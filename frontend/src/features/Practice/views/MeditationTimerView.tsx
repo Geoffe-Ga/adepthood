@@ -4,10 +4,10 @@ import Svg, { Circle } from 'react-native-svg';
 
 import type { RitualControls, RitualState } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
-import { SessionContainer } from './shared';
+import { SESSION_DISPLAY_MAX_FONT_SCALE, SessionContainer } from './shared';
 
 import { SPACING, shadows } from '@/design/tokens';
 
@@ -52,7 +52,14 @@ const MeditationTimerView = ({ state, controls }: Props): React.JSX.Element => {
           />
         </Svg>
         <View style={styles.center} pointerEvents="none">
-          <Text style={[styles.time, { color: surface.text }]} testID="meditation-time-remaining">
+          <Text
+            style={[styles.time, { color: surface.text }]}
+            testID="meditation-time-remaining"
+            accessibilityRole="timer"
+            accessibilityLabel={spokenTime(remainingMs, 'remaining')}
+            accessibilityLiveRegion="polite"
+            maxFontSizeMultiplier={SESSION_DISPLAY_MAX_FONT_SCALE}
+          >
             {formatTime(remainingMs)}
           </Text>
         </View>

@@ -13,7 +13,7 @@ import type {
 } from '../engine/types';
 import { MS_PER_SECOND, RANDOM_BELL_MAX_BELLS_CEILING, SECONDS_PER_MINUTE } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
 import { SESSION_BIG_TIME, SESSION_CAPTION_LABEL, SessionContainer } from './shared';
@@ -132,6 +132,23 @@ function useIntervalBells(
   }, [schedule, struckCount, status, audio, tone]);
 }
 
+/** Lift the live schedule metadata to the parent so it can harvest it on save. */
+function useReportedMetadata(
+  schedule: Schedule | null,
+  struckCount: number,
+  onMetadataChange: Props['onMetadataChange'],
+): void {
+  useEffect(() => {
+    if (onMetadataChange === undefined) return;
+    const intervals = schedule === null ? [] : schedule.deltas.slice(0, struckCount);
+    onMetadataChange({
+      mode: 'random_interval_bell',
+      bells_struck: struckCount,
+      interval_seconds: intervals,
+    });
+  }, [onMetadataChange, schedule, struckCount]);
+}
+
 const RandomIntervalBellView = ({
   config,
   state,
@@ -153,15 +170,7 @@ const RandomIntervalBellView = ({
   useBoundaryBells(config, state.status, adapter);
   useIntervalBells(schedule, struckCount, state.status, adapter, config.bell_tone);
 
-  useEffect(() => {
-    if (onMetadataChange === undefined) return;
-    const intervals = schedule === null ? [] : schedule.deltas.slice(0, struckCount);
-    onMetadataChange({
-      mode: 'random_interval_bell',
-      bells_struck: struckCount,
-      interval_seconds: intervals,
-    });
-  }, [onMetadataChange, schedule, struckCount]);
+  useReportedMetadata(schedule, struckCount, onMetadataChange);
 
   const surface = useSessionSurface();
   const total = schedule?.offsets.length ?? 0;
@@ -169,7 +178,13 @@ const RandomIntervalBellView = ({
   return (
     <SessionContainer testID="random-interval-bell-view" style={styles.fill}>
       <Text style={[styles.label, { color: surface.textSoft }]}>elapsed</Text>
-      <Text style={[styles.time, { color: surface.text }]} testID="random-interval-bell-elapsed">
+      <Text
+        style={[styles.time, { color: surface.text }]}
+        testID="random-interval-bell-elapsed"
+        accessibilityRole="timer"
+        accessibilityLabel={spokenTime(state.elapsedMs, 'elapsed')}
+        accessibilityLiveRegion="polite"
+      >
         {formatTime(state.elapsedMs)}
       </Text>
       <Text style={[styles.count, { color: surface.text }]} testID="random-interval-bell-count">

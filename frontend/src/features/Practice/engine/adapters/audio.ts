@@ -167,26 +167,53 @@ export function createNoopAudioAdapter(): AudioAdapter {
   };
 }
 
+/** Reports, at most once per adapter, that a bell genuinely failed to play. */
+type UnavailableReporter = () => void;
+
+/**
+ * Wrap the caller's optional callback so it fires at most once, and never
+ * synchronously: a player can fail during the caller's own render (adapters
+ * are built in a `useState` initializer), where a state update is illegal.
+ */
+function onceDeferred(onUnavailable?: () => void): UnavailableReporter {
+  let reported = false;
+  return () => {
+    if (reported || onUnavailable === undefined) return;
+    reported = true;
+    void Promise.resolve().then(onUnavailable);
+  };
+}
+
 /**
  * expo-audio-backed adapter. Sound loading is fire-and-forget; if a cue has no
  * timbre, renders inaudible, or fails to construct a player, that cue degrades
  * to a no-op and a single warning is emitted (subsequent plays do not re-warn).
+ *
+ * `onUnavailable` is told (once) when a bell *fails* — the player cannot be
+ * built, or a play rejects (e.g. blocked web autoplay) — so the session can say
+ * so. A cue that is silent by design (the metronome tick) is not a failure and
+ * never reports.
  */
-export function createExpoAudioAdapter(): AudioAdapter {
+export function createExpoAudioAdapter(onUnavailable?: () => void): AudioAdapter {
   configureAudioSessionOnce();
+  const report = onceDeferred(onUnavailable);
   const entries = new Map<SoundKey, SoundEntry>();
   for (const key of Object.keys(SOUND_TIMBRES) as SoundKey[]) {
     entries.set(key, makeEntry());
-    void loadCue(key, entries);
+    void loadCue(key, entries, report);
   }
 
   return {
-    play: (kind, tone) => playCue(soundKeyFor(kind, tone), entries),
+    play: (kind, tone) => playCue(soundKeyFor(kind, tone), entries, report),
     dispose: () => disposeAll(entries),
   };
 }
 
-async function loadCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promise<void> {
+async function loadCue(
+  key: SoundKey,
+  entries: Map<SoundKey, SoundEntry>,
+  report: UnavailableReporter,
+): Promise<void> {
   const timbre = SOUND_TIMBRES[key];
   const entry = entries.get(key);
   if (!entry) return;
@@ -207,6 +234,7 @@ async function loadCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promi
     entry.sound = createAudioPlayer(bellSources()[timbre]) as unknown as PlayableSound;
   } catch (err) {
     markFailed(entry, key, err);
+    report();
   }
 }
 
@@ -216,7 +244,11 @@ function markFailed(entry: SoundEntry, key: SoundKey, reason: unknown): void {
   console.warn(`[ritual-audio] cue "${key}" unavailable — falling back to silent:`, reason);
 }
 
-async function playCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promise<void> {
+async function playCue(
+  key: SoundKey,
+  entries: Map<SoundKey, SoundEntry>,
+  report: UnavailableReporter,
+): Promise<void> {
   const entry = entries.get(key);
   if (!entry || entry.failed || !entry.sound) return;
   try {
@@ -224,6 +256,7 @@ async function playCue(key: SoundKey, entries: Map<SoundKey, SoundEntry>): Promi
     entry.sound.play();
   } catch (err) {
     markFailed(entry, key, err);
+    report();
   }
 }
 

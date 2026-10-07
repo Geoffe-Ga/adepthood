@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 import type { RepCounterConfig, RitualControls, RitualState } from '../engine/types';
 import { MS_PER_MINUTE } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
 import { SESSION_CAPTION_LABEL, SessionContainer } from './shared';
@@ -42,7 +42,13 @@ const RepCounterView = ({ config, state, controls }: Props): React.JSX.Element =
         </Text>
       </Pressable>
       {remaining !== null && (
-        <Text style={[styles.timeCap, { color: surface.textMuted }]} testID="rep-counter-time-cap">
+        <Text
+          style={[styles.timeCap, { color: surface.textMuted }]}
+          testID="rep-counter-time-cap"
+          accessibilityRole="timer"
+          accessibilityLabel={spokenTime(remaining, 'remaining')}
+          accessibilityLiveRegion="polite"
+        >
           time cap: {formatTime(remaining)}
         </Text>
       )}

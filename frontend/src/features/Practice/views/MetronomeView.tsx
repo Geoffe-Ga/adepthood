@@ -3,10 +3,10 @@ import { Animated, StyleSheet, Text, View } from 'react-native';
 
 import type { MetronomeConfig, RitualControls, RitualState } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
-import { SESSION_CAPTION_LABEL, SessionContainer } from './shared';
+import { SESSION_CAPTION_LABEL, SESSION_DISPLAY_MAX_FONT_SCALE, SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -20,16 +20,18 @@ interface Props {
   controls: RitualControls;
 }
 
-const MetronomeView = ({ config, state, controls }: Props): React.JSX.Element => {
+/**
+ * A scale value that pulses once per struck cue. Under the OS "Reduce Motion"
+ * setting the dot stays still; the beat is still felt through the haptic tick.
+ */
+function useBeatPulse(cuesStruck: number): Animated.Value {
   const pulse = useRef(new Animated.Value(1)).current;
-  const lastStruckRef = useRef(state.cuesStruck);
-  // Under the OS "Reduce Motion" setting the dot stays still; the beat is
-  // still felt through the haptic tick.
+  const lastStruckRef = useRef(cuesStruck);
   const reduced = useReducedMotion();
 
   useEffect(() => {
-    if (state.cuesStruck === lastStruckRef.current) return;
-    lastStruckRef.current = state.cuesStruck;
+    if (cuesStruck === lastStruckRef.current) return;
+    lastStruckRef.current = cuesStruck;
     if (reduced) return;
     Animated.sequence([
       Animated.timing(pulse, {
@@ -43,13 +45,22 @@ const MetronomeView = ({ config, state, controls }: Props): React.JSX.Element =>
         useNativeDriver: true,
       }),
     ]).start();
-  }, [state.cuesStruck, pulse, reduced]);
+  }, [cuesStruck, pulse, reduced]);
 
+  return pulse;
+}
+
+const MetronomeView = ({ config, state, controls }: Props): React.JSX.Element => {
+  const pulse = useBeatPulse(state.cuesStruck);
   const surface = useSessionSurface();
   const elapsedMs = state.elapsedMs;
   return (
     <SessionContainer testID="metronome-view">
-      <Text style={[styles.bpm, { color: surface.text }]} testID="metronome-bpm">
+      <Text
+        style={[styles.bpm, { color: surface.text }]}
+        testID="metronome-bpm"
+        maxFontSizeMultiplier={SESSION_DISPLAY_MAX_FONT_SCALE}
+      >
         {config.bpm}
       </Text>
       <Text style={[styles.label, { color: surface.textSoft }]}>bpm</Text>
@@ -57,7 +68,13 @@ const MetronomeView = ({ config, state, controls }: Props): React.JSX.Element =>
         style={[styles.dot, { backgroundColor: surface.accent, transform: [{ scale: pulse }] }]}
         testID="metronome-pulse"
       />
-      <Text style={[styles.miniTimer, { color: surface.textSoft }]} testID="metronome-mini-timer">
+      <Text
+        style={[styles.miniTimer, { color: surface.textSoft }]}
+        testID="metronome-mini-timer"
+        accessibilityRole="timer"
+        accessibilityLabel={spokenTime(elapsedMs, 'elapsed')}
+        accessibilityLiveRegion="polite"
+      >
         {formatTime(elapsedMs)}
       </Text>
       <View style={styles.spacer} />

@@ -25,7 +25,7 @@ import type {
 } from '../engine/types';
 import { MS_PER_SECOND } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
@@ -254,6 +254,8 @@ const ElapsedDisplay = ({ seconds, surface }: ElapsedDisplayProps): React.JSX.El
     <Text
       style={[styles.elapsedTime, { color: surface.text }]}
       testID="mindful-anchor-elapsed-time"
+      accessibilityRole="timer"
+      accessibilityLabel={spokenTime(seconds * MS_PER_SECOND, 'elapsed')}
     >
       {formatTime(seconds * MS_PER_SECOND)}
     </Text>

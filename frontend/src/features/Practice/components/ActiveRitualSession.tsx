@@ -86,6 +86,14 @@ import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView
 import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
 
 const KEEP_AWAKE_TAG = 'ritual-engine';
+
+/**
+ * Non-blocking notice shown when the bells cannot play on this device (the
+ * audio player failed to load, or the browser blocked playback). The session
+ * itself is unaffected. Wording awaits an owner-light copy review (#3072 AC10).
+ */
+export const BELLS_UNAVAILABLE_COPY =
+  "Bells can't play on this device right now. Your timer still runs as usual.";
 const SAVE_FALLBACK =
   "We couldn't save your practice session. Check your connection and try again — your timer minutes are still safe here.";
 
@@ -121,6 +129,8 @@ interface ActiveSession {
   onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
   completedWindow: { start: Date; end: Date } | null;
   saveError: string | null;
+  /** True once a bell has genuinely failed to play this session. */
+  bellsUnavailable: boolean;
   /** Lifts the random-bell view's live schedule metadata for the harvest. */
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
   submitSession: (
@@ -150,6 +160,7 @@ export const ActiveRitualSession = forwardRef<ActiveRitualSessionHandle, ActiveR
           cardPick={session.cardPick}
           onMindfulAnchorComplete={session.onMindfulAnchorComplete}
           saveError={session.saveError}
+          bellsUnavailable={session.bellsUnavailable}
           onRandomBellMetadata={session.onRandomBellMetadata}
         />
         <RitualConfiguratorSheet
@@ -265,19 +276,28 @@ function useHarvestedMetadata(
   };
 }
 
-function useEngineDeps(tarotCardIndex: number, injectedAudio?: AudioAdapter): EngineDeps {
+interface SessionEngineDeps {
+  deps: EngineDeps;
+  bellsUnavailable: boolean;
+}
+
+function useEngineDeps(tarotCardIndex: number, injectedAudio?: AudioAdapter): SessionEngineDeps {
   const [haptics] = useState(() => createExpoHapticsAdapter());
-  const [audio] = useState<AudioAdapter>(() => injectedAudio ?? createExpoAudioAdapter());
+  const [bellsUnavailable, setBellsUnavailable] = useState(false);
+  const [audio] = useState<AudioAdapter>(
+    () => injectedAudio ?? createExpoAudioAdapter(() => setBellsUnavailable(true)),
+  );
   useEffect(() => () => audio.dispose?.(), [audio]);
-  return useMemo(
+  const deps = useMemo(
     () => ({ startCardIndex: tarotCardIndex, haptics, audio }),
     [tarotCardIndex, haptics, audio],
   );
+  return { deps, bellsUnavailable };
 }
 
 function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const tarotCardIndex = useTarotCardIndex(props);
-  const engineDeps = useEngineDeps(tarotCardIndex, props.audio);
+  const { deps: engineDeps, bellsUnavailable } = useEngineDeps(tarotCardIndex, props.audio);
   const [state, controls] = useRitualEngine(props.effectiveConfig, engineDeps);
   useKeepAwakeWhileRunning(state.status);
   const window = useCompletionWindow(state.status, state.elapsedMs);
@@ -319,6 +339,7 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
     onMindfulAnchorComplete,
     completedWindow: window.completedWindow,
     saveError,
+    bellsUnavailable,
     onRandomBellMetadata,
     submitSession,
   };
@@ -458,6 +479,7 @@ interface SessionCardProps {
   cardPick: PickedCard | null;
   onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
   saveError: string | null;
+  bellsUnavailable: boolean;
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
 
@@ -479,6 +501,11 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
           onMindfulAnchorComplete={props.onMindfulAnchorComplete}
         />
       </SessionSurfaceProvider>
+      {props.bellsUnavailable && (
+        <Text style={styles.notice} testID="ritual-bells-unavailable">
+          {BELLS_UNAVAILABLE_COPY}
+        </Text>
+      )}
       {props.saveError !== null && (
         <Text style={styles.error} testID="active-practice-save-error">
           {props.saveError}
@@ -633,6 +660,14 @@ const styles = StyleSheet.create({
   card: {
     paddingBottom: SPACING.lg,
     marginBottom: SPACING.lg,
+  },
+  notice: {
+    // Informational, not an error: the session carries on. The light
+    // border swatch reads on the umber ground like the save-error ink does.
+    color: colors.destructive.border,
+    fontSize: 14,
+    marginTop: SPACING.md,
+    textAlign: 'center',
   },
   error: {
     // The light destructive border swatch doubles as an AA-clearing (~6.3:1)
