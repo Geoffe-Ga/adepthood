@@ -2,9 +2,12 @@
 
 Each test plays one scenario from ``docs/ops/privacy-incident-response.md`` §7
 through the real application: the incident, the operator's steps, and the safe
-state those steps reach. Every test records its steps in ``steps`` and asserts
-both the final state and the path to it, so a scenario that "passes" by never
-having been unsafe in the first place fails instead.
+state those steps reach. Each test keeps a ``trail``: one entry per step,
+pairing the step with what the system was *observed* to do at that point (a
+status code, a count of requests that reached a fake, the key a request
+carried, a row). The test asserts the whole trail at once, so it fails if the
+deployment was never unsafe to begin with, if a step had no effect, or if the
+safe state is not reached.
 
 These are rehearsals against fakes. A live rehearsal on the real deployment,
 with real credentials, is the owner's (#3075).
@@ -94,32 +97,27 @@ async def test_canary_leak_contained_by_ai_switch(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Before: a pass reaches the provider. After the switch: nothing more does."""
-    steps: list[str] = []
+    trail: list[tuple[str, object]] = []
     stub = arm_anthropic(monkeypatch)
     headers, user_id, _ = await signup(async_client, "canary")
     admin = await _admin(async_client, db_session, "canary_admin")
 
     before = await _resonate(async_client, headers, await seed_entry(db_session, user_id))
-    assert before.status_code == HTTPStatus.OK, before.text
+    trail.append(("resonance before", (before.status_code, stub.request_count > 0)))
     dialled = stub.request_count
-    assert dialled >= 1, "the incident never reached the provider, so nothing was contained"
-    steps.append("canary observed at provider")
 
     suspend_ai(monkeypatch)
-    steps.append(f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}")
     probe = await async_client.get(_PROBE, headers=admin)
-    steps.append("probe confirms safe state")
-
+    trail.append(("probe after the switch", probe.json()["external_ai_suspended"]))
     after = await _resonate(async_client, headers, await seed_entry(db_session, user_id))
+    trail.append(("resonance after", (after.status_code, after.json()["detail"])))
+    trail.append(("new provider requests", stub.request_count - dialled))
 
-    assert probe.json()["external_ai_suspended"] is True
-    assert after.status_code == HTTPStatus.SERVICE_UNAVAILABLE
-    assert after.json() == {"detail": AI_SUSPENDED_DETAIL}
-    assert stub.request_count == dialled
-    assert steps == [
-        "canary observed at provider",
-        f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}",
-        "probe confirms safe state",
+    assert trail == [
+        ("resonance before", (HTTPStatus.OK, True)),
+        ("probe after the switch", True),
+        ("resonance after", (HTTPStatus.SERVICE_UNAVAILABLE, AI_SUSPENDED_DETAIL)),
+        ("new provider requests", 0),
     ]
 
 
@@ -145,27 +143,36 @@ def _record_anthropic_keys(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return keys
 
 
+async def _refused(message: str) -> bool:
+    """Whether a generation is refused by the suspension, rather than answered."""
+    try:
+        await botmason.generate_response(message, [])
+    except botmason.ExternalAISuspendedError:
+        return True
+    return False
+
+
 @pytest.mark.asyncio
 async def test_compromised_llm_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Switch on, swap the key, switch off: the next call carries only the new key."""
-    steps: list[str] = []
+    trail: list[tuple[str, object]] = []
     keys = _record_anthropic_keys(monkeypatch)
     monkeypatch.setenv("LLM_API_KEY", _OLD_KEY)
     await botmason.generate_response("before", [])
-    assert keys == [_OLD_KEY]
+    trail.append(("keys sent before", list(keys)))
 
     suspend_ai(monkeypatch)
-    steps.append("suspend")
-    with pytest.raises(botmason.ExternalAISuspendedError):
-        await botmason.generate_response("during", [])
+    trail.append(("refused while suspended", await _refused("during")))
     monkeypatch.setenv("LLM_API_KEY", _NEW_KEY)
-    steps.append("swap key")
     monkeypatch.delenv(EXTERNAL_AI_SUSPEND_ENV_VAR)
-    steps.append("resume")
     await botmason.generate_response("after", [])
+    trail.append(("keys sent after the swap", keys[1:]))
 
-    assert keys == [_OLD_KEY, _NEW_KEY]
-    assert steps == ["suspend", "swap key", "resume"]
+    assert trail == [
+        ("keys sent before", [_OLD_KEY]),
+        ("refused while suspended", True),
+        ("keys sent after the swap", [_NEW_KEY]),
+    ]
 
 
 # --- (c) compromised user session -----------------------------------------------
@@ -176,23 +183,23 @@ async def test_compromised_session_revoked_by_password_changed_at(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """Before: the stolen bearer reads the journal. After ``password_changed_at``: it cannot."""
-    steps: list[str] = []
+    trail: list[tuple[str, object]] = []
     stolen, user_id, _ = await signup(async_client, "stolen_session")
     before = await async_client.get("/journal/", headers=stolen)
-    assert before.status_code == HTTPStatus.OK, "the stolen bearer never worked: nothing to revoke"
-    steps.append("stolen bearer reads the journal")
+    trail.append(("stolen bearer before", before.status_code))
 
     user = await db_session.get(User, user_id)
     assert user is not None
     user.password_changed_at = datetime.now(UTC) + timedelta(seconds=1)
     db_session.add(user)
     await db_session.commit()
-    steps.append("set password_changed_at")
-
     after = await async_client.get("/journal/", headers=stolen)
+    trail.append(("stolen bearer after password_changed_at", after.status_code))
 
-    assert after.status_code == HTTPStatus.UNAUTHORIZED
-    assert steps == ["stolen bearer reads the journal", "set password_changed_at"]
+    assert trail == [
+        ("stolen bearer before", HTTPStatus.OK),
+        ("stolen bearer after password_changed_at", HTTPStatus.UNAUTHORIZED),
+    ]
 
 
 # --- (d) budget exhaustion --------------------------------------------------------
@@ -203,34 +210,26 @@ async def test_budget_exhaustion_ceiling_zero_then_switch_for_byok(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Ceiling 0 stops server-paid passes but not BYOK; only the switch stops both."""
-    steps: list[str] = []
+    trail: list[tuple[str, object]] = []
     stub = arm_anthropic(monkeypatch)
     headers, user_id, _ = await signup(async_client, "budget")
+
+    async def _pass(extra: dict[str, str] | None = None) -> tuple[object, bool]:
+        before = stub.request_count
+        resp = await _resonate(async_client, headers, await seed_entry(db_session, user_id), extra)
+        answer = resp.status_code if resp.is_success else resp.json()["detail"]
+        return answer, stub.request_count > before
+
     monkeypatch.setenv(DAILY_GENERATION_CEILING_ENV, "0")
-    steps.append(f"set {DAILY_GENERATION_CEILING_ENV}=0")
-
-    paid = await _resonate(async_client, headers, await seed_entry(db_session, user_id))
-    assert paid.status_code == HTTPStatus.TOO_MANY_REQUESTS, paid.text
-    assert paid.json()["detail"] == DAILY_GENERATION_LIMIT_REACHED
-    assert stub.request_count == 0
-
-    byok = await _resonate(async_client, headers, await seed_entry(db_session, user_id), _BYOK)
-    assert byok.status_code == HTTPStatus.OK, byok.text
-    dialled = stub.request_count
-    assert dialled >= 1, "BYOK should still dial under ceiling 0: that is the gap"
-    steps.append("BYOK still dials")
-
+    trail.append(("server-paid under ceiling 0", await _pass()))
+    trail.append(("BYOK under ceiling 0", await _pass(_BYOK)))
     suspend_ai(monkeypatch)
-    steps.append(f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}")
-    refused = await _resonate(async_client, headers, await seed_entry(db_session, user_id), _BYOK)
+    trail.append(("BYOK under the switch", await _pass(_BYOK)))
 
-    assert refused.status_code == HTTPStatus.SERVICE_UNAVAILABLE
-    assert refused.json() == {"detail": AI_SUSPENDED_DETAIL}
-    assert stub.request_count == dialled
-    assert steps == [
-        f"set {DAILY_GENERATION_CEILING_ENV}=0",
-        "BYOK still dials",
-        f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}",
+    assert trail == [
+        ("server-paid under ceiling 0", (DAILY_GENERATION_LIMIT_REACHED, False)),
+        ("BYOK under ceiling 0", (HTTPStatus.OK, True)),
+        ("BYOK under the switch", (AI_SUSPENDED_DETAIL, False)),
     ]
 
 
@@ -242,33 +241,27 @@ async def test_false_model_readiness_contained_by_vault_send_switch(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Before: a vault claiming readiness receives the writing. After the switch: nothing."""
-    steps: list[str] = []
+    trail: list[tuple[str, object]] = []
     recorder = _VaultRecorder()
     vault = await handshaken_vault(recorder)
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
     headers, _, _ = await signup(async_client, "false_ready")
     monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR, raising=False)
 
-    before = await async_client.post(
-        "/journal/", json={"message": "Written before anyone noticed."}, headers=headers
-    )
-    assert before.status_code == HTTPStatus.CREATED, before.text
-    sent = recorder.methods().count("PUT")
-    assert sent >= 1, "the vault never received the writing: nothing to contain"
-    steps.append("vault receives journal content")
+    async def _write(message: str) -> tuple[int, int, bool]:
+        sent = recorder.methods().count("PUT")
+        resp = await async_client.post("/journal/", json={"message": message}, headers=headers)
+        saved = await db_session.get(JournalEntry, int(resp.json()["id"])) is not None
+        return resp.status_code, recorder.methods().count("PUT") - sent, saved
 
+    trail.append(("write before", await _write("Written before anyone noticed.")))
     suspend_vault(monkeypatch)
-    steps.append(f"set {VAULT_SEND_SUSPEND_ENV_VAR}")
-    after = await async_client.post(
-        "/journal/", json={"message": "Written while the vault is suspect."}, headers=headers
-    )
+    trail.append(("write under the switch", await _write("Written while the vault is suspect.")))
 
-    assert after.status_code == HTTPStatus.CREATED, after.text
-    row = await db_session.get(JournalEntry, int(after.json()["id"]))
-    assert row is not None
-    assert row.vault_ref is None
-    assert recorder.methods().count("PUT") == sent
-    assert steps == ["vault receives journal content", f"set {VAULT_SEND_SUSPEND_ENV_VAR}"]
+    assert trail == [
+        ("write before", (HTTPStatus.CREATED, 1, True)),
+        ("write under the switch", (HTTPStatus.CREATED, 0, True)),
+    ]
 
 
 # --- (f) stuck deletion -------------------------------------------------------------
@@ -279,7 +272,7 @@ async def test_stuck_deletion_visible_and_withdraw_continues(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A deletion stuck for days shows its true age, and withdrawals land under suspension."""
-    steps: list[str] = []
+    trail: list[tuple[str, object]] = []
     admin = await _admin(async_client, db_session, "teardown_admin")
     requested = datetime.now(UTC) - _STUCK_FOR
     db_session.add(
@@ -293,31 +286,22 @@ async def test_stuck_deletion_visible_and_withdraw_continues(
         )
     )
     await db_session.commit()
-    steps.append("deletion stuck for three days, retried moments ago")
 
     suspend_ai(monkeypatch)
     suspend_vault(monkeypatch)
-    steps.append("set both suspension switches")
     listed = await async_client.get("/admin/vault-teardowns", headers=admin)
-    steps.append("list teardowns")
-
-    assert listed.status_code == HTTPStatus.OK, listed.text
     (row,) = listed.json()
-    assert row["state"] == "deleting"
-    pending_since = datetime.fromisoformat(row["pending_since"])
-    assert pending_since.replace(tzinfo=UTC) == requested.replace(tzinfo=UTC)
+    pending_since = datetime.fromisoformat(row["pending_since"]).replace(tzinfo=UTC)
+    trail.append(("teardown listed", (listed.status_code, row["state"], pending_since)))
 
     recorder = _VaultRecorder()
     vault = await handshaken_vault(recorder)
     await vault.withdraw_journal_entry(_WITHDRAWN_ENTRY)
-    steps.append("withdraw the entry")
+    trail.append(("withdrawal under both switches", recorder.methods()))
 
-    assert recorder.methods() == ["GET", "DELETE"]
-    assert steps == [
-        "deletion stuck for three days, retried moments ago",
-        "set both suspension switches",
-        "list teardowns",
-        "withdraw the entry",
+    assert trail == [
+        ("teardown listed", (HTTPStatus.OK, "deleting", requested.replace(tzinfo=UTC))),
+        ("withdrawal under both switches", ["GET", "DELETE"]),
     ]
 
 
@@ -333,7 +317,7 @@ async def test_vendor_policy_change(
     monkeypatch: pytest.MonkeyPatch, api_key: str | None, vendor: str
 ) -> None:
     """Before: the vendor is reached. After the switch: no client for it is built."""
-    steps: list[str] = []
+    trail: list[tuple[str, object]] = []
     use_openai(monkeypatch, HTTPStatus.OK, _OPENAI_OK)
     arm_anthropic(monkeypatch)
     # Each vendor's own default model, so a BYOK key of either kind is servable.
@@ -341,13 +325,13 @@ async def test_vendor_policy_change(
     built = record_constructions(monkeypatch)
 
     await botmason.generate_response("before", [], api_key=api_key)
-    assert built == [vendor], "the vendor was never reached: nothing to stop"
-    steps.append(f"{vendor} reached")
-
+    trail.append(("clients built before", list(built)))
     suspend_ai(monkeypatch)
-    steps.append(f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}")
     with pytest.raises(botmason.ExternalAISuspendedError):
         await botmason.generate_response("after", [], api_key=api_key)
+    trail.append(("clients built under the switch", built[1:]))
 
-    assert built == [vendor]
-    assert steps == [f"{vendor} reached", f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}"]
+    assert trail == [
+        ("clients built before", [vendor]),
+        ("clients built under the switch", []),
+    ]

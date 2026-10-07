@@ -158,9 +158,11 @@ Timing, jurisdiction and wording: [OPERATOR].
 ## 7. Tabletop scenarios
 
 Each scenario is an automated test in
-`backend/tests/incident/test_tabletop.py`. Each test records the steps it took
-to reach a safe state and asserts that state. A live rehearsal on the real
-deployment is the owner's (#3075).
+`backend/tests/incident/test_tabletop.py`. For each step, the test records what
+the system was observed to do (a status code, the requests that reached a fake
+provider or vault, a listed row). It then asserts the whole sequence: unsafe
+before the operator acts, safe after. A live rehearsal on the real deployment
+is the owner's (#3075).
 
 | Scenario | Safe state reached by | Test |
 |---|---|---|
