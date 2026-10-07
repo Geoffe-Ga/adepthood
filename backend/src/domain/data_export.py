@@ -489,6 +489,11 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Content-free post-deletion reconciliation state. It has no account "
         "reference and belongs to operations, not to an export.",
     ),
+    "voicedraftretraction": Omitted(
+        "Content-free bookkeeping of which essays were mirrored to the "
+        "account's vault and whether their withdrawal was confirmed. The essays "
+        "themselves are exported with their notes; this is housekeeping.",
+    ),
     "walletaudit": Omitted(
         "The offering-balance ledger. Operational accounting, and rows about "
         "other accounts' wallets are not this account's to take.",

@@ -55,6 +55,7 @@ from .vault_activation import (
 )
 from .vault_pipeline_follow_up import VaultPipelineFollowUp
 from .vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
+from .voice_draft_retraction import VoiceDraftRetraction
 from .wallet_audit import WalletAudit
 
 __all__ = [
@@ -114,5 +115,6 @@ __all__ = [
     "VaultPipelineOutcome",
     "VaultPipelineRun",
     "VaultTeardownReceipt",
+    "VoiceDraftRetraction",
     "WalletAudit",
 ]
