@@ -181,7 +181,7 @@ history and future content stand or fall together.
 
 ### Option B
 
-*User-held end-to-end encrypted journal.*
+*User-held keys with client-side encryption.*
 
 - **Boundary:** Stored prose is ciphertext the server cannot decrypt; the person's devices hold plaintext. (`issue:#3067`)
 - **Key custody:** Keys generated on the person's device; no operator escrow; AEAD bound to owner, object and version. (`issue:#3067`)
@@ -558,11 +558,14 @@ The B13 epic body that carries this plan is drafted at
   and 6 are amended by an appended section.
 - Creek-Vault ADR 0005, Creek-Vault ADR 0006 and Creek-Vault ADR 0007 are
   amended by appended sections in Creek-Vault (branch `w34/B12-creek`).
-- Creek-Vault ADR 0014 is **superseded for journal content**. Journal content
-  in a managed vault is ciphertext under the person's key. Provider-managed
-  custody remains only for operational state (credentials, job state,
-  configuration) and, for inference that sees plaintext, under the RUNTIME
-  question.
+- Creek-Vault ADR 0014 is **superseded for journal content as a decided
+  target**. The decision is that journal content in a managed vault will be
+  ciphertext under the person's key once B13 phases (b) and (c) complete for
+  that account. Until then, Creek-Vault ADR 0014 and ADR 0007 Decision 4 keep
+  describing and governing that account's journal content, which stays
+  operator-readable. Provider-managed custody stays for operational state
+  (credentials, job state, configuration). Inference that sees plaintext falls
+  under the RUNTIME question.
 
 ## Reopen triggers
 
@@ -579,8 +582,8 @@ The B13 epic body that carries this plan is drafted at
 - A per-person key parameter appears on the codec, so
   `test_custody_codec_has_no_per_principal_key` fails. That is expected: it
   is the signal to update this record's Context and invert the test.
-- Confidential compute becomes affordable enough to make the
-  runtime-we-control path operator-blind (C and D05).
+- Confidential compute becomes affordable enough that it could make the
+  runtime-we-control path operator-blind, if D05 is proven (C).
 - The owner's budget for any phase is exceeded.
 
 ## Open owner questions

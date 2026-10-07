@@ -217,15 +217,18 @@ the launch service. This section states exactly what changes.
 
 - **Decision 4, launch custody.** `provider_managed` stays an accurate
   description of what an ordinary Fly vault does today: provider-managed
-  custody is not operator-blind. It **stops being an acceptable resting
-  place for journal content.** Under ADR 0009, journal content in a managed
-  vault is ciphertext under the person's user-held key. Provider-managed
-  custody remains for operational state only (credentials, job state,
-  configuration). Any vault-local inference that sees plaintext falls under
+  custody is not operator-blind. It is **decided to stop being an
+  acceptable resting place for journal content.** The target under ADR 0009
+  is that journal content in a managed vault will be ciphertext under the
+  person's user-held key. **Until B13 phases (b) and (c) complete for an
+  account, this Decision 4 keeps describing and governing that account's
+  journal content, which stays operator-readable.** Provider-managed custody
+  stays for operational state (credentials, job state, configuration). Any vault-local inference that sees plaintext falls under
   ADR 0009's open RUNTIME question.
 - **Decision 6, what a VM is not.** Items 1 and 2 (a user-held key with no
-  escrow, and client-side ciphertext through Adepthood) are now **required
-  for all journal content**, not only INTIMATE. Items 3-5 (attestation, key
+  escrow, and client-side ciphertext through Adepthood) are **decided as
+  requirements for all journal content**, not only INTIMATE. Neither is
+  implemented yet. Items 3-5 (attestation, key
   release into an enclave, and confidential inference) are **not selected**.
   They return only through ADR 0009's reopen triggers. INTIMATE stays
   skip-only for inference until ADR 0009's phase (d) moves a feature onto the

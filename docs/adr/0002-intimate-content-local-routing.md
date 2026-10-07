@@ -197,11 +197,13 @@ decision. The text above stays as written. This section states exactly what
 changes.
 
 - **Decision 2, key custody.** User-held keys with no operator escrow are no
-  longer a future, Creek-volume-only design. They become the custody model for
-  **the journal itself**, meaning Adepthood's own database and every prose
-  derivative in it. Confidential compute (TEE) is **not** required for that
-  guarantee and is not selected. Keys are generated on the person's device,
-  and the server stores ciphertext only.
+  longer a future, Creek-volume-only design. They are **decided to become** the
+  custody model for **the journal itself**, meaning Adepthood's own database
+  and every prose derivative in it. Confidential compute (TEE) is **not**
+  required for that target and is not selected. Under the target, keys will
+  be generated on the person's device and the server will store ciphertext
+  only. **Until B13 phases (b) and (c) land for an account, its journal stays
+  under today's server-held keys and is operator-readable.**
 - **Decision 3, routing.** BYOK is no longer a supplement to an app-paid
   cloud path. It is the **only** way any of a person's content reaches a
   cloud model. Without their own key, none of their data reaches one. A

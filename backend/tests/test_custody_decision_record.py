@@ -667,3 +667,65 @@ def test_decision_three_does_not_invent_byok_consent_granularity() -> None:
 
     assert "per-feature opt-in" not in decision
     assert "BYOK-CONSENT" in decision
+
+
+# A custody word that, said flatly in the present tense, is a claim nothing
+# yet supports. Each may appear only in a sentence that negates it or scopes
+# it to a target, a condition or a future.
+_CUSTODY_CLAIM = re.compile(
+    r"operator-blind|end-to-end|\bE2EE\b|already user-held|cannot read it", re.IGNORECASE
+)
+_SCOPING_MARKER = re.compile(
+    r"\b(?:not|no|never|neither|nor|until|unless|once|will|would|if|whether|"
+    r"target|decided|must|only while|stop|stops)\b",
+    re.IGNORECASE,
+)
+
+
+def _unscoped_custody_claims(text: str) -> list[str]:
+    """Sentences that state a custody property flatly, with no negation or scope."""
+    blocks = re.split(r"\n\s*\n|\n(?=\s*(?:[-*] |#))|\|", text)
+    sentences = [
+        sentence for block in blocks for sentence in re.split(r"(?<=[.;!?])\s+", _flat(block))
+    ]
+    return [
+        sentence
+        for sentence in sentences
+        if _CUSTODY_CLAIM.search(sentence) and not _SCOPING_MARKER.search(sentence)
+    ]
+
+
+def _amendment_sections() -> dict[str, str]:
+    """The appended ADR 0009 amendment of each amended local record."""
+    sections: dict[str, str] = {}
+    for filename in _AMENDED_ADRS:
+        text = (_ADR_DIR / filename).read_text(encoding="utf-8")
+        sections[filename] = text[text.index(_AMENDMENT_HEADING) :]
+    return sections
+
+
+def _scorecard_prose(card: dict[str, object]) -> str:
+    """Every scored value in the twin, joined, so the scan covers JSON too."""
+    return "\n".join(
+        str(_as_dict(cell).get("value", ""))
+        for scored in _as_dict(card.get("options")).values()
+        for cell in _as_dict(scored).values()
+    )
+
+
+def test_no_affirmative_present_tense_custody_claim() -> None:
+    """ADR 0009, its twin and the amendments never state a custody property flatly."""
+    documents = {"0009": _adr_text(), "scorecard": _scorecard_prose(_card())}
+    documents.update(_amendment_sections())
+
+    found = {name: _unscoped_custody_claims(text) for name, text in documents.items()}
+
+    assert {name: hits for name, hits in found.items() if hits} == {}
+
+
+def test_the_custody_claim_scan_bites() -> None:
+    """A flat claim is caught; a negated or scoped one is not."""
+    assert _unscoped_custody_claims("Adepthood is operator-blind.") != []
+    assert _unscoped_custody_claims("Journal content is already user-held.") != []
+    assert _unscoped_custody_claims("Ordinary Fly is not operator-blind.") == []
+    assert _unscoped_custody_claims("It is operator-blind once phase (c) lands.") == []
