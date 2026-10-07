@@ -185,12 +185,16 @@ is the owner's (#3075).
 ## 9. Known side effects of the switches
 
 - `PRIVACY_SUSPEND_VAULT_SEND` also refuses the pipeline's classify and link
-  steps. A stage is recorded `failed` on the first attempt the switch
-  refuses, with the log line `creek vault pipeline stage suspended by
-  operator`. That holds for a fresh stage, for a retry of a stage already in
-  flight when the switch was set, and for a stage resumed at startup. It is
-  not retried further, and it is not recorded `ambiguous`, because the
-  refused request never left the process. Nothing re-runs the stage when the
+  steps. The stage ends on the first attempt the switch refuses, with the log
+  line `creek vault pipeline stage suspended by operator`, and is not retried
+  further. That holds for a fresh stage, for a retry of a stage already in
+  flight when the switch was set, and for a stage resumed at startup. A
+  refusal proves only that *its own* attempt never left the process, so the
+  run's outcome depends on its earlier attempts. It is recorded `failed` when
+  no attempt could have reached the vault: a fresh stage, or one whose earlier
+  job definitively failed. It is recorded `ambiguous` when an earlier attempt
+  went out and was never answered, so it may have landed; count it as possible
+  egress. Nothing re-runs the stage when the
   switch is unset: it runs again only when a later trigger (a new journal
   write, for example) starts a new pipeline run. That is expected, not a
   second incident.

@@ -651,9 +651,10 @@ async def test_a_suspension_arriving_before_a_retry_ends_the_run_failed(
     """A retry the vault-send switch refused never left the process (#3075).
 
     The first admission's job fails, and the operator suspends vault sends
-    before the readmission. The readmission is refused locally, so the run
-    closes FAILED at once: no further attempt, no further wire request, and
-    never AMBIGUOUS.
+    before the readmission. The readmission is refused locally, and the only
+    earlier attempt is provably over (its job definitively failed), so no
+    attempt can have landed: the run closes FAILED at once, with no further
+    attempt and no further wire request.
     """
     monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
     monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
@@ -685,11 +686,16 @@ async def test_a_suspension_arriving_before_a_retry_ends_the_run_failed(
 
 
 @pytest.mark.asyncio
-async def test_a_resumed_run_under_suspension_ends_failed_without_sending(
+async def test_a_resumed_unanswered_run_under_suspension_stays_ambiguous(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Startup resume of an in-flight run with no handle, under the switch (#3075)."""
+    """A suspension proves only that *its* attempt never left the process (#3075).
+
+    The row's earlier attempt went out and was never answered, so it may have
+    landed. The suspended retry sends nothing and ends the run, but must keep
+    that uncertainty: AMBIGUOUS, never FAILED, which would understate exposure.
+    """
     monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
     monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
     recorder = _DurableJobRecorder()
@@ -721,7 +727,7 @@ async def test_a_resumed_run_under_suspension_ends_failed_without_sending(
     assert _CLASSIFICATIONS_PATH not in recorder.paths
     rows = await _rows(db_session)
     assert [(row.stage, row.outcome, row.attempt_count) for row in rows] == [
-        ("classify", VaultPipelineOutcome.FAILED, 2)
+        ("classify", VaultPipelineOutcome.AMBIGUOUS, 2)
     ]
 
 

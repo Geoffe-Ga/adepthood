@@ -1130,10 +1130,20 @@ async def _retry_for_reconciliation(
     client: CreekVaultPipelineClient,
     run: VaultPipelineRun,
     stage: VaultPipelineStage,
+    state: _Reconciliation,
 ) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob | VaultPipelineOutcome | None:
-    """Try fresh admission, turning a definitive refusal into a final outcome."""
+    """Try fresh admission, turning a definitive refusal into a final outcome.
+
+    An operator suspension proves only that *this* retry never left the process
+    (#3075). It says nothing about the run's earlier attempts, so it ends the run
+    with the ambiguity those carry: AMBIGUOUS when one may have landed, and
+    FAILED only when none could have.
+    """
     try:
         return await _retry_once(session, client, run, stage)
+    except VaultSendSuspendedError as exc:
+        _LOGGER.info(_refusal_event(exc), extra={"stage": stage.value})
+        return await _finish_exhausted_run(session, run, ambiguous=state.ambiguous)
     except _DEFINITIVE_REFUSALS as exc:
         _LOGGER.info(_refusal_event(exc), extra={"stage": stage.value})
         await _commit_finished_run(
@@ -1199,7 +1209,7 @@ async def _reconciliation_step(
             return outcome
     if run.attempt_count >= _MAX_STAGE_ATTEMPTS:
         return await _finish_exhausted_run(session, run, ambiguous=state.ambiguous)
-    retried = await _retry_for_reconciliation(session, client, run, stage)
+    retried = await _retry_for_reconciliation(session, client, run, stage, state)
     if isinstance(retried, VaultPipelineOutcome):
         return retried
     return await _continue_after_retry(session, run, retried, state)

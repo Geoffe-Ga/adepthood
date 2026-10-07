@@ -295,9 +295,11 @@ class VaultSendSuspendedError(CreekVaultUnavailableError):
     degrade: the journal write is saved without a vault copy, and a reflection
     or upload degrades as if the vault were absent. The vault pipeline is the
     exception. Its ladders list this subclass *ahead* of its transient parent,
-    so a refused stage is recorded FAILED on the first attempt the switch
-    refuses -- fresh, retried or resumed -- and is never retried or recorded
-    ambiguous, because the request provably never left the process.
+    so a stage ends, without further retries, on the first attempt the switch
+    refuses -- fresh, retried or resumed. The refusal proves only that its own
+    attempt never left the process: the run is recorded FAILED when no attempt
+    could have reached the vault, and AMBIGUOUS when an earlier, unanswered
+    attempt may have.
     """
 
     def __init__(self) -> None:
