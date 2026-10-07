@@ -963,3 +963,23 @@ def test_b13_epic_draft_lists_exactly_the_open_owner_questions() -> None:
     questions = {_as_dict(entry).get("id") for entry in _as_list(_card()["open_owner_questions"])}
 
     assert listed == questions
+
+
+def test_decisions_three_and_four_scope_the_cloud_rule_and_name_the_app_key_gap() -> None:
+    """Today the app's own key pays when no BYOK key is sent, so the rule is a target.
+
+    ``_resolve_api_key`` falls back to the server ``LLM_API_KEY`` when no
+    BYOK key is supplied. While it does, the record must state the cloud rule
+    as the decided target and name the fallback as a known gap that phase (a)
+    closes with #3096.
+    """
+    text = _flat(_adr_text())
+    decision = text[text.index("## Decision ") : text.index("## Threat actors")]
+    botmason = (_REPO_ROOT / "backend" / "src" / "services" / "botmason.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "return _get_llm_api_key()" in botmason
+    assert "The app's own cloud key never carries" not in decision
+    assert "Without such a key, **none of their data reaches a cloud model**" not in decision
+    assert "Known gap until phase (a) lands, with #3096: the app-key fallback" in decision

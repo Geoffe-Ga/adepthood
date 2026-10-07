@@ -110,16 +110,17 @@ answers to this record's follow-up questions, given the same evening.
    data key**. Recovery itself is item 11.
 3. **Cloud models are used only with the person's own key.**
    (`owner:2026-10-07#B12-cloud-byok`) Anthropic, OpenAI and any other cloud
-   model are reached only when the person adds their own key in Settings
-   (BYOK). Without such a key, **none of their data reaches a cloud model**.
-   How finely BYOK consent is granted (per key, per feature or per call) is
-   not decided; see open question BYOK-CONSENT. The app's own cloud key never
-   carries a person's journal content.
+   model are to be reached only when the person adds their own key in
+   Settings (BYOK). Under the decision, without such a key **none of their
+   data will reach a cloud model**, and the app's own cloud key will never
+   carry a person's journal content. How finely BYOK consent is granted (per
+   key, per feature or per call) is not decided; see open question
+   BYOK-CONSENT.
 
    **BYOK calls go from the person's device straight to the vendor.** This
    follows directly from the premise. If the server relayed a BYOK call, it
-   would see the plaintext it forwards. So the person's key and the content
-   of a BYOK call never pass through our server.
+   would see the plaintext it forwards. So, under the target, the person's
+   key and the content of a BYOK call will not pass through our server.
 
    **Known gap until phase (a) lands:** today the client sends the person's
    key to our backend in the `X-LLM-API-Key` header
@@ -130,8 +131,15 @@ answers to this record's follow-up questions, given the same evening.
    (`owner:2026-10-07#B12-credits`, `owner:2026-10-07#followup-runtime`)
    That means the vault-local model (B05,
    [Creek-Vault#1849](https://github.com/Geoffe-Ga/Creek-Vault/issues/1849))
-   or a **managed no-retention runtime** we run. Credits never pay for a call
-   made with the app's cloud key.
+   or a **managed no-retention runtime** we run. Under the decision, credits
+   will never pay for a call made with the app's cloud key.
+
+   **Known gap until phase (a) lands, with #3096: the app-key fallback.**
+   Today, when no BYOK key is sent, `services/botmason.py::_resolve_api_key`
+   falls back to the server's `LLM_API_KEY`. A credit-funded request
+   carrying journal content therefore reaches a cloud vendor on the app's
+   account. Phase (a) removes that fallback for anything carrying a person's
+   content, together with #3096 (refuse without credits or BYOK).
 
    **Honest limit, decided by the owner:** processing in that managed
    runtime is **not operator-blind while it runs**. The runtime sees the
