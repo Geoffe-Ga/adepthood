@@ -3746,6 +3746,30 @@
         "title": "JournalClassification",
         "type": "string"
       },
+      "JournalEntryPurgeResult": {
+        "description": "Outcome of the soft-deleted journal-entry purge: counts and the window used.\n\n``blocked`` counts expired entries kept back because a remote withdrawal\nthey owe is not yet confirmed. Counts only -- never an id or a word.",
+        "properties": {
+          "blocked": {
+            "title": "Blocked",
+            "type": "integer"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "older_than_days": {
+            "title": "Older Than Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted",
+          "blocked",
+          "older_than_days"
+        ],
+        "title": "JournalEntryPurgeResult",
+        "type": "object"
+      },
       "JournalEntryUpdate": {
         "description": "Partial update for a journal entry (PATCH).\n\nEvery field is optional; an empty payload is rejected (422) so a no-op PATCH\ncan't silently bump ``updated_at``. ``message`` is re-sanitized server-side.",
         "properties": {
@@ -10263,6 +10287,117 @@
           }
         },
         "summary": "Cleanup Feedback Reports",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/maintenance/journal-entries": {
+      "post": {
+        "description": "Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.\n\nRemoves their margin notes, promoted passages, completion suggestions and\ncorpus fragments, and clears the metering link, as ``domain.retention``\nderives from the schema. Entries still owing a remote withdrawal are kept\nand counted as ``blocked``. The window is required -- there is no default,\nbecause how long a deleted page is kept is the owner's promise to make\n(#3063) -- and nothing schedules this route.",
+        "operationId": "purge_journal_entries_admin_maintenance_journal_entries_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "older_than_days",
+            "required": true,
+            "schema": {
+              "maximum": 36500,
+              "minimum": 1,
+              "title": "Older Than Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEntryPurgeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Purge Journal Entries",
         "tags": [
           "admin"
         ]

@@ -21,15 +21,18 @@ The pins below are deliberately structural:
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import Column, Integer, MetaData, Table
+from sqlalchemy import Column, ForeignKey, Integer, MetaData, Table
 from sqlmodel import SQLModel
 
 from domain import retention
 from domain.account_deletion import POLICY, Disposition, TablePolicy
 from domain.retention import (
+    ENTRY_PURGE_BLOCKERS,
     RETENTION,
     RetentionKind,
     RetentionRule,
+    entry_dependant_gaps,
+    entry_dependants,
     indefinite,
     retention_conflicts,
     retention_gaps,
@@ -38,6 +41,7 @@ from domain.retention import (
     unratified_rules,
 )
 from models.feedback import FEEDBACK_RETENTION_DAYS
+from models.voice_draft_retraction import VoiceDraftRetractionState
 from services.energy import ENERGY_PLAN_RETENTION_DAYS
 from tests.helpers.openapi_errors import route_index
 
@@ -175,3 +179,57 @@ def test_report_names_every_table_and_flags_the_unratified() -> None:
     assert "UNRATIFIED" in report
     gumroad_line = next(line for line in report.splitlines() if line.startswith("gumroadsale"))
     assert "UNRATIFIED" in gumroad_line
+
+
+def _triples() -> set[tuple[str, str, str]]:
+    return {
+        (dependant.table, dependant.column, dependant.action.value)
+        for dependant in entry_dependants(SQLModel.metadata)
+    }
+
+
+def test_every_entry_foreign_key_has_a_purge_action() -> None:
+    """Purging an entry acts on every row that points at it, with a stated action."""
+    assert entry_dependant_gaps(SQLModel.metadata) == ()
+    triples = _triples()
+    assert ("llmusagelog", "journal_entry_id", "null") in triples
+    assert ("promotedquote", "included_in_entry_id", "null") in triples
+    for deleted in (
+        ("marginalia", "journal_entry_id"),
+        ("completionsuggestion", "journal_entry_id"),
+        ("corpusfragment", "source_entry_id"),
+        ("promotedquote", "source_entry_id"),
+        ("voicedraftretraction", "journal_entry_id"),
+    ):
+        assert (*deleted, "delete") in triples
+
+
+def test_a_new_entry_reference_without_ondelete_is_a_gap() -> None:
+    """A foreign key into an entry with no cascade and no override is a decision owed."""
+    copied = _metadata_with_new_table()
+    copied.tables[_NEW_TABLE].append_column(
+        Column("entry_id", Integer, ForeignKey("journalentry.id")),
+    )
+    gaps = entry_dependant_gaps(copied)
+    assert len(gaps) == 1
+    assert f"{_NEW_TABLE}.entry_id" in gaps[0]
+
+
+def test_dependants_are_walked_through_deleted_children() -> None:
+    """A row pointing at a deleted dependant is reached too, never left dangling."""
+    copied = _metadata_with_new_table()
+    copied.tables[_NEW_TABLE].append_column(
+        Column("note_id", Integer, ForeignKey("marginalia.id", ondelete="CASCADE")),
+    )
+    grandchild = next(d for d in entry_dependants(copied) if d.table == _NEW_TABLE)
+    assert grandchild.action.value == "delete"
+    assert grandchild.parent is not None
+    assert grandchild.parent.table == "marginalia"
+
+
+def test_the_withdrawal_obligation_blocks_the_purge() -> None:
+    """An unconfirmed remote withdrawal keeps its entry out of the purge (B04 / #3060)."""
+    blocker = ENTRY_PURGE_BLOCKERS["voicedraftretraction"]
+    assert blocker.cleared_states == (VoiceDraftRetractionState.CONFIRMED.value,)
+    unsettled = {state.value for state in VoiceDraftRetractionState} - set(blocker.cleared_states)
+    assert unsettled == {"mirror_intent", "pending"}

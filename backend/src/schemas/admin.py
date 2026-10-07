@@ -187,6 +187,18 @@ class EnergyPlanCleanupResult(BaseModel):
     older_than_days: int
 
 
+class JournalEntryPurgeResult(BaseModel):
+    """Outcome of the soft-deleted journal-entry purge: counts and the window used.
+
+    ``blocked`` counts expired entries kept back because a remote withdrawal
+    they owe is not yet confirmed. Counts only -- never an id or a word.
+    """
+
+    deleted: int
+    blocked: int
+    older_than_days: int
+
+
 class FeedbackCleanupResult(BaseModel):
     """Outcome of a feedback retention sweep: rows deleted + the window used.
 

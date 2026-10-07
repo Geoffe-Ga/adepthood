@@ -2293,3 +2293,38 @@ async def test_idor_ui_flags_writing_habit_link_missing_habit_404s_and_persists_
     stored = await _ui_flags_row(db_session, user_id)
     assert stored.writing_session_habit_id is None
     assert stored.has_seen_welcome is False
+
+
+@pytest.mark.asyncio
+async def test_admin_purge_rejects_non_admin_and_spares_rows(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A non-admin cannot purge anyone's deleted pages; nothing is removed (#3063)."""
+    victim_headers, victim_id = await _signup(async_client, "purgevictim")
+    entry = await async_client.post(
+        "/journal/", json={"message": "mine", "classification": "personal"}, headers=victim_headers
+    )
+    entry_id = entry.json()["id"]
+    await async_client.delete(f"/journal/{entry_id}", headers=victim_headers)
+    await db_session.execute(
+        update(JournalEntry)
+        .where(col(JournalEntry.id) == entry_id)
+        .values(deleted_at=datetime.now(UTC) - timedelta(days=30))
+    )
+    await db_session.commit()
+    attacker_headers, _ = await _signup(async_client, "purgeattacker")
+
+    resp = await async_client.post(
+        "/admin/maintenance/journal-entries",
+        params={"older_than_days": 1},
+        headers=attacker_headers,
+    )
+
+    assert resp.status_code == HTTPStatus.FORBIDDEN
+    remaining = await db_session.execute(
+        select(func.count())
+        .select_from(JournalEntry)
+        .where(col(JournalEntry.user_id) == victim_id)
+        .execution_options(populate_existing=True)
+    )
+    assert remaining.scalar_one() == 1

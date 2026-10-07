@@ -58,6 +58,7 @@ FEEDBACK_SWEEP_DAYS = 180
 
 ENERGY_PLAN_SWEEP = "POST /admin/maintenance/energy-plans"
 FEEDBACK_SWEEP = "POST /admin/maintenance/feedback-reports"
+JOURNAL_ENTRY_PURGE = "POST /admin/maintenance/journal-entries"
 
 _ACCOUNT_DELETION = "account deletion"
 _SWEEP_ROUTE = re.compile(r"^(GET|POST|PUT|PATCH|DELETE) /\S+$")
@@ -178,7 +179,8 @@ def shared_catalogue(rationale: str) -> RetentionRule:
 
 _DERIVED_FROM_ENTRY = (
     " Rows anchored to a soft-deleted entry live as long as that entry does (see "
-    "journalentry's soft-deleted rule): the soft delete hides them, it does not remove them."
+    "journalentry's soft-deleted rule): the soft delete hides them, and only the operator "
+    "purge or account deletion removes them."
 )
 
 # --------------------------------------------------------------------------
@@ -250,10 +252,13 @@ RETENTION: Mapping[str, RetentionRule] = {
     "invitationsignal": until_account_deletion("Which invitations the account saw."),
     "journalentry": until_account_deletion(
         "The writing. A live entry lives until the account is erased.",
-        soft_deleted=indefinite(
-            "A soft-deleted entry (BUG-JOURNAL-007) is hidden from every read path but "
-            "kept, with its derivatives, until account deletion: no purge exists and no "
-            "deadline has been chosen (#3063 AC13, AC15).",
+        soft_deleted=swept_by(
+            JOURNAL_ENTRY_PURGE,
+            trigger="soft delete",
+            rationale="A soft-deleted entry (BUG-JOURNAL-007) is hidden from every read "
+            "path but kept, with its derivatives, until account deletion or until an "
+            "operator runs the purge. The purge has no default window and nothing "
+            "schedules it; both are owner decisions (#3063 AC15, AC18).",
             ratified=False,
         ),
     ),
@@ -516,3 +521,141 @@ def tombstone_gaps(metadata: MetaData) -> tuple[str, ...]:
         if not present
     ]
     return tuple(uncovered + stale)
+
+
+# --------------------------------------------------------------------------
+# What purging a soft-deleted entry must do to the rows that point at it
+# (#3063 AC13).
+#
+# Derived from the schema's own foreign keys rather than hand-listed, so the
+# next table that references an entry is a decision the purge is forced to
+# make rather than a row it silently leaves dangling -- or, on Postgres, a row
+# the database cascade silently deletes.
+# --------------------------------------------------------------------------
+
+ENTRY_TABLE = "journalentry"
+
+
+class PurgeAction(enum.StrEnum):
+    """What a purge does to one referencing column's rows."""
+
+    DELETE = "delete"
+    NULL = "null"
+
+
+@dataclass(frozen=True)
+class EntryDependant:
+    """One foreign key that reaches a purged entry, directly or through a deleted child.
+
+    ``parent`` is ``None`` for a column referencing the entry itself; otherwise
+    it is the deleted dependant whose rows this column references.
+    """
+
+    table: str
+    column: str
+    action: PurgeAction
+    referenced_column: str
+    parent: EntryDependant | None = None
+
+
+@dataclass(frozen=True)
+class PurgeBlocker:
+    """Rows of an obligation table that make their entry ineligible for a purge.
+
+    An entry is skipped while any of its rows in ``table`` has a ``state_column``
+    value outside ``cleared_states``: purging it would delete an obligation the
+    system still owes somebody (a remote copy not yet withdrawn).
+    """
+
+    entry_column: str
+    state_column: str
+    cleared_states: tuple[str, ...]
+
+
+#: Foreign keys into an entry that declare no ``ondelete``; the purge's action
+#: for each is stated here instead.
+ENTRY_FK_OVERRIDES: Mapping[str, PurgeAction] = {
+    # The metering row outlives the writing it metered (BUG-JOURNAL-007).
+    "llmusagelog.journal_entry_id": PurgeAction.NULL,
+}
+
+#: Obligation tables whose unsettled rows keep a soft-deleted entry out of the
+#: purge. ``voicedraftretraction`` (B04, #3060): an essay offered to a vault
+#: whose withdrawal is not confirmed -- ``mirror_intent`` or ``pending`` --
+#: still has a remote copy, and purging the entry would cascade the only record
+#: that a withdrawal is owed.
+ENTRY_PURGE_BLOCKERS: Mapping[str, PurgeBlocker] = {
+    "voicedraftretraction": PurgeBlocker(
+        entry_column="journal_entry_id",
+        state_column="state",
+        cleared_states=("confirmed",),
+    ),
+}
+
+_ONDELETE_ACTIONS: Mapping[str, PurgeAction] = {
+    "CASCADE": PurgeAction.DELETE,
+    "SET NULL": PurgeAction.NULL,
+}
+
+
+def _references_into(metadata: MetaData, target: str) -> list[tuple[str, str, str | None, str]]:
+    """``(table, column, ondelete, referenced column)`` for every FK into ``target``."""
+    return [
+        (table.name, column.name, foreign_key.ondelete, foreign_key.column.name)
+        for table in metadata.sorted_tables
+        for column in table.columns
+        for foreign_key in column.foreign_keys
+        if foreign_key.column.table.name == target
+    ]
+
+
+def _action(table: str, column: str, ondelete: str | None) -> PurgeAction | None:
+    """The purge action for one FK: an explicit override, else its declared cascade."""
+    override = ENTRY_FK_OVERRIDES.get(f"{table}.{column}")
+    if override is not None:
+        return override
+    return _ONDELETE_ACTIONS.get((ondelete or "").upper())
+
+
+def _walk(
+    metadata: MetaData, target: str, parent: EntryDependant | None, seen: frozenset[str]
+) -> tuple[list[EntryDependant], list[str]]:
+    """Dependants of ``target`` and, through every deleted one, theirs."""
+    dependants: list[EntryDependant] = []
+    gaps: list[str] = []
+    for table, column, ondelete, referenced in _references_into(metadata, target):
+        action = _action(table, column, ondelete)
+        if action is None:
+            gaps.append(
+                f"{table}.{column} references {target} with ondelete={ondelete!r} and no "
+                "purge override; decide whether a purge deletes or nulls it"
+            )
+            continue
+        dependant = EntryDependant(table, column, action, referenced, parent)
+        dependants.append(dependant)
+        if action is PurgeAction.DELETE and table not in seen:
+            deeper, deeper_gaps = _walk(metadata, table, dependant, seen | {table})
+            dependants.extend(deeper)
+            gaps.extend(deeper_gaps)
+    return dependants, gaps
+
+
+def entry_dependants(metadata: MetaData) -> tuple[EntryDependant, ...]:
+    """Every column a purge of an entry must act on, parents before their children."""
+    dependants, _ = _walk(metadata, ENTRY_TABLE, None, frozenset({ENTRY_TABLE}))
+    return tuple(dependants)
+
+
+def entry_dependant_gaps(metadata: MetaData) -> tuple[str, ...]:
+    """Foreign keys reaching an entry that the purge has no stated action for.
+
+    Also reports a blocker naming a table or column that no longer exists, so
+    an obligation cannot quietly stop protecting its entry.
+    """
+    _, gaps = _walk(metadata, ENTRY_TABLE, None, frozenset({ENTRY_TABLE}))
+    for name, blocker in ENTRY_PURGE_BLOCKERS.items():
+        table = metadata.tables.get(name)
+        columns = (blocker.entry_column, blocker.state_column)
+        if table is None or any(column not in table.c for column in columns):
+            gaps.append(f"purge blocker {name!r} names a table or column not in the schema")
+    return tuple(gaps)
