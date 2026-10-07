@@ -320,3 +320,50 @@ async def test_purge_refuses_a_window_shorter_than_the_longest_backup(
         _PURGE, params={"older_than_days": PURGE_MIN_RETENTION_DAYS}, headers=headers
     )
     assert resp.status_code == HTTPStatus.OK
+
+
+_GRANDCHILD = "zz_note_annotation"
+
+
+@pytest.mark.asyncio
+async def test_purge_reaches_rows_hanging_off_a_deleted_dependant(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A table pointing at a margin note loses only the purged entry's rows.
+
+    The schema has no such table today, so one is registered for the test: a
+    CASCADE reference into ``marginalia``, two levels below the entry. Only the
+    purged entry's note's rows may go; the other account's must stay.
+    """
+    alice, _, bob = await _seed_two_accounts(async_client, db_session)
+    grandchild = sa.Table(
+        _GRANDCHILD,
+        SQLModel.metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("note_id", sa.Integer, sa.ForeignKey("marginalia.id", ondelete="CASCADE")),
+    )
+    try:
+        await db_session.run_sync(lambda sync: grandchild.create(sync.connection()))
+        notes = SQLModel.metadata.tables["marginalia"]
+        note_of: dict[int, int] = {}
+        for account in (alice, bob):
+            entry_id = await _seeded_entry(db_session, account)
+            note_of[entry_id] = (
+                await db_session.execute(
+                    sa.select(notes.c["id"]).where(notes.c["journal_entry_id"] == entry_id)
+                )
+            ).scalar_one()
+            await db_session.execute(sa.insert(grandchild).values(note_id=note_of[entry_id]))
+        doomed = await _seeded_entry(db_session, alice)
+        await _soft_delete(db_session, doomed, _OLD)
+        await _settle_obligations(db_session, doomed, VoiceDraftRetractionState.CONFIRMED.value)
+
+        result = await purge_soft_deleted_entries(db_session, older_than_days=_WINDOW_DAYS)
+
+        assert result.deleted == 1
+        remaining = (await db_session.execute(sa.select(grandchild.c["note_id"]))).scalars().all()
+        bob_note = note_of[await _seeded_entry(db_session, bob)]
+        assert remaining == [bob_note]
+    finally:
+        await db_session.run_sync(lambda sync: grandchild.drop(sync.connection(), checkfirst=True))
+        SQLModel.metadata.remove(grandchild)
