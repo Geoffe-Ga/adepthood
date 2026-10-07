@@ -953,3 +953,13 @@ def test_selected_primary_copy_removal_matches_the_scope_split() -> None:
 
     assert "All 18" not in cell
     assert f"{len(in_scope)} in-scope" in cell
+
+
+def test_b13_epic_draft_lists_exactly_the_open_owner_questions() -> None:
+    """The drafted epic carries the same open questions as the twin, no stale ones."""
+    draft = _EPIC_DRAFT.read_text(encoding="utf-8")
+    section = draft[draft.index("## Open owner questions") : draft.index("## Dependencies")]
+    listed = set(re.findall(r"^- \*\*([A-Z0-9-]+):\*\*", section, re.MULTILINE))
+    questions = {_as_dict(entry).get("id") for entry in _as_list(_card()["open_owner_questions"])}
+
+    assert listed == questions
