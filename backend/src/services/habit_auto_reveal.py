@@ -10,7 +10,7 @@ from sqlmodel import col, select
 from domain.dates import to_user_date
 from domain.frequencies import frequency_for_color
 from domain.stage_authority import open_through
-from domain.stage_progress import get_user_progress
+from domain.stage_progress import ensure_user_progress, get_user_progress
 from models.habit import Habit
 from models.metta_return_habit_release import MettaReturnHabitRelease
 
@@ -66,6 +66,11 @@ async def _unconsumed_candidates(session: AsyncSession, user_id: int) -> list[Ha
         .order_by(col(Habit.id))
     )
     return list(result.scalars().all())
+
+
+def _has_laddered(candidates: list[Habit]) -> bool:
+    """Whether any candidate waits on a ring of the program ladder."""
+    return any(_stage_number(habit.stage) is not None for habit in candidates)
 
 
 async def _locked_candidates(
@@ -150,6 +155,28 @@ async def _open_candidates(
     )
 
 
+async def _anchored_candidates(session: AsyncSession, user_id: int) -> list[Habit]:
+    """Read unconsumed candidates, giving the calendar an anchor if one awaits it.
+
+    The habits are a depth a person may take without the course (NORTH-STAR:18),
+    so this read gives the calendar its anchor when nothing else has (#3071).
+    Without a progress row ``open_through`` answers stage 1 forever, and for an
+    account that never opened the course every ring after Beige stayed shut.
+    The row is provisioned only on behalf of a laddered habit whose invitation is
+    still pending: a habit off the ladder has no ring to wait for, and an empty
+    or fully consumed list has nothing for an anchor to open. It is the same
+    provisioner, with the same anchor semantics, the course router uses.
+
+    Provisioning commits, and the candidates read before that commit are used
+    afterwards. That is sound only because every session factory is built with
+    ``expire_on_commit=False``.
+    """
+    candidates = await _unconsumed_candidates(session, user_id)
+    if _has_laddered(candidates):
+        await ensure_user_progress(session, user_id)
+    return candidates
+
+
 async def reconcile_habit_auto_reveals(
     session: AsyncSession,
     user_id: int,
@@ -167,9 +194,14 @@ async def reconcile_habit_auto_reveals(
     Already-revealed eligible rows are stamped too: the marker
     records that their automatic invitation has been consumed, allowing a
     future manual re-lock to remain locked.
+
+    The first read may provision the calendar anchor (see
+    :func:`_anchored_candidates`), which commits: callers must hold no
+    uncommitted writes across this call, and ``list_habits`` calls it before
+    anything else.
     """
     moment = now or datetime.now(UTC)
-    candidates = await _unconsumed_candidates(session, user_id)
+    candidates = await _anchored_candidates(session, user_id)
     prospective = await _open_candidates(session, user_id, user_tz, candidates, moment)
     prospective_ids = [habit.id for habit in prospective if habit.id is not None]
     if not prospective_ids:

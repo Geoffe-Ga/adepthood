@@ -1953,5 +1953,17 @@
     },
     "status": "uncovered",
     "issue": 1938
+  },
+  {
+    "id": "habits.reveal-without-course",
+    "description": "A person who takes the habits without the Course still moves through the program cadence (#3071). Before the fix the Course router was the only thing that ever gave an account a calendar anchor, so a habits-only account had no stage-progress row, the server read it as standing on stage 1 forever, and the Purple habit and every ring after it never opened. The habits list read now provisions the anchor itself, with the same ensure_user_progress the Course uses, but only when a laddered habit is still waiting on its ring. The covering Playwright spec pins the browser to UTC, signs up through the UI, seeds a locked Beige and a locked Purple habit over POST /habits/, and opens Habits: Beige is open, Purple shows its locked tile, and a read of the lane database finds a stage-1 row the habits read created. It then rewinds that anchor by Beige's 21-day window through tests.e2e.program_anchor, reloads, and Purple's tile is open. A request guard fails the run on any /course/ call, and the database read runs before the rewind because the rewind arrange provisions a row itself and would otherwise mask the bug. Pinned in process by backend/tests/test_habits_api.py (provisioning, the no-row guards for an unladdered or empty list, and a concurrent first read that leaves one row), by backend/tests/integration/test_habit_reveal_stamp_race.py (two reads forced to race the locked re-read on PostgreSQL, counting every write so each invitation is stamped exactly once; SQLite cannot prove this because FOR UPDATE is a no-op there) and by backend/tests/services/test_habit_auto_reveal_cadence.py (every stage boundary in UTC and America/Los_Angeles across DST, with literal expected stages).",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "stageprogress"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-reveal-without-course.browser.e2e.test.ts"
   }
 ]
