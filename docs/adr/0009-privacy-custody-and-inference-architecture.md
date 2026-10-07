@@ -331,7 +331,7 @@ history and future content stand or fall together.
 
 *Selected: user-held keys plus device-side and vault-local inference, BYOK cloud as explicit opt-in.*
 
-- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server. (`owner:2026-10-07#B12-premise`)
+- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server and the app key is a fallback. (`owner:2026-10-07#B12-premise`)
 - **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07#B12-premise`)
 - **Recovery:** A recovery phrase the person writes down plus their passphrase; either unlocks the data key. Losing both means the data is gone, agreed up front at enrolment. Pairing, revocation and the rest of D03 stay open. (`owner:2026-10-07#followup-recovery`)
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)

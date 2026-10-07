@@ -1102,3 +1102,16 @@ def test_adr_0002_amendment_scopes_the_cloud_rule_and_names_the_app_key_gap() ->
     assert "known gap: the app-key fallback" in amendment
     assert "ADR 0009 Decision item 4" in amendment
     assert "#3096" in amendment
+
+
+def test_selected_boundary_is_a_target_and_names_the_relay_gap() -> None:
+    """BD's boundary cell scopes both sentences and admits today's relay and runtime."""
+    cell = _as_dict(_as_dict(_as_dict(_card()["options"])[_SELECTED])["boundary"])
+    value = str(cell.get("value"))
+    prose = _flat(_option_slice(_adr_text(), _SELECTED))
+
+    assert "never relayed by our server" not in value
+    assert "Under the target, plaintext will exist only" in value
+    assert "managed no-retention runtime" in value
+    assert "until phase (a), BYOK is relayed through our server" in value
+    assert value in prose
