@@ -1,7 +1,7 @@
 """Add inference provenance columns to marginalia (#3062).
 
 Revision ID: b05e0a2de1cd
-Revises: d7f9b1c3e5a2
+Revises: e3b5d7f9a1c4
 Create Date: 2026-10-07 00:00:00.000000
 
 Records which side answered each margin note and, separately, its letter:
@@ -30,7 +30,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b05e0a2de1cd"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "d7f9b1c3e5a2"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "e3b5d7f9a1c4"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

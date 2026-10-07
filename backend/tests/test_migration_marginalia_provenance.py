@@ -17,7 +17,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
-_BASE_REVISION = "d7f9b1c3e5a2"  # pragma: allowlist secret
+_BASE_REVISION = "e3b5d7f9a1c4"  # pragma: allowlist secret
 _REVISION = "b05e0a2de1cd"  # pragma: allowlist secret
 _TABLE = "marginalia"
 _PROVENANCE_COLUMNS = {
