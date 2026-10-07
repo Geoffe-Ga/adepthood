@@ -195,15 +195,40 @@ def test_backup_legs_are_the_backup_stores() -> None:
         assert leg.evidence.strip()
 
 
-def test_offhost_runbook_prunes_dumps_past_their_retention() -> None:
-    """The 90 days is an operation someone performs, not a number on a page.
+_MINUTES_PER_DAY = 24 * 60
+# ``find -mmin +N`` matches an age strictly greater than N minutes, with the
+# fraction kept (unlike ``-mtime``, which drops whole days), so N in minutes is
+# exactly the model's "older than the retention".
+_PRUNE = re.compile(
+    r"(?P<gate>\[ -s \"adepthood-\$STAMP\.dump\.gpg\" \] && )?"
+    r"find\b[^\n]*\.dump\.gpg[^\n]*-mmin \+\$\(\((?P<expr>[0-9 *]+)\)\)[^\n]*-delete"
+)
 
-    The weekly dump procedure deletes dumps older than the retention the
-    inventory states; the purge floor depends on that happening.
-    """
+
+def _prune_command() -> re.Match[str]:
     section = _section(_DEPLOYMENT_DOC.read_text(encoding="utf-8"), _DUMP_HEADING)
     assert _DRAFT_MARKER in section
     shell = "\n".join(_BASH_BLOCK.findall(section))
-    prune = re.search(r"find\b[^\n]*\.dump\.gpg[^\n]*-mtime \+(\d+)[^\n]*-delete", shell)
-    assert prune, "the off-host procedure never deletes expired .gpg dumps"
-    assert int(prune.group(1)) == OFFHOST_DUMP_RETENTION_DAYS
+    assert "-mtime" not in shell, "-mtime drops whole days and prunes a day late"
+    prune = _PRUNE.search(shell)
+    assert prune, "the off-host procedure never deletes expired .gpg dumps by age in minutes"
+    return prune
+
+
+def _minutes(expression: str) -> int:
+    """Evaluate the shell's ``a * b * c`` arithmetic without a shell."""
+    total = 1
+    for factor in expression.split("*"):
+        total *= int(factor.strip())
+    return total
+
+
+def test_offhost_runbook_prunes_dumps_past_their_retention() -> None:
+    """The 90 days is an operation someone performs, at exactly the retention the model uses.
+
+    The weekly dump procedure deletes dumps older than the retention the
+    inventory states, to the minute; the purge floor (retention + interval)
+    depends on that happening and on nothing older surviving a run.
+    """
+    prune = _prune_command()
+    assert _minutes(prune.group("expr")) == OFFHOST_DUMP_RETENTION_DAYS * _MINUTES_PER_DAY

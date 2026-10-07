@@ -511,8 +511,9 @@ where the off-host copies live is still undecided.* "Kept 90 days" is only true
 if someone deletes the older ones. After copying the new dump, delete every dump
 older than 90 days, locally and at the off-host destination:
 ```bash
-# Local copies past the 90-day retention.
-find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mtime +90 -delete
+# Local copies older than the 90-day retention, to the minute: an age in whole
+# days would round down and keep a dump a day too long.
+find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mmin +$((90 * 24 * 60)) -delete
 ```
 Then remove the same-aged `adepthood-*.dump.gpg` files at the off-host
 destination with that store's own tooling. The journal-entry purge's minimum
