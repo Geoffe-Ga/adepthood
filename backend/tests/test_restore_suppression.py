@@ -71,7 +71,7 @@ _GATE_RESTORE_ID = "r9"
 # here deliberately, after deciding it carries no email, prose or hash.
 _TOMBSTONE_TOP_KEYS = {"version", "accounts", "entries"}
 _ACCOUNT_KEYS = {"user_id", "deleted_at"}
-_ENTRY_KEYS = {"entry_id", "user_id", "deleted_at"}
+_ENTRY_KEYS = {"entry_id", "user_id", "timestamp", "deleted_at"}
 
 
 @dataclass(frozen=True)
@@ -342,7 +342,10 @@ async def test_entry_tombstone_for_another_owner_is_a_mismatch(
         accounts=(),
         entries=(
             EntryTombstone(
-                entry_id=entry_id, user_id=erin.user_id + 1, deleted_at=datetime.now(UTC)
+                entry_id=entry_id,
+                user_id=erin.user_id + 1,
+                timestamp=await _created(factory, entry_id),
+                deleted_at=datetime.now(UTC),
             ),
         ),
     )
@@ -489,13 +492,24 @@ def test_tombstone_file_round_trips_and_rejects_junk() -> None:
     original = TombstoneSet(
         accounts=(AccountTombstone(user_id=3, deleted_at=datetime(2026, 1, 2, tzinfo=UTC)),),
         entries=(
-            EntryTombstone(entry_id=9, user_id=4, deleted_at=datetime(2026, 1, 3, tzinfo=UTC)),
+            EntryTombstone(
+                entry_id=9,
+                user_id=4,
+                timestamp=datetime(2025, 12, 1, 9, 30, 0, 123456, tzinfo=UTC),
+                deleted_at=datetime(2026, 1, 3, tzinfo=UTC),
+            ),
         ),
     )
     assert TombstoneSet.from_json(json.loads(json.dumps(original.to_json()))) == original
     junk_documents: tuple[object, ...] = (
         [],
         {"version": 99, "accounts": [], "entries": []},
+        # The first format carried no creation stamp; it cannot be reapplied safely.
+        {
+            "version": 1,
+            "accounts": [],
+            "entries": [{"entry_id": 1, "user_id": 1, "deleted_at": "2026-01-01T00:00:00+00:00"}],
+        },
         {
             "version": 1,
             "accounts": [{"user_id": "x", "deleted_at": "2026-01-01T00:00:00+00:00"}],
@@ -561,23 +575,21 @@ def _utc(stamp: datetime) -> datetime:
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
 
-async def _entry_instants(
-    factory: async_sessionmaker[AsyncSession], entry_id: int
-) -> tuple[datetime, datetime]:
-    """``(timestamp, updated_at)`` of one entry, read as UTC."""
+async def _created(factory: async_sessionmaker[AsyncSession], entry_id: int) -> datetime:
+    """The entry's stored ``timestamp``, read as UTC."""
     async with factory() as session:
         entry = await session.get(JournalEntry, entry_id)
         assert entry is not None
-        return _utc(entry.timestamp), _utc(entry.updated_at)
+        return _utc(entry.timestamp)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("offset", "survives"),
     [
-        (timedelta(seconds=-1), True),  # written after the deletion: a reused id
-        (timedelta(0), True),  # written the instant it was deleted: not the same page
-        (timedelta(seconds=1), False),  # last written before the deletion: the deleted page
+        (timedelta(microseconds=-1), True),  # a different page holding the id
+        (timedelta(0), False),  # the very page the tombstone describes
+        (timedelta(microseconds=1), True),  # a different page holding the id
     ],
 )
 async def test_entry_tombstone_never_touches_a_reused_id(
@@ -587,20 +599,25 @@ async def test_entry_tombstone_never_touches_a_reused_id(
     *,
     survives: bool,
 ) -> None:
-    """A same-owner page last written at or after the tombstone's instant is a new page.
+    """Only the page whose stored creation stamp matches the tombstone is re-deleted.
 
     After a restore the entry sequence rewinds, so a page the owner writes
-    afterwards can take a deleted page's id. It was necessarily written after
-    the deletion; the deleted page never was.
+    afterwards can take a deleted page's id. It cannot also share the deleted
+    page's stored ``timestamp`` to the microsecond.
     """
     client, factory = concurrent_async_client, concurrent_session_factory
     ida = await _signup(client, "ida")
-    entry_id = await _write(client, ida, "ida's new page")
-    _, written = await _entry_instants(factory, entry_id)
+    entry_id = await _write(client, ida, "ida's page")
+    created = await _created(factory, entry_id)
     tombstones = TombstoneSet(
         accounts=(),
         entries=(
-            EntryTombstone(entry_id=entry_id, user_id=ida.user_id, deleted_at=written + offset),
+            EntryTombstone(
+                entry_id=entry_id,
+                user_id=ida.user_id,
+                timestamp=created + offset,
+                deleted_at=datetime.now(UTC),
+            ),
         ),
     )
 
@@ -612,19 +629,13 @@ async def test_entry_tombstone_never_touches_a_reused_id(
 
 
 @pytest.mark.asyncio
-async def test_a_backdated_new_page_is_still_recognised_as_new(
+async def test_a_backdated_new_page_reusing_the_id_is_skipped(
     concurrent_async_client: AsyncClient,
     concurrent_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """``timestamp`` cannot tell a new page from the deleted one; ``updated_at`` can.
-
-    A writer may backdate a page (``entry_date``), so its ``timestamp`` can sit
-    before a tombstone it postdates. The guard reads the server-only
-    ``updated_at`` instead, which no request can move into the past.
-    """
+    """A backdated new page is still a different page: its stamp is not the deleted one's."""
     client, factory = concurrent_async_client, concurrent_session_factory
     jo = await _signup(client, "jo")
-    deleted_at = datetime.now(UTC) - timedelta(hours=1)
     resp = await client.post(
         "/journal/",
         json={"message": "backdated", "classification": "personal", "entry_date": "2020-01-01"},
@@ -632,11 +643,18 @@ async def test_a_backdated_new_page_is_still_recognised_as_new(
     )
     assert resp.status_code in {HTTPStatus.OK, HTTPStatus.CREATED}
     entry_id = int(resp.json()["id"])
-    stamped, _ = await _entry_instants(factory, entry_id)
-    assert stamped < deleted_at  # a timestamp guard would wrongly delete this page
+    deleted_page_created = datetime.now(UTC) - timedelta(days=3)
+    assert await _created(factory, entry_id) != deleted_page_created
     tombstones = TombstoneSet(
         accounts=(),
-        entries=(EntryTombstone(entry_id=entry_id, user_id=jo.user_id, deleted_at=deleted_at),),
+        entries=(
+            EntryTombstone(
+                entry_id=entry_id,
+                user_id=jo.user_id,
+                timestamp=deleted_page_created,
+                deleted_at=datetime.now(UTC) - timedelta(days=1),
+            ),
+        ),
     )
 
     receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
@@ -645,6 +663,38 @@ async def test_a_backdated_new_page_is_still_recognised_as_new(
     assert (
         await client.get(f"/journal/{entry_id}", headers=jo.headers)
     ).status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_a_resurrected_page_edited_after_the_restore_is_still_suppressed(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """An edit, or any system write, after the restore does not make a deleted page new.
+
+    The restored row's ``updated_at`` moves with every write; its creation
+    stamp does not, so the page is still recognised and re-deleted.
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    max_ = await _signup(client, "max")
+    gone = await _write(client, max_, "the page max deleted")
+    snapshot = await _snapshot(factory, tmp_path)
+    resp = await client.delete(f"/journal/{gone}", headers=max_.headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    tombstones = await _export(factory)
+    await _restore(factory, snapshot)
+    resp = await client.patch(
+        f"/journal/{gone}", json={"title": "touched after the restore"}, headers=max_.headers
+    )
+    assert resp.status_code == HTTPStatus.OK  # resurrected, and now written to
+
+    receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    assert receipt.entries_reapplied == 1
+    assert receipt.identity_mismatches == 0
+    resp = await client.get(f"/journal/{gone}", headers=max_.headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
 
 
 _VAULT_REF = "synthetic-vault-ref"

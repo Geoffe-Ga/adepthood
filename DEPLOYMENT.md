@@ -580,9 +580,11 @@ costs.
    ```
    Exit 0 prints the counts; exit 1 is a refusal (a policy gap, or a restore
    already marked complete -- never rerun a completed restore after cutover);
-   exit 2 is an unreadable file. Optionally set `RESTORE_SUPPRESSION_REQUIRED=1`
-   and `RESTORE_ID` on the service: the app then refuses to boot until that
-   restore's reapply completed. Both are unset by default and change nothing.
+   exit 2 is an unreadable file. Before the restored service starts at all,
+   set `RESTORE_SUPPRESSION_REQUIRED=1` and `RESTORE_ID` (the same value) on
+   it: the app then refuses to boot until that restore's reapply completed, so
+   nothing writes to a resurrected page first. Both are unset by default in the
+   code and change nothing until set here.
 9. **Verify before cutting over** (next section). A restore is not finished when
    `pg_restore` exits; it is finished when a journal entry decrypts.
 10. **Point the app at it** and bring the backend service back up. Watch the boot

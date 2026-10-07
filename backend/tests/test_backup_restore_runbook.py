@@ -251,6 +251,21 @@ def test_restore_suppression_step_names_the_real_cli_and_switches(runbook: str) 
     assert RESTORE_ID_ENV_VAR in runbook
 
 
+def test_restored_deployment_turns_the_gate_on(runbook: str) -> None:
+    """The draft step makes the restored app refuse to serve until reapply completed.
+
+    Any write to a resurrected row before reapply is a write to a page somebody
+    deleted, so turning the gate on is a step, not an option.
+    """
+    step = runbook[
+        runbook.index("**Suppress resurrected deletions.**") : runbook.index(
+            "**Verify before cutting over**"
+        )
+    ]
+    assert f"`{RESTORE_SUPPRESSION_REQUIRED_ENV_VAR}=1`" in step
+    assert "Optionally" not in step
+
+
 def test_restore_id_is_chosen_once_not_regenerated_per_run(runbook: str) -> None:
     """A rerun must reuse the restore id, or the completed-restore refusal never fires.
 

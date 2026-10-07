@@ -26,8 +26,9 @@ Safety properties:
   stamped is skipped, and a run interrupted midway converges when rerun.
 * An account created at or after its tombstone's instant is not the deleted
   account (an id reused after the backup) and is never touched; an entry
-  naming a different owner, or last written at or after its tombstone's
-  instant, is likewise skipped. Both are counted as identity mismatches.
+  whose owner or stored creation stamp differs from its tombstone's is a new
+  page holding a reused id, and is likewise skipped. Both are counted as
+  identity mismatches.
 * A restore marked complete refuses to be reapplied again: after cutover the
   database's sequences have moved on and an entry id could name a new row.
 * It dials nothing outside adepthood: resurrected accounts are swept with
@@ -71,7 +72,8 @@ from services.creek_vault_voice_drafts import mark_entry_retractions_pending
 logger = logging.getLogger(__name__)
 
 #: The tombstone file's format version. Bump on any field change.
-TOMBSTONE_FORMAT_VERSION: Final = 1
+#: Version 2 added the entry's creation stamp; version 1 files are refused.
+TOMBSTONE_FORMAT_VERSION: Final = 2
 
 #: Opt-in startup gate: refuse to serve until this restore was reapplied.
 RESTORE_SUPPRESSION_REQUIRED_ENV_VAR: Final = "RESTORE_SUPPRESSION_REQUIRED"
@@ -82,7 +84,7 @@ _GATE_OFF = frozenset({"", "0", "false"})
 
 _TOP_KEYS = frozenset({"version", "accounts", "entries"})
 _ACCOUNT_KEYS = frozenset({"user_id", "deleted_at"})
-_ENTRY_KEYS = frozenset({"entry_id", "user_id", "deleted_at"})
+_ENTRY_KEYS = frozenset({"entry_id", "user_id", "timestamp", "deleted_at"})
 
 
 class MalformedTombstoneError(ValueError):
@@ -116,10 +118,16 @@ class AccountTombstone:
 
 @dataclass(frozen=True)
 class EntryTombstone:
-    """A journal entry that was soft-deleted, by whom, and when."""
+    """A journal entry that was soft-deleted, by whom, and when.
+
+    ``timestamp`` is the entry's stored creation stamp. It is not content
+    (``GET /journal`` already returns it to its owner), and it is what tells the
+    deleted page apart from a new page that later took the same id.
+    """
 
     entry_id: int
     user_id: int
+    timestamp: datetime
     deleted_at: datetime
 
 
@@ -180,6 +188,7 @@ def _entry_tombstone(item: Mapping[str, object]) -> EntryTombstone:
     return EntryTombstone(
         entry_id=_int_field(item, "entry_id"),
         user_id=_int_field(item, "user_id"),
+        timestamp=_instant_field(item, "timestamp"),
         deleted_at=_instant_field(item, "deleted_at"),
     )
 
@@ -204,6 +213,7 @@ class TombstoneSet:
                 {
                     "entry_id": t.entry_id,
                     "user_id": t.user_id,
+                    "timestamp": t.timestamp.isoformat(),
                     "deleted_at": t.deleted_at.isoformat(),
                 }
                 for t in self.entries
@@ -249,13 +259,23 @@ async def _account_tombstones(session: AsyncSession) -> tuple[AccountTombstone, 
 async def _entry_tombstones(session: AsyncSession, erased: set[int]) -> tuple[EntryTombstone, ...]:
     """Every soft-deleted entry whose owner was not erased outright."""
     rows = await session.execute(
-        select(col(JournalEntry.id), col(JournalEntry.user_id), col(JournalEntry.deleted_at))
+        select(
+            col(JournalEntry.id),
+            col(JournalEntry.user_id),
+            col(JournalEntry.timestamp),
+            col(JournalEntry.deleted_at),
+        )
         .where(col(JournalEntry.deleted_at).is_not(None))
         .order_by(col(JournalEntry.id))
     )
     return tuple(
-        EntryTombstone(entry_id=entry_id, user_id=user_id, deleted_at=_aware(deleted_at))
-        for entry_id, user_id, deleted_at in rows.all()
+        EntryTombstone(
+            entry_id=entry_id,
+            user_id=user_id,
+            timestamp=_aware(created),
+            deleted_at=_aware(deleted_at),
+        )
+        for entry_id, user_id, created, deleted_at in rows.all()
         if user_id not in erased
     )
 
@@ -346,15 +366,16 @@ async def _reapply_entry(
         if entry is None or entry.deleted_at is not None:
             tally.entries_absent += 1
             return
-        # Another owner's row, or this owner's page last written at or after the
-        # deletion, is a new page holding an id the restore's rewound sequence
-        # handed out again; the deleted page was last written before it was
-        # deleted. ``updated_at`` rather than ``timestamp``: a writer can
-        # backdate ``timestamp`` (``entry_date``), but no request can move the
-        # server-maintained ``updated_at`` into the past. A resurrected page
-        # edited after the restore is skipped too and counted -- the startup
-        # gate exists so the restored database serves no edits first.
-        if entry.user_id != tombstone.user_id or _aware(entry.updated_at) >= tombstone.deleted_at:
+        # Only the very page the tombstone describes is re-deleted: same owner
+        # and the same stored creation stamp. After a restore the rewound
+        # sequence can hand a deleted page's id to a new page, which will not
+        # share its creation stamp to the microsecond. The one residual case is
+        # two pages both backdated (``entry_date``) to the same calendar day,
+        # which share a noon-UTC stamp; the startup gate, which keeps the
+        # restored app from taking writes before reapply, closes that window.
+        # ``updated_at`` would not do: any write after the restore (an edit, a
+        # recovery sweep) moves it, and would leave the deleted page live.
+        if entry.user_id != tombstone.user_id or _aware(entry.timestamp) != tombstone.timestamp:
             tally.identity_mismatches += 1
             return
         await withdraw_local_journal_entry(
