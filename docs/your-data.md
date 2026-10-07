@@ -147,10 +147,11 @@ Deleting a page does not touch anything else about your account.
 and the account is erased.
 
 It takes effect on the live service **immediately**, and it **cannot be
-undone**. There is no grace period, no deactivation, and no support path to get
-any of it back. Backups taken before you delete still hold a copy until they
-age out, within about 97 days (see "Backups" below). If you want a copy of your
-writing, [take it first](#taking-a-copy-of-your-writing).
+undone**. There is no grace period, no deactivation, and no support path to
+get any of it back. Backups taken before you delete still hold a copy until
+they age out — on our backup schedule, within about 97 days (see "Backups"
+below). If you want a copy of your writing, [take it
+first](#taking-a-copy-of-your-writing).
 
 You are signed out everywhere: the app on every device stops working at its
 next request.
@@ -213,13 +214,14 @@ cleared off them.
 
 ### Backups
 
-Deleting your account does not reach into backups. The database is backed up
-on two schedules: the hosting platform keeps each daily backup for 6 days, and
-a weekly copy kept off the platform, itself encrypted, is kept for 90 days. A
-backup taken before you deleted still holds what your account held then, with
-your writing encrypted in it as it is in the database. No backup is edited to
-remove one account; each is deleted when its retention runs out, so the last
-copy holding your data is gone within about 97 days of your deletion.
+Deleting your account does not reach into backups. Our backup schedule has two
+legs: the hosting platform keeps each daily backup for 6 days, and a weekly
+copy kept off the platform, itself encrypted, is kept for 90 days. The
+off-platform copies are made, and the expired ones deleted, by the operator by
+hand. A backup taken before you deleted still holds what your account held
+then, with your writing encrypted in it as it is in the database. No backup is
+edited to remove one account. On that schedule, the last copy holding your
+data ages out within about 97 days of your deletion.
 
 ### If you use a Creek Vault
 

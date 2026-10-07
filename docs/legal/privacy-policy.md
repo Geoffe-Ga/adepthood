@@ -483,12 +483,13 @@ carve-out in data-protection law; and a note that a deletion happened —
 date, counts, and an internal id that now names nobody.
 
 **Backups age out; they are not edited.** The database is backed up, and a
-backup taken before you deleted still holds what your account held then,
-with your writing encrypted in it as it is in the database. No backup is
-altered to remove one account. Each is deleted when its retention runs out —
-6 days for the hosting platform's daily backups, 90 days for the weekly
-encrypted copies kept off the platform — so the last copy holding your data
-is gone within about 97 days of your deletion.
+backup taken before you deleted still holds what your account held then, with
+your writing encrypted in it as it is in the database. No backup is altered to
+remove one account. Our backup schedule keeps the hosting platform's daily
+backups for 6 days and the weekly encrypted copies kept off the platform for
+90 days; those off-platform copies are made, and the expired ones deleted, by
+the operator by hand. On that schedule, the last copy holding your data ages
+out within about 97 days of your deletion.
 
 [Your data](../your-data.md) says all of this at greater length, including
 what happens to a Creek Vault.

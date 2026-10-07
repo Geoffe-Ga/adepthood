@@ -35,13 +35,14 @@ import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
 const IRREVERSIBLE_LEAD =
   'Deleting your account removes it from Adepthood immediately and is irreversible. ' +
   'There is no grace period, and no way back — not in the app, not through support. ' +
-  'Backups made before you delete still hold a copy until they age out, within about 97 days.';
+  'Backups made before you delete still hold a copy until they age out — ' +
+  'on our backup schedule, within about 97 days.';
 
 /** The receipt's account of what was removed, and of what ages out after. */
 function receiptSummary(rowsErased: number): string {
   return (
     `We removed ${rowsErased} records belonging to you. ` +
-    'Backups made before now age out within about 97 days.'
+    'On our backup schedule, backups made before now age out within about 97 days.'
   );
 }
 

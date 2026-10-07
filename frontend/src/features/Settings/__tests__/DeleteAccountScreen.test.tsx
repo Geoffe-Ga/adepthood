@@ -68,6 +68,7 @@ describe('DeleteAccountScreen', () => {
     // backend/tests/test_deletion_backup_copy.py; this pins that it is said here.
     const warning = getByTestId('delete-account-warning').props.children as string;
     expect(warning).toContain('Backups made before you delete still hold a copy');
+    expect(warning).toContain('on our backup schedule');
     expect(warning).not.toContain('nothing left to restore');
   });
 
@@ -128,7 +129,7 @@ describe('DeleteAccountScreen', () => {
     await waitFor(() => expect(getByTestId('delete-account-receipt-summary')).toBeTruthy());
     const summary = getByTestId('delete-account-receipt-summary').props.children as string;
     expect(summary).toContain(`We removed ${RECEIPT.rows_erased} records belonging to you`);
-    expect(summary).toContain('Backups made before now age out');
+    expect(summary).toContain('On our backup schedule, backups made before now age out');
     expect(summary).not.toContain('nothing left to restore');
   });
 
