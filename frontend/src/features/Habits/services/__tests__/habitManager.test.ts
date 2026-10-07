@@ -5638,6 +5638,49 @@ describe('habitManager', () => {
         expect(mockReplayState).toBeNull();
       });
 
+      // The whole record, not a subset: every field the quarantine carries is
+      // the user's own check-in, and a field silently lost is a report the
+      // user can no longer act on.
+      const signedEntry = (goalId: number) => ({
+        goal_id: goalId,
+        did_complete: true,
+        completed_units: 2,
+        operation_id: `op-${goalId}`,
+        timestamp: '2025-04-01T00:00:00Z',
+        completed_on: '2025-04-01',
+      });
+
+      it('quarantines a given-up signed entry with every field it was queued with', async () => {
+        const head = signedEntry(131);
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect((recordDroppedCheckIn as jest.Mock).mock.calls[0]![0]).toStrictEqual({
+          ...head,
+          status: 500,
+          dropped_at: expect.any(String),
+          reason: 'gave_up',
+        });
+      });
+
+      it('quarantines a permanently rejected signed entry with every field it was queued with', async () => {
+        const head = signedEntry(132);
+        rejectOnce(new ApiError(404, 'goal_not_found'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect((recordDroppedCheckIn as jest.Mock).mock.calls[0]![0]).toStrictEqual({
+          ...head,
+          status: 404,
+          dropped_at: expect.any(String),
+          reason: 'rejected',
+        });
+      });
+
       it('forgets the given-up entry even when the drain then stops behind it', async () => {
         const head = queued(125, '2025-04-01');
         const pending = [head, queued(126, '2025-04-02')];
