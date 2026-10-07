@@ -41,17 +41,13 @@ _ADMISSION: Final = "require_external_ai_available"
 _HTTP_SEND_METHODS: Final = frozenset(
     {"request", "send", "stream", "get", "head", "options", "post", "put", "patch", "delete"}
 )
-_MAPPING: Final = "a mapping lookup, not an HTTP send"
-#: ``.get`` receivers in ``creek_vault_client.py`` that are lookups, not clients.
-_MAPPING_GETS: Final[dict[str, str]] = {
-    "_CAPABILITY_BY_WIRE_NAME": _MAPPING,
-    "_HANDSHAKE_OUTCOME_BY_DEGRADE_REASON": _MAPPING,
-    "_LINK_STAGE_DEADLINE_SECONDS": _MAPPING,
-    "payload": f"{_MAPPING} over a decoded response body",
-    "vault": f"{_MAPPING} over a decoded response body",
-    "_VAULT_HTTP_POOL": "the pool's accessor for its shared client; it sends nothing",
-    "_PINNED_VAULT_HTTP_POOL": "the pool's accessor for its shared client; it sends nothing",
-}
+#: What a module-level binding is built from when it is a mapping, or the
+#: vault adapter's connection pool (whose zero-argument ``.get()`` hands back a
+#: client and sends nothing).
+_MAPPING_CONSTRUCTORS: Final = frozenset({"MappingProxyType", "dict"})
+_POOL_CONSTRUCTOR: Final = "_VaultHttpPool"
+#: A literal-key lookup takes the key and, at most, a literal default.
+_MAX_LOOKUP_ARGS: Final = 2
 _EXPECTED_CONSTRUCTION_SITES: Final = 2
 _MIN_GUARDED_ROUTES: Final = 4
 
@@ -154,22 +150,77 @@ def test_provider_clients_constructed_only_in_call_leaves() -> None:
     assert _calls_named(first.test, "external_ai_suspended")
 
 
+def _module_bindings(tree: ast.Module) -> tuple[set[str], set[str]]:
+    """The module-level names provably bound to a mapping, and to the connection pool."""
+    mappings: set[str] = set()
+    pools: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name, value = node.target.id, node.value
+            if ast.unparse(node.annotation).startswith("Mapping"):
+                mappings.add(name)
+        elif (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            name, value = node.targets[0].id, node.value
+        else:
+            continue
+        if isinstance(value, ast.Dict):
+            mappings.add(name)
+        elif isinstance(value, ast.Call):
+            built_by = _dotted(value.func)
+            if built_by in _MAPPING_CONSTRUCTORS:
+                mappings.add(name)
+            elif built_by == _POOL_CONSTRUCTOR:
+                pools.add(name)
+    return mappings, pools
+
+
+def _is_literal_key_lookup(call: ast.Call) -> bool:
+    """``x.get("key")`` or ``x.get("key", <literal>)``: a lookup, carrying no content."""
+    return (
+        not call.keywords
+        and 1 <= len(call.args) <= _MAX_LOOKUP_ARGS
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
+        and all(isinstance(arg, ast.Constant) for arg in call.args)
+    )
+
+
+def _is_lookup(call: ast.Call, mappings: set[str], pools: set[str]) -> bool:
+    """Whether a ``.get`` call is provably not an HTTP send.
+
+    By what the receiver is bound to (a module-level mapping, or the pool's
+    zero-argument accessor) or by the call's own shape (a literal key) -- never
+    by a receiver's *name* alone, which a client could share.
+    """
+    receiver = _dotted(call.func.value) if isinstance(call.func, ast.Attribute) else ""
+    if receiver in mappings:
+        return True
+    if receiver in pools:
+        return not call.args and not call.keywords
+    return _is_literal_key_lookup(call)
+
+
 def _send_sites(tree: ast.Module) -> list[tuple[str, str]]:
     """Every ``(method, enclosing function)`` that calls an HTTP client send method.
 
     Every send verb ``httpx`` offers counts, on any receiver, because the vault's
     client is reached through locals and attributes no static pass can type. The
-    one exception is a ``.get`` on a receiver :data:`_MAPPING_GETS` names, since
-    a dictionary lookup and ``client.get(url)`` are spelled the same.
+    one exception is a ``.get`` that :func:`_is_lookup` proves is not a send,
+    since a dictionary lookup and ``client.get(url)`` are spelled the same.
     """
     owner = _enclosing_functions(tree)
+    mappings, pools = _module_bindings(tree)
     return [
         (node.func.attr, owner[id(node)])
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr in _HTTP_SEND_METHODS
-        and not (node.func.attr == "get" and ast.unparse(node.func.value) in _MAPPING_GETS)
+        and not (node.func.attr == "get" and _is_lookup(node, mappings, pools))
     ]
 
 
@@ -187,19 +238,22 @@ def test_vault_adapter_has_one_request_site() -> None:
     assert _calls_named(first.test, "carries_content")
 
 
-def test_mapping_gets_name_only_live_receivers() -> None:
-    """No exemption outlives the lookup it was written for."""
+def test_the_real_module_has_lookups_the_rule_exempts() -> None:
+    """Non-vacuity: the exemption is exercised by the module it guards."""
     tree = ast.parse(_VAULT_CLIENT.read_text(encoding="utf-8"))
-    receivers = {
-        ast.unparse(node.func.value)
+    mappings, pools = _module_bindings(tree)
+    gets = [
+        node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "get"
-    }
-    stale = sorted(set(_MAPPING_GETS) - receivers)
-    assert stale == [], f"exemptions naming no live .get receiver: {stale}"
-    assert all(reason.strip() for reason in _MAPPING_GETS.values())
+    ]
+
+    assert gets, "no .get call found: the walk itself is broken"
+    assert all(_is_lookup(node, mappings, pools) for node in gets)
+    assert {"_VAULT_HTTP_POOL", "_PINNED_VAULT_HTTP_POOL"} <= pools
+    assert "_LINK_STAGE_DEADLINE_SECONDS" in mappings
 
 
 @pytest.mark.parametrize(
@@ -222,6 +276,42 @@ def test_a_second_send_site_of_any_verb_is_found(method: str, call: str) -> None
     source = f"async def _smuggle(self, client, url, body, request):\n    await {call}\n"
 
     assert _send_sites(ast.parse(source)) == [(method, "_smuggle")]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "vault.get(url)",
+        "payload.get(url)",
+        "payload.get(url, params=body)",
+        "_VAULT_HTTP_POOL.get(url)",
+    ],
+)
+def test_a_get_shaped_like_a_send_is_found_whatever_its_receiver(call: str) -> None:
+    """A lookup's receiver name does not exempt a call shaped like an HTTP GET."""
+    source = f"async def _smuggle(self, url, body):\n    await {call}\n"
+
+    assert _send_sites(ast.parse(source)) == [("get", "_smuggle")]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        'payload.get("code")',
+        'vault.get("available", None)',
+        "_LOOKUP.get(key)",
+        "_POOL.get()",
+    ],
+)
+def test_a_provable_lookup_is_not_a_send(call: str) -> None:
+    """A literal-key lookup, a module-level mapping, and a pool accessor send nothing."""
+    source = (
+        "_LOOKUP: Mapping[str, int] = MappingProxyType({})\n"
+        "_POOL = _VaultHttpPool()\n"
+        f"def _read(payload, vault, key):\n    return {call}\n"
+    )
+
+    assert _send_sites(ast.parse(source)) == []
 
 
 def _ai_trails(handler: Site) -> list[tuple[str, ...]]:
