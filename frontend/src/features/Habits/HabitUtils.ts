@@ -578,7 +578,8 @@ const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): num
  * The goal that speaks for a habit's streak cadence. Frequency is shared by
  * every tier, so the clear tier wins; without one, the polarity rule's
  * threshold goal (subtractive) or the first goal (additive) does — the same
- * choice as the backend ``period_cadence_for_goals``.
+ * choice as the backend ``period_cadence_for_goals`` / ``_cadence_goal``;
+ * change both together.
  */
 const streakCadenceGoal = (habit: Habit): Goal | undefined =>
   habit.goals.find((g) => g.tier === 'clear') ??

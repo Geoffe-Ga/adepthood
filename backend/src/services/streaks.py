@@ -96,7 +96,9 @@ def _cadence_goal(goals: Sequence[Goal]) -> Goal | None:
     """Return the goal whose cadence speaks for the habit, else ``None``.
 
     Ladder ambiguity is the polarity helper's to refuse (it raises for a
-    subtractive habit); an additive ladder tolerates extra clear rows.
+    subtractive habit); an additive ladder tolerates extra clear rows. The
+    clear -> first non-additive -> first goal order mirrors the frontend
+    ``streakCadenceGoal`` in ``HabitUtils.ts``; change both together.
     """
     if not goals:
         return None
