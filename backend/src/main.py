@@ -28,7 +28,7 @@ from client_ip import (
 from database import async_session_factory, get_session
 from database import engine as database_engine
 from database_schema import require_database_schema_current
-from dependencies.creek_vault import resolve_creek_vault_client
+from dependencies.creek_vault import resolve_creek_vault_client, resolved_vault_destination
 from error_responses import refusal_responses
 from errors import install_exception_handlers
 from middleware import (
@@ -108,6 +108,7 @@ from services.creek_vault_pipeline import (
     close_vault_pipeline_tasks,
     resume_vault_pipeline_runs,
 )
+from services.creek_vault_voice_drafts import resume_voice_draft_retractions
 from services.managed_vault_rollout import (
     ManagedVaultRolloutState,
     load_managed_vault_rollout,
@@ -146,6 +147,14 @@ async def _recover_provisioning_until_shutdown() -> None:
             await reconcile_vault_teardowns(async_session_factory, client)
         except (OSError, RuntimeError, SQLAlchemyError):
             logger.warning("creek teardown recovery could not read its durable state")
+        try:
+            await resume_voice_draft_retractions(
+                async_session_factory,
+                resolve_creek_vault_client,
+                resolved_vault_destination,
+            )
+        except (OSError, RuntimeError, SQLAlchemyError):
+            logger.warning("voice draft withdrawal recovery could not read its durable state")
         await asyncio.sleep(_PROVISIONING_RECOVERY_INTERVAL_SECONDS)
 
 
