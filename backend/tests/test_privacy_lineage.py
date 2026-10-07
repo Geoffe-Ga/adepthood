@@ -180,6 +180,27 @@ async def test_restricted_lineage_counts_folded_quote_from_intimate_source(
 
 
 @pytest.mark.asyncio
+async def test_a_deleted_intimate_source_is_withdrawn_not_also_restricted(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A source deleted while still Intimate is counted once, as withdrawn -- never conflated."""
+    _, user_id = await _signup(async_client, "lineage_deleted_intimate")
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+    source = await db_session.get(JournalEntry, chain.source_id)
+    assert source is not None
+    assert source.classification == JournalClassification.INTIMATE
+    source.deleted_at = datetime.now(UTC)
+    db_session.add(source)
+    await db_session.commit()
+
+    found = await restricted_lineage_counts(
+        db_session, user_id=user_id, entry_ids=[chain.review_id]
+    )
+
+    assert found == {chain.review_id: LineageCounts(restricted=0, withdrawn=1)}
+
+
+@pytest.mark.asyncio
 async def test_another_writers_quote_is_not_counted(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
