@@ -849,6 +849,8 @@ async def test_intimate_patch_during_generation_prevents_the_later_mirror(
     assert expanded.status_code == HTTPStatus.OK
     assert expanded.json()["essay"] == _ESSAY
     assert vault.upserts == []
+    async with concurrent_session_factory() as session:
+        assert await _obligation(session, note_id) is None, "a withheld mirror owes nothing"
 
 
 @pytest.mark.asyncio
@@ -899,6 +901,10 @@ async def test_intimate_patch_waits_for_an_in_flight_mirror_then_retracts_it(
     assert patched.json()["classification"] == "intimate"
     assert vault.operations == ["put", "delete"]
     assert vault.deletes == [(voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL)]
+    async with concurrent_session_factory() as session:
+        obligation = await _obligation(session, note_id)
+    assert obligation is not None
+    assert obligation.state == VoiceDraftRetractionState.CONFIRMED
 
 
 @pytest.mark.asyncio
@@ -970,6 +976,8 @@ async def test_delete_during_generation_prevents_the_later_mirror(
     assert deleted.status_code == HTTPStatus.NO_CONTENT
     assert expanded.status_code == HTTPStatus.OK
     assert vault.upserts == []
+    async with concurrent_session_factory() as session:
+        assert await _obligation(session, note_id) is None, "a withheld mirror owes nothing"
 
 
 @pytest.mark.asyncio
@@ -1018,3 +1026,7 @@ async def test_delete_waits_for_an_in_flight_mirror_then_retracts_it(
     assert deleted.status_code == HTTPStatus.NO_CONTENT
     assert vault.operations == ["put", "delete"]
     assert vault.deletes == [(voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL)]
+    async with concurrent_session_factory() as session:
+        obligation = await _obligation(session, note_id)
+    assert obligation is not None
+    assert obligation.state == VoiceDraftRetractionState.CONFIRMED

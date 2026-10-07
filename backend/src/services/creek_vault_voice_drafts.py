@@ -67,8 +67,8 @@ _MIRROR_DEGRADED_EVENT = "creek vault voice draft mirror degraded"
 _MIRROR_STORED_EVENT = "creek vault voice draft mirrored"
 _RETRACTION_DEGRADED_EVENT = "creek vault voice draft retraction degraded"
 _RETRACTED_EVENT = "creek vault voice draft retracted"
-_TRANSITION_EVENT = "creek vault voice draft obligation transition"
-_BACKLOG_EVENT = "creek vault voice draft retraction backlog"
+RETRACTION_TRANSITION_EVENT = "creek vault voice draft obligation transition"
+RETRACTION_BACKLOG_EVENT = "creek vault voice draft retraction backlog"
 _SWEEP_SKIPPED_EVENT = "creek vault voice draft retraction sweep skipped"
 _MIRROR_WITHHELD_EVENT = "creek vault voice draft mirror withheld"
 
@@ -299,7 +299,7 @@ def _log_transition(
 ) -> None:
     """Record one content-free state transition of an obligation row."""
     _LOGGER.info(
-        _TRANSITION_EVENT,
+        RETRACTION_TRANSITION_EVENT,
         extra={
             "obligation_id": obligation_id,
             "from_state": from_state,
@@ -418,9 +418,9 @@ async def _settle(
     obligation_id: int,
     attempt_count: int,
     failure: RetractionFailureCode | None,
+    now: datetime,
 ) -> None:
     """Persist one attempt's outcome, only while the row is still pending, and commit."""
-    now = _utcnow()
     guard = update(VoiceDraftRetraction).where(
         col(VoiceDraftRetraction.id) == obligation_id,
         col(VoiceDraftRetraction.state) == _PENDING,
@@ -467,7 +467,8 @@ async def retract_pending_voice_drafts(
     network call. A row bound to another destination is never dialled: it stays
     pending as ``destination_changed``. ``due_by`` restricts the attempt to rows
     whose backoff has elapsed (the background sweep); a request path passes
-    ``None`` and retries every owed row, because the writer just asked.
+    ``None`` and retries every owed row, because the writer just asked. The
+    sweep's ``due_by`` is also the clock its backoff is scheduled from.
     """
     query = select(
         VoiceDraftRetraction.id,
@@ -497,6 +498,7 @@ async def retract_pending_voice_drafts(
             obligation_id=obligation_id,
             attempt_count=attempt_count,
             failure=failure,
+            now=due_by if due_by is not None else _utcnow(),
         )
         confirmed = confirmed and failure is None
     return confirmed and not await _still_owed(session, target)
@@ -524,7 +526,7 @@ def _is_due(moment: datetime) -> ColumnElement[bool]:
     return or_(next_attempt.is_(None), next_attempt <= moment)
 
 
-class _JournalRetrySchedule:
+class JournalRetrySchedule:
     """Per-process backoff for the background journal-copy retry.
 
     The journal copy's durable marker is ``JournalEntry.vault_ref`` /
@@ -535,6 +537,7 @@ class _JournalRetrySchedule:
     """
 
     def __init__(self) -> None:
+        """Start with no recorded failures: every entry is due."""
         self._failures: dict[int, tuple[int, datetime]] = {}
 
     def due(self, entry_id: int, moment: datetime) -> bool:
@@ -551,7 +554,17 @@ class _JournalRetrySchedule:
         self._failures[entry_id] = (attempts, moment + retraction_backoff(attempts))
 
 
-_JOURNAL_RETRIES = _JournalRetrySchedule()
+_JOURNAL_RETRIES = JournalRetrySchedule()
+
+
+@dataclass(frozen=True)
+class _SweepPass:
+    """What one background pass resolves each account through, and its clock."""
+
+    resolve_client: VaultClientResolver
+    resolve_destination: DestinationResolver
+    moment: datetime
+    journal_retries: JournalRetrySchedule
 
 
 def _journal_marker_present() -> ColumnElement[bool]:
@@ -561,11 +574,11 @@ def _journal_marker_present() -> ColumnElement[bool]:
     )
 
 
-async def _due_entries(session: AsyncSession, moment: datetime) -> tuple[tuple[int, int], ...]:
+async def _due_entries(session: AsyncSession, sweep: _SweepPass) -> tuple[tuple[int, int], ...]:
     """Snapshot the (account, entry) pairs with work due, then end the transaction."""
     essays = await session.execute(
         select(VoiceDraftRetraction.user_id, VoiceDraftRetraction.journal_entry_id)
-        .where(VoiceDraftRetraction.state == _PENDING, _is_due(moment))
+        .where(VoiceDraftRetraction.state == _PENDING, _is_due(sweep.moment))
         .order_by(col(VoiceDraftRetraction.id))
         .limit(_SWEEP_BATCH)
     )
@@ -583,7 +596,7 @@ async def _due_entries(session: AsyncSession, moment: datetime) -> tuple[tuple[i
         .limit(_SWEEP_BATCH)
     )
     for user_id, entry_id in journals.all():
-        if entry_id is not None and _JOURNAL_RETRIES.due(entry_id, moment):
+        if entry_id is not None and sweep.journal_retries.due(entry_id, sweep.moment):
             pairs.setdefault((user_id, entry_id))
     await session.commit()
     return tuple(pairs)
@@ -601,7 +614,7 @@ async def _log_backlog(session: AsyncSession, moment: datetime) -> None:
     if not pending_count or oldest is None:
         return
     _LOGGER.info(
-        _BACKLOG_EVENT,
+        RETRACTION_BACKLOG_EVENT,
         extra={
             "pending_count": int(pending_count),
             "oldest_pending_age_seconds": int((moment - _aware(oldest)).total_seconds()),
@@ -612,10 +625,10 @@ async def _log_backlog(session: AsyncSession, moment: datetime) -> None:
 async def _retry_journal_copy(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
+    sweep: _SweepPass,
     *,
     entry_id: int,
     destination: str | None,
-    moment: datetime,
 ) -> None:
     """Retry an Intimate entry's journal withdrawal when its marker is still held."""
     result = await session.execute(
@@ -627,20 +640,11 @@ async def _retry_journal_copy(
         )
     )
     entry = result.scalars().first()
-    if entry is None or not _JOURNAL_RETRIES.due(entry_id, moment):
+    if entry is None or not sweep.journal_retries.due(entry_id, sweep.moment):
         await session.commit()
         return
     confirmed = await withdraw_journal_copy(session, entry, client, destination=destination)
-    _JOURNAL_RETRIES.record(entry_id, moment, confirmed=confirmed)
-
-
-@dataclass(frozen=True)
-class _SweepPass:
-    """What one background pass resolves each account through, and its clock."""
-
-    resolve_client: VaultClientResolver
-    resolve_destination: DestinationResolver
-    moment: datetime
+    sweep.journal_retries.record(entry_id, sweep.moment, confirmed=confirmed)
 
 
 async def _resume_entry(session: AsyncSession, sweep: _SweepPass, target: EntryRef) -> None:
@@ -665,11 +669,7 @@ async def _resume_entry(session: AsyncSession, sweep: _SweepPass, target: EntryR
                 session, client, target, destination=destination, due_by=sweep.moment
             )
             await _retry_journal_copy(
-                session,
-                client,
-                entry_id=target.entry_id,
-                destination=destination,
-                moment=sweep.moment,
+                session, client, sweep, entry_id=target.entry_id, destination=destination
             )
     except HTTPException:
         _LOGGER.info(_SWEEP_SKIPPED_EVENT, extra={"reason": "account_unavailable"})
@@ -681,20 +681,24 @@ async def resume_voice_draft_retractions(
     resolve_destination: DestinationResolver,
     *,
     now: datetime | None = None,
+    journal_retries: JournalRetrySchedule | None = None,
 ) -> None:
     """Retry owed withdrawals in the background, without any user action.
 
     Run from the application's recovery loop. Each pass snapshots a bounded
     batch of due work in one short transaction, then handles each entry on its
     own session so one slow vault holds no pooled connection for the others.
+    ``journal_retries`` defaults to this process's schedule; a caller that
+    wants an isolated backoff (a test) passes its own.
     """
     sweep = _SweepPass(
         resolve_client=resolve_client,
         resolve_destination=resolve_destination,
         moment=now if now is not None else _utcnow(),
+        journal_retries=journal_retries if journal_retries is not None else _JOURNAL_RETRIES,
     )
     async with factory() as session:
-        targets = await _due_entries(session, sweep.moment)
+        targets = await _due_entries(session, sweep)
         await _log_backlog(session, sweep.moment)
     for user_id, entry_id in targets:
         async with factory() as session:
