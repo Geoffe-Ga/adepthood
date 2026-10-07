@@ -1264,18 +1264,12 @@ async def test_throttled_license_path_consumes_a_dummy_bcrypt_verify(
 
 
 # ---------------------------------------------------------------------------
-# The $0 floor (#1938, B21) and ended memberships (ADR 0008 Decision 1)
+# The $0 floor (#1938, B21)
 # ---------------------------------------------------------------------------
 # Gumroad reports ``price`` in cents. The APTITUDE membership's floor is zero,
 # and nothing in the claim path may treat a free purchase as less of a claim.
 ZERO_PRICE_CENTS = 0
 ZERO_PRICE_SALE_ID = "S-zero"
-ENDED_MEMBERSHIP_TIMESTAMP = "2026-09-01T00:00:00Z"
-FAILED_PAYMENT_TIMESTAMP = "2026-09-02T00:00:00Z"
-# The two membership-terminal fields ADR 0008 D1 refuses on. Gumroad also
-# reports ``subscription_failed_at``, deliberately left out: a failed renewal
-# is a payment retry, not a membership the buyer ended.
-TERMINAL_MEMBERSHIP_FIELDS = ("subscription_ended_at", "subscription_cancelled_at")
 
 
 def _membership_result(**subscription_fields: str | None) -> GumroadLicenseResult:
