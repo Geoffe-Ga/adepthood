@@ -7,8 +7,9 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlmodel import col, select
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
@@ -17,6 +18,7 @@ from domain.creek_vault import (
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultIngestAction,
+    VaultJournalWithdrawResult,
     VaultTierCeiling,
     VaultVoiceDraftDeleteResult,
     VaultVoiceDraftRequest,
@@ -25,6 +27,7 @@ from domain.creek_vault import (
 from main import app
 from models.journal_entry import JournalClassification, JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
+from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
 from services import marginalia as marginalia_service
 from services.account_egress_barrier import account_egress_barrier
 from services.botmason import STUB_MODEL_NAME, STUB_PROSE_PREFIX, LLMResponse
@@ -38,6 +41,10 @@ _ESSAY_ASK = {"price_acknowledged": True}
 
 _BODY = "I walked by the river and the willow bent without breaking."
 _ESSAY = "A warm letter about beginnings."
+
+#: DELETE count after one failed attempt and one successful retry.
+_FAILED_THEN_RETRIED = 2
+_JOURNAL_REF = "vault-fragment-1"
 
 #: How long a competing mutation is given to overtake a dial that is being held
 #: open, *once it is provably at the barrier*. Long enough that a request which
@@ -86,7 +93,13 @@ async def _seed_note(
     *,
     classification: JournalClassification = JournalClassification.PERSONAL,
     essay: str | None = None,
+    mirrored: bool = True,
 ) -> tuple[int, int]:
+    """Seed one entry and note; a seeded essay is recorded as offered to a vault.
+
+    ``mirrored`` writes the ``mirror_intent`` row the essay route writes before
+    its PUT, so a seeded essay behaves like one the vault may hold.
+    """
     entry = JournalEntry(
         sender="user",
         user_id=user_id,
@@ -108,12 +121,47 @@ async def _seed_note(
         note.essay = essay
         note.essay_generated_at = datetime.now(UTC)
     session.add(note)
+    await session.flush()
+    assert entry.id is not None
+    assert note.id is not None
+    if essay is not None and mirrored:
+        _record_mirror_intent(session, user_id, entry.id, note.id)
     await session.commit()
     await session.refresh(entry)
     await session.refresh(note)
-    assert entry.id is not None
-    assert note.id is not None
     return entry.id, note.id
+
+
+def _record_mirror_intent(session: AsyncSession, user_id: int, entry_id: int, note_id: int) -> None:
+    """Stage the content-free row a real mirror commits before its PUT."""
+    session.add(
+        VoiceDraftRetraction(
+            user_id=user_id,
+            journal_entry_id=entry_id,
+            marginalia_id=note_id,
+        )
+    )
+
+
+async def _mark_ingested(session: AsyncSession, entry_id: int) -> None:
+    """Give an entry the durable marker a successful journal ingest leaves."""
+    entry = await session.get(JournalEntry, entry_id)
+    assert entry is not None
+    entry.vault_ref = _JOURNAL_REF
+    session.add(entry)
+    await session.commit()
+
+
+async def _obligation(session: AsyncSession, note_id: int) -> VoiceDraftRetraction | None:
+    """Read one note's obligation row fresh from the database."""
+    result = await session.execute(
+        select(VoiceDraftRetraction)
+        .where(col(VoiceDraftRetraction.marginalia_id) == note_id)
+        .execution_options(populate_existing=True)
+    )
+    row = result.scalars().first()
+    await session.commit()
+    return row
 
 
 class _EssayLLM:
@@ -146,17 +194,32 @@ class _RecordingDraftVault(LocalFallbackCreekVaultClient):
         supported: bool = True,
         fail_upsert: bool = False,
         fail_delete: bool = False,
+        journal_withdraw: bool = False,
     ) -> None:
         super().__init__()
         self.session = session
         self.supported = supported
         self.fail_upsert = fail_upsert
         self.fail_delete = fail_delete
+        self.journal_withdraw = journal_withdraw
+        self.fail_withdraw = False
+        #: External ids whose DELETE fails while the rest succeed.
+        self.fail_delete_for: set[str] = set()
+        #: Answer a DELETE for a slot this vault never stored the way Creek does
+        #: today: ``privacy_refused``, which the adapter raises as a vault error.
+        self.refuse_missing = False
         self.upserts: list[VaultVoiceDraftRequest] = []
         self.deletes: list[tuple[str, VaultTierCeiling]] = []
+        self.withdrawals: list[int] = []
+
+    def _capabilities(self) -> frozenset[CreekCapability]:
+        capabilities = {CreekCapability.VOICE_DRAFTS} if self.supported else set()
+        if self.journal_withdraw:
+            capabilities.add(CreekCapability.JOURNAL_WITHDRAW)
+        return frozenset(capabilities)
 
     async def handshake(self) -> HandshakeResult:
-        capabilities = frozenset({CreekCapability.VOICE_DRAFTS}) if self.supported else frozenset()
+        capabilities = self._capabilities()
         return HandshakeResult(
             available=True,
             contract_version=CONTRACT_VERSION,
@@ -166,7 +229,15 @@ class _RecordingDraftVault(LocalFallbackCreekVaultClient):
         )
 
     def supports(self, capability: CreekCapability, /) -> bool:
-        return self.supported and capability is CreekCapability.VOICE_DRAFTS
+        return capability in self._capabilities()
+
+    async def withdraw_journal_entry(self, entry_id: int, /) -> VaultJournalWithdrawResult:
+        if self.session is not None:
+            assert not self.session.in_transaction(), "withdraw held a pooled DB connection"
+        self.withdrawals.append(entry_id)
+        if self.fail_withdraw:
+            raise CreekVaultUnavailableError("synthetic withdraw outage")
+        return VaultJournalWithdrawResult(withdrawn=True)
 
     async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
         if self.session is not None:
@@ -186,8 +257,11 @@ class _RecordingDraftVault(LocalFallbackCreekVaultClient):
         if self.session is not None:
             assert not self.session.in_transaction(), "draft DELETE held a pooled DB connection"
         self.deletes.append((external_id, tier_ceiling))
-        if self.fail_delete:
+        if self.fail_delete or external_id in self.fail_delete_for:
             raise CreekVaultUnavailableError("synthetic draft outage")
+        stored = {request.external_id for request in self.upserts}
+        if self.refuse_missing and external_id not in stored:
+            raise CreekVaultUnavailableError("synthetic privacy_refused for a missing slot")
         return VaultVoiceDraftDeleteResult(deleted=True)
 
 
@@ -389,9 +463,11 @@ async def test_reclassifying_an_entry_intimate_retracts_each_existing_draft(
     )
     second_note.essay_generated_at = datetime.now(UTC)
     db_session.add(second_note)
+    await db_session.flush()
+    assert second_note.id is not None
+    _record_mirror_intent(db_session, user_id, entry_id, second_note.id)
     await db_session.commit()
     await db_session.refresh(second_note)
-    assert second_note.id is not None
     vault = _RecordingDraftVault(db_session)
     _wire_vault(vault)
 
@@ -410,35 +486,223 @@ async def test_reclassifying_an_entry_intimate_retracts_each_existing_draft(
     assert vault.upserts == []
 
 
+async def _patch_intimate(client: AsyncClient, entry_id: int, headers: dict[str, str]) -> Response:
+    """Ask for the Intimate tier on one entry."""
+    return await client.patch(
+        f"/journal/{entry_id}", json={"classification": "intimate"}, headers=headers
+    )
+
+
 @pytest.mark.asyncio
-async def test_failed_retraction_never_costs_the_intimate_reclassification(
+async def test_failed_retraction_keeps_intimate_and_reports_pending(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """The privacy PATCH remains committed when the one DELETE attempt fails."""
+    """A failed DELETE keeps the stricter tier, answers 503, and leaves a durable obligation."""
     headers, user_id = await _signup(async_client, "draft_retract_degrade")
     entry_id, note_id = await _seed_note(db_session, user_id, essay="Existing draft")
     vault = _RecordingDraftVault(db_session, fail_delete=True)
     _wire_vault(vault)
 
-    response = await async_client.patch(
-        f"/journal/{entry_id}",
-        json={"classification": "intimate"},
-        headers=headers,
-    )
+    response = await _patch_intimate(async_client, entry_id, headers)
 
-    assert response.status_code == HTTPStatus.OK
-    assert response.json()["classification"] == "intimate"
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert response.json() == {"detail": "vault_withdrawal_pending"}
+    persisted = await db_session.get(JournalEntry, entry_id)
+    assert persisted is not None
+    await db_session.refresh(persisted)
+    assert persisted.classification == JournalClassification.INTIMATE
     assert vault.deletes == [(voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL)]
+    obligation = await _obligation(db_session, note_id)
+    assert obligation is not None
+    assert obligation.state == VoiceDraftRetractionState.PENDING
+    assert obligation.attempt_count == 1
+    assert obligation.safe_failure_code == "vault_error"
 
-    repeated = await async_client.patch(
-        f"/journal/{entry_id}",
-        json={"classification": "intimate"},
-        headers=headers,
+
+@pytest.mark.asyncio
+async def test_repeated_intimate_patch_retries_then_stops(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A same-value Intimate PATCH retries the owed DELETE, then is idempotent once confirmed."""
+    headers, user_id = await _signup(async_client, "draft_retract_retry")
+    entry_id, note_id = await _seed_note(db_session, user_id, essay="Existing draft")
+    vault = _RecordingDraftVault(db_session, fail_delete=True)
+    _wire_vault(vault)
+    failed = await _patch_intimate(async_client, entry_id, headers)
+    assert failed.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+
+    vault.fail_delete = False
+    retried = await _patch_intimate(async_client, entry_id, headers)
+
+    assert retried.status_code == HTTPStatus.OK
+    assert retried.json()["classification"] == "intimate"
+    assert len(vault.deletes) == _FAILED_THEN_RETRIED
+    obligation = await _obligation(db_session, note_id)
+    assert obligation is not None
+    assert obligation.state == VoiceDraftRetractionState.CONFIRMED
+    assert obligation.confirmed_at is not None
+
+    again = await _patch_intimate(async_client, entry_id, headers)
+
+    assert again.status_code == HTTPStatus.OK
+    assert len(vault.deletes) == _FAILED_THEN_RETRIED, "a confirmed withdrawal is never re-sent"
+
+
+@pytest.mark.asyncio
+async def test_one_failed_note_keeps_the_entry_pending_and_retries_only_it(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Among several notes, one failure keeps the whole PATCH pending; the retry covers only it."""
+    headers, user_id = await _signup(async_client, "draft_retract_partial")
+    entry_id, first_id = await _seed_note(db_session, user_id, essay="First draft")
+    second = Marginalia(
+        journal_entry_id=entry_id,
+        user_id=user_id,
+        kind=MarginaliaKind.THEME,
+        anchor_start=7,
+        anchor_end=12,
+        anchor_text="river",
+        note="A current.",
+        essay="Second draft",
+        essay_generated_at=datetime.now(UTC),
     )
+    db_session.add(second)
+    await db_session.flush()
+    assert second.id is not None
+    second_id = second.id
+    _record_mirror_intent(db_session, user_id, entry_id, second_id)
+    await db_session.commit()
+    vault = _RecordingDraftVault(db_session)
+    failing = voice_draft_external_id(user_id, first_id)
+    vault.fail_delete_for = {failing}
+    _wire_vault(vault)
 
-    assert repeated.status_code == HTTPStatus.OK
-    assert len(vault.deletes) == 1, "a same-value PATCH must not retry a failed retraction"
+    failed = await _patch_intimate(async_client, entry_id, headers)
+
+    assert failed.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    first_attempts = len(vault.deletes)
+    vault.fail_delete_for = set()
+    retried = await _patch_intimate(async_client, entry_id, headers)
+
+    assert retried.status_code == HTTPStatus.OK
+    assert vault.deletes[first_attempts:] == [(failing, VaultTierCeiling.PERSONAL)]
+    for note_id in (first_id, second_id):
+        obligation = await _obligation(db_session, note_id)
+        assert obligation is not None
+        assert obligation.state == VoiceDraftRetractionState.CONFIRMED
+
+
+@pytest.mark.asyncio
+async def test_journal_withdraw_failure_still_attempts_essay_retraction(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A failing journal withdrawal never short-circuits the essay retraction."""
+    headers, user_id = await _signup(async_client, "draft_journal_fails")
+    entry_id, note_id = await _seed_note(db_session, user_id, essay="Existing draft")
+    await _mark_ingested(db_session, entry_id)
+    vault = _RecordingDraftVault(db_session, journal_withdraw=True)
+    vault.fail_withdraw = True
+    _wire_vault(vault)
+
+    response = await _patch_intimate(async_client, entry_id, headers)
+
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert response.json() == {"detail": "vault_withdrawal_pending"}
+    assert vault.withdrawals == [entry_id]
+    assert vault.deletes == [(voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL)]
+    persisted = await db_session.get(JournalEntry, entry_id)
+    assert persisted is not None
+    await db_session.refresh(persisted)
+    assert persisted.classification == JournalClassification.INTIMATE
+    assert persisted.vault_ref == _JOURNAL_REF
+
+
+@pytest.mark.asyncio
+async def test_essay_failure_still_attempts_journal_withdrawal(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A failing essay retraction never short-circuits the journal withdrawal."""
+    headers, user_id = await _signup(async_client, "draft_essay_fails")
+    entry_id, _note_id = await _seed_note(db_session, user_id, essay="Existing draft")
+    await _mark_ingested(db_session, entry_id)
+    vault = _RecordingDraftVault(db_session, fail_delete=True, journal_withdraw=True)
+    _wire_vault(vault)
+
+    response = await _patch_intimate(async_client, entry_id, headers)
+
+    assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert vault.withdrawals == [entry_id]
+    persisted = await db_session.get(JournalEntry, entry_id)
+    assert persisted is not None
+    await db_session.refresh(persisted)
+    assert persisted.classification == JournalClassification.INTIMATE
+    assert persisted.vault_ref is None
+
+
+@pytest.mark.asyncio
+async def test_never_mirrored_essay_needs_no_retraction(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An essay cached while no vault took drafts never makes journal DELETE 503 forever."""
+    headers, user_id = await _signup(async_client, "draft_never_mirrored")
+    entry_id, note_id = await _seed_note(db_session, user_id)
+    monkeypatch.setattr(marginalia_service, "generate_response", _EssayLLM())
+    vault = _RecordingDraftVault(db_session, supported=False)
+    _wire_vault(vault)
+    expanded = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay", headers=headers, json=_ESSAY_ASK
+    )
+    assert expanded.status_code == HTTPStatus.OK
+    assert expanded.json()["essay"] == _ESSAY
+    assert await _obligation(db_session, note_id) is None
+
+    vault.supported = True
+    vault.refuse_missing = True
+    deleted = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert deleted.status_code == HTTPStatus.NO_CONTENT
+    assert vault.deletes == []
+
+
+@pytest.mark.asyncio
+async def test_mirror_intent_is_committed_before_the_put(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The PUT sees a committed intent row, so a failed or lost PUT is still retracted later."""
+    headers, user_id = await _signup(async_client, "draft_intent_first")
+    entry_id, note_id = await _seed_note(db_session, user_id)
+    monkeypatch.setattr(marginalia_service, "generate_response", _EssayLLM())
+    seen_at_put: list[str | None] = []
+
+    class _IntentProbeVault(_RecordingDraftVault):
+        async def upsert_voice_draft(
+            self, request: VaultVoiceDraftRequest, /
+        ) -> VaultVoiceDraftResult:
+            row = await _obligation(db_session, note_id)
+            seen_at_put.append(None if row is None else row.state)
+            return await super().upsert_voice_draft(request)
+
+    vault = _IntentProbeVault(db_session, fail_upsert=True)
+    _wire_vault(vault)
+    expanded = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay", headers=headers, json=_ESSAY_ASK
+    )
+    assert expanded.status_code == HTTPStatus.OK
+
+    assert seen_at_put == [VoiceDraftRetractionState.MIRROR_INTENT]
+    patched = await _patch_intimate(async_client, entry_id, headers)
+
+    assert patched.status_code == HTTPStatus.OK
+    assert vault.deletes == [(voice_draft_external_id(user_id, note_id), VaultTierCeiling.PERSONAL)]
 
 
 @pytest.mark.asyncio

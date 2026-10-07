@@ -1,12 +1,20 @@
-"""Best-effort mirroring of AI-authored Voice Drafts into Creek Vault.
+"""Mirroring of AI-authored Voice Drafts into Creek Vault, and their durable withdrawal.
 
 Postgres remains the system of record. A generated essay gets one immediate,
-capability-gated upsert into the writer's connected vault; a later intimate
-reclassification gets one content-free delete. Neither operation is queued.
-Creek failures degrade after a content-free log record so a vault can never cost
-the writer their local draft. Retraction additionally reports whether absence
-was confirmed: a privacy PATCH may remain best-effort, while journal deletion
-uses that answer to retain its local retry surface until every replica is gone.
+capability-gated upsert into the writer's connected vault. A mirror failure
+degrades after a content-free log record, so a vault can never cost the writer
+their local draft; the mirror itself is not retried.
+
+Withdrawal is not best-effort (#3060). Before the PUT is dialled, a content-free
+:class:`~models.voice_draft_retraction.VoiceDraftRetraction` row records that
+this essay was offered to this destination. An Intimate reclassification or a
+journal deletion turns that row ``pending``, and it stays pending -- across
+failed attempts, repeated requests and restarts -- until the destination that
+received the copy confirms it absent. The request paths retry it every time;
+:func:`resume_voice_draft_retractions` retries it in the background with a
+bounded exponential backoff. An essay with no row was never offered to a vault
+and is owed nothing, which is what keeps a never-mirrored essay from making
+journal deletion fail forever against a vault that refuses unknown ids.
 
 This is a dedicated capability rather than the document-upload path. Creek owns
 the former's fixed ``ai-as-user`` attribution and zero voice weight; the latter
@@ -17,17 +25,37 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Final
+
+from fastapi import HTTPException
+from sqlalchemy import ColumnElement, func, or_, update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlmodel import col, select
 
 from domain.creek_vault import (
     CreekCapability,
     CreekVaultError,
+    CreekVaultPipelineClient,
     CreekVaultVoiceDraftClient,
     VaultTierCeiling,
     VaultVoiceDraftRequest,
     tier_ceiling_for,
 )
+from models.journal_entry import JournalClassification, JournalEntry
+from models.voice_draft_retraction import (
+    RetractionFailureCode,
+    VoiceDraftRetraction,
+    VoiceDraftRetractionState,
+)
+from services.account_egress_barrier import ensure_account_live, hold_account
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_upload import _expressible_on_the_wire
+from services.creek_vault_withdraw import withdraw_journal_copy
+from services.voice_draft_privacy import voice_draft_privacy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +67,43 @@ _MIRROR_DEGRADED_EVENT = "creek vault voice draft mirror degraded"
 _MIRROR_STORED_EVENT = "creek vault voice draft mirrored"
 _RETRACTION_DEGRADED_EVENT = "creek vault voice draft retraction degraded"
 _RETRACTED_EVENT = "creek vault voice draft retracted"
+_TRANSITION_EVENT = "creek vault voice draft obligation transition"
+_BACKLOG_EVENT = "creek vault voice draft retraction backlog"
+_SWEEP_SKIPPED_EVENT = "creek vault voice draft retraction sweep skipped"
+_MIRROR_WITHHELD_EVENT = "creek vault voice draft mirror withheld"
+
+#: Every ``extra`` key this module may log. Ids are opaque, states and codes are
+#: closed vocabularies, counts and ages are integers: no essay, body, title,
+#: vault URL, or credential can ride on any of them (B10 shared invariant).
+RETRACTION_LOG_EXTRAS: Final = frozenset(
+    {
+        "external_id",
+        "reason",
+        "action",
+        "obligation_id",
+        "from_state",
+        "to_state",
+        "attempt_count",
+        "safe_failure_code",
+        "pending_count",
+        "oldest_pending_age_seconds",
+    }
+)
+
+#: The background sweep's bounded batch, and its exponential backoff: a row that
+#: failed ``n`` times waits ``min(base * 2**(n-1), max)`` before the next try, so
+#: a vault that refuses forever (a legacy essay it never held, #3060 escalation
+#: 1) costs one DELETE an hour rather than one every recovery tick.
+_SWEEP_BATCH: Final = 50
+_SWEEP_BASE_BACKOFF_SECONDS: Final = 30
+_SWEEP_MAX_BACKOFF_SECONDS: Final = 3600
+
+_PENDING = VoiceDraftRetractionState.PENDING.value
+_MIRROR_INTENT = VoiceDraftRetractionState.MIRROR_INTENT.value
+_CONFIRMED = VoiceDraftRetractionState.CONFIRMED.value
+
+VaultClientResolver = Callable[[AsyncSession, int], Awaitable[CreekVaultPipelineClient]]
+DestinationResolver = Callable[[AsyncSession, int], Awaitable[str | None]]
 
 
 def voice_draft_external_id(owner_user_id: int, marginalia_id: int) -> str:
@@ -60,32 +125,58 @@ async def _supports_voice_drafts(client: CreekVaultVoiceDraftClient) -> bool:
     return handshake.available and client.supports(CreekCapability.VOICE_DRAFTS)
 
 
+@dataclass(frozen=True)
+class VoiceDraftCopy:
+    """One generated essay as the mirror sends it: whose, which note, what tier."""
+
+    owner_user_id: int
+    marginalia_id: int
+    essay: str
+    classification: str
+
+
+@dataclass(frozen=True)
+class EntryRef:
+    """The (account, journal entry) pair an obligation belongs to."""
+
+    user_id: int
+    entry_id: int
+
+
 async def mirror_voice_draft(
     client: CreekVaultVoiceDraftClient,
+    draft: VoiceDraftCopy,
     *,
-    owner_user_id: int,
-    marginalia_id: int,
-    essay: str,
-    classification: str,
+    record_intent: Callable[[], Awaitable[bool]] | None = None,
 ) -> None:
-    """Make one best-effort upsert of a non-intimate generated essay.
+    """Make one upsert of a non-intimate generated essay, after recording the intent.
 
     The tier guard runs before the handshake so an intimate essay never reaches
     even a client method. An unavailable or unsupported vault is the ordinary
-    local-only configuration and returns silently. Once admitted, exactly one
-    upsert is attempted; a Creek fault or an unreadable success is recorded and
-    dropped, never retried.
+    local-only configuration and returns silently, with nothing recorded:
+    nothing was offered, so nothing is owed. Once admitted, ``record_intent``
+    durably records the offer *before* the PUT is dialled; it answers ``False``
+    while an earlier withdrawal is still owed for this draft, and the PUT is
+    then withheld rather than republishing over that obligation. A Creek fault
+    or an unreadable success is recorded and dropped, never retried -- its
+    intent row keeps any later withdrawal honest.
     """
-    tier = tier_ceiling_for(classification)
+    tier = tier_ceiling_for(draft.classification)
     if not _expressible_on_the_wire(tier):
         return
     if not await _supports_voice_drafts(client):
         return
 
-    external_id = voice_draft_external_id(owner_user_id, marginalia_id)
+    external_id = voice_draft_external_id(draft.owner_user_id, draft.marginalia_id)
+    if record_intent is not None and not await record_intent():
+        _LOGGER.warning(
+            _MIRROR_WITHHELD_EVENT,
+            extra={"external_id": external_id, "reason": "withdrawal_outstanding"},
+        )
+        return
     request = VaultVoiceDraftRequest(
         external_id=external_id,
-        content=essay,
+        content=draft.essay,
         tier=tier,
         tier_ceiling=tier,
     )
@@ -109,6 +200,62 @@ async def mirror_voice_draft(
     )
 
 
+async def _absence_answer(client: CreekVaultVoiceDraftClient) -> RetractionFailureCode | None:
+    """Negotiate the DELETE; ``None`` means dial it, a code means it cannot be confirmed.
+
+    A true local fallback has no remote destination, so it answers absent by
+    returning a sentinel the caller reads as "confirmed without a dial".
+    """
+    try:
+        handshake = await client.handshake()
+    except CreekVaultError:
+        return RetractionFailureCode.VAULT_UNAVAILABLE
+    if not handshake.available:
+        return RetractionFailureCode.VAULT_UNAVAILABLE
+    if not client.supports(CreekCapability.VOICE_DRAFTS):
+        return RetractionFailureCode.CAPABILITY_MISSING
+    return None
+
+
+async def retraction_failure(
+    client: CreekVaultVoiceDraftClient,
+    *,
+    owner_user_id: int,
+    marginalia_id: int,
+) -> RetractionFailureCode | None:
+    """Retract one mirrored draft; ``None`` when absence is confirmed, else a closed code.
+
+    ``PERSONAL`` is the widest ceiling the remote wire admits, so it can delete
+    either an open or a personal copy. The local essay is intentionally absent
+    from this signature: an intimate reclassification must not resend the prose
+    it is retracting. A true local fallback is absence-equivalent because this
+    request has no remote destination. An unreachable connected adapter is not:
+    it may still hold an earlier mirror. Nor is a connected capability
+    downgrade: the vault may retain a draft written while that capability was
+    previously advertised.
+    """
+    negotiation = await _absence_answer(client)
+    if negotiation is not None:
+        return None if type(client) is LocalFallbackCreekVaultClient else negotiation
+    external_id = voice_draft_external_id(owner_user_id, marginalia_id)
+    try:
+        result = await client.delete_voice_draft(external_id, VaultTierCeiling.PERSONAL)
+    except CreekVaultError:
+        _LOGGER.warning(
+            _RETRACTION_DEGRADED_EVENT,
+            extra={"external_id": external_id, "reason": "vault_error"},
+        )
+        return RetractionFailureCode.VAULT_ERROR
+    if not result.deleted:
+        _LOGGER.warning(
+            _RETRACTION_DEGRADED_EVENT,
+            extra={"external_id": external_id, "reason": "not_deleted"},
+        )
+        return RetractionFailureCode.NOT_DELETED
+    _LOGGER.info(_RETRACTED_EVENT, extra={"external_id": external_id})
+    return None
+
+
 async def retract_voice_draft(
     client: CreekVaultVoiceDraftClient,
     *,
@@ -117,38 +264,438 @@ async def retract_voice_draft(
 ) -> bool:
     """Retract one mirrored draft and report whether its absence is confirmed.
 
-    ``PERSONAL`` is the widest ceiling the remote wire admits, so it can delete
-    either an open or a personal copy. The local essay is intentionally absent
-    from this signature: an intimate reclassification must not resend the prose
-    it is retracting. A true local fallback is absence-equivalent because this
-    request has no remote destination. An unreachable connected adapter is not:
-    it may still hold an earlier mirror, so its failed handshake stays
-    unconfirmed and lets a required caller preserve a retry surface. Nor is a
-    connected capability downgrade absence-equivalent: the vault may retain a
-    draft written while that capability was previously advertised.
+    The boolean form of :func:`retraction_failure`, for callers that need only
+    the verdict.
     """
-    handshake = await client.handshake()
-    if not handshake.available:
-        return type(client) is LocalFallbackCreekVaultClient
-    if not client.supports(CreekCapability.VOICE_DRAFTS):
-        return type(client) is LocalFallbackCreekVaultClient
-    external_id = voice_draft_external_id(owner_user_id, marginalia_id)
+    failure = await retraction_failure(
+        client, owner_user_id=owner_user_id, marginalia_id=marginalia_id
+    )
+    return failure is None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def _aware(moment: datetime) -> datetime:
+    """Read a stored timestamp as UTC; SQLite hands timezone-aware columns back naive."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def retraction_backoff(attempt_count: int) -> timedelta:
+    """Return how long a row that has failed ``attempt_count`` times waits to retry."""
+    exponent = max(attempt_count - 1, 0)
+    seconds = min(_SWEEP_BASE_BACKOFF_SECONDS * 2**exponent, _SWEEP_MAX_BACKOFF_SECONDS)
+    return timedelta(seconds=seconds)
+
+
+def _log_transition(
+    obligation_id: int | None,
+    from_state: str | None,
+    to_state: str,
+    *,
+    attempt_count: int = 0,
+    safe_failure_code: str | None = None,
+) -> None:
+    """Record one content-free state transition of an obligation row."""
+    _LOGGER.info(
+        _TRANSITION_EVENT,
+        extra={
+            "obligation_id": obligation_id,
+            "from_state": from_state,
+            "to_state": to_state,
+            "attempt_count": attempt_count,
+            "safe_failure_code": safe_failure_code,
+        },
+    )
+
+
+async def _intent_row(
+    session: AsyncSession, *, user_id: int, marginalia_id: int
+) -> VoiceDraftRetraction | None:
+    result = await session.execute(
+        select(VoiceDraftRetraction).where(
+            VoiceDraftRetraction.user_id == user_id,
+            VoiceDraftRetraction.marginalia_id == marginalia_id,
+        )
+    )
+    return result.scalars().first()
+
+
+def _may_rearm(row: VoiceDraftRetraction, destination: str | None) -> bool:
+    """Whether an existing row may be reset to a fresh intent for ``destination``.
+
+    A confirmed row owes nothing. An intent to the same destination is the same
+    offer. Anything else -- a pending withdrawal, or an intent to another vault
+    -- still describes a copy that must be withdrawn first.
+    """
+    if row.state == _CONFIRMED:
+        return True
+    return row.state == _MIRROR_INTENT and row.destination == destination
+
+
+async def record_mirror_intent(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    entry_id: int,
+    marginalia_id: int,
+    destination: str | None,
+) -> bool:
+    """Durably record that this essay is about to be offered to ``destination``.
+
+    Commits before returning, so the PUT that follows holds no pooled
+    connection and a crash after Creek stores the draft still leaves a local
+    trace. Upserts rather than skipping: a confirmed row is re-armed, so a
+    future re-mirror is never untracked. Returns ``False`` -- withhold the PUT
+    -- while an earlier withdrawal for this draft is still owed.
+    """
+    row = await _intent_row(session, user_id=user_id, marginalia_id=marginalia_id)
+    previous = None if row is None else row.state
+    if row is None:
+        row = VoiceDraftRetraction(
+            user_id=user_id,
+            journal_entry_id=entry_id,
+            marginalia_id=marginalia_id,
+            destination=destination,
+        )
+    elif not _may_rearm(row, destination):
+        await session.commit()
+        return False
+    else:
+        row.state = _MIRROR_INTENT
+        row.journal_entry_id = entry_id
+        row.destination = destination
+        row.attempt_count = 0
+        row.safe_failure_code = None
+        row.next_attempt_at = None
+        row.confirmed_at = None
+        row.updated_at = _utcnow()
+    session.add(row)
     try:
-        result = await client.delete_voice_draft(
-            external_id,
-            VaultTierCeiling.PERSONAL,
-        )
-    except CreekVaultError:
-        _LOGGER.warning(
-            _RETRACTION_DEGRADED_EVENT,
-            extra={"external_id": external_id, "reason": "vault_error"},
-        )
+        await session.commit()
+    except IntegrityError:
+        # A concurrent writer recorded this draft first; its row governs.
+        await session.rollback()
         return False
-    if not result.deleted:
-        _LOGGER.warning(
-            _RETRACTION_DEGRADED_EVENT,
-            extra={"external_id": external_id, "reason": "not_deleted"},
-        )
-        return False
-    _LOGGER.info(_RETRACTED_EVENT, extra={"external_id": external_id})
+    _log_transition(row.id, previous, _MIRROR_INTENT)
     return True
+
+
+async def mark_entry_retractions_pending(
+    session: AsyncSession, *, user_id: int, entry_id: int
+) -> None:
+    """Turn every recorded offer for this entry into an owed withdrawal. Does not commit.
+
+    Called inside the same transaction that commits the Intimate tier or the
+    deletion request, so the obligation exists before any network call.
+    """
+    result = await session.execute(
+        select(VoiceDraftRetraction.id).where(
+            VoiceDraftRetraction.user_id == user_id,
+            VoiceDraftRetraction.journal_entry_id == entry_id,
+            VoiceDraftRetraction.state == _MIRROR_INTENT,
+        )
+    )
+    obligation_ids = tuple(result.scalars().all())
+    if not obligation_ids:
+        return
+    await session.execute(
+        update(VoiceDraftRetraction)
+        .where(
+            col(VoiceDraftRetraction.id).in_(obligation_ids),
+            col(VoiceDraftRetraction.state) == _MIRROR_INTENT,
+        )
+        .values(state=_PENDING, next_attempt_at=None, updated_at=_utcnow())
+    )
+    for obligation_id in obligation_ids:
+        _log_transition(obligation_id, _MIRROR_INTENT, _PENDING)
+
+
+async def _settle(
+    session: AsyncSession,
+    *,
+    obligation_id: int,
+    attempt_count: int,
+    failure: RetractionFailureCode | None,
+) -> None:
+    """Persist one attempt's outcome, only while the row is still pending, and commit."""
+    now = _utcnow()
+    guard = update(VoiceDraftRetraction).where(
+        col(VoiceDraftRetraction.id) == obligation_id,
+        col(VoiceDraftRetraction.state) == _PENDING,
+    )
+    if failure is None:
+        values: dict[str, object] = {
+            "state": _CONFIRMED,
+            "confirmed_at": now,
+            "safe_failure_code": None,
+            "next_attempt_at": None,
+            "updated_at": now,
+        }
+        _log_transition(obligation_id, _PENDING, _CONFIRMED, attempt_count=attempt_count)
+    else:
+        attempts = attempt_count + 1
+        values = {
+            "attempt_count": attempts,
+            "safe_failure_code": failure.value,
+            "next_attempt_at": now + retraction_backoff(attempts),
+            "updated_at": now,
+        }
+        _log_transition(
+            obligation_id,
+            _PENDING,
+            _PENDING,
+            attempt_count=attempts,
+            safe_failure_code=failure.value,
+        )
+    await session.execute(guard.values(**values))
+    await session.commit()
+
+
+async def retract_pending_voice_drafts(
+    session: AsyncSession,
+    client: CreekVaultVoiceDraftClient,
+    target: EntryRef,
+    *,
+    destination: str | None,
+    due_by: datetime | None = None,
+) -> bool:
+    """Attempt every owed withdrawal for one entry; ``True`` only when none remains.
+
+    Projects ids only -- never essay text -- and commits before the first
+    network call. A row bound to another destination is never dialled: it stays
+    pending as ``destination_changed``. ``due_by`` restricts the attempt to rows
+    whose backoff has elapsed (the background sweep); a request path passes
+    ``None`` and retries every owed row, because the writer just asked.
+    """
+    query = select(
+        VoiceDraftRetraction.id,
+        VoiceDraftRetraction.marginalia_id,
+        VoiceDraftRetraction.destination,
+        VoiceDraftRetraction.attempt_count,
+    ).where(
+        VoiceDraftRetraction.user_id == target.user_id,
+        VoiceDraftRetraction.journal_entry_id == target.entry_id,
+        VoiceDraftRetraction.state == _PENDING,
+    )
+    if due_by is not None:
+        query = query.where(_is_due(due_by))
+    rows = tuple((await session.execute(query.order_by(col(VoiceDraftRetraction.id)))).all())
+    await session.commit()
+    confirmed = True
+    for obligation_id, marginalia_id, recorded, attempt_count in rows:
+        failure: RetractionFailureCode | None
+        if recorded is not None and recorded != destination:
+            failure = RetractionFailureCode.DESTINATION_CHANGED
+        else:
+            failure = await retraction_failure(
+                client, owner_user_id=target.user_id, marginalia_id=marginalia_id
+            )
+        await _settle(
+            session,
+            obligation_id=obligation_id,
+            attempt_count=attempt_count,
+            failure=failure,
+        )
+        confirmed = confirmed and failure is None
+    return confirmed and not await _still_owed(session, target)
+
+
+async def _still_owed(session: AsyncSession, target: EntryRef) -> bool:
+    """Whether any withdrawal for this entry is still pending (e.g. one backed off)."""
+    result = await session.execute(
+        select(func.count())
+        .select_from(VoiceDraftRetraction)
+        .where(
+            VoiceDraftRetraction.user_id == target.user_id,
+            VoiceDraftRetraction.journal_entry_id == target.entry_id,
+            VoiceDraftRetraction.state == _PENDING,
+        )
+    )
+    owed = int(result.scalar_one())
+    await session.commit()
+    return owed > 0
+
+
+def _is_due(moment: datetime) -> ColumnElement[bool]:
+    """Match pending rows whose backoff has elapsed by ``moment`` (never-tried rows included)."""
+    next_attempt = col(VoiceDraftRetraction.next_attempt_at)
+    return or_(next_attempt.is_(None), next_attempt <= moment)
+
+
+class _JournalRetrySchedule:
+    """Per-process backoff for the background journal-copy retry.
+
+    The journal copy's durable marker is ``JournalEntry.vault_ref`` /
+    ``vault_destination``, which carries no attempt count. Rather than widen a
+    hot table, the sweep spaces its retries here with the same exponential
+    curve as the essay rows. A restart forgets the schedule, which costs one
+    early retry -- never a dropped obligation, because the marker is durable.
+    """
+
+    def __init__(self) -> None:
+        self._failures: dict[int, tuple[int, datetime]] = {}
+
+    def due(self, entry_id: int, moment: datetime) -> bool:
+        """Whether ``entry_id``'s backoff has elapsed by ``moment``."""
+        record = self._failures.get(entry_id)
+        return record is None or record[1] <= moment
+
+    def record(self, entry_id: int, moment: datetime, *, confirmed: bool) -> None:
+        """Forget a confirmed entry, or push a failed one's next attempt out."""
+        if confirmed:
+            self._failures.pop(entry_id, None)
+            return
+        attempts = self._failures.get(entry_id, (0, moment))[0] + 1
+        self._failures[entry_id] = (attempts, moment + retraction_backoff(attempts))
+
+
+_JOURNAL_RETRIES = _JournalRetrySchedule()
+
+
+def _journal_marker_present() -> ColumnElement[bool]:
+    return or_(
+        col(JournalEntry.vault_ref).is_not(None),
+        col(JournalEntry.vault_destination).is_not(None),
+    )
+
+
+async def _due_entries(session: AsyncSession, moment: datetime) -> tuple[tuple[int, int], ...]:
+    """Snapshot the (account, entry) pairs with work due, then end the transaction."""
+    essays = await session.execute(
+        select(VoiceDraftRetraction.user_id, VoiceDraftRetraction.journal_entry_id)
+        .where(VoiceDraftRetraction.state == _PENDING, _is_due(moment))
+        .order_by(col(VoiceDraftRetraction.id))
+        .limit(_SWEEP_BATCH)
+    )
+    pairs: dict[tuple[int, int], None] = dict.fromkeys(
+        (user_id, entry_id) for user_id, entry_id in essays.all()
+    )
+    journals = await session.execute(
+        select(JournalEntry.user_id, JournalEntry.id)
+        .where(
+            JournalEntry.classification == JournalClassification.INTIMATE,
+            col(JournalEntry.deleted_at).is_(None),
+            _journal_marker_present(),
+        )
+        .order_by(col(JournalEntry.id))
+        .limit(_SWEEP_BATCH)
+    )
+    for user_id, entry_id in journals.all():
+        if entry_id is not None and _JOURNAL_RETRIES.due(entry_id, moment):
+            pairs.setdefault((user_id, entry_id))
+    await session.commit()
+    return tuple(pairs)
+
+
+async def _log_backlog(session: AsyncSession, moment: datetime) -> None:
+    """Report how many withdrawals are owed and how old the oldest is, content-free."""
+    result = await session.execute(
+        select(func.count(), func.min(VoiceDraftRetraction.created_at)).where(
+            VoiceDraftRetraction.state == _PENDING
+        )
+    )
+    pending_count, oldest = result.one()
+    await session.commit()
+    if not pending_count or oldest is None:
+        return
+    _LOGGER.info(
+        _BACKLOG_EVENT,
+        extra={
+            "pending_count": int(pending_count),
+            "oldest_pending_age_seconds": int((moment - _aware(oldest)).total_seconds()),
+        },
+    )
+
+
+async def _retry_journal_copy(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    *,
+    entry_id: int,
+    destination: str | None,
+    moment: datetime,
+) -> None:
+    """Retry an Intimate entry's journal withdrawal when its marker is still held."""
+    result = await session.execute(
+        select(JournalEntry).where(
+            JournalEntry.id == entry_id,
+            JournalEntry.classification == JournalClassification.INTIMATE,
+            col(JournalEntry.deleted_at).is_(None),
+            _journal_marker_present(),
+        )
+    )
+    entry = result.scalars().first()
+    if entry is None or not _JOURNAL_RETRIES.due(entry_id, moment):
+        await session.commit()
+        return
+    confirmed = await withdraw_journal_copy(session, entry, client, destination=destination)
+    _JOURNAL_RETRIES.record(entry_id, moment, confirmed=confirmed)
+
+
+@dataclass(frozen=True)
+class _SweepPass:
+    """What one background pass resolves each account through, and its clock."""
+
+    resolve_client: VaultClientResolver
+    resolve_destination: DestinationResolver
+    moment: datetime
+
+
+async def _resume_entry(session: AsyncSession, sweep: _SweepPass, target: EntryRef) -> None:
+    """Retry one entry's owed withdrawals under the same locks as the request paths.
+
+    Account barrier outermost, entry serializer innermost -- the fixed nesting
+    everywhere the two meet -- so a concurrent PATCH, DELETE, mirror, or
+    another worker's sweep runs strictly before or after this, never between a
+    read and its settle. An erased (or erasing) account answers 401 from
+    :func:`ensure_account_live`; that is a skip for this one account, never an
+    exception that would end the shared recovery task.
+    """
+    try:
+        async with (
+            hold_account(session, target.user_id),
+            voice_draft_privacy.hold(session, target.entry_id),
+        ):
+            await ensure_account_live(session, target.user_id)
+            client = await sweep.resolve_client(session, target.user_id)
+            destination = await sweep.resolve_destination(session, target.user_id)
+            await retract_pending_voice_drafts(
+                session, client, target, destination=destination, due_by=sweep.moment
+            )
+            await _retry_journal_copy(
+                session,
+                client,
+                entry_id=target.entry_id,
+                destination=destination,
+                moment=sweep.moment,
+            )
+    except HTTPException:
+        _LOGGER.info(_SWEEP_SKIPPED_EVENT, extra={"reason": "account_unavailable"})
+
+
+async def resume_voice_draft_retractions(
+    factory: async_sessionmaker[AsyncSession],
+    resolve_client: VaultClientResolver,
+    resolve_destination: DestinationResolver,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Retry owed withdrawals in the background, without any user action.
+
+    Run from the application's recovery loop. Each pass snapshots a bounded
+    batch of due work in one short transaction, then handles each entry on its
+    own session so one slow vault holds no pooled connection for the others.
+    """
+    sweep = _SweepPass(
+        resolve_client=resolve_client,
+        resolve_destination=resolve_destination,
+        moment=now if now is not None else _utcnow(),
+    )
+    async with factory() as session:
+        targets = await _due_entries(session, sweep.moment)
+        await _log_backlog(session, sweep.moment)
+    for user_id, entry_id in targets:
+        async with factory() as session:
+            await _resume_entry(session, sweep, EntryRef(user_id=user_id, entry_id=entry_id))
