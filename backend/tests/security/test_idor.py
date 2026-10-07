@@ -66,6 +66,7 @@ from models.stage_progress import StageProgress
 from models.user import User
 from models.user_ui_flags import UserUiFlags
 from security.idempotency import hash_idem_key
+from services.journal_retention import PURGE_MIN_RETENTION_DAYS
 from tests.helpers.feedback_triage import (
     DRAFT_BODY,
     make_account,
@@ -2309,14 +2310,14 @@ async def test_admin_purge_rejects_non_admin_and_spares_rows(
     await db_session.execute(
         update(JournalEntry)
         .where(col(JournalEntry.id) == entry_id)
-        .values(deleted_at=datetime.now(UTC) - timedelta(days=30))
+        .values(deleted_at=datetime.now(UTC) - timedelta(days=PURGE_MIN_RETENTION_DAYS + 30))
     )
     await db_session.commit()
     attacker_headers, _ = await _signup(async_client, "purgeattacker")
 
     resp = await async_client.post(
         "/admin/maintenance/journal-entries",
-        params={"older_than_days": 1},
+        params={"older_than_days": PURGE_MIN_RETENTION_DAYS},
         headers=attacker_headers,
     )
 

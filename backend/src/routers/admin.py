@@ -60,7 +60,7 @@ from schemas.pagination import count_query_total, page_has_more, paginate_query
 from schemas.vault_activation import VaultTeardownStatus
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 from services.feedback import delete_expired_feedback_reports
-from services.journal_retention import purge_soft_deleted_entries
+from services.journal_retention import PURGE_MIN_RETENTION_DAYS, purge_soft_deleted_entries
 from services.llm_cost_alerts import charged_generation_cost_report
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
@@ -459,14 +459,16 @@ async def cleanup_feedback_reports(
 async def purge_journal_entries(
     session: Annotated[AsyncSession, Depends(get_session)],
     admin: Annotated[User, Depends(require_admin)],
-    older_than_days: Annotated[int, Query(ge=_MIN_RETENTION_DAYS, le=_MAX_RETENTION_DAYS)],
+    older_than_days: Annotated[int, Query(ge=PURGE_MIN_RETENTION_DAYS, le=_MAX_RETENTION_DAYS)],
 ) -> JournalEntryPurgeResult:
     """Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.
 
     Removes their margin notes, promoted passages, completion suggestions and
     corpus fragments, and clears the metering link, as ``domain.retention``
     derives from the schema. Entries still owing a remote withdrawal are kept
-    and counted as ``blocked``. The window is required -- there is no default,
+    and counted as ``blocked``. The window is at least the longest backup
+    retention, so no live backup can hold a purged entry undeleted. It is
+    required -- there is no default,
     because how long a deleted page is kept is the owner's promise to make
     (#3063) -- and nothing schedules this route.
     """

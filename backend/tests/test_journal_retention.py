@@ -30,17 +30,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col
 
 from domain.retention import PurgeAction, entry_dependants
+from domain.retention_stores import OFFHOST_DUMP_RETENTION_DAYS, RAILWAY_PLATFORM_BACKUP_DAYS
 from models.journal_entry import JournalEntry
 from models.user import User
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
+from services.journal_retention import PURGE_MIN_RETENTION_DAYS, purge_soft_deleted_entries
 from tests.helpers.account_seed import SeedAccount, seed_one_row_everywhere, seed_shared_tables
 from tests.helpers.telemetry_canaries import SHORT_CANARY, assert_no_canary
 
 _PURGE = "/admin/maintenance/journal-entries"
 _PASSWORD = "securepassword123"  # pragma: allowlist secret
-_WINDOW_DAYS = 1
-_OLD = timedelta(days=3)
-_RECENT = timedelta(hours=12)
+# The shortest window the purge accepts: the longest backup's lifetime.
+_WINDOW_DAYS = PURGE_MIN_RETENTION_DAYS
+_OLD = timedelta(days=PURGE_MIN_RETENTION_DAYS + 2)
+_RECENT = timedelta(days=PURGE_MIN_RETENTION_DAYS - 1)
 _LOG_EVENT = "journalentry_purge"
 
 
@@ -288,3 +291,32 @@ async def test_purge_log_is_content_free(
     assert events[0].__dict__["deleted"] == 1
     for record in caplog.records:
         assert_no_canary(f"{record.getMessage()} {record.__dict__!r}", SHORT_CANARY)
+
+
+def test_purge_floor_tracks_the_longest_backup() -> None:
+    """The floor is the longest backup lifetime the inventory states, never a literal."""
+    assert (
+        max(RAILWAY_PLATFORM_BACKUP_DAYS, OFFHOST_DUMP_RETENTION_DAYS) == PURGE_MIN_RETENTION_DAYS
+    )
+
+
+@pytest.mark.asyncio
+async def test_purge_refuses_a_window_shorter_than_the_longest_backup(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A window a live backup could outlast is refused by the service and by the route.
+
+    A purged entry has no tombstone left, so it must only ever be purged once
+    every backup that could still hold it live has expired.
+    """
+    with pytest.raises(ValueError, match="backup"):
+        await purge_soft_deleted_entries(db_session, older_than_days=PURGE_MIN_RETENTION_DAYS - 1)
+    headers = await _admin(async_client, db_session)
+    resp = await async_client.post(
+        _PURGE, params={"older_than_days": PURGE_MIN_RETENTION_DAYS - 1}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    resp = await async_client.post(
+        _PURGE, params={"older_than_days": PURGE_MIN_RETENTION_DAYS}, headers=headers
+    )
+    assert resp.status_code == HTTPStatus.OK

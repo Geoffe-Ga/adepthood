@@ -27,7 +27,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlmodel import col
 
@@ -44,6 +44,7 @@ from services.account_deletion import (
     DeletionReceipt,
     ErasurePolicyGapError,
 )
+from services.journal_retention import PURGE_MIN_RETENTION_DAYS, purge_soft_deleted_entries
 from services.restore_suppression import (
     RESTORE_ID_ENV_VAR,
     RESTORE_SUPPRESSION_REQUIRED_ENV_VAR,
@@ -505,3 +506,50 @@ def test_tombstone_file_round_trips_and_rejects_junk() -> None:
     for junk in junk_documents:
         with pytest.raises(restore_suppression.MalformedTombstoneError):
             TombstoneSet.from_json(junk)
+
+
+@pytest.mark.asyncio
+async def test_purge_at_the_floor_leaves_every_live_backup_holding_the_entry_deleted(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """A purged entry needs no tombstone, because no live backup holds it undeleted.
+
+    The purge refuses any window shorter than the longest backup lifetime. So
+    when it removes an entry soft-deleted more than that long ago, every backup
+    still alive was taken after the soft delete and holds the row *deleted*.
+    The snapshot below stands for the oldest such backup: taken after the
+    delete, restored after the purge. The page stays gone without any
+    tombstone to reapply.
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    alice = await _signup(client, "alice")
+    gone = await _write(client, alice, "the page alice deleted")
+    kept = await _write(client, alice, "the page alice kept")
+    resp = await client.delete(f"/journal/{gone}", headers=alice.headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    async with factory() as session:
+        await session.execute(
+            update(JournalEntry)
+            .where(col(JournalEntry.id) == gone)
+            .values(deleted_at=datetime.now(UTC) - timedelta(days=PURGE_MIN_RETENTION_DAYS + 1))
+        )
+        await session.commit()
+    oldest_live_backup = await _snapshot(factory, tmp_path)
+
+    async with factory() as session:
+        result = await purge_soft_deleted_entries(session, older_than_days=PURGE_MIN_RETENTION_DAYS)
+    assert result.deleted == 1
+    await _restore(factory, oldest_live_backup)
+
+    assert await _entry_count(factory, alice.user_id) == 2  # the row is back...
+    resp = await client.get(f"/journal/{gone}", headers=alice.headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND  # ...but still deleted
+    listed = {
+        item["id"]
+        for item in (await client.get("/journal/", headers=alice.headers)).json()["items"]
+    }
+    assert listed == {kept}
+    export = (await client.get("/users/me/export", headers=alice.headers)).json()
+    assert {entry["id"] for entry in export["records"]["journal_entries"]} == {kept}

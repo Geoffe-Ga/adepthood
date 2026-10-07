@@ -30,6 +30,12 @@ RAILWAY_PLATFORM_BACKUP_DAYS: Final = 6
 #: The encrypted off-host ``pg_dump`` is kept this long (DEPLOYMENT.md).
 OFFHOST_DUMP_RETENTION_DAYS: Final = 90
 
+#: The longest any backup of the database lives. Anything soft-deleted longer
+#: ago than this is held *deleted* by every backup still alive.
+LONGEST_BACKUP_RETENTION_DAYS: Final = max(
+    RAILWAY_PLATFORM_BACKUP_DAYS, OFFHOST_DUMP_RETENTION_DAYS
+)
+
 #: The invalid-licence throttle evicts a key once its hourly window rolls off.
 INVALID_LICENSE_THROTTLE_HOURS: Final = 1
 

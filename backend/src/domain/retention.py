@@ -257,8 +257,9 @@ RETENTION: Mapping[str, RetentionRule] = {
             trigger="soft delete",
             rationale="A soft-deleted entry (BUG-JOURNAL-007) is hidden from every read "
             "path but kept, with its derivatives, until account deletion or until an "
-            "operator runs the purge. The purge has no default window and nothing "
-            "schedules it; both are owner decisions (#3063 AC15, AC18).",
+            "operator runs the purge. The purge refuses a window shorter than the "
+            "longest backup retention, has no default window, and nothing schedules "
+            "it; both are owner decisions (#3063 AC15, AC18).",
             ratified=False,
         ),
     ),
