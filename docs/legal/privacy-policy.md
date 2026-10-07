@@ -292,11 +292,13 @@ checkout, which Adepthood never sees; Adepthood sends it a licence key to
 verify and receives back the sale record it keeps.
 
 **Sentry**, if — and only if — the deployment configures it. It is how a
-crash becomes visible to the operator instead of vanishing. Nothing is
-captured automatically: a report is made only when the server meets an error
-it did not handle, and each one is rebuilt from a short list of fields before
-it is sent. It names the release and environment that failed, a request id,
-the request's method and route — the route's pattern, such as
+crash becomes visible to the operator instead of vanishing. Reports can come
+from two places, and neither captures anything automatically.
+
+From the server, a report is made when the server meets an error it did not
+handle, and each one is rebuilt from a short list of fields before it is sent.
+It names the release and environment that failed, a request id, the
+request's method and route — the route's pattern, such as
 `/journal/{entry_id}`, not the address you visited — and, for each exception,
 its type, a fixed error code, and the file, function and line of each stack
 frame. The exception's message is never sent: the fixed error code stands in
@@ -304,8 +306,19 @@ for it, and that code is written into the program, never taken from anything
 you typed. Nor is anything else sent — not the body or headers of the
 request, not log records, not the source lines or local variables of any
 frame. Credential-shaped text in what is left is redacted as a second,
-separate lock. A deployment that sets no Sentry credentials sends nothing
-anywhere and logs the same crash locally.
+separate lock.
+
+From the app, if it was built with a Sentry address, a crash that reaches one
+of the app's error screens is reported straight from your device. That report
+names the error's type, the component stack — the chain of screen components
+the crash happened inside — and which error screen caught it, plus the app's
+release and environment. The error's message is withheld here too. Because
+the report is sent from your device, Sentry also sees the network address it
+came from and the ordinary details any connection carries, such as the
+browser's or app's version string.
+
+A deployment that sets no Sentry credentials, and an app built without a
+Sentry address, sends nothing anywhere and logs the same crash locally.
 
 **An email relay (Resend, or the deployment's own mail server)**, when the
 deployment is configured to send mail. It carries password-reset messages to
