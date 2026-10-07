@@ -35,13 +35,24 @@ from tests.support.outbound_boundary import _CLIENT_FACTORIES, _DIAL_LEAVES
 
 SRC_ROOT: Final = Path(__file__).resolve().parents[2] / "src"
 
+#: The module-level one-shot request verbs httpx and requests both expose.
+_HTTP_VERBS: Final = ("get", "post", "put", "patch", "delete", "head", "options")
+
 #: Fully-qualified callables that open (or configure the opening of) a connection.
 OUTBOUND_CONSTRUCTORS: Final = frozenset(
     {
         *(
             f"{lib}.{name}"
             for lib in ("httpx", "httpx2")
-            for name in ("Client", "AsyncClient", "HTTPTransport", "AsyncHTTPTransport")
+            for name in (
+                "Client",
+                "AsyncClient",
+                "HTTPTransport",
+                "AsyncHTTPTransport",
+                *_HTTP_VERBS,
+                "request",
+                "stream",
+            )
         ),
         "openai.OpenAI",
         "openai.AsyncOpenAI",
@@ -62,15 +73,15 @@ OUTBOUND_CONSTRUCTORS: Final = frozenset(
         "socket.socket",
         "asyncio.open_connection",
         "aiohttp.ClientSession",
-        "requests.get",
-        "requests.post",
-        "requests.request",
+        *(f"requests.{verb}" for verb in (*_HTTP_VERBS, "request")),
         "requests.Session",
     }
 )
 
 #: Attribute calls that dial whatever their receiver is (an event loop, a socket module).
-OUTBOUND_ATTRIBUTES: Final = frozenset({"getaddrinfo"})
+OUTBOUND_ATTRIBUTES: Final = frozenset(
+    {"getaddrinfo", "create_connection", "sock_connect", "open_connection"}
+)
 
 _URL_SCHEMES: Final = ("https://", "http://")
 _LOOPBACK_HOSTS: Final = frozenset({None, "", "localhost", "127.0.0.1", "::1"})

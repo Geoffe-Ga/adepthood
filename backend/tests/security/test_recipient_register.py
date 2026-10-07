@@ -22,6 +22,7 @@ import dataclasses
 import re
 import shutil
 import sys
+from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
 from types import MappingProxyType
@@ -31,6 +32,7 @@ import pytest
 
 import sentry
 from privacy.recipients import (
+    OPERATOR_ARRANGED,
     PROVIDER_BASE_URL_ENV_VARS,
     PROVIDER_RECIPIENTS,
     RECIPIENTS,
@@ -260,6 +262,117 @@ def test_sweep_resolves_an_import_alias(copied_src: Path) -> None:
         target.unlink()
 
     assert gaps.unclaimed_sites == frozenset({DialSite("planted.alias", "relay", "smtplib.SMTP")})
+
+
+_HTTP_VERBS = ("get", "post", "put", "patch", "delete", "head", "options")
+_ENV_URL = 'os.environ["COLLECTOR_URL"]'
+_ENV_HOST = 'os.environ["COLLECTOR_HOST"]'
+
+# Every dial shape the sweep must see, each fed a URL from the environment so no
+# literal host can catch it instead: (imports, call, constructor the sweep reports).
+PLANTED_SHAPES: tuple[tuple[str, str, str], ...] = (
+    *(
+        (f"import {lib}", f"{lib}.{verb}({_ENV_URL}, json=body)", f"{lib}.{verb}")
+        for lib in ("httpx", "httpx2")
+        for verb in _HTTP_VERBS
+    ),
+    *(
+        (f"import {lib}", f'{lib}.{verb}("POST", {_ENV_URL}, json=body)', f"{lib}.{verb}")
+        for lib in ("httpx", "httpx2")
+        for verb in ("request", "stream")
+    ),
+    *(
+        ("import requests", f"requests.{verb}({_ENV_URL}, json=body)", f"requests.{verb}")
+        for verb in (*_HTTP_VERBS, "request")
+    ),
+    ("import requests", "requests.Session()", "requests.Session"),
+    ("import httpx", "httpx.AsyncClient()", "httpx.AsyncClient"),
+    ("import asyncio", f"asyncio.open_connection({_ENV_HOST}, 443)", "asyncio.open_connection"),
+    ("import socket", f"socket.create_connection(({_ENV_HOST}, 443))", "socket.create_connection"),
+    (
+        "import asyncio",
+        f"asyncio.get_running_loop().create_connection(object, {_ENV_HOST}, 443)",
+        "*.create_connection",
+    ),
+    ("import asyncio", f"loop.sock_connect(body, ({_ENV_HOST}, 443))", "*.sock_connect"),
+    ("import asyncio", f"streams.open_connection({_ENV_HOST}, 443)", "*.open_connection"),
+    ("import asyncio", f"loop.getaddrinfo({_ENV_HOST}, None)", "*.getaddrinfo"),
+)
+
+
+@pytest.mark.parametrize(
+    ("imports", "call", "constructor"), PLANTED_SHAPES, ids=[c for _, _, c in PLANTED_SHAPES]
+)
+def test_sweep_names_every_dial_shape_without_a_literal_host(
+    imports: str, call: str, constructor: str, copied_src: Path
+) -> None:
+    """A dial whose destination comes from the environment is still a dial.
+
+    No literal host stands in for these, so the constructor table is the only
+    line of defence: narrowing it must turn this red.
+    """
+    source = f"import os\n{imports}\nasync def leak(body, loop=None, streams=None):\n    {call}\n"
+    target = _plant(copied_src, "shape.py", source)
+    try:
+        gaps = register_gaps(sweep(copied_src), RECIPIENTS, egress_leaves())
+    finally:
+        target.unlink()
+
+    assert gaps.unclaimed_sites == frozenset({DialSite("planted.shape", "leak", constructor)})
+    assert gaps.unclaimed_hosts == frozenset()
+
+
+def _with_row(row: Recipient) -> dict[RecipientId, Recipient]:
+    register = dict(RECIPIENTS)
+    register[row.id] = row
+    return register
+
+
+def test_a_row_claiming_a_site_that_no_longer_exists_is_stale() -> None:
+    """A dial renamed away leaves its old claim behind, and that claim is named."""
+    gone = DialSite("services.gone", "f", "httpx.AsyncClient")
+    gumroad = RECIPIENTS[RecipientId.GUMROAD]
+    register = _with_row(dataclasses.replace(gumroad, dial_sites=gumroad.dial_sites | {gone}))
+
+    gaps = register_gaps(sweep(SRC_ROOT), register, egress_leaves())
+
+    assert gaps == RegisterGaps(stale_sites=frozenset({gone}))
+
+
+def test_a_host_no_source_names_is_stale() -> None:
+    """A registered host the code no longer mentions is a row nobody re-checked."""
+    gumroad = RECIPIENTS[RecipientId.GUMROAD]
+    register = _with_row(dataclasses.replace(gumroad, hosts=gumroad.hosts | {"gone.example"}))
+
+    gaps = register_gaps(sweep(SRC_ROOT), register, egress_leaves())
+
+    assert gaps == RegisterGaps(stale_hosts=frozenset({"gone.example"}))
+
+
+def test_two_rows_claiming_one_host_are_reported() -> None:
+    """A host is one party's; two rows owning it means one of them is wrong."""
+    resend = RECIPIENTS[RecipientId.RESEND]
+    register = _with_row(dataclasses.replace(resend, hosts=resend.hosts | {"api.gumroad.com"}))
+
+    gaps = register_gaps(sweep(SRC_ROOT), register, egress_leaves())
+
+    assert gaps == RegisterGaps(multiply_claimed_hosts=frozenset({"api.gumroad.com"}))
+
+
+def test_an_egress_leaf_no_row_owns_is_unclaimed() -> None:
+    """A new instrumented leaf without a register owner is a recipient nobody listed."""
+    gaps = register_gaps(sweep(SRC_ROOT), RECIPIENTS, egress_leaves() | {("m", "f")})
+
+    assert gaps == RegisterGaps(unclaimed_leaves=frozenset({("m", "f")}))
+
+
+def test_a_leaf_the_boundary_suites_dropped_is_stale() -> None:
+    """A row naming a leaf nothing instruments any more has lost its evidence."""
+    dropped = ("integrations.gumroad", "verify_license")
+
+    gaps = register_gaps(sweep(SRC_ROOT), RECIPIENTS, egress_leaves() - {dropped})
+
+    assert gaps == RegisterGaps(stale_leaves=frozenset({dropped}))
 
 
 def test_a_duplicate_claim_is_reported() -> None:
@@ -532,6 +645,86 @@ def test_processor_purpose_claim_also_needs_non_content_purposes() -> None:
 
     assert c06.blocks == (Block(RecipientId.SENTRY, BlockReason.UNVERIFIED_PURPOSE),)
     assert c04.allowed is True
+
+
+def _attested_where(keep: Callable[[Scope], bool]) -> dict[RecipientId, Recipient]:
+    """Attest exactly the scopes ``keep`` selects; leave every other at UNVERIFIED."""
+    return {
+        rid: dataclasses.replace(
+            r,
+            scopes=tuple(
+                dataclasses.replace(s, owner=_attested(s.owner)) if keep(s) else s for s in r.scopes
+            ),
+        )
+        for rid, r in RECIPIENTS.items()
+    }
+
+
+@pytest.mark.parametrize("claim", list(ClaimId))
+def test_claim_allowed_with_only_operator_arranged_scopes_attested(claim: ClaimId) -> None:
+    """BYOK and test-seam scopes are not the operator's to attest, and never block.
+
+    Were they judged, the gate could never open: the operator cannot attest a
+    user's own vendor account.
+    """
+    register = _attested_where(lambda scope: scope.kind in OPERATOR_ARRANGED)
+    unattested = [
+        s
+        for r in register.values()
+        for s in r.scopes
+        if s.kind in {ScopeKind.USER_OWNED_ACCOUNT, ScopeKind.TEST_SEAM}
+    ]
+    assert unattested
+    assert all(s.owner.training_setting == UNVERIFIED for s in unattested)
+
+    readiness = claim_ready(
+        claim, register, provider_models=_shipped_models(), today=TODAY, byok_enabled=False
+    )
+
+    assert readiness.blocks == ()
+    assert readiness.allowed is True
+
+
+@pytest.mark.parametrize("claim", [ClaimId.C04, ClaimId.C05])
+def test_non_content_terms_do_not_block_content_claims(claim: ClaimId) -> None:
+    """Training and retention terms matter where content flows, not on Sentry or Gumroad."""
+    register = _fully_attested()
+    for rid in (RecipientId.SENTRY, RecipientId.GUMROAD):
+        row = register[rid]
+        register[rid] = dataclasses.replace(
+            row,
+            scopes=tuple(
+                dataclasses.replace(
+                    s,
+                    owner=dataclasses.replace(
+                        s.owner,
+                        training_setting=UNVERIFIED,
+                        retention=UNVERIFIED,
+                        agreement_ref=UNVERIFIED,
+                    ),
+                )
+                for s in row.scopes
+            ),
+        )
+
+    readiness = claim_ready(
+        claim, register, provider_models=_shipped_models(), today=TODAY, byok_enabled=False
+    )
+
+    assert readiness.blocks == ()
+
+
+def test_an_agreement_expiring_today_is_still_current() -> None:
+    """Expiry blocks from the day after the agreement's last day, not on it."""
+    readiness = claim_ready(
+        ClaimId.C04,
+        _fully_attested(expires=TODAY),
+        provider_models=_shipped_models(),
+        today=TODAY,
+        byok_enabled=False,
+    )
+
+    assert readiness.allowed is True
 
 
 def test_unknown_claim_raises() -> None:
