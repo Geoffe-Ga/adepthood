@@ -525,19 +525,19 @@ def test_tombstone_file_round_trips_and_rejects_junk() -> None:
 
 
 @pytest.mark.asyncio
-async def test_purge_at_the_floor_leaves_every_live_backup_holding_the_entry_deleted(
+async def test_restoring_a_post_delete_backup_after_a_purge_keeps_the_page_hidden(
     concurrent_async_client: AsyncClient,
     concurrent_session_factory: async_sessionmaker[AsyncSession],
     tmp_path: Path,
 ) -> None:
-    """A purged entry needs no tombstone, because no live backup holds it undeleted.
+    """Smoke test: a backup taken after the soft delete restores the page still deleted.
 
-    The purge refuses any window shorter than the longest backup lifetime. So
-    when it removes an entry soft-deleted more than that long ago, every backup
-    still alive was taken after the soft delete and holds the row *deleted*.
-    The snapshot below stands for the oldest such backup: taken after the
-    delete, restored after the purge. The page stays gone without any
-    tombstone to reapply.
+    This does not prove the purge floor. The snapshot is taken after the
+    delete, so it would pass with any window. The floor's proof is the
+    property test in ``tests/test_journal_retention.py``: every backup leg's
+    oldest live copy is younger than the floor. This test only pins the other
+    half of the argument: a restored row that carries its ``deleted_at`` stamp
+    stays out of every read path once the live entry has been purged.
     """
     client, factory = concurrent_async_client, concurrent_session_factory
     alice = await _signup(client, "alice")
