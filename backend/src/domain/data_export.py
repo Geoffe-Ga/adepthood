@@ -274,9 +274,9 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Every check-in the account logged — the raw material of every streak.",
     ),
     "goalcompletionspend": Omitted(
-        "A hashed transport-retry receipt. It prevents one check-in operation "
-        "from being applied twice but is not content the account authored; the "
-        "check-in itself is exported from goalcompletion.",
+        "A receipt that stops one check-in from being counted twice if the app "
+        "has to retry. It holds nothing you wrote; the check-in itself is in "
+        "goal_completions.",
     ),
     "goalgroup": _include(
         "goal_groups",
@@ -296,7 +296,7 @@ MANIFEST: Mapping[str, ExportRule] = {
     ),
     "invitationsignal": Omitted(
         "Which invitations the interface showed and how they were dismissed. "
-        "Interaction telemetry about the app, not writing by the account.",
+        "Bookkeeping about what the app showed, not anything you wrote.",
     ),
     "journalentry": _include(
         "journal_entries",
@@ -314,8 +314,7 @@ MANIFEST: Mapping[str, ExportRule] = {
         "receipt itself is already omitted.",
     ),
     "llmusagelog": Omitted(
-        "Per-request AI metering: token counts and prices. Operational "
-        "accounting about the account's usage, not anything it wrote.",
+        "A tally of what each AI request cost. Bookkeeping about usage, not anything you wrote.",
     ),
     "loginattempt": Omitted(
         "Sign-in attempts and the IP addresses they came from. Security "

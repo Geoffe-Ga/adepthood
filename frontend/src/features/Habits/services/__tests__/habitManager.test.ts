@@ -2801,7 +2801,7 @@ describe('habitManager', () => {
       const toast = habitManager.buildLogUnitToast(ctx);
 
       expect(toast).not.toBeNull();
-      expect(toast!.message).toMatch(/Low Goal achieved/i);
+      expect(toast!.message).toMatch(/Low Goal met/i);
     });
 
     it('buildLogUnitToast returns a confirmation toast when no milestone fires', () => {
@@ -3891,7 +3891,7 @@ describe('habitManager', () => {
 
       const toast = habitManager.buildLogUnitToast(ctx);
 
-      expect(toast.message).toMatch(/Clear Goal achieved/i);
+      expect(toast.message).toMatch(/Clear Goal met/i);
     });
 
     it('returns the Stretch Goal milestone toast when the log crosses the stretch threshold', () => {
@@ -3931,7 +3931,7 @@ describe('habitManager', () => {
         const toast = habitManager.buildLogUnitToast(ctx);
 
         // Monday + today = 2 of the clear tier's 2 this week.
-        expect(toast.message).toMatch(/Clear Goal achieved/i);
+        expect(toast.message).toMatch(/Clear Goal met/i);
       } finally {
         jest.useRealTimers();
       }
@@ -3964,7 +3964,7 @@ describe('habitManager', () => {
         const toast = habitManager.buildLogUnitToast(ctx);
 
         // 2 March sessions meet the clear tier; February's 5 do not count.
-        expect(toast.message).toMatch(/Clear Goal achieved/i);
+        expect(toast.message).toMatch(/Clear Goal met/i);
       } finally {
         jest.useRealTimers();
       }

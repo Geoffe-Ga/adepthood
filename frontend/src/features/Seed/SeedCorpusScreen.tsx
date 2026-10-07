@@ -70,7 +70,7 @@ import { vaultComesFirst } from '@/features/Settings/vaultConnectionState';
 import type { RootStackParamList } from '@/navigation/RootStack';
 
 /** Sits above the tier control, so the choice reads as a choice. */
-const TIER_PROMPT = 'Everything in this batch is stored at the tier you pick here.';
+const TIER_PROMPT = 'Everything you choose now is kept at the privacy level you pick here.';
 
 /** One document's row: its own name, and the one true thing about it. */
 const SeedItemRow = ({ item }: { item: SeedItem }): React.JSX.Element => {
@@ -237,7 +237,7 @@ interface SeedCorpusBodyProps {
 /** The screen's heading, the same whether or not there is a picker beneath it. */
 const SeedHeader = (): React.JSX.Element => (
   <ScreenHeader
-    eyebrow="Your corpus"
+    eyebrow="Your writing"
     title="Bring in what you've written"
     lead={SEED_EMPTY_INVITATION}
   />

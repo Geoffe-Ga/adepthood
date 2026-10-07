@@ -531,7 +531,7 @@ def test_the_two_labelings_of_a_position_may_differ_but_the_colour_may_not() -> 
     F5      Achievism                   Intellectual Understanding / Achievist
     F6      Pluralism                   Embodied Understanding / Pluralist
     F7      Integration                 Systems Wisdom / Integrative
-    F8      True Self / Transcendence   True Self Connection / Nondual
+    F8      True Self / Transcendence   True Self Connection / True Self Connection
     ======  ==========================  ============================
 
     Those are the same four positions under two vocabularies, not eight

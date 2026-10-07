@@ -702,8 +702,18 @@ describe('MapScreen', () => {
     'Yes-And-Ness': 500,
   };
   const TARGET_ROW_LABEL: MapRowLabel = 'Yes-And-Ness';
-  const CELL_LAYOUT_Y = 0;
+  /** The last band's height; every other band ends where the next begins. */
+  const LAST_ROW_HEIGHT = 100;
+  const rowHeight = (label: MapRowLabel): number => {
+    const next = MAP_ROW_LABELS[MAP_ROW_LABELS.indexOf(label) + 1];
+    return next === undefined ? LAST_ROW_HEIGHT : ROW_Y_BY_LABEL[next] - ROW_Y_BY_LABEL[label];
+  };
   const CELL_LAYOUT_HEIGHT = 40;
+  /** Stages 8..1 pair up two to a band, the odd stage stacked under the even one. */
+  const PAIRED_STAGE_MAX = 8;
+  /** A band's rows stack: the lower stage's row starts where the upper one ends. */
+  const cellLayoutY = (stage: number): number =>
+    stage <= PAIRED_STAGE_MAX && stage % 2 === 1 ? CELL_LAYOUT_HEIGHT : 0;
   const CELL_LAYOUT_WIDTH = 100;
   const NOMINAL_BAND_MIDPOINT = 0.5;
   const MEASURED_TARGET_STAGE = 1;
@@ -731,7 +741,7 @@ describe('MapScreen', () => {
               x: 0,
               y: ROW_Y_BY_LABEL[label],
               width: WAVE_LAYOUT_WIDTH,
-              height: CELL_LAYOUT_HEIGHT,
+              height: rowHeight(label),
             },
           },
         });
@@ -741,7 +751,7 @@ describe('MapScreen', () => {
           nativeEvent: {
             layout: {
               x: 0,
-              y: CELL_LAYOUT_Y,
+              y: cellLayoutY(stage),
               width: CELL_LAYOUT_WIDTH,
               height: CELL_LAYOUT_HEIGHT,
             },
@@ -752,7 +762,10 @@ describe('MapScreen', () => {
 
     const arrow = tree.root.findByProps({ testID: `wave-arrow-${MEASURED_TARGET_STAGE}` });
     const midY = parseArrowMidY(arrow.props.points as string);
-    const measuredCenterY = ROW_Y_BY_LABEL[TARGET_ROW_LABEL] + CELL_LAYOUT_HEIGHT / 2;
+    const measuredCenterY =
+      ROW_Y_BY_LABEL[TARGET_ROW_LABEL] +
+      cellLayoutY(MEASURED_TARGET_STAGE) +
+      CELL_LAYOUT_HEIGHT / 2;
 
     expect(midY).toBeCloseTo(measuredCenterY);
     expect(midY).not.toBeCloseTo(nominalPixelY(MEASURED_TARGET_STAGE, WAVE_LAYOUT_HEIGHT));
@@ -1011,13 +1024,13 @@ describe('MapScreen center-cell overlay layout', () => {
 
     // Stage 8 hugs the right corner: the countdown, then the padlock at the edge.
     const right = textOrder('stage-hotspot-8-1');
-    const rightCountdown = right.findIndex((text) => text.startsWith('Unlocks'));
+    const rightCountdown = right.findIndex((text) => text.startsWith('Opens'));
     expect(rightCountdown).toBeGreaterThanOrEqual(0);
     expect(rightCountdown).toBeLessThan(right.indexOf('🔒'));
     // Stage 7 hugs the left corner: the padlock at the edge, then the countdown.
     const left = textOrder('stage-hotspot-7-1');
     expect(left.indexOf('🔒')).toBeGreaterThanOrEqual(0);
-    expect(left.indexOf('🔒')).toBeLessThan(left.findIndex((text) => text.startsWith('Unlocks')));
+    expect(left.indexOf('🔒')).toBeLessThan(left.findIndex((text) => text.startsWith('Opens')));
   });
 
   it('groups stage 1 (Agency) label in the left corner, unlocked with no countdown', () => {

@@ -117,7 +117,7 @@ interface AspectChipProps {
  * Deliberately not a {@link RadioOption}: that primitive's adoption criteria
  * exclude an option whose look carries a runtime-injected colour, and say to
  * keep such a control local rather than bend it. Its a11y contract is mirrored
- * exactly — the visible persona is the accessible name, and selection is
+ * exactly — the visible Aspect name is the accessible name, and selection is
  * announced through ``accessibilityState.selected``.
  *
  * Chosen chips take the stage's own fill with a foreground the shared resolver

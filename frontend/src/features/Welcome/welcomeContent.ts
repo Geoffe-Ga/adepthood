@@ -49,7 +49,7 @@ export const WELCOME_PANELS: readonly WelcomePanel[] = [
   {
     eyebrow: 'A week, lived',
     title: 'How a week works',
-    body: 'Plant a small habit, sit with a practice, read the week’s course, and reflect in your journal. The map shows how far you have come.',
+    body: 'Plant a small habit, sit with a practice, read the week’s course, and reflect in your journal. The map shows which capacities are full right now and which are thin.',
   },
   {
     eyebrow: 'Ready',

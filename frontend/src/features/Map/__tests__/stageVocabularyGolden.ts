@@ -99,7 +99,7 @@ export const GOLDEN_STAGES: Readonly<Record<number, GoldenStage>> = {
   },
   8: {
     persona: 'True Self Embodier',
-    descriptor: 'Nondual',
+    descriptor: 'True Self Connection',
     arrowLabel: 'True Self',
     watermark: undefined,
     category: 'Wisdom',
@@ -194,7 +194,7 @@ export const CANON_STAGE_OVERRIDES: Readonly<Record<number, CanonOverrides>> = {
     relationshipToFreeWill: 'Despairing Analyst',
   },
   8: {
-    title: 'Nondual',
+    title: 'True Self Connection',
     category: 'Wisdom',
     aspect: 'True Self Connection',
     relationshipToFreeWill: 'True Self Embodier',

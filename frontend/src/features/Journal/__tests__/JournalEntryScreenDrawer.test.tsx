@@ -279,7 +279,7 @@ describe('Journal header drawer from JournalEntryScreen', () => {
     expect(navigation.navigate).toHaveBeenCalledWith('PromotedQuotes');
   });
 
-  it('routes a consented account from Your corpus to the import surface', async () => {
+  it("routes a consented account from Everything you've written to the import surface", async () => {
     const { getByTestId, getByLabelText, navigation, queryByTestId } = renderScreen(7);
     await waitFor(() => expect(getByTestId('journal-title-input')).toBeTruthy());
 

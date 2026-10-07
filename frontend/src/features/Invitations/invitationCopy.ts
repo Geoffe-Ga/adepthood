@@ -26,7 +26,7 @@ const TARGET_NOUN: Record<InvitationTargetTypeT, string> = {
 const KIND_OPENER: Record<InvitationKindT, string> = {
   readiness: 'If it feels right, there’s',
   consistency: 'Whenever you’d like, there’s',
-  mastery: 'If you’re curious, there’s a deeper',
+  mastery: 'If you’re curious, there’s more depth in',
 };
 
 const LINE_TAIL = 'here, waiting quietly for you.';

@@ -4,19 +4,22 @@ import { fireEvent, render, waitFor, within } from '@testing-library/react-nativ
 import React from 'react';
 
 import {
+  CANON_STAGE_OVERRIDES,
   createCanonicalStages,
   GOLDEN_STAGE_NUMBERS,
-  goldenStage,
 } from '@/features/Map/__tests__/stageVocabularyGolden';
 import { useStageStore } from '@/store/useStageStore';
 
 /**
- * The Journal chord offers each Aspect under its course persona (golden, #2666).
+ * The Journal chord offers each Aspect under its course Aspect name (golden,
+ * #2666, #3037).
  *
  * With the stage store holding what a freshly seeded `GET /stages` serves, the
- * ten chips the writer meets on a new page read the golden personas, in stage
- * order, as both their visible label and their accessible name. Committed
- * before the chord stopped reading the static Map mirror, and unchanged by it.
+ * ten chips the writer meets on a new page read the canon Aspect names
+ * ("Agency", "Receptivity", "Self-Love" ...), in stage order, as both their
+ * visible label and their accessible name. Never the free-will persona: a chip
+ * reading "Victim" would have the writer tag their words with the shadow
+ * instead of the note they are naming (chords, not rungs).
  */
 
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
@@ -65,7 +68,7 @@ describe('the Journal chord golden', () => {
     useStageStore.getState().setStages(createCanonicalStages());
   });
 
-  it('offers the ten Aspects under their golden personas, in stage order', async () => {
+  it('offers the ten Aspects under their canon Aspect names, never personas, in stage order', async () => {
     const { getByTestId } = renderNewPage();
     await waitFor(() => {
       expect(getByTestId('aspect-chord-trigger')).toBeTruthy();
@@ -74,11 +77,15 @@ describe('the Journal chord golden', () => {
 
     const page = within(getByTestId('journal-page'));
     for (const stageNumber of GOLDEN_STAGE_NUMBERS) {
-      const { persona } = goldenStage(stageNumber);
-      expect(page.getByTestId(`aspect-primary-${stageNumber}-label`).props.children).toBe(persona);
-      expect(page.getByTestId(`aspect-primary-${stageNumber}`).props.accessibilityLabel).toBe(
-        persona,
+      const canon = CANON_STAGE_OVERRIDES[stageNumber];
+      if (canon === undefined) throw new Error(`no canon for stage ${stageNumber}`);
+      expect(page.getByTestId(`aspect-primary-${stageNumber}-label`).props.children).toBe(
+        canon.aspect,
       );
+      expect(page.getByTestId(`aspect-primary-${stageNumber}`).props.accessibilityLabel).toBe(
+        canon.aspect,
+      );
+      expect(page.queryByText(canon.relationshipToFreeWill)).toBeNull();
     }
   });
 });

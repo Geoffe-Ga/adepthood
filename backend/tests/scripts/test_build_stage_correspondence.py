@@ -591,12 +591,21 @@ def test_authority_match_ignores_case_and_line_wrapping(workspace: Workspace) ->
     check_authority(load_supersessions(workspace.supersessions_path)[0], workspace.content_dir)
 
 
-def test_committed_supersessions_are_exactly_the_three_ratified_departures() -> None:
+def test_committed_supersessions_are_exactly_the_ratified_departures() -> None:
+    """The three December 2025 rulings plus the chapter-voiced free-will copy (2026-10)."""
     entries = load_supersessions(generator.SUPERSESSIONS_PATH)
     assert {(entry.stage_id, entry.field) for entry in entries} == {
         ("blue", "aspect"),
         ("teal", "aspect"),
         ("teal", "relationship_to_free_will"),
+        ("teal", "growing_up_stage"),
+        ("beige", "free_will_description"),
+        ("red", "free_will_description"),
+        ("blue", "free_will_description"),
+        ("green", "free_will_description"),
+        ("yellow", "free_will_description"),
+        ("teal", "free_will_description"),
+        ("clearlight", "free_will_description"),
     }
 
 

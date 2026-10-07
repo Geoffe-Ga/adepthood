@@ -34,7 +34,7 @@ interface Props {
 }
 
 const PHOTO_NOTE =
-  'Photos are kept on this device. If you delete the photo, the card falls back to its name.';
+  'Photos stay on this phone. If you delete one, the card just shows its name instead.';
 
 const EMPTY_CARD: CardMeditationCard = {
   name: '',

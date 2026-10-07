@@ -35,41 +35,42 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // that may already be current, or leave someone re-sending a tier that can
   // never go.
   capability_unsupported:
-    'Marked Intimate? That tier stays on this device — pick another one if you want this ' +
-    "in your vault. Otherwise uploads aren't working between Adepthood and your vault yet; " +
-    'keep this one, it can go over once either side has caught up.',
+    'Marked Intimate? That stays on this device — pick a different privacy level if you want ' +
+    "this in your vault. Otherwise Adepthood can't send to your vault just yet; keep this one " +
+    'and try again later.',
   degraded: "This didn't finish, and nothing in your vault changed. You can send it again.",
-  in_corpus: 'In your corpus. It will show up in reflections from here on.',
+  in_corpus: 'Kept with the rest of your writing. It will show up in reflections from here on.',
   // The ordinary first answer rather than an error state: the corpus is off
   // until somebody turns it on. It names the setting rather than the endpoint,
   // and the screen offers the way there beneath the list.
   consent_required:
-    'Nothing was imported. Documents are only added to your corpus once you turn that on, and ' +
+    'Nothing was added. Documents only join your writing once you turn that on, and ' +
     "you haven't yet.",
   // The asymmetry, said plainly and without blaming the file. Placing writing
   // among the frequencies means showing it to a language model, which is
   // exactly what the Intimate tier exists to refuse.
   tier_refused:
     'Marked Intimate, so it stayed on this device and nothing was stored. Placing a document ' +
-    'among the frequencies means reading it with a language model, and Intimate writing never ' +
-    'goes to one. Choose another tier if you want this in your corpus.',
+    'among the frequencies means an AI reads it, and Intimate writing never goes to one. ' +
+    'Choose a different privacy level if you want this kept with your writing.',
   format_unreadable:
     "Adepthood can't open this kind of file on its own, so nothing was stored. It reads " +
     'Markdown and plain text — most apps, including Claude and ChatGPT, can export as ' +
     'Markdown. A connected vault reads richer formats for you.',
   not_text:
-    "This file is named as text but isn't readable as text. Re-export it as UTF-8 and send it " +
-    'again.',
+    "This file is named as text but can't be read as text. Save a plain-text copy from the " +
+    'app it came from and send that instead.',
   empty_document: "There's no writing in this document, so there was nothing to store.",
   document_too_long:
-    'Longer than one corpus entry can hold, so nothing was stored. Split it into shorter ' +
+    'Too long to keep as one piece, so nothing was stored. Split it into shorter ' +
     'pieces and send those.',
   // Not a failure of the document and not phrased as one. Writing that sits at
   // no position on the ontology could only ever be retrieved by recency, which
   // is the thing the corpus replaced.
   unclassified:
-    "Adepthood couldn't place this among the frequencies, so it wasn't added — a corpus entry " +
-    'has to sit somewhere on the map to be found again. Nothing changed, and you can try again.',
+    "Adepthood couldn't place this among the frequencies, so it wasn't added — a piece of " +
+    'writing has to sit somewhere on the map to be found again. Nothing changed, and you can ' +
+    'try again.',
   // The one answer the server gives an account it finds no vault for (#3016).
   // Worded to stay true for each such account: one that never set a vault up,
   // one whose vault is still being prepared, one whose vault could not be
@@ -78,8 +79,8 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // have none". It names the Settings row rather than a vault, because the
   // corpus lines are held to never naming one.
   vault_required:
-    'Nothing was stored. Documents you bring in are kept where your corpus lives, and that ' +
-    "isn't ready for this account yet. Open Where your corpus lives in Settings to set it up " +
+    'Nothing was stored. Documents you bring in are kept with the rest of your writing, and ' +
+    `that place isn't ready yet. Open ${VAULT_ROW_LABEL} in Settings to set it up ` +
     'or check on it, then send this again.',
   // Decided on device, so it names neither destination: this extension is
   // outside everything either side could read, and it was never sent.
@@ -110,12 +111,12 @@ export const SEED_FAILED_PICK_NOTICE = "Nothing came back from the picker. It's 
 
 /** Said beneath the list when a document is waiting on a permission. */
 export const SEED_CONSENT_PROMPT =
-  'Adepthood only adds documents to your corpus once you turn that on. Nothing was stored, and ' +
-  'the documents are still on your device — turn on "Documents you bring in", then send them ' +
-  'again.';
+  'Adepthood only keeps documents with your writing once you turn that on. Nothing was ' +
+  'stored, and the documents are still on your device — turn on "Documents you bring in", ' +
+  'then send them again.';
 
 /** What the way there is called. */
-export const SEED_CONSENT_LINK_LABEL = 'Open your corpus settings';
+export const SEED_CONSENT_LINK_LABEL = 'Open that setting';
 
 /**
  * The one-line state of the run: how far along it is while documents are still
@@ -170,7 +171,7 @@ export const SEED_LEAVE_TITLE = 'Documents are still going over';
  * in their corpus.
  */
 export const SEED_LEAVE_WARNING =
-  'Documents from this batch are still going over. The one in flight has already left this ' +
+  'Some of these documents are still going over. The one already on its way has left this ' +
   'device and will finish wherever it lands; everything still waiting is never sent, and those ' +
   'files stay on your device exactly as they are. Stay to let the rest go over, or leave and ' +
   'choose them again another time.';
@@ -213,11 +214,11 @@ export const SEED_ROW_DESCRIPTION =
 
 /** What that row says to an account with nowhere to keep a document yet. */
 export const SEED_ROW_VAULT_FIRST_DESCRIPTION =
-  `Documents you bring in are kept where your corpus lives. Set that up under ` +
+  `Documents you bring in are kept with the rest of your writing. Set that up under ` +
   `${VAULT_ROW_LABEL}, then bring them in.`;
 
 /** The Journal band's open action for an account with nowhere to keep a document yet. */
-export const VAULT_FIRST_CTA = 'Give your corpus a place to live';
+export const VAULT_FIRST_CTA = 'Give your writing a place to live';
 
 /**
  * The words that open each corpus destination, keyed by the destination.
@@ -233,7 +234,7 @@ export const CORPUS_CTA_BY_DESTINATION: Readonly<Record<CorpusDestination, strin
 
 /** What the seeding screen says in place of the picker when there is nowhere to keep a document. */
 export const SEED_VAULT_INVITATION =
-  "Documents you bring in are kept where your corpus lives, and there isn't a place for " +
+  "Documents you bring in are kept with the rest of your writing, and there isn't a place for " +
   'them yet. Set one up, and they can come in from there. Your journal works the same ' +
   'either way.';
 

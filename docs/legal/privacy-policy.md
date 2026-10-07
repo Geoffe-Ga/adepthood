@@ -137,8 +137,8 @@ on who receives your data says how many.
 
 - An Intimate entry is **never sent to a language model**. Asking for a
   reflection on one returns without any model call at all — the request is
-  refused from the stored tier on the server, before a provider client is
-  built or your wallet is touched.
+  refused on the server, before any connection to a language model is
+  opened or your wallet is touched.
 - An Intimate entry is **never used as context** for another entry's
   reflection. Neither source can produce one: the query that gathers recent
   entries excludes them, and an Intimate entry is never put into the corpus
@@ -255,10 +255,10 @@ Creek operators can access its stored bytes and restart it without you. It is
 not confidential compute, there is no user-held recovery key, and Intimate
 journal entries are never replicated to it. Finally, deleting or re-marking a
 mirrored journal page withdraws its content-free stable identity before
-Adepthood reports completion. Deleting an account requests teardown of a
-provisioned allocation; a manually connected vault still requires its owner to
-perform any account-wide purge. [Your data](../your-data.md) explains both
-cases.
+Adepthood reports completion. Deleting an account requests teardown of the
+managed vault Adepthood created for you; a vault you connected yourself still
+requires its owner to perform any account-wide purge.
+[Your data](../your-data.md) explains both cases.
 
 **Gumroad**, for purchases. It receives what you type into its own
 checkout, which Adepthood never sees; Adepthood sends it a licence key to
@@ -304,7 +304,8 @@ and never reproduced in a log, an error report, or a crash trace.
 **platform** — iOS, Android, or web; the **app build** you are running; a
 **viewport class** — compact, regular, or expanded, never your exact screen
 size; your **locale**, as a language and optional region; and a **correlation
-id**, a random identifier the app generates for a session's own telemetry.
+id**, a random label the app makes up for one sitting, so reports from that
+sitting can be matched to each other and nothing else.
 
 That list is an allowlist enforced by the server, not a filter applied
 afterwards. A report carrying any other field is refused outright, and nothing

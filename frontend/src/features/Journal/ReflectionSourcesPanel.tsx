@@ -150,8 +150,8 @@ const FAILED_FEED_COPY =
  * over it.
  */
 const UNRECORDED_PERIOD_COPY =
-  'The dates this review covered cannot be reconstructed — that was lost when you began ' +
-  'again. Everything you wrote then is still in your journal, just not gathered here.';
+  'We can’t tell which dates this review covered — that was lost when you began again. ' +
+  'Everything you wrote then is still in your journal, just not gathered here.';
 
 /**
  * How far the sources request has got. Distinct from ``anchorStatus``, which

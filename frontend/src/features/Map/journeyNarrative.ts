@@ -15,11 +15,11 @@ export const journeyRead = (
   stageCount: number,
 ): string => `Stage ${currentStage} of ${stageCount} · Week ${currentWeek}`;
 
-/** "Unlocks in N days" / already-reached copy for a locked stage. */
+/** "Opens in N days" / already-reached copy for a stage the calendar has not reached. */
 export const unlockTimeline = (daysUntil: number | null): string => {
-  if (daysUntil === null) return 'Unlocks as your journey reaches it';
-  if (daysUntil <= 0) return 'Unlocking now';
-  return `Unlocks in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
+  if (daysUntil === null) return 'Opens with the course';
+  if (daysUntil <= 0) return 'Opening now';
+  return `Opens in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
 };
 
 /** A single ranked headline stat (largest contribution first). */

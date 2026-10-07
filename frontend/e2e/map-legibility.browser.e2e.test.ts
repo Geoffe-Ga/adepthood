@@ -34,7 +34,7 @@ import { overlappingPairs, SUBPIXEL_TOLERANCE, type Box, type TextRecord } from 
  *
  * The Map is a three-column table with a decorative sine wave painted behind
  * its centre column, and that column also carries each stage's Aspect word,
- * its "Unlocks ..." copy, its padlock and, once finished, its check badge. The
+ * its "Opens ..." copy, its padlock and, once finished, its check badge. The
  * text census (`text-order.browser.e2e.test.ts`) already holds text against
  * text on a fresh account; nothing held text against the wave, the viewport or
  * the stage band it belongs to, and nothing measured a Map anyone had walked.

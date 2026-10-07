@@ -199,13 +199,13 @@ const buildMilestoneToast = (
 
   if (currentGoal.tier === 'low') {
     return {
-      message: `Low Goal achieved for ${habitName}! Keep going for the Clear Goal.`,
+      message: `Low Goal met for ${habitName}. That counts — the Clear Goal is there if you want it.`,
       icon: MILESTONE_ICONS.low,
       color: colors.tier.low,
     };
   } else if (currentGoal.tier === 'clear' && nextGoal) {
     return {
-      message: 'Clear Goal achieved! Keep going for the Stretch Goal!',
+      message: `Clear Goal met for ${habitName}. The Stretch Goal is optional from here.`,
       icon: MILESTONE_ICONS.clear,
       color: colors.tier.clear,
     };
@@ -1454,7 +1454,7 @@ export const habitManager = {
       .catch(
         revertOnFailure(
           prev,
-          "We couldn't save that goal change. Your local copy was restored — check your connection and try again.",
+          "We couldn't save that goal change, so it's back to what it was — check your connection and try again.",
         ),
       );
   },
@@ -1496,7 +1496,7 @@ export const habitManager = {
       .catch(
         revertOnFailure(
           prev,
-          "We couldn't update those goal units on the server. Your changes were rolled back — check your connection and try again.",
+          "We couldn't save those goal units. They're back to what they were — check your connection and try again.",
         ),
       );
   },
@@ -1516,7 +1516,7 @@ export const habitManager = {
       .catch(
         revertOnFailure(
           prev,
-          "We couldn't save the changes to that habit. Your local copy was restored — check your connection and try again.",
+          "We couldn't save those changes, so the habit is back to how it was — check your connection and try again.",
         ),
       );
   },
@@ -1909,7 +1909,7 @@ export const habitManager = {
     const next = getHabits().map((h) => ({ ...h, revealed: true }));
     syncRevealState(
       next,
-      "We couldn't unlock every habit. Your previous state was restored — check your connection and try again.",
+      "We couldn't open every habit. They're back as they were — check your connection and try again.",
       tz ?? detectDeviceTimezone(),
     );
   },
@@ -1928,7 +1928,7 @@ export const habitManager = {
     }));
     syncRevealState(
       next,
-      "We couldn't re-lock those habits. Your previous state was restored — check your connection and try again.",
+      "We couldn't set those habits aside. They're back as they were — check your connection and try again.",
       tz ?? detectDeviceTimezone(),
     );
   },
@@ -1937,7 +1937,7 @@ export const habitManager = {
     const next = getHabits().map((h) => (h.id === habitId ? { ...h, revealed: true } : h));
     syncRevealState(
       next,
-      "We couldn't unlock that habit. Your previous state was restored — check your connection and try again.",
+      "We couldn't open that habit. It's back as it was — check your connection and try again.",
       tz ?? detectDeviceTimezone(),
     );
   },

@@ -16,7 +16,7 @@ import {
  * never built from the module's own constants: a test that read the same
  * constant the screen renders would prove only that a string equals itself.
  */
-const ADD_KEY = 'Add your own API key in Settings to bill that key instead.';
+const ADD_KEY = 'Add your own API key in Settings and it pays instead.';
 
 /** A price line's arguments: payer, cap, then the optional wallet snapshot. */
 type CostArgs = [boolean, number | null, (number | null)?, (number | null)?];

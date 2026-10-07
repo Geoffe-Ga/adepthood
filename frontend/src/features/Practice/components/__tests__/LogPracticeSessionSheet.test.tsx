@@ -331,7 +331,7 @@ describe('LogPracticeSessionSheet save outcomes', () => {
 
     await waitFor(() => expect(getByTestId('log-session-error')).toBeTruthy());
     expect(getByTestId('log-session-error').props.children).toMatch(
-      /^You haven't unlocked this stage yet/,
+      /^This stage hasn't opened yet/,
     );
   });
 

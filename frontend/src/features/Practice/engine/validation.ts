@@ -111,11 +111,11 @@ export function validateMetronome(config: MetronomeConfig): string[] {
 function checkOffsetList(offsets: readonly number[], duration: number): string[] {
   const errors: string[] = [];
   if (offsets.length === 0) {
-    errors.push('At least one cue offset is required');
+    errors.push('Add at least one bell time');
   }
   for (const offset of offsets) {
     if (!Number.isFinite(offset) || offset <= 0 || offset > duration) {
-      errors.push('Cue offsets must fall within (0, duration]');
+      errors.push('Each bell time has to be after the start and no later than the end');
       break;
     }
   }
@@ -146,11 +146,11 @@ export function validateIntervalBell(config: IntervalBellConfig): string[] {
   // Split the two violation classes so the surfaced error tells the user
   // which side of the constraint they tripped.
   if (interval === null && offsets === null) {
-    errors.push('Select a spacing method: even intervals or custom offsets');
+    errors.push('Choose how the bells are spaced: evenly, or at times you pick');
     return errors;
   }
   if (interval !== null && offsets !== null) {
-    errors.push('Choose either even intervals or custom offsets, not both');
+    errors.push('Pick evenly spaced bells or your own bell times — not both');
     return errors;
   }
   if (interval !== null) {
@@ -219,10 +219,10 @@ export function validateRepCounter(config: RepCounterConfig): string[] {
     errors.push(`Target reps must be a whole number ≥ ${TARGET_REPS_MIN}`);
   }
   if (config.unit_label.trim().length === 0) {
-    errors.push('Unit label cannot be empty');
+    errors.push("Say what you're counting (e.g. breaths, reps)");
   }
   if (config.unit_label.length > UNIT_LABEL_MAX) {
-    errors.push(`Unit label must be ≤ ${UNIT_LABEL_MAX} characters`);
+    errors.push(`Keep what you're counting to ${UNIT_LABEL_MAX} characters or fewer`);
   }
   if (config.time_cap_minutes !== undefined && config.time_cap_minutes !== null) {
     pushIfOutOfDurationRange(errors, 'Time cap', config.time_cap_minutes);
@@ -261,7 +261,7 @@ function checkAnchorOption(option: MindfulAnchorOption, index: number): string[]
   const errors: string[] = [];
   const label = `Option ${index + 1}`;
   if (!OPTION_KEY_PATTERN.test(option.key) || option.key.length > OPTION_KEY_MAX) {
-    errors.push(`${label}: key must be a slug (lowercase, ≤ ${OPTION_KEY_MAX} chars)`);
+    errors.push(`${label}: something went wrong with this option — remove it and add it again`);
   }
   if (option.label.trim().length === 0) {
     errors.push(`${label}: label cannot be empty`);
@@ -300,7 +300,7 @@ export function validateMindfulAnchor(config: MindfulAnchorConfig): string[] {
   });
   const keys = config.options.map((option) => option.key);
   if (new Set(keys).size !== keys.length) {
-    errors.push('Option keys must be unique');
+    errors.push('Two of these options got mixed up — remove one and add it again');
   }
   if (config.require_option_choice && config.options.length === 0) {
     errors.push('Add at least one option when a choice is required');
@@ -326,7 +326,7 @@ function checkCard(card: CardMeditationCard, index: number): string[] {
     errors.push(`${position}: name must be ≤ ${CARD_MEDITATION_NAME_MAX} characters`);
   }
   if (card.image_asset_key !== null && card.image_uri !== null) {
-    errors.push(`${position}: set at most one image source`);
+    errors.push(`${position}: choose a photo or a built-in picture, not both`);
   }
   if (card.image_uri !== null && !CARD_IMAGE_URI_PATTERN.test(card.image_uri)) {
     errors.push(`${position}: photo must be a device file, not a web link`);
@@ -341,7 +341,7 @@ function checkTalliedCategory(category: TalliedCategory, index: number): string[
   const errors: string[] = [];
   const position = `Category ${index + 1}`;
   if (!TALLIED_KEY_PATTERN.test(category.key) || category.key.length > TALLIED_KEY_MAX) {
-    errors.push(`${position}: key must match ^[a-z][a-z0-9_]*$ and be ≤ ${TALLIED_KEY_MAX} chars`);
+    errors.push(`${position}: something went wrong with this one — remove it and add it again`);
   }
   const labelLen = category.label.trim().length;
   if (labelLen === 0) {
@@ -369,7 +369,7 @@ export function validateCardMeditation(config: CardMeditationConfig): string[] {
     pushIfOutOfDurationRange(errors, 'Per-card minutes', config.per_card_minutes);
   }
   if (!CARD_DECK_ID_PATTERN.test(config.deck_id)) {
-    errors.push('Deck id is invalid');
+    errors.push("That deck isn't available — pick another one");
   }
   if (config.deck_id === CARD_MEDITATION_CUSTOM_DECK_ID) {
     const cards = config.cards ?? [];
@@ -409,7 +409,9 @@ export function validateTalliedGrounding(config: TalliedGroundingConfig): string
   config.categories.forEach((category, index) => {
     errors.push(...checkTalliedCategory(category, index));
     if (seenKeys.has(category.key)) {
-      errors.push(`Category ${index + 1}: duplicate key "${category.key}"`);
+      errors.push(
+        `Category ${index + 1} got mixed up with an earlier one — remove it and add it again`,
+      );
     }
     seenKeys.add(category.key);
   });

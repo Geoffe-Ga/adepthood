@@ -90,7 +90,7 @@ describe('what each outcome says', () => {
   test('a document in the corpus is not described as being in a vault', () => {
     // The two destinations are different places with different guarantees, and
     // an account with no vault has nothing a "vault" sentence could refer to.
-    expect(SEED_STATUS_LINES.in_corpus).toContain('corpus');
+    expect(SEED_STATUS_LINES.in_corpus).toContain('writing');
     expect(SEED_STATUS_LINES.in_corpus.toLowerCase()).not.toContain('vault');
     expect(SEED_STATUS_LINES.in_corpus).not.toBe(SEED_STATUS_LINES.ingested);
   });
@@ -102,7 +102,7 @@ describe('what each outcome says', () => {
     const line = SEED_STATUS_LINES.vault_required;
 
     expect(line).toContain('Nothing was stored');
-    expect(line).toContain('Where your corpus lives');
+    expect(line).toContain(VAULT_ROW_LABEL);
     expect(line.toLowerCase()).toContain('check on it');
     expect(line.toLowerCase()).not.toContain('vault');
     expect(line.toLowerCase()).not.toContain('creek');
@@ -119,15 +119,15 @@ describe('what each outcome says', () => {
 
     expect(line).not.toBe(SEED_STATUS_LINES.failed);
     expect(line.toLowerCase()).toContain('turn that on');
-    expect(SEED_CONSENT_LINK_LABEL.toLowerCase()).toContain('settings');
+    expect(SEED_CONSENT_LINK_LABEL.toLowerCase()).toContain('setting');
   });
 
   test('the intimate refusal says why, and names the remedy the person holds', () => {
     const line = SEED_STATUS_LINES.tier_refused;
 
     expect(line).toContain('Intimate');
-    expect(line).toContain('language model');
-    expect(line.toLowerCase()).toContain('another tier');
+    expect(line).toContain('AI');
+    expect(line.toLowerCase()).toContain('privacy level');
   });
 
   test('the unreadable-format answer says what can be read instead', () => {
@@ -140,6 +140,27 @@ describe('what each outcome says', () => {
   test('nothing sold: the consent prompt states the fact and offers the way there', () => {
     expect(SEED_CONSENT_PROMPT).toContain('Nothing was stored');
     expect(ranksOrShames(SEED_CONSENT_PROMPT)).toBe(false);
+  });
+});
+
+describe('the words a person reads beneath a document', () => {
+  // Storage and request vocabulary — the corpus, its tiers and entries, the
+  // batch, the encoding — is the system's own. A person brought in their
+  // writing and chose how private it is, and the lines say it in those words.
+  const PLUMBING = /\bcorpus\b|\btiers?\b|\bbatch\b|UTF-8|language model|\bimported\b|in flight/i;
+
+  test.each(EVERY_STATUS)('%s talks about writing, not plumbing', (status) => {
+    expect(SEED_STATUS_LINES[status]).not.toMatch(PLUMBING);
+  });
+
+  test.each([
+    SEED_CONSENT_PROMPT,
+    SEED_CONSENT_LINK_LABEL,
+    SEED_LEAVE_WARNING,
+    SEED_LEAVE_BROWSER_WARNING,
+    ...VAULT_GATE_COPY,
+  ])('talks about writing, not plumbing: %s', (line) => {
+    expect(line).not.toMatch(PLUMBING);
   });
 });
 
@@ -252,7 +273,7 @@ describe('the way in when there is nowhere to keep a document yet (#3017)', () =
   });
 
   test('offers the vault-first step as a place to live, not as a task', () => {
-    expect(VAULT_FIRST_CTA).toBe('Give your corpus a place to live');
+    expect(VAULT_FIRST_CTA).toBe('Give your writing a place to live');
   });
 
   test('pairs each corpus destination with the words that open it', () => {
@@ -266,7 +287,7 @@ describe('the way in when there is nowhere to keep a document yet (#3017)', () =
   });
 
   test('the seeding screen names the place and the way there', () => {
-    expect(SEED_VAULT_INVITATION).toContain('where your corpus lives');
+    expect(SEED_VAULT_INVITATION).toContain('with the rest of your writing');
     expect(SEED_VAULT_INVITATION_LINK_LABEL).toContain(VAULT_ROW_LABEL);
   });
 

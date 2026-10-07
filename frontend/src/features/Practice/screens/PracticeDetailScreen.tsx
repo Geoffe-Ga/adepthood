@@ -15,7 +15,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import type { ModeConfig } from '../engine/types';
+import { CARD_MEDITATION_CUSTOM_DECK_ID, type ModeConfig } from '../engine/types';
 
 import { type PracticeItem, practices, userPractices } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
@@ -33,10 +33,15 @@ import {
 } from '@/design/tokens';
 import CopyToStageDialog from '@/features/Practice/components/CopyToStageDialog';
 import { LoadErrorRetry, LoadingBlock } from '@/features/Practice/components/LoadErrorRetry';
-import { resolvePickableMode } from '@/features/Practice/components/ModePicker';
+import {
+  MODE_CATEGORIES,
+  type PickableMode,
+  resolvePickableMode,
+} from '@/features/Practice/components/ModePicker';
 import PracticeStatsBlock from '@/features/Practice/components/PracticeStatsBlock';
 import ShareSheet from '@/features/Practice/components/ShareSheet';
 import StageSelector from '@/features/Practice/components/StageSelector';
+import { getDeck } from '@/features/Practice/data/decks';
 import { usePracticeStats } from '@/features/Practice/hooks/usePracticeStats';
 import { copyPracticeToStage } from '@/features/Practice/utils/copyPracticeToStage';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
@@ -486,6 +491,21 @@ function usePracticeDetail(
   return { ...state, reload, openPicker, closePicker, assign, openCopy, cancelCopy, confirmCopy };
 }
 
+// Derived from MODE_CATEGORIES so a new mode's label propagates here automatically.
+const MODE_LABELS: Readonly<Record<PickableMode, string>> = Object.fromEntries(
+  MODE_CATEGORIES.flatMap((category) => category.modes.map((entry) => [entry.mode, entry.label])),
+) as Record<PickableMode, string>;
+
+/** Label a person reads on a mode (the raw mode is snake_case). */
+const FALLBACK_MODE_LABEL = 'Practice';
+
+/**
+ * The badge copy for a practice's mode: the picker's human label ("Meditation
+ * timer"), or a plain "Practice" when the server knows a mode this client does not.
+ */
+const modeBadgeLabel = (mode: string | null | undefined): string =>
+  MODE_LABELS[resolvePickableMode(mode)] ?? FALLBACK_MODE_LABEL;
+
 interface DetailHeaderProps {
   practice: PracticeItem;
 }
@@ -497,7 +517,7 @@ const DetailHeader = ({ practice }: DetailHeaderProps): React.JSX.Element => (
       {practice.name}
     </Text>
     <View style={styles.metaRow}>
-      <BadgeChip label={resolvePickableMode(practice.mode)} testID="practice-detail-mode-badge" />
+      <BadgeChip label={modeBadgeLabel(practice.mode)} testID="practice-detail-mode-badge" />
       <BadgeChip label={`Stage ${practice.stage_number}`} testID="practice-detail-stage-badge" />
       <BadgeChip
         label={formatDuration(practice.default_duration_minutes)}
@@ -557,6 +577,13 @@ const ConfigSummary = ({ config }: ConfigSummaryProps): React.JSX.Element => (
   </View>
 );
 
+/** Name the deck the way the deck picker does; the inline sentinel is the person's own cards. */
+function describeDeck(deckId: string): string {
+  if (deckId === CARD_MEDITATION_CUSTOM_DECK_ID) return 'Your own deck';
+  const deck = getDeck(deckId);
+  return deck === undefined ? 'A deck this app no longer carries' : `Deck: ${deck.name}`;
+}
+
 const SUMMARIZERS: {
   [K in ModeConfig['mode']]: (config: Extract<ModeConfig, { mode: K }>) => readonly string[];
 } = {
@@ -581,10 +608,14 @@ const SUMMARIZERS: {
   sense_grounding: (c) => [`${c.prompts.length} prompts across the senses`],
   tallied_grounding: (c) => [`${c.rounds} rounds`, `${c.categories.length} categories`],
   tarot: () => ['Major arcana — one card per sit'],
-  card_meditation: (c) => [`Deck: ${c.deck_id}`],
+  card_meditation: (c) => [describeDeck(c.deck_id)],
   mindful_anchor: (c) => {
-    const choice = c.options.length === 0 ? 'no chooser' : `${c.options.length} options`;
-    return [`Soft minimum: ${c.min_duration_seconds}s`, choice];
+    const anchorWord = c.options.length === 1 ? 'anchor' : 'anchors';
+    const choice =
+      c.options.length === 0
+        ? 'One anchor, no choosing'
+        : `${c.options.length} ${anchorWord} to choose from`;
+    return [`Aim for at least ${c.min_duration_seconds} seconds`, choice];
   },
 };
 

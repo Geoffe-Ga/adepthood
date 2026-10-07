@@ -39,3 +39,23 @@ describe('invitationCopy drift guard', () => {
     }
   });
 });
+
+/**
+ * Voice guard: each opener has to meet its noun as one plain sentence. The
+ * mastery opener once ended in an article of its own ("there’s a deeper"), so
+ * the composed line read "there’s a deeper a practice here" on the Journal
+ * home — machine-assembled English, not a friend holding a door open.
+ */
+describe('invitationCopy reads as a sentence', () => {
+  it('composes the mastery line without a doubled article', () => {
+    expect(invitationCopy('practice', 'mastery').line).toBe(
+      'If you’re curious, there’s more depth in a practice here, waiting quietly for you.',
+    );
+  });
+
+  it('never stacks two articles across the opener/noun seam', () => {
+    for (const entry of INVITATION_COPY_ENTRIES) {
+      expect(entry.line).not.toMatch(/\b(a|an|the) (a|an|the)\b/);
+    }
+  });
+});

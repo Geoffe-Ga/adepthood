@@ -1299,9 +1299,9 @@ def _build_change_notification_email(to_address: str) -> EmailMessagePayload:
     """
     body = (
         "Your Adepthood password was just changed.\n\n"
-        "If this was you, no action is needed.\n\n"
-        "If this was NOT you, request another reset immediately so we can\n"
-        f"freeze the account and email {_get_security_contact_address()}."
+        "If that was you, you're all set.\n\n"
+        "If it wasn't, ask for a new password reset right away so we can lock\n"
+        f"the account down, and email {_get_security_contact_address()} so we can help."
     )
     return EmailMessagePayload(
         to=to_address,

@@ -61,7 +61,7 @@ const OBSERVED_STAGE = 2;
 const HABITS_PATH = '/habits/';
 const PROGRAM_ANCHOR_KEY = '@adepthood/program_start_date';
 const FIRST_STAGE_DAYS = STAGE_DURATIONS_DAYS[0];
-const EXPECTED_COUNTDOWN = `Unlocks in ${FIRST_STAGE_DAYS + FUTURE_ANCHOR_DAYS} days`;
+const EXPECTED_COUNTDOWN = `Opens in ${FIRST_STAGE_DAYS + FUTURE_ANCHOR_DAYS} days`;
 /** Length of the `YYYY-MM-DD` prefix of an ISO-8601 instant. */
 const ISO_DATE_LENGTH = 10;
 

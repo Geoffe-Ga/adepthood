@@ -48,7 +48,7 @@ const WALLET_EXHAUSTED_STATUS = 402;
 
 /** Friendly terminal copy when the configured model cannot read images at all. */
 const MODEL_LACKS_VISION_COPY =
-  "Reading photos isn't available with the configured AI model. You can still write this page by hand.";
+  'The AI that reads pages here can’t see photos. You can still type this page in by hand.';
 
 /** Per-kind copy for a recoverable page failure. `wallet_exhausted` is sourced from
  *  the shared 402 message instead, so that copy stays a single source of truth. */

@@ -288,7 +288,7 @@ describe('SettingsHubScreen — Privacy section (issue #897)', () => {
 describe('SettingsHubScreen — vault row', () => {
   // Literals mirror the deck pinned verbatim in vaultCopy.test.ts. Kept literal
   // so a break in the copy module cannot take this file's other suites with it.
-  const VAULT_ROW_LABEL = 'Where your corpus lives';
+  const VAULT_ROW_LABEL = 'Where your writing lives';
   const VAULT_ROW_DESCRIPTION =
     'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.';
 

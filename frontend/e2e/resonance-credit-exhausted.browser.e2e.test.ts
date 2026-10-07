@@ -256,12 +256,12 @@ test("a spent balance behind the writer's own key is named, and a rate limit is 
   // The condition, and the one action that clears it. Named before anything is
   // asserted absent, so "no retry" is a claim about copy that actually rendered.
   expect(spentCopy).toContain('has run out of credit');
-  expect(spentCopy).toContain('Add credit with your provider');
+  expect(spentCopy).toContain('Top it up with whoever issued the key');
   // The affordance is the sentence: there is no retry button in this margin, so
   // pointing the writer at a retry means saying the word. The transient story
   // the bug told must be gone in full -- both halves of it, because either half
   // alone still reads as "this will pass, try again".
-  expect(spentCopy).not.toContain('having trouble connecting');
+  expect(spentCopy).not.toContain("can't reach the AI service");
   expect(spentCopy).not.toMatch(/tap retry/iu);
   expect(spentCopy).not.toMatch(/retry/iu);
   // And no control offering one either, in this margin or anywhere on the page.
@@ -290,7 +290,7 @@ test("a spent balance behind the writer's own key is named, and a rate limit is 
   // A carve-out that read the status instead of the code would have swallowed
   // this into the spent-balance copy and told the writer to go buy credit they
   // already have.
-  expect(throttledCopy).toContain('having trouble connecting');
+  expect(throttledCopy).toContain("can't reach the AI service");
   expect(throttledCopy).toMatch(/tap retry/iu);
   expect(throttledCopy).not.toContain('run out of credit');
 
@@ -335,11 +335,11 @@ test("the server's own spent balance is ours to restore, and still costs the wri
   expect(copy).toContain('shared AI access has run out of credit');
   // The remedy names the right person. The writer holds no key here, so a
   // sentence telling them to go add credit would be advice they cannot take.
-  expect(copy).toContain('ours to do');
+  expect(copy).toContain('ours to fix');
   // Also not the caller's remedy: pointing someone at a key they do not hold is
   // the same failure as pointing them at a retry that cannot work.
-  expect(copy).not.toContain('Add credit with your provider');
-  expect(copy).not.toContain('having trouble connecting');
+  expect(copy).not.toContain('Top it up');
+  expect(copy).not.toContain("can't reach the AI service");
   expect(copy).not.toMatch(/retry/iu);
   await expect(page.getByRole('button', { name: /retry/iu })).toHaveCount(0);
 

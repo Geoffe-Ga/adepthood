@@ -48,6 +48,14 @@ describe('ReauthSheet', () => {
     expect(getByTestId('reauth-dismiss')).toBeTruthy();
   });
 
+  it('says you got signed out in plain words, never "session" or "credentials"', () => {
+    const { getByText, queryByText } = render(<ReauthSheet />);
+    expect(
+      getByText('You got signed out. Sign back in and you’ll pick up right where you left off.'),
+    ).toBeTruthy();
+    expect(queryByText(/session|credentials/i)).toBeNull();
+  });
+
   it('calls login with the canonicalized (trimmed + lowercased) email', async () => {
     const { getByTestId } = render(<ReauthSheet />);
     fireEvent.changeText(getByTestId('reauth-email'), '  User@Example.COM  ');
