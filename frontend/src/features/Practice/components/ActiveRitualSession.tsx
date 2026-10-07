@@ -405,8 +405,11 @@ interface CompletionWindow {
  * record. `end` is `start + active elapsed` — pause time is excluded, so
  * `end - start` is exactly the time spent practising — capped at "now" so a
  * clock stepped backwards mid-sit can never post a future `ended_at`, and
- * floored at `start` so a step back past the start never posts an end the
- * server refuses as earlier than the start.
+ * floored at `start` so the window always satisfies `ended_at >= started_at`.
+ * That is all the floor promises. A clock that was fast when `start` was
+ * stamped and is corrected mid-sit leaves `start` itself in the server's
+ * future, which the server still refuses; re-anchoring `start` (e.g. to now
+ * minus active elapsed) would be needed for that case.
  */
 function useCompletionWindow(status: RitualState['status'], elapsedMs: number): CompletionWindow {
   const [completedWindow, setCompletedWindow] = useState<{ start: Date; end: Date } | null>(null);

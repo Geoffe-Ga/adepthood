@@ -150,8 +150,11 @@ describe('ActiveRitualSession completion window', () => {
       fireEvent.press(getByTestId('ritual-start'));
     });
     clockTo(T0 + 10 * MIN);
-    // Corrected to five minutes *before* the sitting began: capping the end at
-    // "now" alone would put it before the start, which the server refuses (422).
+    // The clock steps back to five minutes *before* the sitting began: capping
+    // the end at "now" alone would put it before the start. This pins only the
+    // window's order (ended_at >= started_at). It does not show the save
+    // succeeds: if the clock was fast when the start was stamped, that start is
+    // still in the server's future and refused; re-anchoring it is out of scope.
     act(() => {
       jest.setSystemTime(T0 - 5 * MIN);
     });
