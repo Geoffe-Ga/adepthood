@@ -19,6 +19,7 @@ edit, export and account deletion all keep working.
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -53,6 +54,7 @@ from models.marginalia import Marginalia, MarginaliaKind
 from models.user import User
 from models.wallet_audit import WalletAudit
 from routers import journal as journal_router
+from routers import transcription as transcription_router
 from services import botmason
 from services.botmason import LLMProviderError
 from services.creek_vault_client import HttpCreekVaultClient, carries_content
@@ -75,7 +77,7 @@ from tests.provider_transport import (
 from tests.transcription_helpers import PNG_BYTES, payload
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Callable
 
 ON: Final = "true"
 _PASSWORD: Final = "secret12345"  # pragma: allowlist secret
@@ -263,6 +265,33 @@ def record_minute_bucket(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return touched
 
 
+#: The routes whose guardrail admission spends the per-user minute bucket.
+_MINUTE_BUCKET_ROUTES: Final = frozenset({"resonance", "essay"})
+
+
+def record_admission(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record every entry into a generation slot or a wallet deduction on the AI routes.
+
+    Checked after the fact, neither leaves a trace: a slot's lease row is
+    deleted on release, and a staged debit is rolled back by the refusal. So the
+    only way to prove a suspended request never took one is to see it never ask.
+    """
+    entered: list[str] = []
+
+    @asynccontextmanager
+    async def _slot(*_args: object, **_kwargs: object) -> AsyncIterator[None]:
+        entered.append("slot")
+        yield
+
+    async def _deduct(*_args: object, **_kwargs: object) -> None:
+        entered.append("deduction")
+
+    for module in (journal_router, transcription_router):
+        monkeypatch.setattr(module, "generation_slot", _slot)
+        monkeypatch.setattr(module, "preflight_deduction", _deduct)
+    return entered
+
+
 # --- T1/T2: the leaf refuses before any client exists --------------------------
 
 
@@ -342,6 +371,7 @@ async def test_suspended_ai_routes_return_503_and_charge_nothing(
     """503 ``ai_suspended``: no charge, no audit row, no slot, no usage row, no dial."""
     stub = arm_anthropic(monkeypatch)
     minute = record_minute_bucket(monkeypatch)
+    admitted = record_admission(monkeypatch)
     headers, user_id, _ = await signup(async_client, f"suspended_{route}")
     before_wallet = await wallet(db_session, user_id)
     before_audit = await count_rows(db_session, WalletAudit)
@@ -356,7 +386,9 @@ async def test_suspended_ai_routes_return_503_and_charge_nothing(
     assert await count_rows(db_session, GenerationSlot) == 0
     assert await count_rows(db_session, LLMUsageLog) == 0
     assert stub.request_count == 0
-    assert minute == []
+    assert admitted == []
+    if route in _MINUTE_BUCKET_ROUTES:
+        assert minute == []
 
 
 @pytest.mark.asyncio
