@@ -190,6 +190,7 @@ from services.marginalia import (
     reanchor_entry_suggestions,
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
+from services.privacy_lineage import LineageOperation, observe_entry_lineage
 from services.reflection_boundary import (
     REFLECTION_SOURCE_UNAVAILABLE,
     ReflectionBoundary,
@@ -392,6 +393,7 @@ async def _record_vault_outcome(
     """
     if entry.id is None:
         return
+    await observe_entry_lineage(session, LineageOperation.VAULT_WRITE, entry)
     binding = await _bind_vault_destination(session, entry, vault_client)
     if binding is _Binding.WITHHOLD:
         return
@@ -545,6 +547,7 @@ async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) ->
     """
     if entry.id is None:
         return
+    await observe_entry_lineage(session, LineageOperation.CORPUS_INGEST, entry)
     with suppress(LLMCreditExhaustedError):
         await ingest_journal_entry(session, entry)
     await session.commit()
@@ -1717,7 +1720,7 @@ async def _body_under_hold(
 
 
 async def _pass_context_under_hold(
-    session: AsyncSession, user_id: int, entry_id: int
+    session: AsyncSession, entry: JournalEntry
 ) -> tuple[Grounding, list[str]]:
     """Gather the other writing a pass carries, under its hold, then release the connection.
 
@@ -1740,11 +1743,16 @@ async def _pass_context_under_hold(
     upload or an import has no entry to re-check at all; the corpus copy the
     mutation withdrew is simply no longer there to retrieve.
 
+    The entry's own folded-quote lineage is observed here too (#3059, shadow
+    only): this is the read of the state that actually egresses.
+
     The commit releases the pooled connection these reads opened, so none is
     held across the dials that follow.
     """
+    user_id, entry_id = entry.user_id, cast("int", entry.id)
     grounding = await _grounding_for(session, user_id, entry_id)
     prior_letters = await _prior_letter_essays(session, user_id=user_id, exclude_entry_id=entry_id)
+    await observe_entry_lineage(session, LineageOperation.RESONANCE, entry)
     await session.commit()
     return grounding, prior_letters
 
@@ -2375,7 +2383,7 @@ async def _run_admitted_resonance(
             # vault and no model is asked, and the committed charge is refunded.
             await _refund_failed_pass(session, current_user, spent, trace=trace)
             return await _care_only_response(session, current_user, care)
-        grounding, prior_letters = await _pass_context_under_hold(session, current_user, entry_id)
+        grounding, prior_letters = await _pass_context_under_hold(session, entry)
         reflected = await _reflect_or_answer(
             _ReflectionRequest(
                 entry_id=entry_id,
@@ -2747,6 +2755,7 @@ async def detect_entry_suggestions(
         await session.commit()
         return CompletionDetectionResponse(items=[], checked=False)
 
+    await observe_entry_lineage(session, LineageOperation.DETECT, entry)
     inputs = await _detection_inputs(session, entry=entry)
     if not inputs.candidates:
         # There is nothing new to send and therefore no reason to require a key,
@@ -3302,6 +3311,9 @@ async def _cache_and_mirror_essay(
             return note
         if entry.deleted_at is not None or not admits_egress(entry.classification):
             return note
+        # Shadow only (#3059). ``_cache_essay`` commits before it dials, so this
+        # read is released with its own before anything leaves the process.
+        await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
         cached = await _cache_essay(
             session, note, _sanitize_message(entry.message), clients.api_key
         )
@@ -3345,6 +3357,7 @@ async def _mirror_cached_essay(
     ):
         await ensure_account_live(session, entry.user_id)
         await session.refresh(entry)
+        await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
         await session.commit()
         if entry.deleted_at is not None:
             return cached
