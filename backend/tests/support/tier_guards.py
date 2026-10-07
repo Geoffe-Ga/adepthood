@@ -15,9 +15,11 @@ A :class:`ast.Compare` (``==``, ``!=``, ``is``, ``is not``, ``in``, ``not in``)
 -- or a SQL column operator call (``.in_``, ``.not_in``, ``.notin_``, ``.is_``,
 ``.is_not``, ``.isnot``) -- with any operand that names the denied tier:
 
-* the attribute ``JournalClassification.INTIMATE``;
+* any ``<base>.INTIMATE`` attribute -- bare, qualified or aliased -- except on
+  a vault-ceiling enum;
 * the string constant ``"intimate"`` in any case;
-* the name or attribute ``EXCLUDED_TIER``;
+* the name or attribute ``EXCLUDED_TIER`` or ``DENIED_TIERS``;
+* a call whose argument is one of these (``JournalClassification("intimate")``);
 * a set, tuple or list literal containing any of the above.
 
 What it deliberately does not flag
@@ -25,8 +27,9 @@ What it deliberately does not flag
 
 * An assignment (``EXCLUDED_TIER = JournalClassification.INTIMATE``) or a dict
   key (``{"intimate": ...}``): neither decides anything.
-* ``VaultTierCeiling.INTIMATE``: a different enum, Creek's ceiling vocabulary,
-  checked *after* the egress predicate as a second gate on the resolved tier.
+* ``VaultTierCeiling.INTIMATE`` / ``WireTierCeiling.*``: Creek's ceiling
+  vocabulary, checked *after* the egress predicate as a second gate on the
+  resolved tier.
 
 B15's privacy regression suite reuses this scanner; keep it free of test-only
 assumptions about which files exist.
@@ -43,8 +46,16 @@ from typing import TypeGuard
 #: point is that *any* spelling of a deny-list is a deny-list.
 DENIED_TIER_LITERAL = "intimate"
 
-#: Names whose mention in a comparison is a deny-list on the Intimate tier.
-_DENIED_TIER_NAMES = frozenset({"EXCLUDED_TIER"})
+#: Names whose mention in a comparison is a deny-list on the Intimate tier --
+#: the corpus model's ``EXCLUDED_TIER`` and the policy module's own
+#: ``DENIED_TIERS``, which is for drift tests and must never become a sink's
+#: deny-list.
+_DENIED_TIER_NAMES = frozenset({"EXCLUDED_TIER", "DENIED_TIERS"})
+
+#: Enums whose ``INTIMATE`` member is a *vault ceiling*, not a journal tier.
+#: Comparing against one is the second gate after the egress predicate, so it is
+#: the one ``.INTIMATE`` attribute that is not a deny-list.
+_CEILING_ENUMS = frozenset({"VaultTierCeiling", "WireTierCeiling"})
 
 #: SQL column operators that are comparisons in all but syntax.
 _SQL_COMPARISON_METHODS = frozenset({"in_", "not_in", "notin_", "is_", "is_not", "isnot"})
@@ -64,23 +75,42 @@ class InlineTierComparison:
         return f"{self.path}:{self.line}"
 
 
+def _base_name(node: ast.expr) -> str | None:
+    """The last dotted segment ``node`` names: ``JC`` for ``JC``, ``Enum`` for ``a.b.Enum``."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
 def _names_denied_tier(node: ast.expr) -> bool:
-    """Whether ``node`` is, or is a literal collection containing, the Intimate tier."""
+    """Whether ``node`` is, constructs, or is a literal collection containing, the Intimate tier.
+
+    Any ``<base>.INTIMATE`` counts unless ``<base>`` is a vault-ceiling enum, so
+    a qualified (``models.journal_entry.JournalClassification.INTIMATE``) or
+    aliased (``JC.INTIMATE``) spelling is caught as well as the bare one. A call
+    whose argument names the tier (``JournalClassification("intimate")``) is the
+    tier too.
+    """
     if isinstance(node, ast.Constant):
         return isinstance(node.value, str) and node.value.lower() == DENIED_TIER_LITERAL
     if isinstance(node, ast.Name):
         return node.id in _DENIED_TIER_NAMES
     if isinstance(node, ast.Attribute):
-        if node.attr in _DENIED_TIER_NAMES:
-            return True
-        return (
-            node.attr == "INTIMATE"
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "JournalClassification"
+        return node.attr in _DENIED_TIER_NAMES or (
+            node.attr == "INTIMATE" and _base_name(node.value) not in _CEILING_ENUMS
         )
+    return any(_names_denied_tier(child) for child in _operands_within(node))
+
+
+def _operands_within(node: ast.expr) -> list[ast.expr]:
+    """A call's positional arguments or a literal collection's elements; nothing otherwise."""
+    if isinstance(node, ast.Call):
+        return list(node.args)
     if isinstance(node, ast.Set | ast.Tuple | ast.List):
-        return any(_names_denied_tier(element) for element in node.elts)
-    return False
+        return list(node.elts)
+    return []
 
 
 def _is_tier_comparison(node: ast.AST) -> TypeGuard[ast.Compare | ast.Call]:

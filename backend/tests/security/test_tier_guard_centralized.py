@@ -54,6 +54,13 @@ def test_the_scan_reaches_the_source_tree() -> None:
         "c == 'Intimate'",
         "col(c).in_([JournalClassification.INTIMATE])",
         "col(c).not_in(('intimate',))",
+        "c in DENIED_TIERS",
+        "c in privacy_tier.DENIED_TIERS",
+        "col(c).in_(DENIED_TIERS)",
+        "col(c).not_in(DENIED_TIERS)",
+        "c == JournalClassification('intimate')",
+        "c == models.journal_entry.JournalClassification.INTIMATE",
+        "c == JC.INTIMATE",
     ],
 )
 def test_scanner_flags_planted_violations(snippet: str) -> None:
@@ -70,6 +77,10 @@ def test_scanner_flags_planted_violations(snippet: str) -> None:
         "c == JournalClassification.PERSONAL",
         "admits_egress(c)",
         "c == 'personal'",
+        "c in EGRESS_ELIGIBLE_TIERS",
+        "ceiling == domain.creek_vault.VaultTierCeiling.INTIMATE",
+        "ceiling is WireTierCeiling.OPEN",
+        "c == JournalClassification('personal')",
     ],
 )
 def test_scanner_ignores_non_decisions(snippet: str) -> None:
