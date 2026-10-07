@@ -1079,6 +1079,10 @@ async def _retry_once(
         if not client.supports(CreekCapability.PIPELINE):
             await client.handshake()
         return await _perform(client, stage)
+    except VaultSendSuspendedError:
+        # A definitive local refusal wearing its transient parent's type (#3075):
+        # it must reach _retry_for_reconciliation, not be retried as a lost answer.
+        raise
     except (CreekVaultUnavailableError, TimeoutError):
         return None
 
@@ -1130,12 +1134,8 @@ async def _retry_for_reconciliation(
     """Try fresh admission, turning a definitive refusal into a final outcome."""
     try:
         return await _retry_once(session, client, run, stage)
-    except (
-        CreekCapabilityUnsupportedError,
-        CreekVaultAuthError,
-        CreekVaultContractError,
-        CreekVaultPayloadError,
-    ):
+    except _DEFINITIVE_REFUSALS as exc:
+        _LOGGER.info(_refusal_event(exc), extra={"stage": stage.value})
         await _commit_finished_run(
             session,
             run,

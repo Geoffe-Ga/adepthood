@@ -644,6 +644,88 @@ async def test_a_terminal_failed_job_is_readmitted_with_bounded_backoff(
 
 
 @pytest.mark.asyncio
+async def test_a_suspension_arriving_before_a_retry_ends_the_run_failed(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry the vault-send switch refused never left the process (#3075).
+
+    The first admission's job fails, and the operator suspends vault sends
+    before the readmission. The readmission is refused locally, so the run
+    closes FAILED at once: no further attempt, no further wire request, and
+    never AMBIGUOUS.
+    """
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR, raising=False)
+    recorder = _DurableJobRecorder(fail_first_classification_job=True)
+
+    def _suspend_on_first_poll(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith(_JOBS_PREFIX):
+            monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+        return recorder(request)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_suspend_on_first_poll))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 1
+    assert recorder.paths.count(_CLASSIFICATIONS_PATH) == 1
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome, row.attempt_count) for row in rows] == [
+        ("classify", VaultPipelineOutcome.FAILED, 2)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_run_under_suspension_ends_failed_without_sending(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Startup resume of an in-flight run with no handle, under the switch (#3075)."""
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    db_session.add(
+        VaultPipelineRun(
+            user_id=_OWNER,
+            stage="classify",
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+            outcome=VaultPipelineOutcome.ATTEMPTED.value,
+            job_id=None,
+            attempt_count=1,
+            fragments_seen=0,
+            fragments_touched=0,
+            fragments_lost=0,
+        )
+    )
+    await db_session.commit()
+
+    async def _resolve(_session: AsyncSession, user_id: int) -> HttpCreekVaultClient:
+        assert user_id == _OWNER
+        return client
+
+    await pipeline.resume_vault_pipeline_runs(_test_session_factory(db_session), _resolve)
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert _CLASSIFICATIONS_PATH not in recorder.paths
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome, row.attempt_count) for row in rows] == [
+        ("classify", VaultPipelineOutcome.FAILED, 2)
+    ]
+
+
+@pytest.mark.asyncio
 async def test_a_lost_job_handle_is_readmitted_instead_of_polled_forever(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
