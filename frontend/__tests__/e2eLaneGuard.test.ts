@@ -128,6 +128,7 @@ const EXPECTED_JOURNEYS = [
   'journal-delete.e2e.test.ts',
   'journal-essay-economy.e2e.test.ts',
   'journal-habit-offer.e2e.test.ts',
+  'journal-intimate-withdrawal.e2e.test.ts',
   'journal-practice-offer.e2e.test.ts',
   'journal-vault-withdrawal.e2e.test.ts',
   'journal.e2e.test.ts',
