@@ -200,7 +200,7 @@ _MINUTES_PER_DAY = 24 * 60
 # fraction kept (unlike ``-mtime``, which drops whole days), so N in minutes is
 # exactly the model's "older than the retention".
 _PRUNE = re.compile(
-    r"(?P<gate>\[ -s \"adepthood-\$STAMP\.dump\.gpg\" \] && )?"
+    r"(?P<gate>\[ -s \"adepthood-\$STAMP\.dump\.gpg\" \] && (?:\\\n\s*)?)?"
     r"find\b[^\n]*\.dump\.gpg[^\n]*-mmin \+\$\(\((?P<expr>[0-9 *]+)\)\)[^\n]*-delete"
 )
 
@@ -232,3 +232,12 @@ def test_offhost_runbook_prunes_dumps_past_their_retention() -> None:
     """
     prune = _prune_command()
     assert _minutes(prune.group("expr")) == OFFHOST_DUMP_RETENTION_DAYS * _MINUTES_PER_DAY
+
+
+def test_offhost_prune_runs_only_after_a_fresh_dump() -> None:
+    """A run whose dump failed must not delete the older dumps it would have replaced.
+
+    Gating on this run's non-empty dump also keeps the newest copy whatever
+    the ages of the others.
+    """
+    assert _prune_command().group("gate"), "the prune is not gated on this run's non-empty dump"

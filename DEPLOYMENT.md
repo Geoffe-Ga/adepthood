@@ -512,8 +512,11 @@ if someone deletes the older ones. After copying the new dump, delete every dump
 older than 90 days, locally and at the off-host destination:
 ```bash
 # Local copies older than the 90-day retention, to the minute: an age in whole
-# days would round down and keep a dump a day too long.
-find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mmin +$((90 * 24 * 60)) -delete
+# days would round down and keep a dump a day too long. Only after this run's
+# dump exists and is non-empty, so a failed run never deletes the copies it
+# was meant to replace, and the newest dump is always kept.
+[ -s "adepthood-$STAMP.dump.gpg" ] && \
+  find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mmin +$((90 * 24 * 60)) -delete
 ```
 Then remove the same-aged `adepthood-*.dump.gpg` files at the off-host
 destination with that store's own tooling. The journal-entry purge's minimum
