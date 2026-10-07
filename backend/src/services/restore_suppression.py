@@ -26,8 +26,8 @@ Safety properties:
   stamped is skipped, and a run interrupted midway converges when rerun.
 * An account created at or after its tombstone's instant is not the deleted
   account (an id reused after the backup) and is never touched; an entry
-  tombstone naming a different owner is likewise skipped. Both are counted as
-  identity mismatches.
+  naming a different owner, or last written at or after its tombstone's
+  instant, is likewise skipped. Both are counted as identity mismatches.
 * A restore marked complete refuses to be reapplied again: after cutover the
   database's sequences have moved on and an entry id could name a new row.
 * It dials nothing outside adepthood: resurrected accounts are swept with
@@ -346,7 +346,15 @@ async def _reapply_entry(
         if entry is None or entry.deleted_at is not None:
             tally.entries_absent += 1
             return
-        if entry.user_id != tombstone.user_id:
+        # Another owner's row, or this owner's page last written at or after the
+        # deletion, is a new page holding an id the restore's rewound sequence
+        # handed out again; the deleted page was last written before it was
+        # deleted. ``updated_at`` rather than ``timestamp``: a writer can
+        # backdate ``timestamp`` (``entry_date``), but no request can move the
+        # server-maintained ``updated_at`` into the past. A resurrected page
+        # edited after the restore is skipped too and counted -- the startup
+        # gate exists so the restored database serves no edits first.
+        if entry.user_id != tombstone.user_id or _aware(entry.updated_at) >= tombstone.deleted_at:
             tally.identity_mismatches += 1
             return
         await withdraw_local_journal_entry(

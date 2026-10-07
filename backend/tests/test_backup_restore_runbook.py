@@ -249,3 +249,16 @@ def test_restore_suppression_step_names_the_real_cli_and_switches(runbook: str) 
 
     assert RESTORE_SUPPRESSION_REQUIRED_ENV_VAR in runbook
     assert RESTORE_ID_ENV_VAR in runbook
+
+
+def test_restore_id_is_chosen_once_not_regenerated_per_run(runbook: str) -> None:
+    """A rerun must reuse the restore id, or the completed-restore refusal never fires.
+
+    ``reapply`` refuses a restore id it already completed. An id minted by a
+    command substitution (``$(date ...)``) is new on every paste, so a rerun
+    after cutover would be accepted -- exactly what the refusal exists to stop.
+    """
+    assignments = re.findall(rf"\b{RESTORE_ID_ENV_VAR}=([^\s;]+)", runbook)
+    assert assignments, f"the runbook never assigns {RESTORE_ID_ENV_VAR}"
+    generated = [value for value in assignments if "$(" in value or "`" in value]
+    assert not generated, f"{RESTORE_ID_ENV_VAR} is regenerated per run: {generated}"

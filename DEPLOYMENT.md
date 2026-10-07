@@ -558,7 +558,10 @@ costs.
    # live database before the restore (or from wherever it is kept -- where it
    # lives is undecided, #3063 AC17; without one, deletions made after the
    # backup cannot be suppressed and must be treated as resurrected).
-   TOMBSTONES=tombstones.json; RESTORE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+   # RESTORE_ID names THIS restore. Choose it once (e.g. after the backup you
+   # restored) and paste the same value on any rerun: a completed id is refused,
+   # which is what stops a second reapply after cutover.
+   TOMBSTONES=tombstones.json; RESTORE_ID=restore-of-backup-YYYYMMDD
    PYTHONPATH=src python -m scripts.restore_suppression reapply \
      --in "$TOMBSTONES" --restore-id "$RESTORE_ID"
    ```

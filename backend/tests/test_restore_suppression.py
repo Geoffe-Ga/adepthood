@@ -553,3 +553,93 @@ async def test_purge_at_the_floor_leaves_every_live_backup_holding_the_entry_del
     assert listed == {kept}
     export = (await client.get("/users/me/export", headers=alice.headers)).json()
     assert {entry["id"] for entry in export["records"]["journal_entries"]} == {kept}
+
+
+def _utc(stamp: datetime) -> datetime:
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
+
+
+async def _entry_instants(
+    factory: async_sessionmaker[AsyncSession], entry_id: int
+) -> tuple[datetime, datetime]:
+    """``(timestamp, updated_at)`` of one entry, read as UTC."""
+    async with factory() as session:
+        entry = await session.get(JournalEntry, entry_id)
+        assert entry is not None
+        return _utc(entry.timestamp), _utc(entry.updated_at)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("offset", "survives"),
+    [
+        (timedelta(seconds=-1), True),  # written after the deletion: a reused id
+        (timedelta(0), True),  # written the instant it was deleted: not the same page
+        (timedelta(seconds=1), False),  # last written before the deletion: the deleted page
+    ],
+)
+async def test_entry_tombstone_never_touches_a_reused_id(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    offset: timedelta,
+    *,
+    survives: bool,
+) -> None:
+    """A same-owner page last written at or after the tombstone's instant is a new page.
+
+    After a restore the entry sequence rewinds, so a page the owner writes
+    afterwards can take a deleted page's id. It was necessarily written after
+    the deletion; the deleted page never was.
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    ida = await _signup(client, "ida")
+    entry_id = await _write(client, ida, "ida's new page")
+    _, written = await _entry_instants(factory, entry_id)
+    tombstones = TombstoneSet(
+        accounts=(),
+        entries=(
+            EntryTombstone(entry_id=entry_id, user_id=ida.user_id, deleted_at=written + offset),
+        ),
+    )
+
+    receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    resp = await client.get(f"/journal/{entry_id}", headers=ida.headers)
+    assert resp.status_code == (HTTPStatus.OK if survives else HTTPStatus.NOT_FOUND)
+    assert receipt.identity_mismatches == (1 if survives else 0)
+
+
+@pytest.mark.asyncio
+async def test_a_backdated_new_page_is_still_recognised_as_new(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """``timestamp`` cannot tell a new page from the deleted one; ``updated_at`` can.
+
+    A writer may backdate a page (``entry_date``), so its ``timestamp`` can sit
+    before a tombstone it postdates. The guard reads the server-only
+    ``updated_at`` instead, which no request can move into the past.
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    jo = await _signup(client, "jo")
+    deleted_at = datetime.now(UTC) - timedelta(hours=1)
+    resp = await client.post(
+        "/journal/",
+        json={"message": "backdated", "classification": "personal", "entry_date": "2020-01-01"},
+        headers=jo.headers,
+    )
+    assert resp.status_code in {HTTPStatus.OK, HTTPStatus.CREATED}
+    entry_id = int(resp.json()["id"])
+    stamped, _ = await _entry_instants(factory, entry_id)
+    assert stamped < deleted_at  # a timestamp guard would wrongly delete this page
+    tombstones = TombstoneSet(
+        accounts=(),
+        entries=(EntryTombstone(entry_id=entry_id, user_id=jo.user_id, deleted_at=deleted_at),),
+    )
+
+    receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    assert receipt.identity_mismatches == 1
+    assert (
+        await client.get(f"/journal/{entry_id}", headers=jo.headers)
+    ).status_code == HTTPStatus.OK
