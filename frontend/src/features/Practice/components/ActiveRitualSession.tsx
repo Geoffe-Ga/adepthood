@@ -280,7 +280,7 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const engineDeps = useEngineDeps(tarotCardIndex, props.audio);
   const [state, controls] = useRitualEngine(props.effectiveConfig, engineDeps);
   useKeepAwakeWhileRunning(state.status);
-  const window = useCompletionWindow(state.status);
+  const window = useCompletionWindow(state.status, state.elapsedMs);
   const [saveError, setSaveError] = useState<string | null>(null);
   const cardPick = useCardPick(props.effectiveConfig);
   const {
@@ -367,25 +367,38 @@ interface CompletionWindow {
   reset: () => void;
 }
 
-function useCompletionWindow(status: RitualState['status']): CompletionWindow {
+/**
+ * Track the wall-clock window a completed sitting is saved with.
+ *
+ * `start` is stamped on the sitting's *first* start (`idle`/`complete` →
+ * `running`), never on a resume, so pausing mid-sit cannot truncate the
+ * record. `end` is `start + active elapsed` — pause time is excluded, so
+ * `end - start` is exactly the time spent practising — capped at "now" so a
+ * clock stepped backwards mid-sit can never post a future `ended_at`.
+ */
+function useCompletionWindow(status: RitualState['status'], elapsedMs: number): CompletionWindow {
   const [completedWindow, setCompletedWindow] = useState<{ start: Date; end: Date } | null>(null);
   const startedAtRef = useRef<Date | null>(null);
   const prevStatusRef = useRef(status);
   useEffect(() => {
     const prev = prevStatusRef.current;
-    if (prev !== 'running' && status === 'running') {
+    if ((prev === 'idle' || prev === 'complete') && status === 'running') {
       startedAtRef.current = new Date();
     }
     if (prev !== 'complete' && status === 'complete') {
       const started = startedAtRef.current ?? new Date();
-      setCompletedWindow({ start: started, end: new Date() });
+      const end = new Date(Math.min(started.getTime() + elapsedMs, Date.now()));
+      setCompletedWindow({ start: started, end });
     }
     if (status === 'idle' && prev !== 'idle') {
       setCompletedWindow(null);
       startedAtRef.current = null;
     }
     prevStatusRef.current = status;
-  }, [status]);
+    // Re-running on an `elapsedMs` change is harmless: every branch above is
+    // gated on a status *transition*, and the reducer freezes elapsed on
+    // completion, so the window is computed once from the final value.
+  }, [status, elapsedMs]);
   const reset = useCallback(() => {
     setCompletedWindow(null);
     startedAtRef.current = null;

@@ -86,7 +86,10 @@ function useSessionSchedule(
   return schedule;
 }
 
-/** Play the start bell once per session and the end bell once on completion. */
+/**
+ * Play the start bell once per session and the end bell once on completion.
+ * A resume (`paused → running`) is not a new session and rings nothing.
+ */
 function useBoundaryBells(
   config: RandomIntervalBellConfig,
   status: RitualState['status'],
@@ -96,7 +99,8 @@ function useBoundaryBells(
   useEffect(() => {
     const prev = prevStatusRef.current;
     prevStatusRef.current = status;
-    if (prev !== 'running' && status === 'running' && (config.start_bell ?? true)) {
+    const sessionBegan = (prev === 'idle' || prev === 'complete') && status === 'running';
+    if (sessionBegan && (config.start_bell ?? true)) {
       audio.play('start_bell');
     }
     if (prev !== 'complete' && status === 'complete' && (config.end_bell ?? true)) {
@@ -105,7 +109,11 @@ function useBoundaryBells(
   }, [status, config.start_bell, config.end_bell, audio]);
 }
 
-/** Strike the configured-tone bell for every newly-passed scheduled offset. */
+/**
+ * Strike the configured-tone bell when a scheduled offset passes. Several
+ * offsets passing at once means the app was backgrounded past them: they
+ * strike as one bell, never a burst of every bell missed.
+ */
 function useIntervalBells(
   schedule: Schedule | null,
   struckCount: number,
@@ -119,9 +127,7 @@ function useIntervalBells(
       playedRef.current = 0;
       return;
     }
-    for (let i = playedRef.current; i < struckCount; i++) {
-      audio.play('interval_bell', tone);
-    }
+    if (struckCount > playedRef.current) audio.play('interval_bell', tone);
     playedRef.current = struckCount;
   }, [schedule, struckCount, status, audio, tone]);
 }

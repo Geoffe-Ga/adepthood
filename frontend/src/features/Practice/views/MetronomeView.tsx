@@ -9,6 +9,7 @@ import { useSessionSurface } from './sessionSurface';
 import { SESSION_CAPTION_LABEL, SessionContainer } from './shared';
 
 import { SPACING } from '@/design/tokens';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 
 const PULSE_DURATION_MS = 120;
 const PULSE_MAX_SCALE = 1.6;
@@ -22,10 +23,14 @@ interface Props {
 const MetronomeView = ({ config, state, controls }: Props): React.JSX.Element => {
   const pulse = useRef(new Animated.Value(1)).current;
   const lastStruckRef = useRef(state.cuesStruck);
+  // Under the OS "Reduce Motion" setting the dot stays still; the beat is
+  // still felt through the haptic tick.
+  const reduced = useReducedMotion();
 
   useEffect(() => {
     if (state.cuesStruck === lastStruckRef.current) return;
     lastStruckRef.current = state.cuesStruck;
+    if (reduced) return;
     Animated.sequence([
       Animated.timing(pulse, {
         toValue: PULSE_MAX_SCALE,
@@ -38,7 +43,7 @@ const MetronomeView = ({ config, state, controls }: Props): React.JSX.Element =>
         useNativeDriver: true,
       }),
     ]).start();
-  }, [state.cuesStruck, pulse]);
+  }, [state.cuesStruck, pulse, reduced]);
 
   const surface = useSessionSurface();
   const elapsedMs = state.elapsedMs;
