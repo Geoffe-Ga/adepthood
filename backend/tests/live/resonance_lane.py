@@ -52,6 +52,18 @@ def _is_truthy(value: str) -> bool:
     return value.strip().casefold() not in _FALSEY
 
 
+def lane_is_armed(env: Mapping[str, str]) -> bool:
+    """Whether ``env`` opts in to the paid resonance lane.
+
+    Args:
+        env: Explicit environment mapping; process state is never read here.
+
+    Returns:
+        ``True`` only when the opt-in flag is truthy.
+    """
+    return _is_truthy(env.get(OPT_IN_ENV, ""))
+
+
 def resolve_live_resonance_api_key(env: Mapping[str, str]) -> str | None:
     """Return the armed production key, or ``None`` when the lane is off.
 
@@ -70,7 +82,7 @@ def resolve_live_resonance_api_key(env: Mapping[str, str]) -> str | None:
         ResonanceLaneMisconfiguredError: The lane is armed without a supported
             real provider and matching nonblank key.
     """
-    if not _is_truthy(env.get(OPT_IN_ENV, "")):
+    if not lane_is_armed(env):
         return None
 
     provider = env.get(PROVIDER_ENV, "stub")

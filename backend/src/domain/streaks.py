@@ -174,7 +174,7 @@ def period_longest_streak(
         if _period_met(totals.get(cursor, 0.0), cadence):
             run += 1
             longest = max(longest, run)
-        else:
+        elif cursor != open_period:
             run = 0
         cursor = _next_period(cursor, unit)
     return longest

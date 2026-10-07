@@ -689,8 +689,12 @@ export const periodLongestStreak = (
   let longest = 0;
   let run = 0;
   for (let cursor = first; cursor <= open; cursor = shiftPeriod(cursor, cadence.kind, 1)) {
-    run = periodMet(totals.get(cursor) ?? 0, cadence) ? run + 1 : 0;
-    longest = Math.max(longest, run);
+    if (periodMet(totals.get(cursor) ?? 0, cadence)) {
+      run += 1;
+      longest = Math.max(longest, run);
+    } else if (cursor !== open) {
+      run = 0;
+    }
   }
   return longest;
 };
