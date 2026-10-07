@@ -3,8 +3,9 @@ name: Iteration Trigger
 # Posts a brief executive summary on a PR (commenting as Geoffe-Ga via PAT)
 # whenever CI completes fully green AND a Claude review has been posted.
 # The comment is intended to fire a webhook that wakes the Claude Code mobile
-# app via MCP so it can continue iterating on feedback. Capped at 10 self-posts
-# per PR to avoid runaway loops.
+# app via MCP so it can act on the verdict: iterate on CHANGES_REQUESTED; on
+# COMMENTS file each finding as a P0-P3 follow-up issue and merge (never
+# iterate); on LGTM merge. Capped at 10 self-posts per PR to avoid runaway loops.
 #
 # Required secrets:
 #   GEOFFE_GA_PAT  - personal access token for Geoffe-Ga with `pull-requests: write`.
@@ -77,12 +78,15 @@ jobs:
           BODY=$(jq -r '.body' <<<"$CLAUDE")
 
           # Parse the verdict from that line only — grepping the whole body is
-          # unsafe (a COMMENTS rationale may itself mention "LGTM").
+          # unsafe (a COMMENTS rationale may itself mention "LGTM"). COMMENTS
+          # clears a merge, so it must be read off the line explicitly: an
+          # unrecognised line is UNPARSED, which clears nothing.
           VLINE=$(grep -m1 -E '^## Verdict:' <<<"$BODY" || true)
           case "$VLINE" in
             *CHANGES_REQUESTED*) VERDICT='CHANGES REQUESTED' ;;
             *LGTM*)              VERDICT='LGTM' ;;
-            *)                   VERDICT='COMMENTS' ;;
+            *COMMENTS*)          VERDICT='COMMENTS' ;;
+            *)                   VERDICT='UNPARSED' ;;
           esac
 
           # CI status from check-runs on the head SHA. Skipped/neutral runs are
@@ -110,14 +114,24 @@ jobs:
           # "not current".
           BEHIND=$(gh api "repos/$REPO/compare/$BASE...$SHA?per_page=1" --jq '.behind_by' 2>/dev/null || true)
 
-          if [ "$GREEN" = "$TOTAL" ] && [ "$VERDICT" = "LGTM" ]; then
+          # COMMENTS is a sign-off with non-blocking findings: it never asks for
+          # another iteration. Its findings become follow-up issues prioritized
+          # P0-P3 by severity (address-feedback skill, Step 1A).
+          FILE_FOLLOWUPS="Do NOT iterate on this review: pull comment ${ID} and file each actionable finding as a follow-up issue with a P0-P3 label matched to its severity (address-feedback Step 1A)."
+          if [ "$GREEN" = "$TOTAL" ] && { [ "$VERDICT" = "LGTM" ] || [ "$VERDICT" = "COMMENTS" ]; }; then
             if [ "$HELD" != "no" ]; then
               ACTION="NOT cleared to merge: the do-not-auto-merge hold is set on this PR (or its labels could not be read). A human owns this one - leave it alone."
             elif [ "$BEHIND" != "0" ]; then
               ACTION="NOT cleared to merge: this head is not current with ${BASE:-its base} (behind_by='${BEHIND}'). Sync main in and let CI re-run first."
+            elif [ "$VERDICT" = "COMMENTS" ]; then
+              ACTION="${FILE_FOLLOWUPS} Then you are cleared to squash merge, delete the branch, clean any worktrees, and unsubscribe from webhooks."
             else
               ACTION="You are cleared to squash merge, delete the branch, clean any worktrees, and unsubscribe from webhooks. Please proceed."
             fi
+          elif [ "$VERDICT" = "COMMENTS" ]; then
+            ACTION="${FILE_FOLLOWUPS} CI is not fully green yet - fix only the failing checks."
+          elif [ "$VERDICT" = "UNPARSED" ]; then
+            ACTION="NOT cleared to merge: comment ${ID} has no readable Verdict line. Surface it to a human; do not infer a verdict."
           else
             ACTION="pull comment ${ID} to see in-depth feedback and continue iterating"
           fi
