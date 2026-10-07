@@ -39,7 +39,7 @@ _AI_LEAVES: Final = frozenset({"services.botmason.generate_response", ".complete
 _ADMISSION: Final = "require_external_ai_available"
 #: Every send method an ``httpx`` client offers.
 _HTTP_SEND_METHODS: Final = frozenset(
-    {"request", "send", "stream", "get", "post", "put", "patch", "delete"}
+    {"request", "send", "stream", "get", "head", "options", "post", "put", "patch", "delete"}
 )
 _MAPPING: Final = "a mapping lookup, not an HTTP send"
 #: ``.get`` receivers in ``creek_vault_client.py`` that are lookups, not clients.
@@ -213,6 +213,8 @@ def test_mapping_gets_name_only_live_receivers() -> None:
         ("send", "client.send(request)"),
         ("stream", "client.stream('POST', url)"),
         ("request", "client.request('POST', url)"),
+        ("head", "client.head(url, params=body)"),
+        ("options", "client.options(url)"),
     ],
 )
 def test_a_second_send_site_of_any_verb_is_found(method: str, call: str) -> None:
