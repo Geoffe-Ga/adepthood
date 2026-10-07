@@ -167,14 +167,15 @@ async def _anchored_candidates(session: AsyncSession, user_id: int) -> list[Habi
     or fully consumed list has nothing for an anchor to open. It is the same
     provisioner, with the same anchor semantics, the course router uses.
 
-    Provisioning commits, and the candidates read before that commit are used
-    afterwards. That is sound only because every session factory is built with
-    ``expire_on_commit=False``.
+    Provisioning commits, so the candidates are read again after it rather than
+    reused: that keeps the result sound whatever the session factory's
+    ``expire_on_commit`` says. The re-read costs one query, once per account.
     """
     candidates = await _unconsumed_candidates(session, user_id)
-    if _has_laddered(candidates):
-        await ensure_user_progress(session, user_id)
-    return candidates
+    if not _has_laddered(candidates) or await get_user_progress(session, user_id) is not None:
+        return candidates
+    await ensure_user_progress(session, user_id)
+    return await _unconsumed_candidates(session, user_id)
 
 
 async def reconcile_habit_auto_reveals(

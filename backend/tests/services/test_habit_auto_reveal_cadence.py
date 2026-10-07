@@ -4,12 +4,10 @@ These tests drive :func:`services.habit_auto_reveal.reconcile_habit_auto_reveals
 directly, so the clock is an argument rather than a mock: every case passes the
 ``now`` it wants and reads the result back from the database.
 
-The session factory behind ``db_session`` is built with ``expire_on_commit=False``
-(``conftest.py``), exactly as production's is (``database.py``). Reconcile relies
-on that: provisioning the calendar anchor commits after the candidate habits have
-been loaded, and the first eligibility pass then reads ``stage`` and
-``start_date`` from those same objects. If the flag flips, that read raises
-``MissingGreenlet`` and these tests fail loudly rather than pass by luck.
+Provisioning the calendar anchor commits after the candidate habits have been
+loaded, so reconcile re-reads them rather than relying on the session factory's
+``expire_on_commit=False``; one case below runs on a session that expires on
+commit to hold that.
 """
 
 from __future__ import annotations
@@ -21,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import func
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
 from database import async_session_factory
@@ -103,6 +101,29 @@ async def test_reconcile_provisions_anchor_when_no_progress_row(db_session: Asyn
     stamped = progress.program_started_at.replace(tzinfo=UTC)
     assert abs(stamped - before) < _PROVISION_TOLERANCE
     assert progress.current_stage == 1
+
+
+@pytest.mark.asyncio
+async def test_reconcile_survives_a_session_that_expires_on_commit(
+    db_session: AsyncSession,
+) -> None:
+    """Provisioning's commit never strands the candidates read before it.
+
+    Reconcile must not lean on the session factory's ``expire_on_commit=False``:
+    on a session that expires on commit, the habits loaded before the anchor's
+    commit would raise ``MissingGreenlet`` on their next attribute read.
+    """
+    user_id = await _make_user(db_session, "expiring@example.com")
+    today = datetime.now(UTC).date()
+    await _add_habit(db_session, user_id, _Seed("Beige ring", "Beige", today, 1))
+    await _add_habit(db_session, user_id, _Seed("Purple ring", "Purple", today, 2))
+    expiring = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=True)
+
+    async with expiring() as session:
+        opened = await reconcile_habit_auto_reveals(session, user_id, _UTC)
+
+    assert opened == 1
+    assert await get_user_progress(db_session, user_id) is not None
 
 
 @pytest.mark.parametrize(
