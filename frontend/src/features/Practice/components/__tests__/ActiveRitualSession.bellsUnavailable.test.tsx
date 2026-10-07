@@ -175,6 +175,30 @@ describe('ActiveRitualSession bells-unavailable notice', () => {
     expect(queryByTestId('ritual-bells-unavailable')).toBeNull();
   });
 
+  it('shows the notice when a random-interval bell is refused', async () => {
+    // This mode's bells are played by its view, not the engine (which
+    // schedules none), so the view must play through the session's adapter.
+    Platform.OS = 'web';
+    player.mockImplementation(() => webPlayer(false));
+    const { getByTestId, queryByTestId } = renderSession({
+      mode: 'random_interval_bell',
+      duration_minutes: 1,
+      min_interval_seconds: 10,
+      max_interval_seconds: 20,
+      bell_tone: 'bowl',
+    });
+    await flushMicrotasks();
+    expect(queryByTestId('ritual-bells-unavailable')).toBeNull();
+
+    act(() => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(getByTestId('ritual-bells-unavailable')).toBeTruthy();
+  });
+
   it('a working player on a metronome leaves the notice absent (its silence is by design)', async () => {
     player.mockImplementation(() => ({
       seekTo: () => Promise.resolve(),

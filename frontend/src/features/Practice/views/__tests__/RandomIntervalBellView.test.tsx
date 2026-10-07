@@ -219,11 +219,13 @@ describe('RandomIntervalBellView — adapter lifecycle', () => {
     unmount();
   });
 
-  it('disposes an injected adapter that exposes dispose on unmount', () => {
+  it('leaves an injected adapter to its owner on unmount', () => {
+    // The session hands in its own adapter and disposes it itself; disposing
+    // it here too would free the session's sounds while it still runs.
     const audio = fakeAudio();
     const { unmount } = renderView(harness({ audio }));
     unmount();
-    expect(audio.dispose).toHaveBeenCalledTimes(1);
+    expect(audio.dispose).not.toHaveBeenCalled();
   });
 
   it('unmounts cleanly when the injected adapter omits dispose', () => {

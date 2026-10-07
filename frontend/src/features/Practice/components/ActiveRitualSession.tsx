@@ -131,6 +131,12 @@ interface ActiveSession {
   saveError: string | null;
   /** True once a bell has genuinely failed to play this session. */
   bellsUnavailable: boolean;
+  /**
+   * The session's one audio adapter. The random-bell view plays its own bells
+   * (the engine schedules none for that mode), so it is handed this adapter
+   * rather than building a second one whose failures nothing would hear.
+   */
+  audio: AudioAdapter;
   /** Lifts the random-bell view's live schedule metadata for the harvest. */
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
   submitSession: (
@@ -161,6 +167,7 @@ export const ActiveRitualSession = forwardRef<ActiveRitualSessionHandle, ActiveR
           onMindfulAnchorComplete={session.onMindfulAnchorComplete}
           saveError={session.saveError}
           bellsUnavailable={session.bellsUnavailable}
+          audio={session.audio}
           onRandomBellMetadata={session.onRandomBellMetadata}
         />
         <RitualConfiguratorSheet
@@ -279,6 +286,7 @@ function useHarvestedMetadata(
 interface SessionEngineDeps {
   deps: EngineDeps;
   bellsUnavailable: boolean;
+  audio: AudioAdapter;
 }
 
 function useEngineDeps(tarotCardIndex: number, injectedAudio?: AudioAdapter): SessionEngineDeps {
@@ -292,12 +300,12 @@ function useEngineDeps(tarotCardIndex: number, injectedAudio?: AudioAdapter): Se
     () => ({ startCardIndex: tarotCardIndex, haptics, audio }),
     [tarotCardIndex, haptics, audio],
   );
-  return { deps, bellsUnavailable };
+  return { deps, bellsUnavailable, audio };
 }
 
 function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const tarotCardIndex = useTarotCardIndex(props);
-  const { deps: engineDeps, bellsUnavailable } = useEngineDeps(tarotCardIndex, props.audio);
+  const { deps: engineDeps, bellsUnavailable, audio } = useEngineDeps(tarotCardIndex, props.audio);
   const [state, controls] = useRitualEngine(props.effectiveConfig, engineDeps);
   useKeepAwakeWhileRunning(state.status);
   const window = useCompletionWindow(state.status, state.elapsedMs);
@@ -340,6 +348,7 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
     completedWindow: window.completedWindow,
     saveError,
     bellsUnavailable,
+    audio,
     onRandomBellMetadata,
     submitSession,
   };
@@ -483,6 +492,7 @@ interface SessionCardProps {
   onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
   saveError: string | null;
   bellsUnavailable: boolean;
+  audio: AudioAdapter;
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
 
@@ -500,6 +510,7 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
           controls={props.controls}
           tarotCardIndex={props.tarotCardIndex}
           cardPick={props.cardPick}
+          audio={props.audio}
           onRandomBellMetadata={props.onRandomBellMetadata}
           onMindfulAnchorComplete={props.onMindfulAnchorComplete}
         />
@@ -524,6 +535,7 @@ interface ModeViewProps {
   controls: RitualControls;
   tarotCardIndex: number;
   cardPick: PickedCard | null;
+  audio: AudioAdapter;
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
   onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
 }
@@ -537,6 +549,7 @@ function ModeView(props: ModeViewProps): React.JSX.Element {
         config={config}
         state={state}
         controls={controls}
+        audio={props.audio}
         onMetadataChange={props.onRandomBellMetadata}
       />
     );

@@ -61,10 +61,24 @@ export function generateSchedule(config: RandomIntervalBellConfig, random: () =>
   return { offsets, deltas };
 }
 
-/** Resolve the audio adapter once; an injected one is honoured for tests. */
+/**
+ * Resolve the audio adapter once. The session hands in its own adapter, so a
+ * bell failure here reaches the same "bells unavailable" notice as every other
+ * mode; that adapter belongs to the session and is not disposed here. Only an
+ * adapter this view built for itself (standalone use) is disposed with it.
+ */
 function useBellAudio(injected?: AudioAdapter): AudioAdapter {
-  const [adapter] = useState<AudioAdapter>(() => injected ?? createExpoAudioAdapter());
-  useEffect(() => () => adapter.dispose?.(), [adapter]);
+  const [{ adapter, owned }] = useState(() =>
+    injected === undefined
+      ? { adapter: createExpoAudioAdapter(), owned: true }
+      : { adapter: injected, owned: false },
+  );
+  useEffect(
+    () => () => {
+      if (owned) adapter.dispose?.();
+    },
+    [adapter, owned],
+  );
   return adapter;
 }
 
