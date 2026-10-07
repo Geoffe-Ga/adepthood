@@ -988,3 +988,12 @@ def test_decisions_three_and_four_scope_the_cloud_rule_and_name_the_app_key_gap(
     assert "The app's own cloud key never carries" not in decision
     assert "Without such a key, **none of their data reaches a cloud model**" not in decision
     assert "Known gap until phase (a) lands, with #3096: the app-key fallback" in decision
+
+
+def test_header_lists_only_what_is_still_open() -> None:
+    """The recovery factors are Decision item 11, so the header may not call them open."""
+    text = _flat(_adr_text())
+    header = text[: text.index("## Context")]
+
+    assert "D03 recovery semantics are still open" not in header
+    assert "the recovery factors are Decision item 11" in header

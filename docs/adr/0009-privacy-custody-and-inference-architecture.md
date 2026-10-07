@@ -20,8 +20,9 @@
   ratify a privacy posture, and none did: an agent wrote down the owner's
   decision, scored the options and drafted the plan. Wherever this record and
   the owner's decision text disagree, the owner's text governs. Budgets,
-  staffing, reviewers and the D03 recovery semantics are still open. They are
-  listed as open questions and are not answered here.
+  staffing, reviewers and the rest of D03 (pairing, revocation, death or
+  incapacity, support requests, shared devices and export) are still open,
+  and are listed as open questions; the recovery factors are Decision item 11.
 
 ## Context
 
