@@ -604,3 +604,11 @@ def test_implementation_plan_has_four_independently_shippable_phases() -> None:
     assert _PHASE_HEADING.findall(plan) == list(_PHASE_IDS)
     assert phases == list(_PHASE_IDS)
     assert plan.count("Shippable on its own:") >= len(_PHASE_IDS)
+
+
+def test_b13_epic_draft_exists_and_points_at_the_record() -> None:
+    """The drafted epic body for #3067 is on disk for the owner to post."""
+    draft = _EPIC_DRAFT.read_text(encoding="utf-8")
+
+    assert "0009-privacy-custody-and-inference-architecture.md" in draft
+    assert "test_custody_codec_has_no_per_principal_key" in draft
