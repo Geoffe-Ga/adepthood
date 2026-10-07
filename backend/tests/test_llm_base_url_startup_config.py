@@ -60,6 +60,9 @@ USERINFO_ON_REGISTERED = "https://user:pw@api.openai.com/v1"  # pragma: allowlis
 PLAIN_HTTP_REGISTERED = "http://api.openai.com/v1"
 WRONG_PORT_REGISTERED = "https://api.openai.com:8443/v1"
 UNPARSEABLE_PORT = "https://api.openai.com:notaport/v1"
+TRAILING_DOT_REGISTERED = "https://api.openai.com./v1"
+SUBDOMAIN_OF_REGISTERED = "https://eu.api.openai.com/v1"
+UPPERCASE_REGISTERED = "https://API.OpenAI.com/v1"
 
 # The two values the end-to-end lane sets, verbatim in shape.
 LANE_OPENAI = "http://127.0.0.1:43123/v1"
@@ -167,6 +170,8 @@ def test_refusal_never_echoes_userinfo(monkeypatch: pytest.MonkeyPatch) -> None:
         PLAIN_HTTP_REGISTERED,
         WRONG_PORT_REGISTERED,
         UNPARSEABLE_PORT,
+        TRAILING_DOT_REGISTERED,
+        SUBDOMAIN_OF_REGISTERED,
     ],
     ids=[
         "userinfo-host-trick",
@@ -175,6 +180,8 @@ def test_refusal_never_echoes_userinfo(monkeypatch: pytest.MonkeyPatch) -> None:
         "plain-http",
         "wrong-port",
         "unparseable-port",
+        "trailing-dot",
+        "subdomain",
     ],
 )
 def test_lookalikes_of_the_registered_host_are_refused(
@@ -200,8 +207,17 @@ def test_lookalikes_of_the_registered_host_are_refused(
         (OPENAI_VAR, REGISTERED_PROVIDER_BASE_URLS["openai"]),
         (ANTHROPIC_VAR, REGISTERED_PROVIDER_BASE_URLS["anthropic"]),
         (ANTHROPIC_VAR, "https://api.anthropic.com/"),
+        (OPENAI_VAR, UPPERCASE_REGISTERED),
     ],
-    ids=["unset", "empty", "blank", "openai-registered", "anthropic-registered", "slash"],
+    ids=[
+        "unset",
+        "empty",
+        "blank",
+        "openai-registered",
+        "anthropic-registered",
+        "slash",
+        "host-case-insensitive",
+    ],
 )
 def test_registered_unset_and_blank_values_boot(
     name: str, value: str | None, monkeypatch: pytest.MonkeyPatch
