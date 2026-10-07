@@ -66,9 +66,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.frequencies import Frequency
+from domain.privacy_tier import egress_eligible_clause
 from domain.stage_authority import open_through
 from domain.stage_progress import get_user_progress
-from models.journal_entry import JournalClassification, JournalEntry
+from models.journal_entry import JournalEntry
 from security import sanitize_user_text
 from services.corpus_store import RetrievalQuery, resolve_stage_frequency, retrieve_fragments
 
@@ -135,7 +136,8 @@ async def _current_frequency(session: AsyncSession, user_id: int) -> Frequency |
 async def _recent_entry_bodies(session: AsyncSession, user_id: int, exclude_id: int) -> list[str]:
     """The caller's most recent other entry bodies, for connection context.
 
-    Intimate entries (issue #895) are excluded: these bodies are embedded in the
+    Intimate entries (issue #895) -- and any tier outside the egress allowlist
+    (#3059) -- are excluded: these bodies are embedded in the
     resonance prompt and sent to the cloud LLM, so an intimate entry must never
     reach the cloud even as *prior context* for a newer non-intimate entry's
     pass. The classification is read off the persisted row (never client-supplied
@@ -150,7 +152,7 @@ async def _recent_entry_bodies(session: AsyncSession, user_id: int, exclude_id: 
             JournalEntry.user_id == user_id,
             JournalEntry.id != exclude_id,
             col(JournalEntry.deleted_at).is_(None),
-            col(JournalEntry.classification) != JournalClassification.INTIMATE,
+            egress_eligible_clause(col(JournalEntry.classification)),
         )
         .order_by(col(JournalEntry.id).desc())
         .limit(GROUNDING_LIMIT)

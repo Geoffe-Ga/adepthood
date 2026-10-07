@@ -527,14 +527,21 @@ def test_neither_seam_entry_can_be_handed_another_source() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("classification", ["not_a_real_tier", "intimate", "INTIMATE", ""])
 async def test_unknown_classification_short_circuits_before_any_transport_call(
     spied_clients: _SpiedClientFactory,
+    classification: str,
 ) -> None:
-    """An unrecognized classification fails closed at the transport, never widening a tier."""
+    """A tier outside the egress allowlist fails closed at the transport, never widening a tier.
+
+    ``intimate`` is included (#3059): it resolves to a real vault ceiling, so
+    only the egress predicate -- not the ceiling map -- keeps this seam from
+    handshaking for it.
+    """
     client = spied_clients([CreekCapability.REFLECT.value])
 
     with pytest.raises(VaultSourceUnavailableError) as raised:
-        await select_reflection_llm(client, body=_BODY, classification="not_a_real_tier")
+        await select_reflection_llm(client, body=_BODY, classification=classification)
 
     assert raised.value.reason is VaultSourceUnavailableReason.UNKNOWN_TIER
     assert spied_clients.handlers[-1].requests == []

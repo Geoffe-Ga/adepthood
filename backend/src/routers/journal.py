@@ -48,6 +48,7 @@ from domain.depth_preferences import DepthRing, load_enabled_rings
 from domain.detection import CompletionDetected, DetectionCandidate, detect_completions
 from domain.detection_facts import DetectionClock
 from domain.practice_resolution import effective_config
+from domain.privacy_tier import admits_egress, egress_eligible_clause
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import (
     PRIOR_DRAFT_CHARS,
@@ -77,7 +78,7 @@ from models.completion_suggestion import (
 )
 from models.goal import Goal
 from models.habit import Habit
-from models.journal_entry import JournalClassification, JournalEntry, JournalTag
+from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -905,7 +906,7 @@ def _prior_letters_query(user_id: int, exclude_entry_id: int) -> Select[tuple[Ma
     return (
         _expanded_drafts_query(user_id)
         .where(
-            col(JournalEntry.classification) != JournalClassification.INTIMATE,
+            egress_eligible_clause(col(JournalEntry.classification)),
             col(JournalEntry.id) != exclude_entry_id,
         )
         .order_by(col(Marginalia.essay_generated_at).desc(), col(Marginalia.id).desc())
@@ -1112,7 +1113,7 @@ async def update_journal_entry(
                 current_user,
                 session,
             )
-            if entry.classification == JournalClassification.INTIMATE:
+            if not admits_egress(entry.classification):
                 await _apply_intimate_update(
                     session,
                     entry,
@@ -1675,7 +1676,7 @@ async def _withdrawn_under_hold(
     if entry.deleted_at is not None:
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         raise not_found("journal_entry")
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         return True
     return False
@@ -2309,7 +2310,7 @@ async def run_resonance(
     # suppresses crisis support (NORTH-STAR §10). An admitted pass re-derives
     # both the body and this screen from the row it re-reads under the hold
     # (#3008); this reading serves only the 422 and intimate fast paths.
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         return await _private_response(session, current_user, _care_response(_care_for(message)))
     # A generation is about to happen: the per-user guardrails (#623) admit it
     # here, after every free exit above. The minute peek is a cheap 429 before
@@ -2740,7 +2741,7 @@ async def detect_entry_suggestions(
     # before any candidate or provider work. The body actually dialled is
     # re-derived from the row re-read under the hold.
     _sanitize_message(entry.message)
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         return CompletionDetectionResponse(items=[], checked=False)
     if caller.boundary is ReflectionBoundary.VAULT_BOUND:
         await session.commit()
@@ -3220,7 +3221,7 @@ async def _expand_essay(
     # Decided from the *persisted* classification, before the LLM is constructed.
     # Read again inside the barrier below, because this reading can go stale
     # while the request waits for it — see ``_cache_and_mirror_essay``.
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         return note
     _require_price_acknowledged(clients)
     # A first letter is about to be asked for: the per-user guardrails (#623)
@@ -3299,7 +3300,7 @@ async def _cache_and_mirror_essay(
             # purchase -- no charge, no dial, no overwrite (#623).
             _log_essay_cache_hit(note, _CACHE_HIT_IN_BARRIER)
             return note
-        if entry.deleted_at is not None or entry.classification == JournalClassification.INTIMATE:
+        if entry.deleted_at is not None or not admits_egress(entry.classification):
             return note
         cached = await _cache_essay(
             session, note, _sanitize_message(entry.message), clients.api_key

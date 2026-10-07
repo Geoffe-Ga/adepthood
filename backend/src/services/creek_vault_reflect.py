@@ -16,8 +16,9 @@ no "else" here to fall back to. Every way the vault can fail to answer raises
 closed-vocabulary reason, which the router settles as a refunded, retryable
 "unavailable":
 
-* an unrecognized classification, before any handshake, so a tier is never
-  widened and the vault is untouched;
+* a classification outside the egress allowlist
+  (:func:`domain.privacy_tier.admits_egress`: intimate, unknown, empty), before
+  any handshake, so a tier is never widened and the vault is untouched (#3059);
 * a vault that does not handshake as available, or never advertises REFLECT;
 * a :class:`~domain.creek_vault.CreekVaultError` from the call itself, which is
   also recorded through :mod:`services.creek_vault_read` so it stays countable.
@@ -61,8 +62,9 @@ the pass charges, and again under the account hold, where a PATCH that won the
 barrier may have made the entry intimate (#2998) -- so
 :func:`select_reflection_llm` is only ever called for non-intimate entries and
 never binds an intimate-tier vault reflection (that attested read path is future
-work). This function has no intimate gate of its own; both router checks are
-load-bearing.
+work). Since #3059 it also refuses one itself, as its first gate: the router
+checks remain load-bearing, and this one makes the seam fail closed on its own
+rather than on its caller's discipline.
 """
 
 from __future__ import annotations
@@ -82,6 +84,7 @@ from domain.creek_vault import (
     VaultTierCeiling,
     tier_ceiling_for,
 )
+from domain.privacy_tier import admits_egress
 from domain.resonance import ResonanceLLM
 from services.creek_vault_read import log_read_degraded
 from services.reflection_boundary import (
@@ -238,9 +241,13 @@ async def select_reflection_llm(
     non-intimate entry the router's local care screen did not flag. The order of
     the gates is load-bearing:
 
-    1. :func:`~domain.creek_vault.tier_ceiling_for` resolves the tier; an
-       unrecognized classification raises ``UNKNOWN_TIER`` before any handshake,
-       so a tier is never widened and the vault is untouched.
+    1. :func:`~domain.privacy_tier.admits_egress` decides the tier: anything
+       outside the allowlist -- intimate, unknown, empty -- raises
+       ``UNKNOWN_TIER`` (the classification maps to no tier the vault may be
+       asked at) before any handshake, so a tier is never widened and the vault
+       is untouched. :func:`~domain.creek_vault.tier_ceiling_for` then resolves
+       the ceiling, and a map that has drifted from the allowlist fails
+       closed with the same ``UNKNOWN_TIER``.
     2. A handshake probes the vault; one that is not available raises
        ``UNAVAILABLE``, and one that does not advertise REFLECT raises
        ``CAPABILITY_MISSING``.
@@ -250,6 +257,8 @@ async def select_reflection_llm(
     There is deliberately no ``fallback`` parameter: a vault-then-app-provider
     composite is not expressible through this function.
     """
+    if not admits_egress(classification):
+        raise VaultSourceUnavailableError(VaultSourceUnavailableReason.UNKNOWN_TIER)
     try:
         tier_ceiling = tier_ceiling_for(classification)
     except ValueError:
