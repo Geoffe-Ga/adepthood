@@ -16,7 +16,8 @@ passing both bodies by keyword so the two strings cannot be silently swapped.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,9 +27,15 @@ from domain.marginalia_anchoring import reanchor_one
 from domain.resonance import split_resonance_prompt
 from models.completion_suggestion import CompletionSuggestion, SuggestionStatus
 from models.journal_entry import JournalEntry
-from models.marginalia import Marginalia, MarginaliaStatus
+from models.marginalia import (
+    SOURCE_MODEL_MAX,
+    InferenceProvider,
+    Marginalia,
+    MarginaliaSource,
+    MarginaliaStatus,
+)
 from models.promoted_quote import PromotedQuote
-from services.botmason import LLMResponse, generate_response
+from services.botmason import STUB_PROVIDER_NAME, LLMResponse, generate_response
 
 # The system role every resonance-family call ships: margin notes, essay
 # expansion, and completion detection.  It exists because ``generate_response``
@@ -86,6 +93,67 @@ class BotmasonResonanceLLM:
         )
         self.usage.append(response)
         return response.text
+
+
+@dataclass(frozen=True, slots=True)
+class InferenceReceipt:
+    """Which side answered one AI operation, built only from what the server observed (#3062).
+
+    Every field is closed vocabulary except ``model``, which is the answering
+    side's own report of itself -- shown as reported, never as attested -- and
+    is ``None`` when nothing was reported. A receipt is never built from the
+    request and never from the account's current vault connection.
+    """
+
+    source: MarginaliaSource
+    provider: InferenceProvider | None
+    model: str | None
+
+
+#: The receipt for an operation the caller's vault answered. The vault's reflect
+#: response carries no model identity, so none is claimed.
+VAULT_RECEIPT = InferenceReceipt(
+    source=MarginaliaSource.CREEK_VAULT, provider=InferenceProvider.CREEK, model=None
+)
+
+
+def _known_provider(name: str) -> InferenceProvider | None:
+    """Map a reported provider name into the vocabulary, or ``None`` -- never a guess."""
+    try:
+        provider = InferenceProvider(name)
+    except ValueError:
+        return None
+    # ``creek`` is the vault's word: an app-provider response claiming it is
+    # not evidence the vault answered, so it is recorded as unknown instead.
+    return None if provider is InferenceProvider.CREEK else provider
+
+
+def receipt_for(response: LLMResponse) -> InferenceReceipt:
+    """Return the receipt for one app-provider response.
+
+    The stub provider is ``demo``; every other response is ``app_provider``,
+    with an unrecognized provider name recorded as ``None`` rather than widened
+    into a vault or a demo. The model is capped at :data:`SOURCE_MODEL_MAX` and
+    an empty one is recorded as unreported.
+    """
+    is_stub = response.provider == STUB_PROVIDER_NAME
+    return InferenceReceipt(
+        source=MarginaliaSource.DEMO if is_stub else MarginaliaSource.APP_PROVIDER,
+        provider=InferenceProvider.STUB if is_stub else _known_provider(response.provider),
+        model=response.model[:SOURCE_MODEL_MAX] or None,
+    )
+
+
+def receipt_since(usage: Sequence[LLMResponse], mark: int = 0) -> InferenceReceipt | None:
+    """Return the receipt for the last app-provider answer at or after ``mark``, if any.
+
+    Written against the usage sequence the adapter already keeps rather than
+    the adapter, so a caller holding only the metered responses can ask. The
+    *last* answer is the one whose output was kept: a corrective retry
+    replaces the first attempt's answer. ``None`` means no call answered.
+    """
+    answered = usage[mark:]
+    return receipt_for(answered[-1]) if answered else None
 
 
 class _AnchoredRow(Protocol):

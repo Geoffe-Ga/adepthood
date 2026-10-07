@@ -33,6 +33,7 @@ from models.wallet_audit import (
     REASON_GUMROAD_PURCHASE,
     REASON_GUMROAD_REFUND,
     REASON_MONTHLY_RESET,
+    REASON_REFUND_DEMO,
     REASON_REFUND_FAILED_ESSAY,
     REASON_REFUND_FAILED_RESONANCE,
     REASON_REFUND_NO_ESSAY,
@@ -319,6 +320,7 @@ def test_reason_sets_are_exactly_the_generation_spends_and_refunds() -> None:
                 REASON_REFUND_FAILED_RESONANCE,
                 REASON_REFUND_FAILED_ESSAY,
                 REASON_REFUND_NO_ESSAY,
+                REASON_REFUND_DEMO,
             }
         )
         == GENERATION_REFUND_REASONS

@@ -76,6 +76,7 @@ from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
 from models.wallet_audit import (
+    REASON_REFUND_DEMO,
     REASON_REFUND_FAILED_ESSAY,
     REASON_REFUND_FAILED_RESONANCE,
     REASON_REFUND_NO_ESSAY,
@@ -103,6 +104,7 @@ from schemas.marginalia import (
     EssayResponse,
     MarginaliaListResponse,
     MarginaliaResponse,
+    PassProvenance,
     RelatedEddyResponse,
     RelatedPraxisResponse,
     ResonanceResponse,
@@ -140,6 +142,7 @@ from services.corpus_invitation import record_completed_pass
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
     VaultRelatedSurfaces,
+    reflection_receipt,
     related_surfaces,
     select_reflection_llm,
 )
@@ -156,6 +159,14 @@ from services.generation_guardrails import (
     require_generation_minute_available,
 )
 from services.higher_self_grounding import Grounding, gather_grounding
+from services.inference_provenance import (
+    PassReceipts,
+    is_demo,
+    pass_provenance,
+    source_value,
+    stamp_letter,
+    stamp_note,
+)
 from services.llm_usage import (
     GenerationFeature,
     GenerationKey,
@@ -168,9 +179,11 @@ from services.llm_usage import (
 )
 from services.marginalia import (
     BotmasonResonanceLLM,
+    InferenceReceipt,
     reanchor_entry_marginalia,
     reanchor_entry_promoted_quotes,
     reanchor_entry_suggestions,
+    receipt_since,
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
 from services.reflection_boundary import (
@@ -851,6 +864,7 @@ def _voice_draft(note: Marginalia) -> VoiceDraftResponse:
         anchor_text=note.anchor_text,
         essay=cast("str", note.essay),
         essay_generated_at=cast("datetime", note.essay_generated_at),
+        essay_source=note.essay_source,
     )
 
 
@@ -1164,9 +1178,18 @@ async def _grounding_for(session: AsyncSession, user_id: int, entry_id: int) -> 
 
 
 def _persist_marginalia(
-    session: AsyncSession, entry_id: int, user_id: int, anchored: list[MarginaliaAnchored]
+    session: AsyncSession,
+    entry_id: int,
+    user_id: int,
+    anchored: list[MarginaliaAnchored],
+    *,
+    receipt: InferenceReceipt | None,
 ) -> list[Marginalia]:
-    """Stage one Marginalia row per anchored note (active, no essay yet)."""
+    """Stage one Marginalia row per anchored note (active, no essay yet), stamped with its source.
+
+    ``receipt`` is required by keyword so no writer can stage a note without
+    deciding what it records about who answered (#3062).
+    """
     rows = [
         Marginalia(
             journal_entry_id=entry_id,
@@ -1180,6 +1203,8 @@ def _persist_marginalia(
         )
         for note in anchored
     ]
+    for row in rows:
+        stamp_note(row, receipt)
     session.add_all(rows)
     return rows
 
@@ -1321,7 +1346,12 @@ def _stage_suggestions(
 
 
 def _log_resonance_outcome(
-    outcome: MarginaliaOutcome, *, user_id: int, entry_id: int, count: int
+    outcome: MarginaliaOutcome,
+    receipts: PassReceipts,
+    *,
+    user_id: int,
+    entry_id: int,
+    count: int,
 ) -> None:
     """Record what the pass produced and, when nothing survived, that it did not.
 
@@ -1335,12 +1365,15 @@ def _log_resonance_outcome(
 
     Counts and ids only. Never a quote, a note, or any part of the body: the same
     reason the grounding path logs ids and counts, since journal text is
-    encrypted at rest.
+    encrypted at rest. The two sources are closed-vocabulary words (#3062); the
+    self-reported model string is never logged.
     """
     extra: dict[str, object] = {
         "user_id": user_id,
         "entry_id": entry_id,
         "count": count,
+        "notes_source": source_value(receipts.notes),
+        "detection_source": source_value(receipts.detection),
         **outcome.as_log_extra(),
     }
     logger.info("journal_resonance_generated", extra=extra)
@@ -1875,6 +1908,7 @@ class _PassSettlementInput:
     ``usage`` is every app-provider response the pass metered, recorded beside
     the rows it stages; it is empty when no app provider was dialled at all.
     ``key`` is the pass's generation, stamped on every usage row it meters.
+    ``receipt`` is which side answered the notes, stamped on every row (#3062).
     """
 
     entry_id: int
@@ -1884,6 +1918,7 @@ class _PassSettlementInput:
     hits: list[CompletionDetected]
     usage: Sequence[LLMResponse]
     key: GenerationKey
+    receipt: InferenceReceipt | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1903,10 +1938,11 @@ class _SettledPass:
     wallet: _WalletSnapshot
     no_notes_message: str | None
     reset_date: datetime
+    outcome: GenerationOutcome
 
 
 def _log_settled_pass(
-    prepared: _PassSettlementInput, usage: GenerationUsage, *, refunded_empty: bool
+    prepared: _PassSettlementInput, usage: GenerationUsage, outcome: GenerationOutcome
 ) -> None:
     """Write a committed pass's one settlement line (#623 PR3).
 
@@ -1919,9 +1955,7 @@ def _log_settled_pass(
             user_id=prepared.user_id,
             key=prepared.key,
             bucket=None if prepared.spent is None else prepared.spent.bucket,
-            outcome=(
-                GenerationOutcome.REFUNDED_EMPTY if refunded_empty else GenerationOutcome.KEPT
-            ),
+            outcome=outcome,
             attempts=prepared.anchored.attempts,
             usage=usage,
         )
@@ -1963,12 +1997,22 @@ async def _persist_settle_commit(
             hits=prepared.hits,
         )
         rows = _persist_marginalia(
-            session, prepared.entry_id, prepared.user_id, prepared.anchored.notes
+            session,
+            prepared.entry_id,
+            prepared.user_id,
+            prepared.anchored.notes,
+            receipt=prepared.receipt,
         )
         suggestions = _stage_suggestions(session, prepared.entry_id, prepared.user_id, fresh_hits)
         spent, no_notes_message, refund = await _settle_empty_pass(
             session, prepared.user_id, spent, prepared.anchored
         )
+        outcome = _pass_outcome(no_notes_message, demo=is_demo(prepared.receipt))
+        if outcome is GenerationOutcome.REFUNDED_DEMO and spent is not None:
+            refund = await refund_one_message(
+                session, prepared.user_id, spent, reason=REASON_REFUND_DEMO
+            )
+            spent = refund.balances
         # A completed pass -- notes or a refunded no-notes 200 alike -- is the
         # moment the corpus invitation's cooldown counts (#2407). Staged here so
         # the count lands with this commit and is rolled back with a failure.
@@ -1997,7 +2041,7 @@ async def _persist_settle_commit(
                     attempts=prepared.anchored.attempts,
                 ),
             )
-    _log_settled_pass(prepared, usage, refunded_empty=no_notes_message is not None)
+    _log_settled_pass(prepared, usage, outcome)
     return _SettledPass(
         rows=rows,
         suggestions=suggestions,
@@ -2007,7 +2051,21 @@ async def _persist_settle_commit(
         ),
         no_notes_message=no_notes_message,
         reset_date=spent_user.monthly_reset_date,
+        outcome=outcome,
     )
+
+
+def _pass_outcome(no_notes_message: str | None, *, demo: bool) -> GenerationOutcome:
+    """Classify a committed pass: empty, a demo, or kept.
+
+    Empty wins over demo: a stub pass that kept no notes is refunded once, as
+    an empty pass, under the reason the writer is told. A demo that kept notes
+    is delivered but handed back (#3062) -- canned text is never billed as a
+    reflection.
+    """
+    if no_notes_message is not None:
+        return GenerationOutcome.REFUNDED_EMPTY
+    return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
 
 
 # A user with no StageProgress row yet has never reached any stage, so their
@@ -2058,12 +2116,15 @@ class _ResonanceSurfaces:
     off the reflection source rather than re-derived: empty for every pass a
     vault did not answer, which is what a cloud reflection, a degraded vault and
     a vault with no pages all report.
+
+    ``provenance`` is which side answered each operation and who paid (#3062).
     """
 
     care: CareResponse | None
     contraction: ContractionReflectionResponse | None = None
     no_notes_message: str | None = None
     related: VaultRelatedSurfaces = field(default_factory=VaultRelatedSurfaces)
+    provenance: PassProvenance | None = None
 
 
 def _resonance_response(
@@ -2094,6 +2155,7 @@ def _resonance_response(
             RelatedEddyResponse.model_validate(eddy, from_attributes=True)
             for eddy in surfaces.related.eddies
         ],
+        provenance=surfaces.provenance,
     )
 
 
@@ -2325,8 +2387,15 @@ async def _run_admitted_resonance(
         if isinstance(reflected, _CareInstead):
             return await _care_only_response(session, current_user, reflected.care)
         anchored, reflection_llm = reflected
+        notes_receipt = reflection_receipt(reflection_llm, usage)
+        detection_mark = len(usage)
         attempt = await _detect_hits_with_status(
             message, inputs=detection, llm=app_llm, user_id=current_user, entry_id=entry_id
+        )
+        receipts = PassReceipts(
+            notes=notes_receipt,
+            detection=receipt_since(usage, detection_mark),
+            detection_checked=attempt.checked,
         )
         settled = await _persist_settle_commit(
             session,
@@ -2338,11 +2407,12 @@ async def _run_admitted_resonance(
                 hits=attempt.hits,
                 usage=usage,
                 key=key,
+                receipt=notes_receipt,
             ),
         )
         await _refresh_persisted(session, settled.rows, settled.suggestions)
     _log_resonance_outcome(
-        anchored, user_id=current_user, entry_id=entry_id, count=len(settled.rows)
+        anchored, receipts, user_id=current_user, entry_id=entry_id, count=len(settled.rows)
     )
     contraction = await _contraction_reflection(session, current_user)
     surfaces = _ResonanceSurfaces(
@@ -2350,6 +2420,11 @@ async def _run_admitted_resonance(
         contraction=contraction,
         no_notes_message=settled.no_notes_message,
         related=related_surfaces(reflection_llm),
+        provenance=pass_provenance(
+            receipts,
+            byok=byok_key is not None,
+            charge_kept=settled.outcome is GenerationOutcome.KEPT,
+        ),
     )
     return _resonance_response(
         settled.rows, settled.suggestions, settled.wallet, settled.reset_date, surfaces
@@ -3481,10 +3556,36 @@ async def _settle_essay(
             extra={"user_id": note.user_id, "id": note.id},
         )
         return
+    outcome = await _keep_letter(session, note, essay, receipt_since(llm.usage), charge)
+    _log_settled_essay(note, charge, usage, outcome)
+
+
+async def _keep_letter(
+    session: AsyncSession,
+    note: Marginalia,
+    essay: str,
+    receipt: InferenceReceipt | None,
+    charge: _EssayCharge,
+) -> GenerationOutcome:
+    """Cache the letter with its source; hand a demo letter's unit back in the same commit.
+
+    The letter's source is stamped beside the letter itself, so the two can
+    never be committed apart. A stub letter is still cached -- the writer asked
+    for it and sees it labelled as a demo -- but it is never billed (#3062).
+    Returns the outcome the settlement line reports.
+    """
     note.essay = essay
     note.essay_generated_at = datetime.now(UTC)
+    stamp_letter(note, receipt)
+    demo = is_demo(receipt)
+    refund = None
+    if demo and charge.spent is not None:
+        refund = await refund_one_message(
+            session, note.user_id, charge.spent, reason=REASON_REFUND_DEMO
+        )
     await session.commit()
-    _log_settled_essay(note, charge, usage, GenerationOutcome.KEPT)
+    log_committed_refund(refund)
+    return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
