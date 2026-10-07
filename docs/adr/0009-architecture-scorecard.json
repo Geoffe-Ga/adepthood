@@ -3,7 +3,7 @@
   "status": "accepted",
   "decider": "Geoff",
   "decided_on": "2026-10-07",
-  "decision_source": "owner:2026-10-07",
+  "decision_source": "owner:2026-10-07#B12-premise",
   "selected_option": "BD",
   "unlocks_public_claims": false,
   "release_gate": "issue:#3076",
@@ -196,7 +196,7 @@
       },
       "reopen_triggers": {
         "value": "Not a selectable end state; the owner's premise rules it out.",
-        "source": "owner:2026-10-07"
+        "source": "owner:2026-10-07#B12-premise"
       }
     },
     "A": {
@@ -246,7 +246,7 @@
       },
       "reopen_triggers": {
         "value": "Rejected by the owner on 2026-10-07: it contradicts the premise that the operator cannot read journal entries.",
-        "source": "owner:2026-10-07"
+        "source": "owner:2026-10-07#B12-premise"
       }
     },
     "B": {
@@ -296,7 +296,7 @@
       },
       "reopen_triggers": {
         "value": "Selected as half of BD; reopen if a key-non-possession prototype fails.",
-        "source": "owner:2026-10-07"
+        "source": "owner:2026-10-07#B12-premise"
       }
     },
     "C": {
@@ -446,17 +446,17 @@
       },
       "reopen_triggers": {
         "value": "Rejected as a custody model; its vault-local inference survives inside BD for consented, non-retained processing.",
-        "source": "owner:2026-10-07"
+        "source": "owner:2026-10-07#B12-premise"
       }
     },
     "BD": {
       "boundary": {
         "value": "Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server.",
-        "source": "owner:2026-10-07"
+        "source": "owner:2026-10-07#B12-premise"
       },
       "key_custody": {
         "value": "User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only.",
-        "source": "owner:2026-10-07"
+        "source": "owner:2026-10-07#B12-premise"
       },
       "recovery": {
         "status": "unknown",
@@ -468,11 +468,11 @@
       },
       "inference_location": {
         "value": "Device first; then the person's vault-local model or a no-retention runtime we control (paid by credits); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a).",
-        "source": "owner:2026-10-07"
+        "source": "owner:2026-10-07#B12-cloud-byok"
       },
       "supported_platforms": {
         "value": "Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve, mitigated by signed or pinned builds.",
-        "source": "owner:2026-10-07"
+        "source": "owner:2026-10-07#B12-web"
       },
       "update_trust": {
         "value": "Native: store-signed builds. Web: an enforced CSP plus signed or pinned builds; the CSP is report-only today.",
@@ -496,7 +496,7 @@
       },
       "reopen_triggers": {
         "value": "Key-non-possession prototype fails; no web anchor is buildable; D03 user testing shows unacceptable loss; B09 finds no supported non-cloud configuration.",
-        "source": "owner:2026-10-07"
+        "source": "owner:2026-10-07#B12-premise"
       }
     }
   }

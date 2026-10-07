@@ -76,6 +76,18 @@ _MONEY_DIMENSIONS = frozenset({"budget_usd_per_active_account_month", "staffing"
 _UNKNOWN = {"status": "unknown", "owner_input_required": True}
 _SOURCE_PREFIXES = ("repo:", "issue:#", "creek-vault:", "owner:")
 _OWNER_SOURCE_PREFIX = "owner:"
+# Every owner decision this record may cite, by date, and the decision
+# bullets on that date it may cite by anchor. An ``owner:`` source that names
+# anything else is laundered provenance. Each anchor must also appear in ADR
+# 0009 beside the decision text it labels.
+_OWNER_DECISIONS: dict[str, frozenset[str]] = {
+    "2026-10-07": frozenset({"B12-premise", "B12-cloud-byok", "B12-credits", "B12-web"}),
+}
+# Anchors under which the owner has actually supplied a budget or staffing
+# figure. None exist yet, so no money cell can be owner-sourced until the
+# owner records one here.
+_OWNER_BUDGET_ANCHORS: frozenset[str] = frozenset()
+_OWNER_SOURCE = re.compile(r"^owner:(\d{4}-\d{2}-\d{2})#([A-Za-z0-9-]+)$")
 _REPO_SOURCE_PREFIX = "repo:"
 _STATUSES = frozenset({"proposed", "accepted"})
 _REVIEW_CONSULTED = "consulted"
@@ -217,17 +229,29 @@ def _option_violations(card: dict[str, object]) -> list[str]:
     return violations
 
 
-def _money_violations(card: dict[str, object]) -> list[str]:
-    """Money and staffing are unknown or owner-sourced, never estimated by us."""
+def _owner_anchor(source: object) -> str | None:
+    """The decision anchor of a well-formed, known ``owner:<date>#<anchor>`` source."""
+    match = _OWNER_SOURCE.match(source) if isinstance(source, str) else None
+    if match is None:
+        return None
+    date_part, anchor = match.groups()
+    return anchor if anchor in _OWNER_DECISIONS.get(date_part, frozenset()) else None
+
+
+def _money_violations(
+    card: dict[str, object], budget_anchors: frozenset[str] = _OWNER_BUDGET_ANCHORS
+) -> list[str]:
+    """Money and staffing are unknown, or cite an owner budget decision; never ours."""
     violations: list[str] = []
     for name, scored in _as_dict(card.get("options")).items():
         cells = _as_dict(scored)
         for dimension in sorted(_MONEY_DIMENSIONS & cells.keys()):
             cell = cells[dimension]
-            source = _as_dict(cell).get("source")
-            owner_sourced = isinstance(source, str) and source.startswith(_OWNER_SOURCE_PREFIX)
-            if cell != _UNKNOWN and not owner_sourced:
-                violations.append(f"options.{name}.{dimension} is neither unknown nor owner:")
+            anchor = _owner_anchor(_as_dict(cell).get("source"))
+            if cell != _UNKNOWN and anchor not in budget_anchors:
+                violations.append(
+                    f"options.{name}.{dimension} is neither unknown nor an owner budget decision"
+                )
     return violations
 
 
@@ -258,6 +282,8 @@ def _source_violation(path: str, source: object, root: Path) -> str | None:
         return f"{path} has an evidence source with no recognised prefix"
     if source.startswith(_REPO_SOURCE_PREFIX):
         return _repo_source_violation(path, source, root)
+    if source.startswith(_OWNER_SOURCE_PREFIX) and _owner_anchor(source) is None:
+        return f"{path} cites an owner decision that is not on record"
     return None
 
 
@@ -439,10 +465,14 @@ def test_custody_scorecard_never_invents_budget_or_staffing() -> None:
         _as_dict(_as_dict(laundered["options"])["E"])["staffing"] = mutant
         assert any("options.E.staffing" in found for found in _money_violations(laundered))
 
-    signed = copy.deepcopy(card)
-    owner_figure = {"value": "6.70", "source": "owner:2026-10-07"}
-    _as_dict(_as_dict(signed["options"])["E"])["staffing"] = owner_figure
-    assert _money_violations(signed) == []
+    # An owner decision that is not a budget decision cannot launder a figure.
+    misattributed = copy.deepcopy(card)
+    owner_figure = {"value": "6.70", "source": "owner:2026-10-07#B12-premise"}
+    _as_dict(_as_dict(misattributed["options"])["E"])["staffing"] = owner_figure
+    assert any("options.E.staffing" in found for found in _money_violations(misattributed))
+
+    # Control: once the owner records a budget anchor, a figure under it passes.
+    assert _money_violations(misattributed, frozenset({"B12-premise"})) == []
 
 
 def test_custody_scorecard_evidence_must_resolve() -> None:
@@ -461,7 +491,21 @@ def test_custody_scorecard_evidence_must_resolve() -> None:
         is None
     )
     assert _source_violation("p", "bogus:x", root) is not None
-    assert _source_violation("p", "owner:2026-10-07", root) is None
+    assert _source_violation("p", "owner:2026-10-07#B12-premise", root) is None
+    assert _source_violation("p", "owner:2026-10-07", root) is not None
+    assert _source_violation("p", "owner:2026-10-07#B12-made-up", root) is not None
+    assert _source_violation("p", "owner:2099-01-01#B12-premise", root) is not None
+    assert _source_violation("p", "owner:draft-analysis", root) is not None
+
+
+def test_every_owner_anchor_is_recorded_beside_its_decision() -> None:
+    """Each citable owner anchor appears in ADR 0009, and the card's decision source is one."""
+    text = _adr_text()
+
+    for decided_on, anchors in _OWNER_DECISIONS.items():
+        for anchor in anchors:
+            assert f"owner:{decided_on}#{anchor}" in text
+    assert _owner_anchor(_card()["decision_source"]) is not None
 
 
 def test_custody_scorecard_cannot_be_accepted_without_signoff() -> None:

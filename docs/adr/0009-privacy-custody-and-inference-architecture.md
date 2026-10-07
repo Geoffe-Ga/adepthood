@@ -89,19 +89,21 @@ hard line to start now rather than as a deferral after the beta.
 **Selected: Option BD**: user-held keys (B) plus device-side and
 vault-local inference (D), with BYOK cloud as an explicit opt-in.
 
-1. **The operator cannot read people's journal entries.** This premise
-   governs. It covers stored journal content and every prose derivative of
+1. **The operator cannot read people's journal entries.**
+   (`owner:2026-10-07#B12-premise`) This premise governs. It covers stored journal content and every prose derivative of
    it. The derivatives are the journal-derived `EncryptedString` columns
    above and the `DERIVED_FROM_PROSE` plaintext. Which non-journal columns
    fall inside the premise is open question SCOPE.
-2. **Keys are user-held, with no operator escrow.** Keys are generated on the
+2. **Keys are user-held, with no operator escrow.**
+   (`owner:2026-10-07#B12-premise`) Keys are generated on the
    person's device. The server stores ciphertext and public parameters only.
    No operator-held decrypt capability exists in the protected path, and
    there is no operator-assisted recovery. It follows directly that **an
    account or password reset cannot recover the data key**. Every other
    recovery, pairing and revocation semantic belongs to D03, which is still
    open.
-3. **Cloud models are used only with the person's own key.** Anthropic,
+3. **Cloud models are used only with the person's own key.**
+   (`owner:2026-10-07#B12-cloud-byok`) Anthropic,
    OpenAI and any other cloud model are reached only when the person adds
    their own key in Settings (BYOK). Without such a key, **none of their
    data reaches a cloud model**. How finely BYOK consent is granted (per key,
@@ -118,11 +120,13 @@ vault-local inference (D), with BYOK cloud as an explicit opt-in.
    (`frontend/src/api/index.ts`). The server then calls the vendor itself
    (`services/botmason.py::resolve_chat_api_key`), so it sees both the key
    and the plaintext on every BYOK call.
-4. **BotMason credits pay for non-cloud inference only.** That means the
+4. **BotMason credits pay for non-cloud inference only.**
+   (`owner:2026-10-07#B12-credits`) That means the
    vault-local model (B05, [Creek-Vault#1849](https://github.com/Geoffe-Ga/Creek-Vault/issues/1849))
    or a no-retention runtime we control. Credits never pay for a call made
    with the app's cloud key. See "BotMason credits" below.
-5. **The web caveat is stated per platform.** User-held keys apply on every
+5. **The web caveat is stated per platform.** (`owner:2026-10-07#B12-web`)
+   User-held keys apply on every
    platform. The guarantee is strongest on native apps. On web it rests on
    trusting the code we serve, mitigated by signed or pinned builds. Public
    claims are scoped per platform (see "Per-platform claim scoping").
@@ -169,7 +173,7 @@ history and future content stand or fall together.
 - **Threat actors:** Defends a database or backup thief only while the env keys stay separate; nothing against operator, host, compelled update, subpoena or support pressure. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
-- **Reopen triggers:** Not a selectable end state; the owner's premise rules it out. (`owner:2026-10-07`)
+- **Reopen triggers:** Not a selectable end state; the owner's premise rules it out. (`owner:2026-10-07#B12-premise`)
 
 ### Option A
 
@@ -186,7 +190,7 @@ history and future content stand or fall together.
 - **Threat actors:** DB thief and backup holder only; privileged operator, host and subpoena all succeed. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
-- **Reopen triggers:** Rejected by the owner on 2026-10-07: it contradicts the premise that the operator cannot read journal entries. (`owner:2026-10-07`)
+- **Reopen triggers:** Rejected by the owner on 2026-10-07: it contradicts the premise that the operator cannot read journal entries. (`owner:2026-10-07#B12-premise`)
 
 ### Option B
 
@@ -203,7 +207,7 @@ history and future content stand or fall together.
 - **Threat actors:** Defeats DB thief, backup holder, host and stored-data subpoena. A malicious or compelled update (on web, any served bundle) captures the key and reads all stored history; a compromised device also succeeds. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
-- **Reopen triggers:** Selected as half of BD; reopen if a key-non-possession prototype fails. (`owner:2026-10-07`)
+- **Reopen triggers:** Selected as half of BD; reopen if a key-non-possession prototype fails. (`owner:2026-10-07#B12-premise`)
 
 ### Option C
 
@@ -254,24 +258,24 @@ history and future content stand or fall together.
 - **Threat actors:** Defeats external AI vendors only; operator, host and subpoena succeed. (`creek-vault:creek-tools/docs/architecture/ADR/0014-provider-managed-custody-for-ordinary-fly.md`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
-- **Reopen triggers:** Rejected as a custody model; its vault-local inference survives inside BD for consented, non-retained processing. (`owner:2026-10-07`)
+- **Reopen triggers:** Rejected as a custody model; its vault-local inference survives inside BD for consented, non-retained processing. (`owner:2026-10-07#B12-premise`)
 
 ### Option BD
 
 *Selected: user-held keys plus device-side and vault-local inference, BYOK cloud as explicit opt-in.*
 
-- **Boundary:** Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server. (`owner:2026-10-07`)
-- **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07`)
+- **Boundary:** Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server. (`owner:2026-10-07#B12-premise`)
+- **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07#B12-premise`)
 - **Recovery:** **unknown; owner input required.** See D03 below.
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
-- **Inference location:** Device first; then the person's vault-local model or a no-retention runtime we control (paid by credits); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07`)
-- **Supported platforms:** Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve, mitigated by signed or pinned builds. (`owner:2026-10-07`)
+- **Inference location:** Device first; then the person's vault-local model or a no-retention runtime we control (paid by credits); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
+- **Supported platforms:** Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve, mitigated by signed or pinned builds. (`owner:2026-10-07#B12-web`)
 - **Client delivery and update trust:** Native: store-signed builds. Web: an enforced CSP plus signed or pinned builds; the CSP is report-only today. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** All 18 EncryptedString columns that carry journal prose, DERIVED_FROM_PROSE plaintext, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until WEB-ANCHOR ships. A compromised device remains; runtime-we-control inference is not operator-blind while it runs; until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
-- **Reopen triggers:** Key-non-possession prototype fails; no web anchor is buildable; D03 user testing shows unacceptable loss; B09 finds no supported non-cloud configuration. (`owner:2026-10-07`)
+- **Reopen triggers:** Key-non-possession prototype fails; no web anchor is buildable; D03 user testing shows unacceptable loss; B09 finds no supported non-cloud configuration. (`owner:2026-10-07#B12-premise`)
 ## Per-platform claim scoping
 
 What may be said, after B13's gates **and** B24's certification. Nothing in
