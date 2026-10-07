@@ -101,11 +101,11 @@ describe('RecipePickerModal', () => {
     expect(utils.getByTestId('recipe-row-2')).toBeTruthy();
   });
 
-  it('shows a System badge on read-only recipes', async () => {
+  it('shows a Built in badge on read-only recipes', async () => {
     const utils = mountPicker();
     await waitFor(() => expect(utils.getByTestId('recipe-row-1')).toBeTruthy());
-    expect(within(utils.getByTestId('recipe-row-1')).getByText('System')).toBeTruthy();
-    expect(within(utils.getByTestId('recipe-row-2')).queryByText('System')).toBeNull();
+    expect(within(utils.getByTestId('recipe-row-1')).getByText('Built in')).toBeTruthy();
+    expect(within(utils.getByTestId('recipe-row-2')).queryByText('Built in')).toBeNull();
   });
 
   it('renders "Edit a copy" on system rows and "Edit" on user rows', async () => {

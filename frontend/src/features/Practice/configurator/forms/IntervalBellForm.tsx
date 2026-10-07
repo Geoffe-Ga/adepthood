@@ -99,7 +99,7 @@ const CustomOffsetControls = ({ value, onChange }: Props): React.JSX.Element => 
   };
   return (
     <View testID="interval-bell-offsets">
-      <Text style={localStyles.subLabel}>Cue offsets (minutes from start)</Text>
+      <Text style={localStyles.subLabel}>Bell times (minutes from the start)</Text>
       <View style={localStyles.chipWrap}>
         {offsets.map((offset, index) => (
           <TouchableOpacity

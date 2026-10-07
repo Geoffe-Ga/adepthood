@@ -102,7 +102,7 @@ describe('useSaveSessionMutation', () => {
     expect(s.rollback).toHaveBeenCalledTimes(1);
     expect(s.commit).not.toHaveBeenCalled();
     expect(s.setSaveError).toHaveBeenLastCalledWith(
-      expect.stringContaining("You haven't unlocked this stage yet"),
+      expect.stringContaining("This stage hasn't opened yet"),
     );
   });
 

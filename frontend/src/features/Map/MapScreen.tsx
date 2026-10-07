@@ -141,7 +141,7 @@ const BADGE_CORNER_STYLE: Readonly<Record<LabelCorner, StyleProp<ViewStyle>>> = 
 };
 
 /**
- * "Unlocks in N days" / unlock-condition copy for a locked stage, computed from
+ * "Opens in N days" / opening-condition copy for a locked stage, computed from
  * the existing calendar drip (no new backend). Falls back to the condition when
  * no program anchor is set. Its text aligns to the note's corner so the copy
  * reads away from the wave strand.
@@ -693,9 +693,9 @@ const GOAL_TIER_COLORS: Record<string, string> = {
 };
 
 const GOAL_TIER_LABELS: Record<string, string> = {
-  low: 'L',
-  clear: 'C',
-  stretch: 'S',
+  low: 'Low',
+  clear: 'Clear',
+  stretch: 'Stretch',
 };
 
 const PracticeHistoryRow = ({ item }: { item: PracticeHistoryItem }): React.JSX.Element => (
@@ -1426,7 +1426,7 @@ interface CompletionCelebration {
 const completionMessage = (completed: number, lookup: StageLookup): string => {
   if (completed >= STAGE_COUNT) return BEGIN_AGAIN_COPY.celebration;
   const next = lookup[completed + 1];
-  return `${next ? next.title : 'The next stage'} unlocked`;
+  return `${next ? next.title : 'The next stage'} is open to you now`;
 };
 
 const useStageCompletionCelebration = (

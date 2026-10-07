@@ -50,7 +50,7 @@ const JourneySummary = ({ currentStage, cycleNumber }: JourneySummaryProps): Rea
   );
 };
 
-/** "Unlocks in N days" estimate for a locked row, read from the calendar drip. */
+/** "Opens in N days" estimate for a locked row, read from the calendar drip. */
 const UnlockRow = ({ stageNumber }: { stageNumber: number }): React.JSX.Element => {
   const { width } = useWindowDimensions();
   const daysUntil = useDaysUntilStage(stageNumber);

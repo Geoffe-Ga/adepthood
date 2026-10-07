@@ -498,7 +498,15 @@ describe('PracticeDetailScreen — config summary variants', () => {
       ['2 rounds', '1 categories'],
     ],
     [{ mode: 'tarot', deck: 'major_arcana' } as const, ['Major arcana — one card per sit']],
-    [{ mode: 'card_meditation', deck_id: 'rws' } as const, ['Deck: rws']],
+    [{ mode: 'card_meditation', deck_id: 'rws' } as const, ['Deck: Rider-Waite-Smith']],
+    [
+      {
+        mode: 'card_meditation',
+        deck_id: 'custom',
+        cards: [{ name: 'Oak', image_asset_key: null, image_uri: null, symbolism: null }],
+      } as const,
+      ['Your own deck'],
+    ],
     [
       {
         mode: 'mindful_anchor',
@@ -507,7 +515,7 @@ describe('PracticeDetailScreen — config summary variants', () => {
         options: [],
         require_option_choice: false,
       } as const,
-      ['Soft minimum: 60s', 'no chooser'],
+      ['Aim for at least 60 seconds', 'One anchor, no choosing'],
     ],
     [
       {
@@ -517,7 +525,7 @@ describe('PracticeDetailScreen — config summary variants', () => {
         options: [{ key: 'touch_grass', label: 'Touch grass' }],
         require_option_choice: false,
       } as const,
-      ['Soft minimum: 60s', '1 options'],
+      ['Aim for at least 60 seconds', '1 anchor to choose from'],
     ],
   ])('summarises %p as %p', async (config, lines) => {
     mockPracticesGet.mockResolvedValueOnce({ ...samplePractice, mode_config: config });
@@ -537,13 +545,32 @@ describe('PracticeDetailScreen — badge + body fallbacks', () => {
     mockUserPracticesCreate.mockReset();
   });
 
-  it('falls back to the meditation_timer badge label when mode is absent', async () => {
+  it('shows the human mode label, never the snake_case mode, on the badge', async () => {
+    mockPracticesGet.mockResolvedValueOnce(samplePractice);
+    const { view } = renderScreen();
+    await waitForLoad();
+    expect(view.getByTestId('practice-detail-mode-badge').props.children.props.children).toBe(
+      'Random interval bell',
+    );
+  });
+
+  it('falls back to the Meditation timer badge label when mode is absent', async () => {
     const noMode: PracticeItem = { ...samplePractice, mode: undefined };
     mockPracticesGet.mockResolvedValueOnce(noMode);
     const { view } = renderScreen();
     await waitForLoad();
     expect(view.getByTestId('practice-detail-mode-badge').props.children.props.children).toBe(
-      'meditation_timer',
+      'Meditation timer',
+    );
+  });
+
+  it('labels a mode this client does not know as a plain Practice', async () => {
+    const future: PracticeItem = { ...samplePractice, mode: 'mode_from_a_newer_server' };
+    mockPracticesGet.mockResolvedValueOnce(future);
+    const { view } = renderScreen();
+    await waitForLoad();
+    expect(view.getByTestId('practice-detail-mode-badge').props.children.props.children).toBe(
+      'Practice',
     );
   });
 

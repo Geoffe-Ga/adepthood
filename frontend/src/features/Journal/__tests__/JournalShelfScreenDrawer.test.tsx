@@ -288,7 +288,7 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
-  it('keeps Your corpus in the drawer and routes an undecided account to consent', async () => {
+  it("keeps Everything you've written in the drawer and routes an undecided account to consent", async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
     await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
@@ -365,7 +365,7 @@ describe('Journal header drawer from JournalShelfScreen', () => {
 
     await waitFor(() =>
       expect(getByRole('alert').props.children).toBe(
-        "Couldn't open your corpus. Check your connection and try again.",
+        "Couldn't open your writing just now. Check your connection and try again.",
       ),
     );
     expect(queryByTestId('screen-drawer')).toBeTruthy();

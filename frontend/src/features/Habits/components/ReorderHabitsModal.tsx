@@ -667,8 +667,9 @@ const ReorderBody = ({
       onSelectDate={onSelectDate}
     />
     <Text style={styles.reorderInstructions}>
-      Drag by the handle to reorder or cross a range line. Habits 1-8 start 21 days apart; habits
-      9-10 start 42 days apart.
+      Drag by the handle to change the order, or drag a habit across one of the lines to move it to
+      a different part of your program. Habits 1-8 start 21 days apart; habits 9-10 start 42 days
+      apart.
     </Text>
     <ReorderList orderedHabits={orderedHabits} onDragEnd={onDragEnd} />
     <Button

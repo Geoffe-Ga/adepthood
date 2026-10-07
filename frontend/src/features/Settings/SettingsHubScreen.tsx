@@ -146,7 +146,7 @@ const CorpusSection = ({
   onVault,
   seedDescription,
 }: CorpusSectionProps): React.JSX.Element => (
-  <EditorialSection title="Your corpus" testID="settings-group-corpus">
+  <EditorialSection title="Your writing" testID="settings-group-corpus">
     <SettingsRow
       icon={Vault}
       label={VAULT_ROW_LABEL}

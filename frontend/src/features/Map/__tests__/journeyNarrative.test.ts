@@ -37,17 +37,17 @@ describe('journeyRead', () => {
 
 describe('unlockTimeline', () => {
   it('pluralises day counts', () => {
-    expect(unlockTimeline(3)).toBe('Unlocks in 3 days');
-    expect(unlockTimeline(1)).toBe('Unlocks in 1 day');
+    expect(unlockTimeline(3)).toBe('Opens in 3 days');
+    expect(unlockTimeline(1)).toBe('Opens in 1 day');
   });
 
   it('treats zero / negative as unlocking now', () => {
-    expect(unlockTimeline(0)).toBe('Unlocking now');
-    expect(unlockTimeline(-2)).toBe('Unlocking now');
+    expect(unlockTimeline(0)).toBe('Opening now');
+    expect(unlockTimeline(-2)).toBe('Opening now');
   });
 
   it('falls back to the condition when no anchor is set', () => {
-    expect(unlockTimeline(null)).toContain('reaches it');
+    expect(unlockTimeline(null)).toBe('Opens with the course');
   });
 });
 

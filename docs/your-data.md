@@ -83,7 +83,7 @@ deletion receipt, for the same reason.
 Nobody needs this. Adepthood is complete without a vault, and a managed one is
 offered separately. This is for people who already run their own.
 
-**Settings → Where your corpus lives → Advanced: connect a vault you run
+**Settings → Where your writing lives → Advanced: connect a vault you run
 yourself.** It asks for two things: the public web address your vault answers
 on, starting `https://`, and the key your vault issued. Adepthood then sends it
 a copy of each entry when you save or edit it, and of each voice draft if your
@@ -104,11 +104,10 @@ Changing a Public or Personal page to **Intimate** keeps the stricter choice in
 Adepthood first, then withdraws that page's stable journal identity from a
 connected Creek Vault without sending its title or body again. The page's local
 corpus copy is withdrawn too. Adepthood clears the remote reference only after
-Creek confirms that the source page, active fragment, and derived surfaces no
-longer contain it.
+Creek confirms it no longer holds that page anywhere.
 
 If Creek is offline or cannot confirm the removal, Adepthood keeps the page
-Intimate and keeps the remote reference as a retry marker. The editor tells you
+Intimate and remembers to try the vault again. The editor tells you
 the withdrawal is pending: bring the vault online, then choose **Intimate**
 again. Repeating the operation is safe.
 
@@ -123,8 +122,7 @@ delete complete. Creek does not receive the page body during this operation.
 
 If the vault is offline or cannot confirm removal, the page returns to your
 shelf and its remote reference is retained. Bring the vault online and delete
-the page again; the content-free withdrawal is idempotent, so a repeated request
-does not recreate or reveal anything.
+the page again; asking twice is safe — nothing is re-sent or revealed.
 
 There is no restore inside the app. The row is not shredded the instant you
 confirm — it is marked deleted and kept out of every read path, which is how
@@ -144,8 +142,8 @@ It is **immediate and irreversible**. There is no grace period, no
 deactivation, and no support path to get any of it back. If you want a copy of
 your writing, [take it first](#taking-a-copy-of-your-writing).
 
-Your session dies with the account: the token on your device stops working on
-the next request, on every device.
+You are signed out everywhere: the app on every device stops working at its
+next request.
 
 ### What is deleted
 

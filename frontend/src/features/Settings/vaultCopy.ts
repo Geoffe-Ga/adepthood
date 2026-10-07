@@ -1,5 +1,5 @@
 /**
- * Copy for the "Where your corpus lives" Settings surface.
+ * Copy for the "Where your writing lives" Settings surface.
  *
  * A private vault is an optional depth, not a missing piece. Adepthood commits
  * every entry to its own store before a vault is ever contacted, replication is
@@ -37,7 +37,7 @@ export { HIGHER_SELF_GAIN } from './higherSelfCopy';
  * Hub row label, and the screen's name everywhere it is shown. Plain words for
  * the place, without the product name of the software a vault runs (#3007).
  */
-export const VAULT_ROW_LABEL = 'Where your corpus lives';
+export const VAULT_ROW_LABEL = 'Where your writing lives';
 
 /**
  * Hub row description. States the offer, both ways to take it, and the floor
@@ -55,7 +55,7 @@ export const VAULT_EYEBROW = 'Optional';
  * Screen and navigation title. Descriptive, not an instruction to connect. The
  * stack header paints it, so the screen body does not (#2962).
  */
-export const VAULT_TITLE = 'Where your corpus lives';
+export const VAULT_TITLE = 'Where your writing lives';
 
 /**
  * The one promise. It says ownership and makes the choice specifically about
@@ -73,7 +73,7 @@ export const VAULT_PROMISE =
  * happens, so it describes an addition and never a transfer.
  */
 export const VAULT_WHAT_IT_IS =
-  'A vault holds an account-scoped copy of what you write. You can connect one you run or ask Adepthood to manage one. A managed vault is readable by privileged operators, and neither kind receives Intimate entries.';
+  'A vault holds a copy of what you write, kept for your account alone. You can connect one you run or ask Adepthood to manage one. The people who run a managed vault can read what is in it, and neither kind ever receives Intimate entries.';
 
 /**
  * The floor. Declining is a complete way to use Adepthood, so this says so
@@ -86,7 +86,7 @@ export const VAULT_WHAT_IT_IS =
  * a vault" stays true of the journal and reflections, which are what it names.
  */
 export const VAULT_FLOOR =
-  'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional account-scoped copy of your entries; it does not turn sorting on, which stays a separate choice.';
+  'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice.';
 
 /**
  * Said where somebody is about to create a managed vault, so that the press

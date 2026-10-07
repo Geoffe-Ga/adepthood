@@ -41,7 +41,7 @@ const WHAT_GOES = [
   'Your habits, goals, check-ins and streaks.',
   'Your practices, sessions, recipes and tags.',
   'Your course progress, reflections, margin notes and promoted passages.',
-  'Your account, your sign-in methods, and every session on every device.',
+  'Your account, your sign-in methods, and every place you are signed in.',
 ];
 
 /** What deliberately survives — stated here rather than discovered later. */

@@ -316,7 +316,7 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
         true,
       );
       expect(getByTestId('journal-save-hint').props.children).toMatch(
-        /Intimate here.*Creek.*choose Intimate again/i,
+        /Intimate here.*vault.*choose Intimate again/i,
       );
 
       fireEvent.press(page.getByTestId('privacy-tier-intimate'));

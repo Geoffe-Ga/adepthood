@@ -62,7 +62,7 @@ export const validateAndAddHabit = (
   if (habits.length >= MAX_HABITS) {
     return {
       kind: 'error',
-      message: `You've hit the ${MAX_HABITS}-habit limit for onboarding. Remove one you don't need to add a different habit.`,
+      message: `You can start with up to ${MAX_HABITS} habits. Take one off to make room for another.`,
     };
   }
   const lower = cleaned.toLowerCase();

@@ -247,8 +247,8 @@ describe('VoiceReadinessBand — where it goes', () => {
     const { findByTestId, getByText } = render(<VoiceReadinessBand />);
     const band = await findByTestId(BAND);
 
-    expect(getByText('Give your corpus a place to live')).toBeTruthy();
-    expect(band.props.accessibilityLabel).toBe('Give your corpus a place to live');
+    expect(getByText('Give your writing a place to live')).toBeTruthy();
+    expect(band.props.accessibilityLabel).toBe('Give your writing a place to live');
     fireEvent.press(band);
     expect(mockNavigate).toHaveBeenCalledWith('VaultSettings');
   });

@@ -408,7 +408,7 @@ const styles = StyleSheet.create({
   locked: {
     opacity: 0.4,
   },
-  // Unlock estimate ("Unlocks in N days") beside the padlock in the locked
+  // Opening estimate ("Opens in N days") beside the padlock in the locked
   // note. It wraps inside the lane rather than spanning the cell, and its text
   // aligns to the same corner via the left/right variants below, so the copy
   // reads away from the wave strand.
@@ -820,9 +820,10 @@ const styles = StyleSheet.create({
     marginLeft: spacing(0.5),
   },
   goalBadge: {
-    width: BADGE_DIAMETER,
+    minWidth: BADGE_DIAMETER,
     height: BADGE_DIAMETER,
     borderRadius: BADGE_DIAMETER / 2,
+    paddingHorizontal: spacing(0.5),
     alignItems: CENTER,
     justifyContent: CENTER,
   },

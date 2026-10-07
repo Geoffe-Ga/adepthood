@@ -188,7 +188,7 @@ const RandomIntervalBellView = ({
       </Text>
       {nextHint !== null && (
         <Text style={[styles.hint, { color: surface.textSoft }]} testID="random-interval-bell-next">
-          {`Next bell in ~${nextHint}s`}
+          {`Next bell in about ${nextHint} seconds`}
         </Text>
       )}
       <RitualControlsBar status={state.status} controls={controls} />

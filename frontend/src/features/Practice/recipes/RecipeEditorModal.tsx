@@ -482,7 +482,7 @@ function validateDraft(draft: RecipeDraft, mode: RecipeMode): string[] {
     }
     if (mode === 'tallied_grounding') {
       if (seenSlugs.has(step.tag_slug)) {
-        errors.push(`Step ${idx + 1} repeats tag "${step.tag_slug}"; use a different tag.`);
+        errors.push(`Step ${idx + 1} uses the same tag as an earlier step — pick a different one.`);
       }
       seenSlugs.add(step.tag_slug);
     }
@@ -661,7 +661,7 @@ const StepCard = (props: StepCardProps): React.JSX.Element => (
       value={props.step.prompt_label}
       onChangeText={(text) => props.onChange({ prompt_label: text })}
       style={styles.input}
-      placeholder="What should the user notice?"
+      placeholder="What to notice (e.g. something red)"
       maxLength={PROMPT_MAX}
       testID={`recipe-editor-step-${props.index}-prompt`}
     />

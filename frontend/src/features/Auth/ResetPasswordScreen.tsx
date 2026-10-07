@@ -103,7 +103,7 @@ function MissingTokenView({ onRequestNew }: { onRequestNew: () => void }): React
     <AuthScreenContainer testID="reset-password">
       <Text style={styles.title}>Reset Link Invalid</Text>
       <Text style={styles.subtitle}>
-        That link is missing or malformed. Request a fresh one to continue.
+        That link looks broken or incomplete. Ask for a fresh one and we’ll send it over.
       </Text>
       <Button
         accessibilityLabel="Request a new reset link"
