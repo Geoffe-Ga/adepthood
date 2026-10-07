@@ -392,6 +392,28 @@ async def test_suspended_ai_routes_return_503_and_charge_nothing(
 
 
 @pytest.mark.asyncio
+async def test_suspended_essay_says_suspended_before_asking_for_the_price(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unpriced, server-paid first letter answers ``ai_suspended``, not 409.
+
+    Asking a writer to acknowledge a price for a letter that cannot be written
+    would be a false next step; the suspension is the truthful answer.
+    """
+    arm_anthropic(monkeypatch)
+    headers, user_id, _ = await signup(async_client, "suspended_unpriced")
+    note_id = await seed_note(db_session, user_id)
+    suspend_ai(monkeypatch)
+
+    resp = await async_client.post(f"/journal/marginalia/{note_id}/essay", headers=headers, json={})
+
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    assert resp.json() == {"detail": AI_SUSPENDED_DETAIL}
+
+
+@pytest.mark.asyncio
 async def test_free_exits_survive_suspension(
     async_client: AsyncClient,
     db_session: AsyncSession,
