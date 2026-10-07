@@ -1190,9 +1190,7 @@ async def generate_response(
         spec = PROVIDER_REGISTRY.get(provider)
         if spec is None:
             # Default: stub provider for development and testing.
-            if images:
-                return _stub_vision_response(user_message, len(images))
-            return _stub_response(user_message, resolved_prompt)
+            return _stub_answer(user_message, resolved_prompt, images)
         model = _get_model(provider)
         # Both checks run before dispatch and raise LLMProviderError subclasses,
         # which are not in _PROVIDER_ERROR_TYPES, so they escape this try
@@ -1209,6 +1207,15 @@ async def generate_response(
     except _PROVIDER_ERROR_TYPES as exc:
         raise _classify_provider_error(exc) from exc
     return result
+
+
+def _stub_answer(
+    user_message: str, system_prompt: str, images: Sequence[ImagePayload] | None
+) -> LLMResponse:
+    """The stub provider's answer: a canned transcription for images, else a canned reply."""
+    if images:
+        return _stub_vision_response(user_message, len(images))
+    return _stub_response(user_message, system_prompt)
 
 
 def _stub_response(user_message: str, system_prompt: str = "") -> LLMResponse:

@@ -58,6 +58,7 @@ _RECOGNISED_VALUES: Final = frozenset({"", "true", "false"})
 
 _STATE_EVENT: Final = "privacy_suspension_state"
 _MALFORMED_EVENT: Final = "privacy_suspension_value_malformed"
+_NONE_ACTIVE: Final = "none"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,8 +132,19 @@ def log_suspension_state() -> None:
     logged: an operator who pasted the wrong thing into the variable should not
     find it in the log stream.
     """
-    active = [s.env_var for s in PRIVACY_SUSPENSION_SWITCHES if _switch_on(s.env_var)]
-    logger.info("%s active=%s", _STATE_EVENT, ",".join(active) or "none")
-    for switch in PRIVACY_SUSPENSION_SWITCHES:
-        if _raw(switch.env_var) not in _RECOGNISED_VALUES:
-            logger.warning("%s env=%s treated_as=suspended", _MALFORMED_EVENT, switch.env_var)
+    active = ",".join(_active_switches()) or _NONE_ACTIVE
+    logger.info("%s active=%s", _STATE_EVENT, active)
+    for env_var in _malformed_switches():
+        logger.warning("%s env=%s treated_as=suspended", _MALFORMED_EVENT, env_var)
+
+
+def _active_switches() -> list[str]:
+    """The variable names of every switch that is on, in registry order."""
+    return [s.env_var for s in PRIVACY_SUSPENSION_SWITCHES if _switch_on(s.env_var)]
+
+
+def _malformed_switches() -> list[str]:
+    """The variable names of every switch set to an unrecognised spelling."""
+    return [
+        s.env_var for s in PRIVACY_SUSPENSION_SWITCHES if _raw(s.env_var) not in _RECOGNISED_VALUES
+    ]
