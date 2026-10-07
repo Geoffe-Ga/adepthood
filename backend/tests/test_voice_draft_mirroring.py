@@ -52,6 +52,13 @@ _JOURNAL_REF = "vault-fragment-1"
 #: suite noticeably.
 _SERIALIZATION_PROBE_SECONDS = 0.05
 
+#: Upper bound on waiting for a held dial to *start* before its competitor is
+#: launched. A liveness guard only: it stops a broken rendezvous hanging the
+#: suite and asserts nothing, since a dial that never starts fails the test's
+#: own assertions either way. Spent in full only on failure, so it is generous
+#: enough for a heavily loaded runner (2s flaked at load average ~18).
+_RENDEZVOUS_TIMEOUT_SECONDS = 30
+
 
 async def _waited_behind_the_held_dial(
     arrivals: BarrierArrivals, actor: str, competitor: asyncio.Task[object]
@@ -818,7 +825,7 @@ async def test_intimate_patch_during_generation_prevents_the_later_mirror(
             json=_ESSAY_ASK,
         )
     )
-    await asyncio.wait_for(generation_started.wait(), timeout=2)
+    await asyncio.wait_for(generation_started.wait(), timeout=_RENDEZVOUS_TIMEOUT_SECONDS)
     patch = arrivals.start(
         "patch",
         concurrent_async_client.patch(
@@ -877,7 +884,7 @@ async def test_intimate_patch_waits_for_an_in_flight_mirror_then_retracts_it(
             json=_ESSAY_ASK,
         )
     )
-    await asyncio.wait_for(vault.upsert_started.wait(), timeout=2)
+    await asyncio.wait_for(vault.upsert_started.wait(), timeout=_RENDEZVOUS_TIMEOUT_SECONDS)
     patch = arrivals.start(
         "patch",
         concurrent_async_client.patch(
@@ -952,7 +959,7 @@ async def test_delete_during_generation_prevents_the_later_mirror(
             json=_ESSAY_ASK,
         )
     )
-    await asyncio.wait_for(generation_started.wait(), timeout=2)
+    await asyncio.wait_for(generation_started.wait(), timeout=_RENDEZVOUS_TIMEOUT_SECONDS)
     deletion = arrivals.start(
         "deletion",
         concurrent_async_client.delete(
@@ -1004,7 +1011,7 @@ async def test_delete_waits_for_an_in_flight_mirror_then_retracts_it(
             json=_ESSAY_ASK,
         )
     )
-    await asyncio.wait_for(vault.upsert_started.wait(), timeout=2)
+    await asyncio.wait_for(vault.upsert_started.wait(), timeout=_RENDEZVOUS_TIMEOUT_SECONDS)
     deletion = arrivals.start(
         "deletion",
         concurrent_async_client.delete(
