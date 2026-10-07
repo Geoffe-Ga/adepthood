@@ -200,7 +200,7 @@ _MINUTES_PER_DAY = 24 * 60
 # fraction kept (unlike ``-mtime``, which drops whole days), so N in minutes is
 # exactly the model's "older than the retention".
 _PRUNE = re.compile(
-    r"(?P<gate>\[ -s \"adepthood-\$STAMP\.dump\.gpg\" \] && (?:\\\n\s*)?)?"
+    r"(?P<gate>\[ \"\$DUMP_OK\" = 1 \] && (?:\\\n\s*)?)?"
     r"find\b[^\n]*\.dump\.gpg[^\n]*-mmin \+\$\(\((?P<expr>[0-9 *]+)\)\)[^\n]*-delete"
 )
 
@@ -234,10 +234,39 @@ def test_offhost_runbook_prunes_dumps_past_their_retention() -> None:
     assert _minutes(prune.group("expr")) == OFFHOST_DUMP_RETENTION_DAYS * _MINUTES_PER_DAY
 
 
+def _dump_shell() -> str:
+    section = _section(_DEPLOYMENT_DOC.read_text(encoding="utf-8"), _DUMP_HEADING)
+    # Join ``\``-continued lines so one chained statement reads as one line.
+    return re.sub(r"\\\n\s*", " ", "\n".join(_BASH_BLOCK.findall(section)))
+
+
+def test_offhost_dump_success_flag_is_set_only_by_a_verified_dump() -> None:
+    """``DUMP_OK=1`` is the last link of one ``&&`` chain: dump, verify, encrypt.
+
+    ``pg_dump -Fc`` creates its file before it connects, and ``gpg`` happily
+    wraps an empty file, so the size of the encrypted file proves nothing.
+    ``pg_restore --list`` reads the archive's table of contents and fails on a
+    truncated or empty one.
+    """
+    shell = _dump_shell()
+    lines = shell.splitlines()
+    reset = next(n for n, line in enumerate(lines) if line.strip() == "DUMP_OK=0")
+    chain_at = next(n for n, line in enumerate(lines) if line.strip().endswith("DUMP_OK=1"))
+    assert reset < chain_at, "DUMP_OK is not cleared before this run's dump"
+    chain = lines[chain_at]
+    assert "||" not in chain, "the chain has a branch that skips a failure"
+    assert ";" not in chain, "the chain has a statement that ignores a failure"
+    links = [link.strip() for link in chain.split("&&")]
+    assert links[0].startswith("pg_dump ")
+    assert links[1].startswith("pg_restore --list ")
+    assert links[2].startswith("gpg ")
+    assert links[-1] == "DUMP_OK=1"
+
+
 def test_offhost_prune_runs_only_after_a_fresh_dump() -> None:
     """A run whose dump failed must not delete the older dumps it would have replaced.
 
-    Gating on this run's non-empty dump also keeps the newest copy whatever
-    the ages of the others.
+    The prune is gated on the verified-dump flag, never on the encrypted file
+    merely existing.
     """
-    assert _prune_command().group("gate"), "the prune is not gated on this run's non-empty dump"
+    assert _prune_command().group("gate"), "the prune is not gated on this run's verified dump"
