@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
+import { STATS_CLOSE_LABEL } from '../src/features/Habits/components/modalCloseLabels';
 import { HABIT_DEFAULTS } from '../src/features/Habits/HabitDefaults';
 
 import { BOOT_TIMEOUT_MS, launchFrontend, waitForFrontend } from './browserGlobalSetup';
@@ -56,10 +57,11 @@ import { backendUrl, openHabits, signUp } from './journalHabitsBrowserSupport';
  * still open; this spec takes no side on it.
  *
  * One action the ledger lists has no reachable control on web: the habit
- * settings' start-date picker renders nothing there, and the missed-days
- * modal that offers "set a new start date" (and its chained check-in clear) is
- * never opened by anything. The start date is reset instead through the one web
- * control that sets it, the reorder modal's "First habit start date".
+ * settings' start-date picker renders nothing there. The start date is moved
+ * instead through the one web control that sets it, the reorder modal's "First
+ * habit start date". DELETE /habits/{id}/completions has no client caller; it
+ * stays in FORBIDDEN_DEMO_WIRE on purpose, as a free absence check while the
+ * server still serves the route.
  */
 
 const DEMO_ORIGIN = `http://127.0.0.1:${DEMO_FRONTEND_PORT}`;
@@ -297,8 +299,10 @@ test('a demo placeholder tile stays local: no action puts its fabricated id on t
   await tile(page, STATS_TILE).click();
   await expect(page.getByText(STATS_CONTENT)).toBeVisible();
   await expect(page.getByText(LOADING_STATS)).toHaveCount(0);
-  // The sheet's close control carries no accessible name, only its glyph.
-  await page.getByRole('dialog').getByText('×', { exact: true }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: STATS_CLOSE_LABEL, exact: true })
+    .click();
   await expect(page.getByText(STATS_CONTENT)).toHaveCount(0);
   await exitMode(page);
 
