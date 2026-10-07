@@ -120,12 +120,49 @@ sanitized record will identify:
 - Adepthood deployment revision;
 - Creek control, worker, and routing deployment revisions plus the exact fleet
   schedule/job revision;
-- provisioning and `/v1` semantic contract versions.
+- provisioning and `/v1` semantic contract versions;
+- the backend and frontend served releases (see "Serving receipt" below).
 
 Confirm the provider fleet report and Adepthood database show no allocation or
 connection for the disposable identity. Confirm the hard provider-side live
 allocation cap and billing alert from #1806. A dirty baseline is a blocker, not
 something to subtract mentally from later counts.
+
+## Serving receipt
+
+The backend and frontend deploy independently on Railway (each service watches
+only its own directory), so after a backend-only commit the frontend can still
+be serving an older build. Before the run, redeploy **both** services at the
+same `adepthood_sha`, and confirm `RAILWAY_GIT_COMMIT_SHA` is present on the
+backend service; without it the receipt reports `release: "unknown"` and the
+record cannot pass.
+
+Throughout the run window, repeatedly sample the operator-only
+`GET /admin/serving-receipt` with an admin JWT. It is content-free and closed:
+the platform's exact commit SHA (or `unknown`), the content pin, the egress
+barrier and managed-rollout *states*, the pinned Creek contract, and the
+custody vocabulary. It never names a pilot account, URL, bearer path, or
+configured secret, and it reports `attested_confidential: false` and
+`local_model: "unknown"`. Store each sanitized capture privately and reference
+it only by its `sha256` in `evidence_refs`.
+
+Record `backend_served_release` and `frontend_served_release` in `revisions`;
+a passed record requires both to equal `adepthood_sha`. Record the closed
+observations as `serving_receipts`: both receipts present, zero responses from
+a different release, zero responses from a legacy build that serves no
+receipt, a `ready` egress barrier and managed rollout, attestation reported
+`false`, and `local_model_claim` `unknown`. These counts and states are your
+observations of the sampled receipts, backed by the hashed captures; the
+validator checks the facts, not the captures. On a failed run, write `null`
+for any state fact that was not the required value and explain it only in the
+sanitized artifact. A drifted served release may be recorded as the exact SHA
+that answered, never as a label.
+
+Two limits apply to schema v3. The frontend build receipt is not shipped yet
+(#2871 AC23), so `frontend_receipt_present` cannot be observed and no record
+can pass until it is. And `local_model_claim` stays `unknown` until a model
+digest and inference probe exist (B05/B07); claiming local-model readiness
+needs a later schema version.
 
 ## Consumed Creek prerequisite
 
@@ -335,6 +372,7 @@ The evidence validator requires these exact rows so none can disappear in prose:
 - `confirmed_idempotent_teardown`
 - `fleet_disable_and_cost_reconciliation`
 - `exact_main_gates`
+- `serving_receipts`
 
 This file deliberately contains no dated “passed” statement. The dated JSON
 record is created only by the real authorized execution and is accepted only by
