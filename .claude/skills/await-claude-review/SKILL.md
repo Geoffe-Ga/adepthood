@@ -113,7 +113,7 @@ Re-fetch the comments to read the full body (the webhook payload may be truncate
 6. Parse with the regex above. Return one of:
 - `LGTM` → caller proceeds to merge gate.
 - `CHANGES_REQUESTED` → caller enters fix loop.
-- `COMMENTS` → caller files prioritized follow-up issues (`address-feedback` Step 1A) and proceeds to its merge gate — never a fix loop, even when an iteration-trigger summary's `Action:` line says "continue iterating".
+- `COMMENTS` → caller files prioritized follow-up issues (`address-feedback` Step 1A) and proceeds to its merge gate — never a fix loop.
 - **Malformed** → surface to user; do not guess.
 
 ### Step 5: On CI Failure for Current HEAD

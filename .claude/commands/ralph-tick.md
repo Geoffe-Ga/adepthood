@@ -51,7 +51,7 @@ one.
 | 1 | **TDD** (Red→Green→Refactor, `stay-green`) | → Gate 2 | — |
 | 2 | **`./scripts/<side>/check-all.sh`** (backend and/or frontend) | → push → Gate 3 | **drop to Gate 1** |
 | 3 | **CI** all green | → Gate 4 | **drop to Gate 1** (via `ci-debugging`) |
-| 4 | **Claude review `Verdict:`** | `LGTM` + green + up-to-date → **merge + mark issue done + refill**. `COMMENTS` + green + up-to-date → **file `P0`–`P3` follow-up issues, then merge** — never iterate (Step 2) | `CHANGES_REQUESTED` → **drop to Gate 1** (via `address-feedback`) |
+| 4 | **Claude review `Verdict:`** | `LGTM` + green + up-to-date → **merge + mark issue done + refill**. `COMMENTS` + green + up-to-date (`ready-comments`) → **file `P0`–`P3` follow-up issues, then merge** — never iterate (Step 1) | `CHANGES_REQUESTED` → **drop to Gate 1** (via `address-feedback`) |
 
 "Drop to Gate 1" means: fix the root cause with a failing-test-first cycle, re-clear Gate 2 locally, push, and climb again. Never weaken a gate to pass it.
 
@@ -149,7 +149,7 @@ non-zero when it cannot classify a lane (including when a bot PR about to merge
 has a hold it can neither find nor rule out), and an unchecked `$STATUS` would
 just come back empty:
 ```bash
-STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-unreviewed | behind | unknown | draft | blocked | conflicted | pending | ci-failed | transport-error | changes-requested | awaiting-review | review-self-skipped | optout
+STATUS=$(scripts/ralph/pr-ready.sh "$PR_NUM") && RC=0 || RC=$?   # ready | ready-comments | ready-unreviewed | behind | unknown | draft | blocked | conflicted | pending | ci-failed | transport-error | changes-requested | awaiting-review | review-self-skipped | optout
 ```
 Read the PR's comments once for context (which issue it closes, verdict text):
 ```bash
@@ -170,6 +170,16 @@ Then act on `$STATUS`:
   ```
   (Idempotent if `iteration-trigger.yml` or a prior wake already merged it — the
   PR shows MERGED; do the same close + `release` + state bump.)
+- **`ready-comments`** (`Verdict: COMMENTS` fresh + every other `ready`
+  condition: CI green, `CLEAN`, `behind_by == 0`, no hold). The reviewer signed
+  off with non-blocking findings. **Never iterate — dispatch no worker, push
+  nothing, request no re-review.** Run `address-feedback` Step 1A yourself: file
+  each actionable finding as a follow-up issue labelled `P0`–`P3` by severity
+  (plus `agent-ready`), link duplicates, moratorium-defer loop-tooling rows,
+  reply on and resolve every thread, and post the `Follow-ups filed: …`
+  summary. Then re-run `pr-ready.sh`; still `ready-comments` → run the `ready`
+  merge block above verbatim. (A `COMMENTS` lane that is behind prints
+  `behind` and syncs like any other; the fresh review on the new HEAD decides.)
 - **`ready-unreviewed`** (green + `CLEAN` + `behind_by == 0`, but the review gate
   does not exist for this PR: `claude-review` reported `SKIPPED`, Dependabot
   authored it **and** pushed its HEAD commit, and at least one non-review check
@@ -212,11 +222,10 @@ Then act on `$STATUS`:
   A clean sync → dispatch its `ralph-worker` to re-clear Gate 2 locally and push;
   it re-merges on a later wake once green. `SYNC-CONFLICT` → that lane drops to
   Gate 1 (worker resolves the conflict as a root-cause change, re-greens, pushes).
-- **`changes-requested`** — a fresh verdict (posted after this HEAD) that is
-  not `LGTM`: `CHANGES_REQUESTED` or `COMMENTS`. On `CHANGES_REQUESTED`
-  **Gate 4 failed** — advance it via Step 2 (`address-feedback`). On `COMMENTS`
-  the reviewer signed off: file prioritized follow-ups and merge per Step 2's
-  `COMMENTS` bullet — never a fix worker. Never leave this lane to wait: the verdict
+- **`changes-requested`** — a fresh `CHANGES_REQUESTED` verdict (posted after
+  this HEAD). **Gate 4 failed** — advance it via Step 2 (`address-feedback`).
+  (A fresh `COMMENTS` verdict is never this token — see `ready-comments`.)
+  Never leave this lane to wait: the verdict
   already arrived, and this token exists precisely so the watcher wakes on it
   instead of sleeping out its timeout (a fresh non-LGTM used to read as
   `awaiting-review`, which the watcher counts as in-flight).
@@ -296,25 +305,7 @@ into that PR's worktree only if it needs a fix (re-attach a worktree with
 `scripts/ralph/fleet.sh assign "$N" "<slug>"` if reconcile removed it — `assign`
 reuses the existing branch):
 
-- **`COMMENTS` verdict** (`pr-ready.sh` printed `changes-requested` and the
-  fresh verdict line reads `COMMENTS`): **never iterate — dispatch no worker,
-  push nothing, request no re-review.** The orchestrator runs
-  `address-feedback` Step 1A itself: file each actionable item as a follow-up
-  issue labelled `P0`–`P3` by severity (plus `agent-ready`), link duplicates,
-  moratorium-defer loop-tooling rows, reply on and resolve every thread, and
-  post the `Follow-ups filed: …` summary. Then merge the lane on the same
-  evidence `ready` requires, with the filed follow-ups standing in for `LGTM`:
-  ```bash
-  gh pr checks "$PR_NUM" >/dev/null && echo CI-GREEN          # exit 0 only
-  HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid -q .headRefOid)
-  gh api "repos/{owner}/{repo}/compare/main...$HEAD_SHA" --jq .behind_by   # must print 0
-  gh pr view "$PR_NUM" --json labels -q '[.labels[].name] | index("do-not-auto-merge")'  # must print null
-  ```
-  All three hold → run Step 1's `ready` merge block verbatim (merge, close,
-  `release`, state bump). Behind → `fleet.sh sync` and let the fresh verdict on
-  the new HEAD decide; the follow-up issues already filed stand. Any other
-  answer → leave the lane for a later wake.
-- **Gate 4 failed** (`pr-ready.sh` printed `changes-requested` and the fresh
+- **Gate 4 failed** (`pr-ready.sh` printed `changes-requested`: the fresh
   verdict is `CHANGES_REQUESTED`): worker runs the
   **`address-feedback`** flow in the worktree — triage, TDD fix loop dispatching
   the specialist that owns each comment, re-clear Gate 2 + Gate 2.5, push, reply,
@@ -525,10 +516,9 @@ still worktree-isolated, same gates, same drop-backs.
 
 ## Hard rules (do not deviate)
 - **Merges to `main` are serialized and always up-to-date.** Merge a lane only
-  when `pr-ready.sh` prints `ready` — or `ready-unreviewed` on a `dependencies`
-  lane, per the rule below, or `changes-requested` on a fresh `COMMENTS`
-  verdict once Step 2's `COMMENTS` bullet has filed its follow-ups and proved
-  green CI, `behind_by == 0`, and no hold. Every other token syncs, waits, or is fixed first, and
+  when `pr-ready.sh` prints `ready` — or `ready-comments` once its findings are
+  filed as prioritized follow-up issues, or `ready-unreviewed` on a
+  `dependencies` lane, per the rule below. Every other token syncs, waits, or is fixed first, and
   no other evidence merges a lane.
 - **"Up to date" means `behind_by == 0`, never `mergeStateStatus`.** `CLEAN` is
   not a freshness signal in a repo without strict status checks.
@@ -541,8 +531,8 @@ still worktree-isolated, same gates, same drop-backs.
   that lane merges on verified-current green CI alone — where "green" means the
   helper also proved at least one real check passed, since a workflow-only bump
   can match every `paths:` filter's complement and land zero checks. No other PR
-  class may ever merge without `LGTM`, except a fresh `COMMENTS` verdict
-  whose findings are all filed as prioritized follow-up issues (Step 2).
+  class may ever merge without `LGTM`, except a `ready-comments` lane
+  whose findings are all filed as prioritized follow-up issues (Step 1).
 - **A `COMMENTS` verdict never iterates.** No worker, no push, no re-review:
   its findings become `P0`–`P3` follow-up issues and the lane merges.
 - **Never make a fast lane wait on a slow one.** No per-tick barrier, no
