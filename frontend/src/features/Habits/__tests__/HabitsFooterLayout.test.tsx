@@ -85,7 +85,6 @@ jest.mock('../../../api', () => ({
 jest.mock('../components/AddHabitModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/GoalModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/HabitSettingsModal', () => ({ __esModule: true, default: () => null }));
-jest.mock('../components/MissedDaysModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));

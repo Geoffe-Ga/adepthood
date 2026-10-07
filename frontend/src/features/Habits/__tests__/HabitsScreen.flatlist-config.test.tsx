@@ -1,14 +1,13 @@
 /* eslint-env jest */
 // audit-render-07: the Habits FlatList must supply getItemLayout (so it can skip
-// async measurement) and the per-completion missed-days scan must be gated on
-// the modal being open rather than running on every render.
+// async measurement).
 import { describe, expect, it, jest } from '@jest/globals';
 import { render } from '@testing-library/react-native';
 import React from 'react';
 import { View } from 'react-native';
 
 import type { Habit } from '../Habits.types';
-import { HabitList, missedDaysFor } from '../HabitsScreen';
+import { HabitList } from '../HabitsScreen';
 
 // Stub the modal components — importing HabitsScreen pulls them in, and some
 // carry native deps (e.g. datetimepicker) that don't load under jest.
@@ -22,16 +21,9 @@ jest.mock('expo-notifications', () => ({
 jest.mock('../components/AddHabitModal', () => () => null);
 jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);
-jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/StatsModal', () => () => null);
-
-const mockCalculateMissedDays = jest.fn((_habit: unknown) => [{ date: '2026-06-01' }]);
-jest.mock('../HabitUtils', () => ({
-  ...(jest.requireActual('../HabitUtils') as Record<string, unknown>),
-  calculateMissedDays: (habit: unknown) => mockCalculateMissedDays(habit),
-}));
 
 function makeHabit(id: number): Habit {
   return {
@@ -94,29 +86,5 @@ describe('Habits FlatList keyExtractor and column layout', () => {
       <HabitList habits={habits} columns={1} gridGutter={8} renderItem={renderRow} />,
     );
     expect(getByTestId('habits-list').props.columnWrapperStyle).toBeUndefined();
-  });
-});
-
-describe('missed-days computation gating', () => {
-  it('does not scan completions while the modal is closed', () => {
-    mockCalculateMissedDays.mockClear();
-    const result = missedDaysFor(false, makeHabit(1));
-    expect(mockCalculateMissedDays).not.toHaveBeenCalled();
-    expect(result).toEqual([]);
-  });
-
-  it('scans (once) and returns the value when the modal is open', () => {
-    mockCalculateMissedDays.mockClear();
-    const habit = makeHabit(1);
-    const result = missedDaysFor(true, habit);
-    expect(mockCalculateMissedDays).toHaveBeenCalledTimes(1);
-    expect(mockCalculateMissedDays).toHaveBeenCalledWith(habit);
-    expect(result).toEqual([{ date: '2026-06-01' }]);
-  });
-
-  it('returns [] without scanning when there is no selected habit', () => {
-    mockCalculateMissedDays.mockClear();
-    expect(missedDaysFor(true, null)).toEqual([]);
-    expect(mockCalculateMissedDays).not.toHaveBeenCalled();
   });
 });

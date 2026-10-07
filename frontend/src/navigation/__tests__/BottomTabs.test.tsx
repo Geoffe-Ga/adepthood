@@ -22,7 +22,6 @@ jest.mock('expo-notifications', () => ({
 
 jest.mock('@/features/Habits/components/GoalModal', () => () => null);
 jest.mock('@/features/Habits/components/HabitSettingsModal', () => () => null);
-jest.mock('@/features/Habits/components/MissedDaysModal', () => () => null);
 jest.mock('@/features/Habits/components/OnboardingModal', () => () => null);
 jest.mock('@/features/Habits/components/ReorderHabitsModal', () => () => null);
 jest.mock('@/features/Habits/components/StatsModal', () => () => null);

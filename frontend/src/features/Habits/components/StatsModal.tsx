@@ -9,6 +9,7 @@ import styles from '../Habits.styles';
 import type { HabitStatsData, StatsModalProps } from '../Habits.types';
 import { generateStatsForHabit } from '../HabitUtils';
 
+import { STATS_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
 
 const FALLBACK_CHART_COLOR = 'rgba(134, 65, 244, 1)';
@@ -163,6 +164,20 @@ const StatsHeaderTitle = ({ habit }: { habit: { name: string; icon: string } }) 
   </>
 );
 
+interface StatsHeaderProps {
+  habit: { name: string; icon: string };
+  onClose: () => void;
+}
+
+/** The sheet's header: the habit's stats title and its named close button. */
+const StatsHeader = ({ habit, onClose }: StatsHeaderProps) => (
+  <ModalHeader
+    title={<StatsHeaderTitle habit={habit} />}
+    onClose={onClose}
+    closeLabel={STATS_CLOSE_LABEL}
+  />
+);
+
 interface StatsContentProps {
   habit: NonNullable<StatsModalProps['habit']>;
   stats: HabitStatsData;
@@ -180,7 +195,7 @@ const StatsContent = (props: StatsContentProps) => {
 
   return (
     <View style={[styles.statsModalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
-      <ModalHeader title={<StatsHeaderTitle habit={habit} />} onClose={onClose} />
+      <StatsHeader habit={habit} onClose={onClose} />
       <TabBar selectedTab={selectedTab} onSelect={onSelectTab} />
       <ScrollView style={styles.statsContainer}>
         {loading && (

@@ -51,7 +51,6 @@ jest.mock('../components/OnboardingModal', () =>
     return null;
   },
 );
-jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/StatsModal', () => () => null);
 
 jest.mock('react-native-draggable-flatlist', () => 'DraggableFlatList');
