@@ -641,6 +641,24 @@
     "coveredBy": "frontend/e2e/journal-vault-withdrawal.e2e.test.ts"
   },
   {
+    "id": "journal.intimate-reclassification-withdraws-copies",
+    "description": "A writer whose Personal page and generated Voice Draft have reached their connected Creek vault chooses Intimate for that page (#3060, #3077). The stricter tier is committed locally whatever the vault says. When the first content-free Voice Draft retraction fails at the real HTTP boundary, the PATCH answers the stable retryable 503 vault_withdrawal_pending -- the existing privacy control keeps Intimate selected and offers a retry -- instead of a 200 while the AI-authored draft is still in the vault. Choosing Intimate again re-sends the owed DELETE from a durable, content-free obligation row and succeeds only once the vault confirms both the draft and the journal replica absent. The lane uses the production client against the out-of-process contract fake.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/PrivacyTierControl.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /journal/{entry_id}"
+      ],
+      "tables": ["journalentry", "marginalia", "voicedraftretraction"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-intimate-withdrawal.e2e.test.ts"
+  },
+  {
     "id": "journal.stage-prompts-and-cadences",
     "description": "Someone in the middle of a stage opens the Journal shelf and sees that stage's whole prompt set, each with the cadence the curriculum states for it, then taps one and writes against that prompt rather than against whichever question the week happened to draw. The seam is the ordinal: the page carries prompt_ordinal into the respond call, and the server decides whether that ordinal is one the stage actually carries. The second seam is the one-response-per-week rule: uq_promptresponse_user_week means a week holds a single response whichever prompt it answers, so the shelf stops offering a tap once this week's is written and the entry page says so if a save is refused anyway. Uncovered because no lane spec talks to the prompts routes yet, and a mocked client agrees with itself about the ordinal check, the stage's unlock gate, and the unique constraint -- the three things only the server can refuse.",
     "crosses": {
@@ -658,7 +676,7 @@
   },
   {
     "id": "journal.ask-for-resonance",
-    "description": "A writer opens a page they finished days ago, asks for its resonance, and the reading lands in the margin against the words they actually wrote. The unhappy half is part of the journey rather than an edge case: a pass can legitimately keep nothing -- the model declines, or every quote it offers is a paraphrase that will not anchor -- and what the writer must never get is the outcome that was reported here, a button that visibly does nothing. So the journey ends either in a persisted note or in a sentence saying why there is none, with the charge reversed. Both endings are driven here against the configured default provider, which is the stub (BOTMASON_PROVIDER unset: no key, no network, no third party), so the route, the wallet, the anchoring and the rows are all real and only the model's sentences are canned; the stub declines exactly when the page gives it no sentence to copy, which is how the lane reaches the second ending. The spec also pins the privacy floor across the wire: an intimate page is answered before any provider is constructed, keeps no notes, and is not charged. What is NOT claimed is that any of it renders -- this lane runs on the node environment with node_modules untransformed and cannot mount JournalEntryScreen at all, the constraint recorded on welcome.first-run-walkthrough-to-journal. The margin's placement and its empty-state copy stay pinned by the Jest specs beside the screen; what crosses the seam here is that the note the margin will draw is one the server kept, anchored to characters the writer wrote. A pass also never runs over a copy whose latest write failed (#2980), nor while offline-typed words are held off the page (#2935): the screen's pass writer answers 'not saved' rather than the entry id, so nothing is generated or charged, the footer's Couldn't save / Retry keeps the save, the margin says the page has not saved (never 'write a little first'), and the next press after the save lands runs exactly one pass -- pinned client-side by frontend/src/features/Journal/__tests__/JournalEntryScreenResonanceDurable.test.tsx, since this lane cannot mount the screen.",
+    "description": "A writer opens a page they finished days ago, asks for its resonance, and the reading lands in the margin against the words they actually wrote. The unhappy half is part of the journey rather than an edge case: a pass can legitimately keep nothing -- the model declines, or every quote it offers is a paraphrase that will not anchor -- and what the writer must never get is the outcome that was reported here, a button that visibly does nothing. So the journey ends either in a persisted note or in a sentence saying why there is none, with the charge reversed. Every note the stub writes is recorded and returned as a demo (source demo, paid_by free) and its unit is handed back (#3062); a real provider's pass whose charge is kept cannot be reached on this lane and is declared as journal.real-provider-pass-keeps-its-charge. Both endings are driven here against the configured default provider, which is the stub (BOTMASON_PROVIDER unset: no key, no network, no third party), so the route, the wallet, the anchoring and the rows are all real and only the model's sentences are canned; the stub declines exactly when the page gives it no sentence to copy, which is how the lane reaches the second ending. The spec also pins the privacy floor across the wire: an intimate page is answered before any provider is constructed, keeps no notes, and is not charged. What is NOT claimed is that any of it renders -- this lane runs on the node environment with node_modules untransformed and cannot mount JournalEntryScreen at all, the constraint recorded on welcome.first-run-walkthrough-to-journal. The margin's placement and its empty-state copy stay pinned by the Jest specs beside the screen; what crosses the seam here is that the note the margin will draw is one the server kept, anchored to characters the writer wrote. A pass also never runs over a copy whose latest write failed (#2980), nor while offline-typed words are held off the page (#2935): the screen's pass writer answers 'not saved' rather than the entry id, so nothing is generated or charged, the footer's Couldn't save / Retry keeps the save, the margin says the page has not saved (never 'write a little first'), and the next press after the save lands runs exactly one pass -- pinned client-side by frontend/src/features/Journal/__tests__/JournalEntryScreenResonanceDurable.test.tsx, since this lane cannot mount the screen.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "resonance"],
@@ -732,7 +750,7 @@
   },
   {
     "id": "journal.told-what-an-essay-costs-before-it-charges",
-    "description": "A note's first letter is a charged depth under the owner-ratified launch economy (#623): one wallet unit to write it, nothing to reopen it. Opening a note with no letter shows an offer, not a request: what a letter is, that the entry goes to an AI model, the price for the payer in force (the writer's own key, the monthly allowance by its served cap, or an offering), and equal-weight Ask for the letter / Not now arms. Only Ask sends POST /journal/marginalia/{marginalia_id}/essay, with price_acknowledged: true. Across the real wire, a server-paid ask without the acknowledgement is refused 409 essay_price_unacknowledged and moves neither the wallet nor its audit trail; the acknowledged ask spends exactly one monthly unit (one spend_monthly row, no refund) and its answer carries the same remaining_messages, remaining_balance and monthly_reset_date that GET /user/usage then reports; reopening the cached letter, acknowledged or not, is free. Pinned by Jest rather than this lane: the offer's copy and a11y, no ask on open, a cached letter opening straight to the letter, and an essay 402 routing to the pass's refill dialog. Pinned by the backend suite rather than this lane: the exhausted-wallet 402 before any provider call, and refunds for failed and empty letters.",
+    "description": "A note's first letter is a charged depth under the owner-ratified launch economy (#623): one wallet unit to write it, nothing to reopen it. Opening a note with no letter shows an offer, not a request: what a letter is, that the entry goes to an AI model, the price for the payer in force (the writer's own key, the monthly allowance by its served cap, or an offering), and equal-weight Ask for the letter / Not now arms. Only Ask sends POST /journal/marginalia/{marginalia_id}/essay, with price_acknowledged: true. Across the real wire, a server-paid ask without the acknowledgement is refused 409 essay_price_unacknowledged and moves neither the wallet nor its audit trail; the acknowledged ask takes its monthly unit before the dial and, because every lane serves the stub provider whose letter is a labelled demo (#3062), hands it back in the same commit (spend_monthly then refund_demo, the letter's essay_source demo), and its answer carries the same remaining_messages, remaining_balance and monthly_reset_date that GET /user/usage then reports; a real provider's letter whose charge is kept is no longer reachable on this lane and is declared as journal.real-provider-pass-keeps-its-charge; reopening the cached letter, acknowledged or not, is free. Pinned by Jest rather than this lane: the offer's copy and a11y, no ask on open, a cached letter opening straight to the letter, and an essay 402 routing to the pass's refill dialog. Pinned by the backend suite rather than this lane: the exhausted-wallet 402 before any provider call, and refunds for failed and empty letters.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "resonance", "botmasonUsage"],
@@ -747,6 +765,50 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-essay-economy.e2e.test.ts"
+  },
+  {
+    "id": "journal.margin-note-source-survives-reload",
+    "description": "A writer asks for resonance and each margin note says which side answered it, as the server recorded it on the row in the same commit as the note (#3062); after a cold reload the label is read back from the persisted source, never re-derived from the pass or from whether a vault is connected. This lane serves the stub provider, so the note is labelled as a demo, the pass carries a one-line demo notice, and the wallet is unchanged. A note older than receipts, an unknown value and a missing field all read \"Source not recorded\" (pinned by the Jest specs for sourceLabel, MarginNote and the provenance schemas). The label wording is a draft pending owner review (#3062 E3).",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "GET /journal/{entry_id}/marginalia",
+        "GET /user/usage"
+      ],
+      "tables": ["journalentry", "marginalia", "walletaudit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-margin-note-source.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.vault-sourced-note-label",
+    "description": "A writer whose AI operations are bound to their connected Creek vault asks for resonance; the vault's note is recorded and labelled as answered by their Creek vault, with no model claimed (the vault's reflect response reports none), and a vault with nothing to say still names itself as the source of the empty pass (#3062). Uncovered across the wire: the lane's fake Creek vault advertises no reflect capability, so no spec can make the vault answer a pass. The backend suite pins the receipt (backend/tests/test_inference_provenance.py) and the Jest specs pin the label.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance", "GET /journal/{entry_id}/marginalia"],
+      "tables": ["marginalia", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 3062
+  },
+  {
+    "id": "journal.real-provider-pass-keeps-its-charge",
+    "description": "A writer's resonance pass, or a note's first letter, answered by the app's real model provider is labelled as such and keeps its wallet unit, while a demo (stub) answer is refunded (#3062). Every lane serves the stub provider, so since demo answers stopped being billed the charged-and-kept half of journal.ask-for-resonance and journal.told-what-an-essay-costs-before-it-charges is unreachable from any spec. The backend suite pins it (backend/tests/test_inference_provenance.py, and the charge assertions in test_resonance_endpoints.py and test_essay_endpoint.py that now answer as a real provider).",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "botmasonUsage"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /user/usage"
+      ],
+      "tables": ["marginalia", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 3062
   },
   {
     "id": "journal.generation-guardrail-refusal",
@@ -1891,5 +1953,17 @@
     },
     "status": "uncovered",
     "issue": 1938
+  },
+  {
+    "id": "habits.reveal-without-course",
+    "description": "A person who takes the habits without the Course still moves through the program cadence (#3071). Before the fix the Course router was the only thing that ever gave an account a calendar anchor, so a habits-only account had no stage-progress row, the server read it as standing on stage 1 forever, and the Purple habit and every ring after it never opened. The habits list read now provisions the anchor itself, with the same ensure_user_progress the Course uses, but only when a laddered habit is still waiting on its ring. The covering Playwright spec pins the browser to UTC, signs up through the UI, seeds a locked Beige and a locked Purple habit over POST /habits/, and opens Habits: Beige is open, Purple shows its locked tile, and a read of the lane database finds a stage-1 row the habits read created. It then rewinds that anchor by Beige's 21-day window through tests.e2e.program_anchor, reloads, and Purple's tile is open. A request guard fails the run on any /course/ call, and the database read runs before the rewind because the rewind arrange provisions a row itself and would otherwise mask the bug. Pinned in process by backend/tests/test_habits_api.py (provisioning, the no-row guards for an unladdered or empty list, and a concurrent first read that leaves one row), by backend/tests/integration/test_habit_reveal_stamp_race.py (two reads forced to race the locked re-read on PostgreSQL, counting every write so each invitation is stamped exactly once; SQLite cannot prove this because FOR UPDATE is a no-op there) and by backend/tests/services/test_habit_auto_reveal_cadence.py (every stage boundary in UTC and America/Los_Angeles across DST, with literal expected stages).",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "stageprogress"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-reveal-without-course.browser.e2e.test.ts"
   }
 ]

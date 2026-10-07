@@ -42,6 +42,7 @@ from services.generation_guardrails import (
 )
 from services.usage import DAILY_GENERATION_CEILING_ENV, get_monthly_cap
 from services.wallet import DAILY_GENERATION_LIMIT_REACHED, net_charged_generations_since
+from tests.support.fake_llm import real_provider_response
 from tests.transcription_helpers import JPEG_BYTES, payload
 
 _BODY = "I walked by the river and the willow bent without breaking."
@@ -77,13 +78,9 @@ class _Provider:
         self.calls += 1
         if self.gate is not None:
             await self.gate.wait()
-        return LLMResponse(
-            text=_NOTES,
-            provider="stub",
-            model=STUB_MODEL_NAME,
-            prompt_tokens=0,
-            completion_tokens=0,
-        )
+        # A real provider's answer: a stub answer is a refunded demo (#3062),
+        # which would net every generation out of the daily count.
+        return real_provider_response(_NOTES)
 
 
 class _Transcriber:

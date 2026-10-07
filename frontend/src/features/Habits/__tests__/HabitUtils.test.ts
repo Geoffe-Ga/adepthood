@@ -406,6 +406,41 @@ describe('HabitUtils', () => {
     expect((tenth.getTime() - base.getTime()) / day).toBe(210);
   });
 
+  describe('program cadence pin (#3071)', () => {
+    // Literal on purpose, and the same table the backend reveal sweep uses
+    // (backend/tests/services/test_habit_auto_reveal_cadence.py): the habit at
+    // onboarding slot i starts on the day its own ring opens -- eight three-week
+    // windows, then two six-week ones. Deriving either column from
+    // STAGE_DURATIONS_DAYS or STAGE_ORDER would let a schedule change move the
+    // oracle with the code.
+    const LADDER: ReadonlyArray<readonly [string, number]> = [
+      ['Beige', 0],
+      ['Purple', 21],
+      ['Red', 42],
+      ['Blue', 63],
+      ['Orange', 84],
+      ['Green', 105],
+      ['Yellow', 126],
+      ['Teal', 147],
+      ['Ultraviolet', 168],
+      ['Clear Light', 210],
+    ];
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    // 2026-03-08 is a US spring-forward; the UTC-anchored arithmetic must not
+    // lose an hour across it.
+    const base = new Date('2026-03-01T00:00:00Z');
+
+    test.each(LADDER.map(([colour, day], index) => [index, colour, day] as const))(
+      'slot %i is %s and starts on program day %i',
+      (index, colour, day) => {
+        expect(stageAtIndex(index)).toBe(colour);
+        expect((calculateHabitStartDate(base, index).getTime() - base.getTime()) / DAY_MS).toBe(
+          day,
+        );
+      },
+    );
+  });
+
   test('logHabitUnits generates valid UUID string IDs for completions', () => {
     let habit: Habit = { ...baseHabit, goals: [], completions: [], streak: 0 };
     habit = logHabitUnits(habit, 1);
