@@ -46,7 +46,7 @@ from tests.incident.test_privacy_suspension import (
     suspend_ai,
     suspend_vault,
 )
-from tests.provider_transport import ANTHROPIC_KEY, OPENAI_KEY
+from tests.provider_transport import ANTHROPIC_KEY, OPENAI_KEY, use_openai
 
 if TYPE_CHECKING:
     from httpx import Response
@@ -57,6 +57,16 @@ _BYOK: Final = {"X-LLM-API-Key": ANTHROPIC_KEY}
 _STUCK_FOR: Final = timedelta(days=3)
 _WITHDRAWN_ENTRY: Final = 11
 _PROBE: Final = "/admin/privacy-suspensions"
+_OPENAI_OK: Final[dict[str, object]] = {
+    "id": "chatcmpl-1",
+    "object": "chat.completion",
+    "created": 0,
+    "model": "gpt-4o-mini",
+    "choices": [
+        {"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
+    ],
+    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+}
 
 
 async def _admin(client: AsyncClient, session: AsyncSession, name: str) -> dict[str, str]:
@@ -165,18 +175,24 @@ async def test_compromised_llm_key(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_compromised_session_revoked_by_password_changed_at(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Moving ``password_changed_at`` past a token's ``iat`` revokes that token."""
-    headers, user_id, _ = await signup(async_client, "stolen_session")
-    assert (await async_client.get("/journal/", headers=headers)).status_code == HTTPStatus.OK
+    """Before: the stolen bearer reads the journal. After ``password_changed_at``: it cannot."""
+    steps: list[str] = []
+    stolen, user_id, _ = await signup(async_client, "stolen_session")
+    before = await async_client.get("/journal/", headers=stolen)
+    assert before.status_code == HTTPStatus.OK, "the stolen bearer never worked: nothing to revoke"
+    steps.append("stolen bearer reads the journal")
 
     user = await db_session.get(User, user_id)
     assert user is not None
     user.password_changed_at = datetime.now(UTC) + timedelta(seconds=1)
     db_session.add(user)
     await db_session.commit()
+    steps.append("set password_changed_at")
 
-    revoked = await async_client.get("/journal/", headers=headers)
-    assert revoked.status_code == HTTPStatus.UNAUTHORIZED
+    after = await async_client.get("/journal/", headers=stolen)
+
+    assert after.status_code == HTTPStatus.UNAUTHORIZED
+    assert steps == ["stolen bearer reads the journal", "set password_changed_at"]
 
 
 # --- (d) budget exhaustion --------------------------------------------------------
@@ -187,9 +203,11 @@ async def test_budget_exhaustion_ceiling_zero_then_switch_for_byok(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Ceiling 0 stops server-paid passes but not BYOK; only the switch stops both."""
+    steps: list[str] = []
     stub = arm_anthropic(monkeypatch)
     headers, user_id, _ = await signup(async_client, "budget")
     monkeypatch.setenv(DAILY_GENERATION_CEILING_ENV, "0")
+    steps.append(f"set {DAILY_GENERATION_CEILING_ENV}=0")
 
     paid = await _resonate(async_client, headers, await seed_entry(db_session, user_id))
     assert paid.status_code == HTTPStatus.TOO_MANY_REQUESTS, paid.text
@@ -200,13 +218,20 @@ async def test_budget_exhaustion_ceiling_zero_then_switch_for_byok(
     assert byok.status_code == HTTPStatus.OK, byok.text
     dialled = stub.request_count
     assert dialled >= 1, "BYOK should still dial under ceiling 0: that is the gap"
+    steps.append("BYOK still dials")
 
     suspend_ai(monkeypatch)
+    steps.append(f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}")
     refused = await _resonate(async_client, headers, await seed_entry(db_session, user_id), _BYOK)
 
     assert refused.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     assert refused.json() == {"detail": AI_SUSPENDED_DETAIL}
     assert stub.request_count == dialled
+    assert steps == [
+        f"set {DAILY_GENERATION_CEILING_ENV}=0",
+        "BYOK still dials",
+        f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}",
+    ]
 
 
 # --- (e) false model readiness at the vault --------------------------------------
@@ -216,29 +241,34 @@ async def test_budget_exhaustion_ceiling_zero_then_switch_for_byok(
 async def test_false_model_readiness_contained_by_vault_send_switch(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A vault claiming readiness gets no content; the writer's entry is still saved."""
+    """Before: a vault claiming readiness receives the writing. After the switch: nothing."""
+    steps: list[str] = []
     recorder = _VaultRecorder()
     vault = await handshaken_vault(recorder)
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
     headers, _, _ = await signup(async_client, "false_ready")
-    suspend_vault(monkeypatch)
+    monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR, raising=False)
 
-    suspended = await async_client.post(
+    before = await async_client.post(
+        "/journal/", json={"message": "Written before anyone noticed."}, headers=headers
+    )
+    assert before.status_code == HTTPStatus.CREATED, before.text
+    sent = recorder.methods().count("PUT")
+    assert sent >= 1, "the vault never received the writing: nothing to contain"
+    steps.append("vault receives journal content")
+
+    suspend_vault(monkeypatch)
+    steps.append(f"set {VAULT_SEND_SUSPEND_ENV_VAR}")
+    after = await async_client.post(
         "/journal/", json={"message": "Written while the vault is suspect."}, headers=headers
     )
 
-    assert suspended.status_code == HTTPStatus.CREATED, suspended.text
-    row = await db_session.get(JournalEntry, int(suspended.json()["id"]))
+    assert after.status_code == HTTPStatus.CREATED, after.text
+    row = await db_session.get(JournalEntry, int(after.json()["id"]))
     assert row is not None
     assert row.vault_ref is None
-    assert "PUT" not in recorder.methods()
-
-    monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR)
-    control = await async_client.post(
-        "/journal/", json={"message": "Written after the all-clear."}, headers=headers
-    )
-    assert control.status_code == HTTPStatus.CREATED, control.text
-    assert "PUT" in recorder.methods(), "the control never reached the vault: test is vacuous"
+    assert recorder.methods().count("PUT") == sent
+    assert steps == ["vault receives journal content", f"set {VAULT_SEND_SUSPEND_ENV_VAR}"]
 
 
 # --- (f) stuck deletion -------------------------------------------------------------
@@ -248,7 +278,8 @@ async def test_false_model_readiness_contained_by_vault_send_switch(
 async def test_stuck_deletion_visible_and_withdraw_continues(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The teardown keeps its true age across retries, and withdrawals still go out."""
+    """A deletion stuck for days shows its true age, and withdrawals land under suspension."""
+    steps: list[str] = []
     admin = await _admin(async_client, db_session, "teardown_admin")
     requested = datetime.now(UTC) - _STUCK_FOR
     db_session.add(
@@ -262,34 +293,61 @@ async def test_stuck_deletion_visible_and_withdraw_continues(
         )
     )
     await db_session.commit()
+    steps.append("deletion stuck for three days, retried moments ago")
+
     suspend_ai(monkeypatch)
     suspend_vault(monkeypatch)
-
+    steps.append("set both suspension switches")
     listed = await async_client.get("/admin/vault-teardowns", headers=admin)
+    steps.append("list teardowns")
 
     assert listed.status_code == HTTPStatus.OK, listed.text
     (row,) = listed.json()
+    assert row["state"] == "deleting"
     pending_since = datetime.fromisoformat(row["pending_since"])
     assert pending_since.replace(tzinfo=UTC) == requested.replace(tzinfo=UTC)
 
     recorder = _VaultRecorder()
     vault = await handshaken_vault(recorder)
     await vault.withdraw_journal_entry(_WITHDRAWN_ENTRY)
+    steps.append("withdraw the entry")
+
     assert recorder.methods() == ["GET", "DELETE"]
+    assert steps == [
+        "deletion stuck for three days, retried moments ago",
+        "set both suspension switches",
+        "list teardowns",
+        "withdraw the entry",
+    ]
 
 
 # --- (g) vendor policy change -------------------------------------------------------
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("api_key", [ANTHROPIC_KEY, OPENAI_KEY, None])
-async def test_vendor_policy_change(monkeypatch: pytest.MonkeyPatch, api_key: str | None) -> None:
-    """Whichever vendor changed its terms, and whoever's key it is, nothing is built."""
+@pytest.mark.parametrize(
+    ("api_key", "vendor"),
+    [(ANTHROPIC_KEY, "anthropic"), (OPENAI_KEY, "openai"), (None, "anthropic")],
+)
+async def test_vendor_policy_change(
+    monkeypatch: pytest.MonkeyPatch, api_key: str | None, vendor: str
+) -> None:
+    """Before: the vendor is reached. After the switch: no client for it is built."""
+    steps: list[str] = []
+    use_openai(monkeypatch, HTTPStatus.OK, _OPENAI_OK)
     arm_anthropic(monkeypatch)
+    # Each vendor's own default model, so a BYOK key of either kind is servable.
+    monkeypatch.delenv("LLM_MODEL")
     built = record_constructions(monkeypatch)
+
+    await botmason.generate_response("before", [], api_key=api_key)
+    assert built == [vendor], "the vendor was never reached: nothing to stop"
+    steps.append(f"{vendor} reached")
+
     suspend_ai(monkeypatch)
-
+    steps.append(f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}")
     with pytest.raises(botmason.ExternalAISuspendedError):
-        await botmason.generate_response("policy", [], api_key=api_key)
+        await botmason.generate_response("after", [], api_key=api_key)
 
-    assert built == []
+    assert built == [vendor]
+    assert steps == [f"{vendor} reached", f"set {EXTERNAL_AI_SUSPEND_ENV_VAR}"]
