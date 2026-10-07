@@ -297,6 +297,11 @@ RETENTION: Mapping[str, RetentionRule] = {
     ),
     "promptdismissal": until_account_deletion("Prompts the account set aside."),
     "promptresponse": until_account_deletion("Answers to the weekly prompts."),
+    "restoremarker": indefinite(
+        "Content-free operator record of each restore's reapply. It must outlive "
+        "the cutover it guards; no bound has been chosen (#3063 AC17).",
+        ratified=False,
+    ),
     "revokedtoken": indefinite(
         "Opaque JWT ids and their expiry. Content-free, but nothing sweeps a row once "
         "its token has expired.",
@@ -415,3 +420,99 @@ def retention_report() -> str:
         flag = "ratified" if rule.ratified else "UNRATIFIED"
         lines.append(f"{name}: {_describe(rule)} [{flag}] -- trigger: {rule.trigger}")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
+# Restore-suppression tombstones (#3063 AC9-10).
+#
+# Restoring a backup older than a deletion brings the deleted rows back, and
+# the record of the deletion comes back without it. Every column that records a
+# deletion is therefore either exported as a tombstone before a restore, or
+# exempt with a written reason. :func:`tombstone_gaps` keeps that total.
+# --------------------------------------------------------------------------
+
+#: The column name every soft-delete stamp in this schema uses.
+SOFT_DELETE_COLUMN = "deleted_at"
+
+
+class TombstoneKind(enum.StrEnum):
+    """Which deletion a tombstone source records."""
+
+    ACCOUNT = "account"
+    ENTRY = "entry"
+
+
+@dataclass(frozen=True)
+class TombstoneSource:
+    """A table whose rows record deletions, and the content-free columns exported."""
+
+    kind: TombstoneKind
+    columns: tuple[str, ...]
+    stamp: str = SOFT_DELETE_COLUMN
+
+
+TOMBSTONE_SOURCES: Mapping[str, TombstoneSource] = {
+    # The deletion receipt is the account tombstone: surrogate id and instant.
+    "accountdeletionaudit": TombstoneSource(
+        kind=TombstoneKind.ACCOUNT,
+        columns=("user_id", SOFT_DELETE_COLUMN),
+    ),
+    # A soft-deleted entry: its id, owner and the instant of deletion.
+    "journalentry": TombstoneSource(
+        kind=TombstoneKind.ENTRY,
+        columns=("id", "user_id", SOFT_DELETE_COLUMN),
+    ),
+}
+
+TOMBSTONE_EXEMPT: Mapping[str, str] = {
+    "user.deleted_at": "never written: account deletion hard-deletes the row, and the "
+    "accountdeletionaudit receipt is the account tombstone",
+}
+
+
+def _stamp_columns(metadata: MetaData) -> set[str]:
+    """Every ``table.deleted_at`` column present in ``metadata``."""
+    return {
+        f"{table.name}.{column.name}"
+        for table in metadata.tables.values()
+        for column in table.columns
+        if column.name == SOFT_DELETE_COLUMN
+    }
+
+
+def _present(metadata: MetaData, qualified: str) -> bool:
+    """Whether ``table.column`` exists in ``metadata``."""
+    table_name, column = qualified.split(".", 1)
+    table = metadata.tables.get(table_name)
+    return table is not None and column in table.c
+
+
+def _declared_columns(metadata: MetaData) -> list[tuple[str, bool]]:
+    """``(table.column, present)`` for every column a source or exemption names."""
+    named = [
+        f"{name}.{column}"
+        for name, source in TOMBSTONE_SOURCES.items()
+        for column in source.columns
+    ]
+    named.extend(TOMBSTONE_EXEMPT)
+    return [(qualified, _present(metadata, qualified)) for qualified in named]
+
+
+def tombstone_gaps(metadata: MetaData) -> tuple[str, ...]:
+    """Report deletion stamps no tombstone covers, and stale declarations.
+
+    A ``deleted_at`` column that is neither a source's stamp nor exempt is a
+    deletion a restore would silently undo.
+    """
+    covered = {f"{name}.{source.stamp}" for name, source in TOMBSTONE_SOURCES.items()}
+    covered |= set(TOMBSTONE_EXEMPT)
+    uncovered = [
+        f"{qualified} records a deletion but is neither a tombstone source nor exempt"
+        for qualified in sorted(_stamp_columns(metadata) - covered)
+    ]
+    stale = [
+        f"{qualified} is declared for tombstones but is not in the schema"
+        for qualified, present in _declared_columns(metadata)
+        if not present
+    ]
+    return tuple(uncovered + stale)

@@ -114,6 +114,7 @@ from services.managed_vault_rollout import (
     load_managed_vault_rollout,
 )
 from services.provider_probe import PROVIDER_PROBE_ENV_VAR, armed_probe_token
+from services.restore_suppression import assert_restore_reapplied
 
 logger = logging.getLogger(__name__)
 
@@ -1059,6 +1060,9 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # a stale checkout fails at boot with the Alembic remedy instead of serving
     # healthy routes until the first journal write reaches a missing column.
     await require_database_schema_current(database_engine)
+    # Default off. When an operator turns it on after a restore, refuse to serve
+    # until that restore's deletions were reapplied (#3063, DEPLOYMENT.md).
+    await assert_restore_reapplied(async_session_factory)
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
     # course content) so a fresh database is immediately usable.

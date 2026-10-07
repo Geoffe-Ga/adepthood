@@ -410,6 +410,10 @@ MANIFEST: Mapping[str, ExportRule] = {
         # ``journalentry`` above).
         drop_columns=("idem_key",),
     ),
+    "restoremarker": Omitted(
+        "Operator bookkeeping for a database restore: a restore id, a state and "
+        "counts. It names no account.",
+    ),
     "revokedtoken": Omitted(
         "Expired JWT identifiers with no owner column at all. Nothing here "
         "names an account, and the rows age out on their own.",

@@ -547,11 +547,31 @@ costs.
    read this database, listing **every key that could have encrypted a row in
    this dump**, newest first. The current production key alone is not enough if
    the dump predates a rotation.
-8. **Verify before cutting over** (next section). A restore is not finished when
+8. **Suppress resurrected deletions.** *DRAFT for owner review (#3063); not yet
+   a ratified step of this procedure.* A backup taken before an account or a
+   journal page was deleted still holds it, and the deletion's own record is
+   restored away with it, so the deleted account could sign in again. Before
+   cutting over, reapply the deletion tombstones to the restored database:
+   ```bash
+   # From backend/, with DATABASE_URL pointing at the RESTORED database.
+   # TOMBSTONES is the content-free file exported with `export --out` from the
+   # live database before the restore (or from wherever it is kept -- where it
+   # lives is undecided, #3063 AC17; without one, deletions made after the
+   # backup cannot be suppressed and must be treated as resurrected).
+   TOMBSTONES=tombstones.json; RESTORE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+   PYTHONPATH=src python -m scripts.restore_suppression reapply \
+     --in "$TOMBSTONES" --restore-id "$RESTORE_ID"
+   ```
+   Exit 0 prints the counts; exit 1 is a refusal (a policy gap, or a restore
+   already marked complete -- never rerun a completed restore after cutover);
+   exit 2 is an unreadable file. Optionally set `RESTORE_SUPPRESSION_REQUIRED=1`
+   and `RESTORE_ID` on the service: the app then refuses to boot until that
+   restore's reapply completed. Both are unset by default and change nothing.
+9. **Verify before cutting over** (next section). A restore is not finished when
    `pg_restore` exits; it is finished when a journal entry decrypts.
-9. **Point the app at it** and bring the backend service back up. Watch the boot
-   log for `journal_encryption_enabled=True` and `/health` for
-   `{"status": "healthy", "database": "connected", ...}`.
+10. **Point the app at it** and bring the backend service back up. Watch the boot
+    log for `journal_encryption_enabled=True` and `/health` for
+    `{"status": "healthy", "database": "connected", ...}`.
 
 ### Verifying a restore
 
