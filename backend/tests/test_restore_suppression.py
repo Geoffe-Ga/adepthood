@@ -763,3 +763,42 @@ async def test_reapply_reowes_resurrected_withdrawals_and_clears_the_vault_handl
         VoiceDraftRetractionState.PENDING.value,
         settled.value,
     ]
+
+
+async def _fragments(factory: async_sessionmaker[AsyncSession], entry_id: int) -> int:
+    fragments = SQLModel.metadata.tables["corpusfragment"]
+    async with factory() as session:
+        result = await session.execute(
+            select(func.count())
+            .select_from(fragments)
+            .where(fragments.c["source_entry_id"] == entry_id)
+        )
+        return int(result.scalar_one())
+
+
+@pytest.mark.asyncio
+async def test_reapply_withdraws_the_resurrected_corpus_copy(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """The corpus fragment a restore brings back is withdrawn again.
+
+    A deleted page's corpus copy would otherwise go on being read back as
+    context for newer writing, which is the one thing deletion promises it won't.
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    lia = await _signup(client, "lia")
+    entry_id = await _seed_deletable_entry(factory, lia)
+    assert await _fragments(factory, entry_id) == 1
+    snapshot = await _snapshot(factory, tmp_path)
+    await _delete_as_the_journal_route_does(factory, entry_id)
+    assert await _fragments(factory, entry_id) == 0
+    tombstones = await _export(factory)
+    await _restore(factory, snapshot)
+
+    assert await _fragments(factory, entry_id) == 1  # resurrection is real
+
+    await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    assert await _fragments(factory, entry_id) == 0
