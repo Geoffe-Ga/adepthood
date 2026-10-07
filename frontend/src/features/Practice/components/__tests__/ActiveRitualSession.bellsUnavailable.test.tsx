@@ -4,7 +4,7 @@
  * the timer still runs, completes and saves (#3072 AC10). The metronome's
  * deliberate silence is not a failure and must not raise the notice.
  */
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import { createAudioPlayer } from 'expo-audio';
 import React from 'react';
@@ -14,6 +14,7 @@ import type { PracticeSessionCreate, PracticeSessionResponse, UserPractice } fro
 import ActiveRitualSession, {
   BELLS_UNAVAILABLE_COPY,
 } from '@/features/Practice/components/ActiveRitualSession';
+import { bellSources } from '@/features/Practice/engine/adapters/audio';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 
 const mockCreate = jest.fn<(payload: PracticeSessionCreate) => Promise<PracticeSessionResponse>>();
@@ -29,6 +30,13 @@ jest.mock('@/api', () => {
 });
 
 const MIN = 60_000;
+/**
+ * Budget for rendering the six bells once. Every test here builds the real
+ * adapter, and the first build synthesizes the bells (~0.5 s unoptimised,
+ * several seconds on a loaded runner); warming the cache in `beforeAll` keeps
+ * that one-off cost out of the first test's 5 s budget.
+ */
+const BELL_SYNTH_WARMUP_MS = 30_000;
 const TICK_MS = 100;
 
 const userPractice: UserPractice = {
@@ -84,6 +92,10 @@ describe('ActiveRitualSession bells-unavailable notice', () => {
   const player = createAudioPlayer as jest.Mock;
   const originalOS = Platform.OS;
   let warn: ReturnType<typeof jest.spyOn>;
+
+  beforeAll(() => {
+    bellSources();
+  }, BELL_SYNTH_WARMUP_MS);
 
   beforeEach(() => {
     jest.useFakeTimers();
