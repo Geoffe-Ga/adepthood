@@ -479,7 +479,7 @@
         "source": "repo:frontend/nginx.conf"
       },
       "primary_copy_removal": {
-        "value": "All 18 EncryptedString columns that carry journal prose, DERIVED_FROM_PROSE plaintext, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected.",
+        "value": "The 12 in-scope EncryptedString columns of journal_scope_proposal (of the 18; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected.",
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {

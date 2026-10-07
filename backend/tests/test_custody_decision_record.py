@@ -891,3 +891,16 @@ def test_removal_inventory_names_the_real_derived_plaintext() -> None:
     assert [member for member in members if f"`{member}`" not in removal] == []
     assert "`completionsuggestion.completed_units`" in removal
     assert "`completionsuggestion.completed_on`" in removal
+
+
+def test_selected_primary_copy_removal_matches_the_scope_split() -> None:
+    """BD's removal cell names the in-scope count, not all 18 columns.
+
+    Feedback and the stored vault credential are proposed out of scope, so a
+    cell promising to remove "all 18" contradicts the scope it sits beside.
+    """
+    cell = str(_as_dict(_as_dict(_as_dict(_card()["options"])[_SELECTED])["primary_copy_removal"]))
+    in_scope, _ = _journal_scope()
+
+    assert "All 18" not in cell
+    assert f"{len(in_scope)} in-scope" in cell
