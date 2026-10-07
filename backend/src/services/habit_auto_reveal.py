@@ -155,6 +155,28 @@ async def _open_candidates(
     )
 
 
+async def _anchored_candidates(session: AsyncSession, user_id: int) -> list[Habit]:
+    """Read unconsumed candidates, giving the calendar an anchor if one awaits it.
+
+    The habits are a depth a person may take without the course (NORTH-STAR:18),
+    so this read gives the calendar its anchor when nothing else has (#3071).
+    Without a progress row ``open_through`` answers stage 1 forever, and for an
+    account that never opened the course every ring after Beige stayed shut.
+    The row is provisioned only on behalf of a laddered habit whose invitation is
+    still pending: a habit off the ladder has no ring to wait for, and an empty
+    or fully consumed list has nothing for an anchor to open. It is the same
+    provisioner, with the same anchor semantics, the course router uses.
+
+    Provisioning commits, and the candidates read before that commit are used
+    afterwards. That is sound only because every session factory is built with
+    ``expire_on_commit=False``.
+    """
+    candidates = await _unconsumed_candidates(session, user_id)
+    if _has_laddered(candidates):
+        await ensure_user_progress(session, user_id)
+    return candidates
+
+
 async def reconcile_habit_auto_reveals(
     session: AsyncSession,
     user_id: int,
@@ -173,24 +195,13 @@ async def reconcile_habit_auto_reveals(
     records that their automatic invitation has been consumed, allowing a
     future manual re-lock to remain locked.
 
-    The habits are a depth a person may take without the course (NORTH-STAR:18),
-    so this read gives the calendar its anchor when nothing else has (#3071).
-    Without a progress row ``open_through`` answers stage 1 forever, and for an
-    account that never opened the course every ring after Beige stayed shut.
-    The row is provisioned only on behalf of a laddered habit whose invitation is
-    still pending: a habit off the ladder has no ring to wait for, and an empty
-    or fully consumed list has nothing for an anchor to open. It is the same
-    provisioner, with the same anchor semantics, the course router uses.
-
-    Provisioning commits, so callers must hold no uncommitted writes across this
-    call; ``list_habits`` calls it before anything else. The candidates read
-    before that commit are used afterwards, which is sound only because every
-    session factory is built with ``expire_on_commit=False``.
+    The first read may provision the calendar anchor (see
+    :func:`_anchored_candidates`), which commits: callers must hold no
+    uncommitted writes across this call, and ``list_habits`` calls it before
+    anything else.
     """
     moment = now or datetime.now(UTC)
-    candidates = await _unconsumed_candidates(session, user_id)
-    if _has_laddered(candidates):
-        await ensure_user_progress(session, user_id)
+    candidates = await _anchored_candidates(session, user_id)
     prospective = await _open_candidates(session, user_id, user_tz, candidates, moment)
     prospective_ids = [habit.id for habit in prospective if habit.id is not None]
     if not prospective_ids:
