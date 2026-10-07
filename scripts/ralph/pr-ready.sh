@@ -10,7 +10,12 @@
 #                    current with main, but this PR HAS no review gate: Dependabot
 #                    authored it AND pushed its HEAD commit, and `claude-review`
 #                    reported SKIPPED → the orchestrator decides (see below)
-#   behind           LGTM (fresh) + CI green but the branch is not current → sync first
+#   ready-comments   COMMENTS (fresh) + CI green + verified current with main → the
+#                    reviewer signed off with non-blocking findings: file each as a
+#                    P0–P3 follow-up issue (address-feedback Step 1A), then merge.
+#                    NEVER a fix loop
+#   behind           LGTM/COMMENTS (fresh) + CI green but the branch is not current
+#                    → sync first
 #   unknown          GitHub has not finished computing mergeability (routine for a
 #                    few seconds after every push) → wait for a later wake; a sync
 #                    would merge nothing and push nothing
@@ -32,8 +37,8 @@
 #                    later wake; do NOT dispatch a debugger. Distinct from
 #                    `unknown`, which is a real answer about mergeability
 #   changes-requested  a FRESH verdict (posted after the PR's HEAD commit) that
-#                    is not LGTM (CHANGES_REQUESTED/COMMENTS) → Step 2
-#                    (address-feedback): Gate 4 has spoken and wants changes
+#                    is CHANGES_REQUESTED → Step 2 (address-feedback): Gate 4 has
+#                    spoken and wants changes
 #   awaiting-review  no verdict yet, or only a stale one (predates HEAD) → wait
 #   review-self-skipped  this PR edits the review workflow, so claude-code-action
 #                    self-skipped (anti-tamper) and no verdict will EVER arrive →
@@ -247,6 +252,7 @@ done
 # and must reach the regex engine as `\\s`.
 readonly VERDICT_RE='(?im)^\\s*(?:#{1,6}\\s+|\\*\\*)?verdict[:*\\s]'
 readonly VERDICT_LGTM_RE="${VERDICT_RE}+lgtm"
+readonly VERDICT_COMMENTS_RE="${VERDICT_RE}+comments"
 
 # `${arr[@]+"${arr[@]}"}` expands to nothing when the array is empty instead of
 # tripping `set -u` on bash 3.2 (stock /bin/bash on macOS).
@@ -423,7 +429,7 @@ fi
 
 # --- CI is green: check mergeability + a FRESH LGTM verdict -----------------
 # One call yields "<mergeStateStatus>|<HEAD committedDate>|<HEAD author login>",
-# another the latest top-level verdict as "<createdAt>|<isLGTM>". gh applies --jq
+# another the latest top-level verdict as "<createdAt>|<isLGTM>|<isCOMMENTS>". gh applies --jq
 # server-side. The HEAD author rides along here rather than in its own call: it is
 # only needed by `review_gate_absent`, and `gh` already hands us the commit.
 # (`gh` caps `commits` at 100. That is already how `head_date` is derived, and it
@@ -441,9 +447,12 @@ IFS='|' read -r merge_state head_date head_author merge_rest <<<"$merge_line"
 verdict_line="$(gh pr view "${gh_args[@]}" \
   --json comments \
   --jq "([.comments[] | select(.body != null and (.body | test(\"$VERDICT_RE\")))] | last) as \$v
-        | ((\$v.createdAt // \"\") + \"|\" + ((\$v.body // \"\" | test(\"$VERDICT_LGTM_RE\")) | tostring))")"
-verdict_date="${verdict_line%%|*}"
-verdict_lgtm="${verdict_line#*|}"
+        | ((\$v.createdAt // \"\") + \"|\" + ((\$v.body // \"\" | test(\"$VERDICT_LGTM_RE\")) | tostring)
+           + \"|\" + ((\$v.body // \"\" | test(\"$VERDICT_COMMENTS_RE\")) | tostring))")"
+# Split by field count, as for merge_line: a surplus field means the answer is
+# malformed, so every flag is blanked and the lane can only wait.
+IFS='|' read -r verdict_date verdict_lgtm verdict_comments verdict_rest <<<"$verdict_line"
+[[ -z "$verdict_rest" ]] || { verdict_date=""; verdict_lgtm=""; verdict_comments=""; }
 
 # True when the branch conflicts with its base. Read off the `mergeStateStatus`
 # already in hand, so it costs no extra round trip.
@@ -560,9 +569,19 @@ review_edits_own_workflow() {
 # one exactly, and the flag must be the literal jq `false`: a malformed field
 # (a stray `|` shifting it) matches neither branch and degrades to
 # `awaiting-review` — fail closed, never a fresh-verdict claim.
+#
+# A fresh COMMENTS verdict is a sign-off with non-blocking findings: it clears
+# Gate 4 exactly like LGTM, under its own `ready-comments` token so the
+# orchestrator files the findings as prioritized follow-up issues before merging
+# instead of iterating on them. It needs the literal jq `true` COMMENTS flag; any
+# other value on a fresh non-LGTM verdict stays `changes-requested`.
 ready_token="ready"
-if [[ "$verdict_lgtm" != "true" || -z "$verdict_date" ]] || ! [[ "$verdict_date" > "$head_date" ]]; then
-  if [[ "$verdict_lgtm" == "false" && -n "$verdict_date" ]] && [[ "$verdict_date" > "$head_date" ]]; then
+verdict_fresh=""
+[[ -n "$verdict_date" ]] && [[ "$verdict_date" > "$head_date" ]] && verdict_fresh="yes"
+if [[ -n "$verdict_fresh" && "$verdict_lgtm" == "false" && "$verdict_comments" == "true" ]]; then
+  ready_token="ready-comments"
+elif [[ "$verdict_lgtm" != "true" || -z "$verdict_fresh" ]]; then
+  if [[ "$verdict_lgtm" == "false" && -n "$verdict_fresh" ]]; then
     echo "changes-requested"; exit 0
   fi
   # A verdict that already ARRIVED (above) still speaks; from here down every

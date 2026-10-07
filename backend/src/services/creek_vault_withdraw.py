@@ -6,13 +6,33 @@ vault accepted plaintext, a privacy upgrade or delete may not report completion
 until that vault confirms the stable external identity absent. This service
 keeps that stricter policy out of the transport adapter and returns one boolean
 the journal router can turn into either completion or a durable retry state.
+
+:func:`withdraw_journal_copy` is the destination-bound wrapper both the router
+and the background retry use (#3060): ``vault_destination`` records which vault
+was offered the entry, and only that vault's confirmation clears the marker. A
+replaced connection answers "unknown id, withdrawn" for an id it never saw, so
+trusting it would report a withdrawal while the old vault still holds the copy.
+
+Known pre-migration limit: an entry ingested before ``vault_destination``
+existed carries ``vault_ref`` with a NULL destination. Nothing records which
+vault received it, so its withdrawal is still trusted from whichever vault is
+connected now -- after a reconnect that is the old false confirmation. It is
+pinned by ``test_legacy_unbound_marker_is_withdrawn_from_the_current_vault``
+and left for an owner decision rather than widened here.
+
+After a reconnect or disconnect, a copy bound to the old vault is never
+dialled and never confirmed: the Intimate reclassification and DELETE answer a
+standing 503 and log ``destination_changed`` (#3060 escalation 5).
 """
 
 from __future__ import annotations
 
 import logging
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from domain.creek_vault import CreekCapability, CreekVaultClient, CreekVaultError
+from models.journal_entry import JournalEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,3 +85,61 @@ async def withdraw_journal_from_vault(client: CreekVaultClient, *, entry_id: int
         return False
     _LOGGER.info(_WITHDRAWAL_CONFIRMED_EVENT, extra={"entry_id": entry_id})
     return True
+
+
+def _holds_no_remote_copy(entry: JournalEntry) -> bool:
+    """Whether no vault was ever offered this entry, or its copy is already withdrawn."""
+    return entry.vault_ref is None and entry.vault_destination is None
+
+
+async def _clear_stale_tags(session: AsyncSession, entry: JournalEntry) -> None:
+    """Drop orphaned vault tags from an entry that holds no remote marker."""
+    if entry.vault_tags is None:
+        return
+    entry.vault_tags = None
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)
+
+
+async def withdraw_journal_copy(
+    session: AsyncSession,
+    entry: JournalEntry,
+    client: CreekVaultClient,
+    *,
+    destination: str | None,
+) -> bool:
+    """Withdraw ``entry``'s remote copy and report whether its absence is confirmed.
+
+    An entry with neither ``vault_ref`` nor ``vault_destination`` has no known
+    remote copy and needs no call. A recorded destination that differs from
+    ``destination`` -- the vault currently connected, ``None`` for none -- is
+    never dialled: the copy lives elsewhere, so the marker stays and the answer
+    is ``False`` (``destination_changed``). Otherwise the session is committed
+    before the HTTP call so no pooled connection rides across Creek latency,
+    and the marker is cleared only on Creek's confirmation.
+    """
+    if _holds_no_remote_copy(entry):
+        await _clear_stale_tags(session, entry)
+        return True
+    entry_id = entry.id
+    if entry_id is None:
+        raise RuntimeError("persisted vault reference requires a journal entry id")
+    bound_elsewhere = entry.vault_destination not in {None, destination}
+    await session.commit()
+    if bound_elsewhere:
+        return _degraded(entry_id, "destination_changed")
+    if not await withdraw_journal_from_vault(client, entry_id=entry_id):
+        return False
+    await _clear_marker(session, entry)
+    return True
+
+
+async def _clear_marker(session: AsyncSession, entry: JournalEntry) -> None:
+    """Drop every remote-copy column once its destination confirmed absence."""
+    entry.vault_ref = None
+    entry.vault_tags = None
+    entry.vault_destination = None
+    session.add(entry)
+    await session.commit()
+    await session.refresh(entry)

@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, it, expect */
+/* global describe, it, expect, jest */
 /* eslint-disable import/order */
 import React from 'react';
 import renderer from 'react-test-renderer';
@@ -67,11 +67,8 @@ describe('HabitTile tooltips', () => {
   });
 });
 
-// Regression: the tile tooltip once rendered today-only progress over the raw
-// weekly/monthly target, so a `per_week` goal whose "met" star was already
-// filled still showed a sub-100% fraction. The tooltip must divide by the same
-// daily-normalized target the star uses.
-describe('HabitTile tooltip fraction matches the met star', () => {
+// The tooltip, marker, and bar must all score the same account-local period.
+describe('HabitTile tooltip fraction matches period scoring', () => {
   const readTooltipFraction = (
     component: ReturnType<typeof renderer.create>,
     tier: string,
@@ -85,31 +82,56 @@ describe('HabitTile tooltip fraction matches the met star', () => {
     return { numerator: Number(match[1]), denominator: Number(match[2]) };
   };
 
-  it('renders numerator >= denominator for a met per_week goal', () => {
-    // Shipped default "High Flow Activity" low tier: 3 hours per_week (frequency 1).
-    // The daily-normalized target is 3/7 hours, so a single 1-hour log today
-    // already fills the "met" star; the tooltip fraction must read >= 100%.
+  it('keeps a Monday log at one of three through Friday without filling the star', () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-03-13T12:00:00Z')); // Friday
     const perWeek: Habit = {
       ...habit,
       goals: [
-        { ...habit.goals[0]!, target: 3, target_unit: 'hours', frequency_unit: 'per_week' },
-        { ...habit.goals[1]!, target: 5, target_unit: 'hours', frequency_unit: 'per_week' },
-        { ...habit.goals[2]!, target: 7, target_unit: 'hours', frequency_unit: 'per_week' },
+        {
+          ...habit.goals[0]!,
+          target: 1,
+          target_unit: 'sessions',
+          frequency: 3,
+          frequency_unit: 'per_week',
+        },
+        {
+          ...habit.goals[1]!,
+          target: 2,
+          target_unit: 'sessions',
+          frequency: 3,
+          frequency_unit: 'per_week',
+        },
+        {
+          ...habit.goals[2]!,
+          target: 3,
+          target_unit: 'sessions',
+          frequency: 3,
+          frequency_unit: 'per_week',
+        },
       ],
-      completions: [{ id: 'w-1', timestamp: new Date(), completed_units: 1 }],
+      completions: [
+        {
+          id: 'w-1',
+          timestamp: new Date('2000-01-01T00:00:00Z'),
+          local_day: '2026-03-09',
+          completed_units: 1,
+        },
+      ],
     };
-    const component = renderer.create(
-      <HabitTile habit={perWeek} onOpenGoals={() => {}} tz="UTC" />,
-    );
-    const marker = component.root.findByProps({ testID: 'marker-low' });
-    // The star is rendered "met" (throws if no met star exists under the marker),
-    // so we assert the tooltip fraction agrees with it rather than merely implying it.
-    expect(marker.findByProps({ met: true })).toBeTruthy();
-    renderer.act(() => {
-      marker.props.onMouseEnter();
-    });
-    const { numerator, denominator } = readTooltipFraction(component, 'low');
-    expect(numerator).toBeGreaterThanOrEqual(denominator);
+    try {
+      const component = renderer.create(
+        <HabitTile habit={perWeek} onOpenGoals={() => {}} tz="UTC" />,
+      );
+      const marker = component.root.findByProps({ testID: 'marker-low' });
+      expect(() => marker.findByProps({ met: true })).toThrow();
+      renderer.act(() => {
+        marker.props.onMouseEnter();
+      });
+      expect(readTooltipFraction(component, 'low')).toEqual({ numerator: 1, denominator: 3 });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -203,5 +225,66 @@ describe('HabitTile achieved-today banner does not leak across days', () => {
       <HabitTile habit={stretchedToday} onOpenGoals={() => {}} tz="UTC" />,
     );
     expect(findChipText(component).toLowerCase()).toContain('achieved today');
+  });
+
+  it("calls a weekly period 'Achieved This Week' after a rest day", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-03-13T12:00:00Z')); // Friday
+    try {
+      const weekly: Habit = {
+        ...habit,
+        streak: 0,
+        goals: [
+          { ...habit.goals[0]!, target: 1, frequency_unit: 'per_week' },
+          { ...habit.goals[1]!, target: 2, frequency_unit: 'per_week' },
+          { ...habit.goals[2]!, target: 3, frequency_unit: 'per_week' },
+        ],
+        completions: [
+          {
+            id: 'mon',
+            timestamp: new Date('2000-01-01T00:00:00Z'),
+            local_day: '2026-03-09',
+            completed_units: 3,
+          },
+        ],
+      };
+      const component = renderer.create(
+        <HabitTile habit={weekly} onOpenGoals={() => {}} tz="UTC" />,
+      );
+      const text = findChipText(component).toLowerCase();
+      expect(text).toContain('achieved this week');
+      expect(text).not.toContain('achieved today');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("calls a completed monthly period 'Achieved This Month'", () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-03-20T12:00:00Z'));
+    try {
+      const monthly: Habit = {
+        ...habit,
+        goals: [
+          { ...habit.goals[0]!, target: 1, frequency_unit: 'per_month' },
+          { ...habit.goals[1]!, target: 2, frequency_unit: 'per_month' },
+          { ...habit.goals[2]!, target: 3, frequency_unit: 'per_month' },
+        ],
+        completions: [
+          {
+            id: 'month-start',
+            timestamp: new Date('2000-01-01T00:00:00Z'),
+            local_day: '2026-03-01',
+            completed_units: 3,
+          },
+        ],
+      };
+      const component = renderer.create(
+        <HabitTile habit={monthly} onOpenGoals={() => {}} tz="UTC" />,
+      );
+      expect(findChipText(component).toLowerCase()).toContain('achieved this month');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

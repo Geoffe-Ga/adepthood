@@ -29,8 +29,12 @@ unit-test without fixtures.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Final
 
+from domain.depth_preferences import DepthRing
 from models.invitation_signal import InvitationKind, InvitationTargetType
 
 # A sustained habit rhythm: three unbroken weeks. Long enough that the streak
@@ -68,6 +72,21 @@ _EMBODIED_COMMUNITY = InvitationTargetType.EMBODIED_COMMUNITY.value
 _CONSISTENCY = InvitationKind.CONSISTENCY.value
 _MASTERY = InvitationKind.MASTERY.value
 _READINESS = InvitationKind.READINESS.value
+
+
+# The ring that owns each invitation target. Total over ``InvitationTargetType``
+# (a unit test pins that), so a new target type cannot ship without deciding
+# which declinable ring quiets it. Both sangha target types belong to the
+# Digital Sangha ring: an outward "embodied community" offer is a sangha offer.
+RING_FOR_TARGET: Final[Mapping[InvitationTargetType, DepthRing]] = MappingProxyType(
+    {
+        InvitationTargetType.HABIT: DepthRing.HABITS,
+        InvitationTargetType.PRACTICE: DepthRing.PRACTICES,
+        InvitationTargetType.COURSE: DepthRing.COURSE,
+        InvitationTargetType.SANGHA: DepthRing.SANGHA,
+        InvitationTargetType.EMBODIED_COMMUNITY: DepthRing.SANGHA,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -183,3 +202,20 @@ def compute_invitation_candidates(
         *_community_candidates(aggregates.active_days_in_window),
         *_corpus_theme_candidates(aggregates.corpus_themes),
     ]
+
+
+def target_types_for_rings(enabled: frozenset[DepthRing]) -> frozenset[str]:
+    """Return the stored ``target_type`` values whose ring is in ``enabled``.
+
+    Used as an allow-list (``IN``) predicate, so a target type with no ring —
+    impossible while :data:`RING_FOR_TARGET` stays total — would fail closed.
+    """
+    return frozenset(target.value for target, ring in RING_FOR_TARGET.items() if ring in enabled)
+
+
+def filter_candidates_by_depth(
+    candidates: list[InvitationCandidate], enabled: frozenset[DepthRing]
+) -> list[InvitationCandidate]:
+    """Drop every candidate pointing into a ring the user declined, preserving order."""
+    allowed = target_types_for_rings(enabled)
+    return [c for c in candidates if c.target_type in allowed]

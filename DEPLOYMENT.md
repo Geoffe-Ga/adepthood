@@ -1491,6 +1491,9 @@ This runs:
 - [ ] Health check returns `{"status":"healthy","database":"connected",...}`
 - [ ] Alembic migrations are up to date (if configured)
 - [ ] `BOTMASON_PROVIDER` is set (`stub` is fine to start)
+- [ ] `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` are unset, or each names exactly its provider's
+      registered `https` host in `backend/src/privacy/recipients.py`. Production refuses to boot
+      on any other value, such as an unregistered AI gateway (#3065)
 
 ---
 

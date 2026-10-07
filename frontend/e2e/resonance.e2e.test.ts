@@ -91,8 +91,8 @@ describe('asking a page for its resonance, against a live server', () => {
   let sessionToken: string | null = null;
   let readableEntryId = 0;
   let keptNoteId = 0;
-  /** Messages left after the charged pass; every later assertion is relative to it. */
-  let remainingAfterCharge = 0;
+  /** Messages left after the first (demo, refunded) pass; later assertions are relative to it. */
+  let remainingAfterFirstPass = 0;
 
   afterAll(() => {
     setTokenGetter(null);
@@ -137,9 +137,14 @@ describe('asking a page for its resonance, against a live server', () => {
     expect(note.journal_entry_id).toBe(readableEntryId);
     expect(note.status).toBe('active');
     expect(note.note.trim()).not.toBe('');
+    // This lane serves the stub provider: the note is recorded as a demo, on
+    // the note and on the pass, and nobody paid for it (#3062).
+    expect(note.source).toBe('demo');
+    expect(pass.provenance?.notes.source).toBe('demo');
+    expect(pass.provenance?.paid_by).toBe('free');
     keptNoteId = note.id;
 
-    remainingAfterCharge = pass.remaining_messages;
+    remainingAfterFirstPass = pass.remaining_messages;
   });
 
   it('serves the same note back on the next read, so the margin survives the reload', async () => {
@@ -151,6 +156,8 @@ describe('asking a page for its resonance, against a live server', () => {
     );
     expect(READABLE_PAGE.slice(note.anchor_start, note.anchor_end)).toBe(note.anchor_text);
     expect(note.status).toBe('active');
+    // The source is persisted, not re-derived: it reads back unchanged.
+    expect(note.source).toBe('demo');
   });
 
   it('answers a pass that keeps nothing with a sentence, and puts the charge back', async () => {
@@ -168,7 +175,7 @@ describe('asking a page for its resonance, against a live server', () => {
     // And it must not have cost anything. The charge commits before the
     // provider call and is reversed by a crediting entry, so a balance that
     // moved here means the writer paid for silence.
-    expect(pass.remaining_messages).toBe(remainingAfterCharge);
+    expect(pass.remaining_messages).toBe(remainingAfterFirstPass);
 
     const listed = await resonance.list(entryId);
     expect(listed.items).toEqual([]);
@@ -186,7 +193,7 @@ describe('asking a page for its resonance, against a live server', () => {
     expect((pass.private_message ?? '').trim()).not.toBe('');
     expect(pass.marginalia).toEqual([]);
     expect(pass.no_notes_message ?? null).toBeNull();
-    expect(pass.remaining_messages).toBe(remainingAfterCharge);
+    expect(pass.remaining_messages).toBe(remainingAfterFirstPass);
 
     const listed = await resonance.list(entryId);
     expect(listed.items).toEqual([]);

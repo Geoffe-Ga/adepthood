@@ -533,3 +533,34 @@ describe('ResonanceEssayModal under a generation guardrail', () => {
     expect(mockEssay).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ResonanceEssayModal letter source (#3062)', () => {
+  it('labels a freshly written letter with the source the server recorded', async () => {
+    mockEssay.mockResolvedValue(
+      note({ id: 4, essay: 'A provider letter.', essay_source: 'app_provider' }),
+    );
+    const { findByTestId } = render(<ResonanceEssayModal note={note()} onClose={jest.fn()} />);
+    await askForTheLetter(findByTestId);
+
+    expect((await findByTestId('essay-source')).props.children).toBe("From the app's AI provider");
+  });
+
+  it('labels a cached demo letter as a demo', async () => {
+    const { findByTestId } = render(
+      <ResonanceEssayModal
+        note={note({ essay: 'Canned.', essay_source: 'demo' })}
+        onClose={jest.fn()}
+      />,
+    );
+
+    expect((await findByTestId('essay-source')).props.children).toMatch(/^Demo/);
+  });
+
+  it('says the source was not recorded for a letter written before receipts', async () => {
+    const { findByTestId } = render(
+      <ResonanceEssayModal note={note({ essay: 'Older letter.' })} onClose={jest.fn()} />,
+    );
+
+    expect((await findByTestId('essay-source')).props.children).toBe('Source not recorded');
+  });
+});

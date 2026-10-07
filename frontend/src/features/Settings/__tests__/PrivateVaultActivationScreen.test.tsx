@@ -250,6 +250,22 @@ describe('resumable progress and honest custody', () => {
     ).toBeTruthy();
   });
 
+  it.each(['provider_managed', 'wrapped_artifact_only', null] as const)(
+    'claims storage custody at readiness, never a working model (%s, #3062)',
+    async (custodyMode) => {
+      const view = await renderActivation({ ...READY, custody_mode: custodyMode });
+
+      // A ready vault is storage that answered its health probe; it proves no
+      // inference, so the card may not say anything about a model.
+      const words = within(view.getByTestId('activation-ready'))
+        .getAllByText(/./u)
+        .map((node) => String(node.props.children))
+        .join(' ');
+      expect(words).not.toBe('');
+      expect(words).not.toMatch(/\bmodel\b|\blocal\b|\bAI\b/u);
+    },
+  );
+
   it('does not reinterpret a retired wrapped artifact as user-held custody', async () => {
     const view = await renderActivation({ ...READY, custody_mode: 'wrapped_artifact_only' });
 

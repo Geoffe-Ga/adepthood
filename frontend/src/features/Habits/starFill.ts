@@ -1,10 +1,10 @@
 import type { TierType } from './goalMarker';
 import type { Goal, Habit } from './Habits.types';
 import {
-  calculateTodaysProgress,
   getGoalTarget,
   getMarkerPositions,
   getProgressPercentage,
+  unitsInCurrentPeriod,
 } from './HabitUtils';
 
 /**
@@ -60,8 +60,8 @@ const findTier = (habit: Habit, tier: TierType): Goal | undefined =>
  * to do (missing tiers, id-less onboarding habit, or today's progress already
  * sits on the star).
  *
- * `deltaUnits` is the daily-equivalent gap between the tier's target and
- * today's logged units, so it works in every direction: positive fills an
+ * `deltaUnits` is the gap between the tier's period target and the units
+ * logged in that account-local period, so it works in every direction: positive fills an
  * additive bar rightward or drains a subtractive one leftward (consuming
  * allowance), negative walks either bar back toward the star. The percents
  * come from the same canonical helpers the bar renders with, so the animation
@@ -78,7 +78,7 @@ export const computeStarFillPlan = (
   const tierGoal = findTier(habit, tier);
   if (habit.id == null || !lowGoal || !clearGoal || !stretchGoal || !tierGoal) return null;
 
-  const deltaUnits = getGoalTarget(tierGoal) - calculateTodaysProgress(habit, tz);
+  const deltaUnits = getGoalTarget(tierGoal) - unitsInCurrentPeriod(habit, tierGoal, tz);
   if (Math.abs(deltaUnits) < DELTA_EPSILON) return null;
 
   const fromPercent = getProgressPercentage(habit, stretchGoal, tz);

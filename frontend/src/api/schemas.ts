@@ -874,6 +874,27 @@ export type MettaReturnStateT = z.infer<typeof mettaReturnStateSchema>;
 export const marginaliaKindSchema = z.enum(['theme', 'connection', 'symbol']);
 export const marginaliaStatusSchema = z.enum(['active', 'stale']);
 
+/**
+ * Which side answered a note or its letter, as the server recorded it (#3062).
+ * Mirrors the backend ``MarginaliaSource``. ``demo`` is the stub provider's
+ * canned text, never a reflection.
+ */
+export const marginaliaSourceSchema = z.enum(['creek_vault', 'app_provider', 'demo']);
+/** Who the answering side reported itself as (mirrors ``InferenceProvider``). */
+export const inferenceProviderSchema = z.enum(['anthropic', 'openai', 'stub', 'creek']);
+/**
+ * One operation's source on a pass (mirrors ``OperationSource``): the recorded
+ * sources plus ``none``, an operation that was not run.
+ */
+export const operationSourceSchema = z.enum(['creek_vault', 'app_provider', 'demo', 'none']);
+
+// Provenance fields fail safe: a missing field (an older server), an unknown
+// value (a newer one) or a malformed one all parse to ``null``, which every
+// label reads as "Source not recorded". Never a parse failure that would cost
+// the writer the note itself, and never a guess at a source.
+const recordedSource = marginaliaSourceSchema.nullish().catch(null);
+const recordedProvider = inferenceProviderSchema.nullish().catch(null);
+
 /** One margin note (mirrors the backend ``MarginaliaResponse``). */
 export const marginaliaSchema = z.object({
   id: z.number().int(),
@@ -888,6 +909,13 @@ export const marginaliaSchema = z.object({
   status: marginaliaStatusSchema,
   created_at: z.string(),
   updated_at: z.string(),
+  // Provenance (#3062): server-recorded, never derived from the vault
+  // connection. All null on a note written before receipts existed.
+  source: recordedSource,
+  source_provider: recordedProvider,
+  source_model: z.string().nullish().catch(null),
+  essay_source: recordedSource,
+  receipt_version: z.number().int().nullish().catch(null),
 });
 
 /**
@@ -920,6 +948,8 @@ export const voiceDraftSchema = z.object({
   anchor_text: z.string(),
   essay: z.string(),
   essay_generated_at: z.string(),
+  // Which side wrote the letter (#3062); null when it was not recorded.
+  essay_source: recordedSource,
 });
 
 /** One page of the Voice Drafts shelf: ``{ items, total, has_more }``. */
@@ -930,6 +960,9 @@ export const voiceDraftListSchema = z.object({
 });
 
 export type VoiceDraftT = z.infer<typeof voiceDraftSchema>;
+export type MarginaliaSourceT = z.infer<typeof marginaliaSourceSchema>;
+export type OperationSourceT = z.infer<typeof operationSourceSchema>;
+export type PassProvenanceT = z.infer<typeof passProvenanceSchema>;
 export type VoiceDraftListT = z.infer<typeof voiceDraftListSchema>;
 
 /**
@@ -1084,6 +1117,22 @@ export const relatedEddySchema = z.object({
   formed: z.string(),
 });
 
+/** Which side answered one operation of a pass (mirrors ``ProvenanceReceipt``). */
+export const provenanceReceiptSchema = z.object({
+  source: operationSourceSchema,
+  provider: recordedProvider,
+  model: z.string().nullish(),
+  receipt_version: z.number().int(),
+});
+
+/** Who answered each operation of a pass, and who paid (mirrors ``PassProvenance``). */
+export const passProvenanceSchema = z.object({
+  notes: provenanceReceiptSchema,
+  detection: provenanceReceiptSchema,
+  detection_checked: z.boolean(),
+  paid_by: z.enum(['own_key', 'wallet', 'free']),
+});
+
 /**
  * Result of a resonance pass (mirrors the backend ``ResonanceResponse``).
  *
@@ -1118,6 +1167,9 @@ export const resonanceResponseSchema = z.object({
   // these are optional only so responses predating them still validate.
   related_praxis: z.array(relatedPraxisSchema).optional(),
   related_eddies: z.array(relatedEddySchema).optional(),
+  // Which side answered each operation and who paid (#3062). A missing or
+  // malformed object parses to null, read as "Source not recorded".
+  provenance: passProvenanceSchema.nullish().catch(null),
 });
 
 /** Current BotMason wallet policy and balances, as served for this deployment. */

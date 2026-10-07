@@ -3909,6 +3909,67 @@ describe('habitManager', () => {
       expect(toast.message).toMatch(/Stretch Goal achieved/i);
     });
 
+    it('celebrates a weekly tier when the log completes it across the week, not only today', () => {
+      // Wednesday; one session already logged on Monday of the same ISO week.
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-03-11T12:00:00Z'));
+      try {
+        const weeklyHabit = makeHabit({
+          completions: [
+            {
+              id: 'monday',
+              timestamp: new Date('2026-03-09T12:00:00Z'),
+              local_day: '2026-03-09',
+              completed_units: 1,
+            },
+          ],
+        });
+        weeklyHabit.goals = weeklyHabit.goals.map((g) => ({ ...g, frequency_unit: 'per_week' }));
+        useHabitStore.setState({ habits: [weeklyHabit] });
+        const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+        const toast = habitManager.buildLogUnitToast(ctx);
+
+        // Monday + today = 2 of the clear tier's 2 this week.
+        expect(toast.message).toMatch(/Clear Goal met/i);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('celebrates a monthly tier when the log completes it across the month', () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-03-20T12:00:00Z'));
+      try {
+        const monthlyHabit = makeHabit({
+          completions: [
+            {
+              id: 'early-march',
+              timestamp: new Date('2026-03-02T12:00:00Z'),
+              local_day: '2026-03-02',
+              completed_units: 1,
+            },
+            {
+              id: 'last-month',
+              timestamp: new Date('2026-02-27T12:00:00Z'),
+              local_day: '2026-02-27',
+              completed_units: 5,
+            },
+          ],
+        });
+        monthlyHabit.goals = monthlyHabit.goals.map((g) => ({ ...g, frequency_unit: 'per_month' }));
+        useHabitStore.setState({ habits: [monthlyHabit] });
+        const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+        const toast = habitManager.buildLogUnitToast(ctx);
+
+        // 2 March sessions meet the clear tier; February's 5 do not count.
+        expect(toast.message).toMatch(/Clear Goal met/i);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('falls back to the confirmation toast for a subtractive goal even when a threshold is crossed', () => {
       const subtractiveHabit = makeHabit();
       subtractiveHabit.goals = subtractiveHabit.goals.map((g) => ({ ...g, is_additive: false }));

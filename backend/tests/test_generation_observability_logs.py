@@ -29,8 +29,9 @@ from models.marginalia import Marginalia, MarginaliaKind
 from models.wallet_audit import REASON_SPEND_MONTHLY, WalletAudit
 from routers import journal as journal_router
 from services import marginalia as marginalia_service
-from services.botmason import STUB_MODEL_NAME, LLMResponse
+from services.botmason import LLMResponse
 from tests.helpers.log_lines import assert_no_text, production_line, records_for
+from tests.support.fake_llm import real_provider_response
 
 _BODY = "I walked by the river and the willow bent without breaking."
 _LETTER = "A warm letter about beginnings, private to the writer."
@@ -83,13 +84,8 @@ class _CountingLLM:
     ) -> LLMResponse:
         del prompt, history, system_prompt, api_key
         self.calls += 1
-        return LLMResponse(
-            text=self.text,
-            provider="stub",
-            model=STUB_MODEL_NAME,
-            prompt_tokens=0,
-            completion_tokens=0,
-        )
+        # A real provider's answer: a stub answer is a refunded demo (#3062).
+        return real_provider_response(self.text)
 
 
 def _essay_path(marg_id: int) -> str:

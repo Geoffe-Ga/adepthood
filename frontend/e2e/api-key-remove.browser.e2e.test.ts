@@ -190,8 +190,10 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
   await expect(page.getByTestId('stored-key-card')).toHaveCount(0);
 
   // 4. The seam, in the same session so an in-memory copy of the key would still
-  //    be live: back on the entry, the next pass is disclosed as, and billed as,
-  //    the shared allowance, and the key no longer rides the request.
+  //    be live: back on the entry, the next pass is disclosed as the shared
+  //    allowance, and the key no longer rides the request. This lane serves the
+  //    stub provider, whose canned pass is a labelled demo and hands its unit
+  //    back (#3062), so the wallet is unchanged once the demo label is up.
   const walletBefore = await usage(page, token);
   await page.getByRole('link', { name: 'Go back' }).click();
   await page.getByRole('button', { name: 'Get resonance' }).click();
@@ -204,9 +206,8 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
   await page.getByTestId('resonance-explainer-continue').click();
   await expect.poll(() => passes.length).toBe(2);
   expect(passes[1]?.headers()[LLM_KEY_HEADER]).toBeUndefined();
-  await expect
-    .poll(async () => (await usage(page, token)).monthly_messages_used)
-    .toBe(walletBefore.monthly_messages_used + 1);
+  await expect(page.getByTestId('resonance-pass-source')).toContainText('Demo');
+  expect((await usage(page, token)).monthly_messages_used).toBe(walletBefore.monthly_messages_used);
 
   // 5. The getter, still in the same session: asking for the essay of a margin
   //    note the shared pass wrote sends no explicit key, so the request's header

@@ -45,6 +45,7 @@ import { EmptyState } from '@/components/feedback/EmptyState';
 import { BottomFade } from '@/components/layout/BottomFade';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { accent, uiType } from '@/design/tokens';
+import DepthGate from '@/features/Depth/DepthGate';
 import InvitationStack from '@/features/Invitations/InvitationStack';
 import ReturnStack from '@/features/Return/ReturnStack';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
@@ -735,7 +736,12 @@ function ShelfTopMatter({
     <View>
       <JournalHero />
       <StatTileRow />
-      <ReturnStack />
+      {/* Return is a way back into habits, so a declined habits ring quiets it
+          (#3073). Invitations filter their own cards by ring, so one ring's
+          decline drops only that ring's cards. */}
+      <DepthGate ring="habits">
+        <ReturnStack />
+      </DepthGate>
       <InvitationStack />
       <View style={styles.actionRow}>
         <Button

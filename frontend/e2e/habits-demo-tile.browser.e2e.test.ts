@@ -78,8 +78,13 @@ const GOAL_TILE = 'Food Choices';
 const NEW_LOW_TARGET = '4';
 const NEW_UNIT = 'minutes';
 const LOGGED_TILE = 'Sangha';
-/** What a met tile says; the logged sample tile is not met until the unit lands. */
-const ACHIEVED_TODAY = 'ACHIEVED TODAY';
+/**
+ * Sangha's sample ladder is weekly (stretch: 3 sessions per week), so it is met
+ * once the week holds three sessions, not by a single one averaged over a day.
+ */
+const LOGGED_SESSIONS = '3';
+/** What a met weekly tile says; the logged sample tile is not met until the units land. */
+const ACHIEVED_THIS_WEEK = 'ACHIEVED THIS WEEK';
 /** Every success toast a real check-in raises: a milestone, or a plain log. */
 const MILESTONE_OR_LOGGED = new RegExp(`(?:achieved|Logged \\d+) for ${LOGGED_TILE}`, 'u');
 const STATS_TILE = 'Scrolling';
@@ -283,14 +288,15 @@ test('a demo placeholder tile stays local: no action puts its fabricated id on t
   nothingSent('icon, goal and units');
 
   // --- Log a unit: the sample notice, and no milestone. ---
-  await expect(tile(page, LOGGED_TILE)).not.toContainText(ACHIEVED_TODAY);
+  await expect(tile(page, LOGGED_TILE)).not.toContainText(ACHIEVED_THIS_WEEK);
   await tile(page, LOGGED_TILE).click();
+  await page.getByTestId('goal-log-amount').fill(LOGGED_SESSIONS);
   await page.getByRole('button', { name: 'Log Units' }).click();
   await expect(page.getByText(DEMO_SEED_TOAST)).toBeVisible();
   await expect(page.getByText(MILESTONE_OR_LOGGED)).toHaveCount(0);
   await closeGoalSheet(page);
   // The check-in stays on the tile, locally: the sample is explorable.
-  await expect(tile(page, LOGGED_TILE)).toContainText(ACHIEVED_TODAY);
+  await expect(tile(page, LOGGED_TILE)).toContainText(ACHIEVED_THIS_WEEK);
 
   nothingSent('check-in');
 

@@ -351,6 +351,15 @@ POLICY: Mapping[str, TablePolicy] = {
         "is gone so operations can prove no billable allocation survived. It "
         "has no user id, content, endpoint, or credential.",
     ),
+    "voicedraftretraction": _erase(
+        "user_id",
+        "Content-free bookkeeping of which of the account's essays were offered "
+        "to its vault and whether their withdrawal is confirmed: ids, a closed "
+        "state and failure code, an opaque destination fingerprint, timestamps. "
+        "Erased with the account for now; whether remote cleanup should outlive "
+        "erasure (which would mean retaining a destination credential) is an "
+        "owner decision tracked by B08 / #3060.",
+    ),
     "walletaudit": _erase(
         "user_id",
         "The account's own wallet ledger goes with the wallet. Rows recording "

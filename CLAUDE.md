@@ -101,6 +101,11 @@ cd frontend && npx tsc --noEmit     # Type check
   changes a user-facing feature — `status: "covered"` naming the seam-crossing
   spec, or `status: "uncovered"` with a linked issue. Declaring a gap is
   expected; hiding one is not
+- On a Claude review `Verdict: COMMENTS`, never iterate — no fix loop, no
+  push, no re-review. File each actionable finding as a follow-up issue with
+  a `P0`–`P3` label matched to its severity (moratorium rows are deferred, not
+  filed), then merge on green CI. Only `CHANGES_REQUESTED` re-enters the fix
+  loop. Procedure: `address-feedback` skill, Step 1A
 - Use conventional commit messages (enforced by commitlint)
 - Keep commits small and atomic — one logical change each
 - Respect existing patterns and conventions in the codebase

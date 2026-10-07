@@ -68,6 +68,7 @@ load-bearing.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from domain.creek_vault import (
@@ -83,7 +84,9 @@ from domain.creek_vault import (
     tier_ceiling_for,
 )
 from domain.resonance import ResonanceLLM
+from services.botmason import LLMResponse
 from services.creek_vault_read import log_read_degraded
+from services.marginalia import VAULT_RECEIPT, InferenceReceipt, receipt_since
 from services.reflection_boundary import (
     VaultSourceUnavailableError,
     VaultSourceUnavailableReason,
@@ -223,6 +226,22 @@ def related_surfaces(llm: ResonanceLLM) -> VaultRelatedSurfaces:
     why the type test lives here and not at the call site.
     """
     return llm.related if isinstance(llm, VaultResonanceLLM) else VaultRelatedSurfaces()
+
+
+def reflection_receipt(
+    llm: ResonanceLLM, usage: Sequence[LLMResponse], mark: int = 0
+) -> InferenceReceipt | None:
+    """Return which side answered a reflection that completed on ``llm`` (#3062).
+
+    The twin of :func:`related_surfaces`, and type-tested here for the same
+    reason. A :class:`VaultResonanceLLM` that returned at all was answered by
+    the vault -- it holds no other source, so there is nothing it could have
+    substituted. Any other source is the app provider, read off the responses
+    it metered at or after ``mark``; ``None`` when none answered.
+    """
+    if isinstance(llm, VaultResonanceLLM):
+        return VAULT_RECEIPT
+    return receipt_since(usage, mark)
 
 
 async def select_reflection_llm(

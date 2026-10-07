@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import logging
 from collections.abc import Sequence
 from contextlib import suppress
@@ -17,7 +18,11 @@ from sqlmodel import col, select
 
 from bounds import INT32_MAX, MAX_PAGE_OFFSET, MIN_ROW_ID, RowIdPath
 from database import get_session
-from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
+from dependencies.creek_vault import (
+    get_creek_vault_client,
+    get_reflection_boundary,
+    resolved_vault_destination,
+)
 from dependencies.ownership import (
     require_owned_journal_entry,
     resolve_owned_practice_session,
@@ -30,6 +35,8 @@ from domain.creek_vault import (
     CreekVaultCareEscalationError,
     CreekVaultClient,
     CreekVaultPipelineClient,
+    VaultTierCeiling,
+    tier_ceiling_for,
 )
 from domain.dates import (
     MAX_BACKFILL_DAYS,
@@ -37,6 +44,7 @@ from domain.dates import (
     to_user_date_bucket,
     today_in_tz,
 )
+from domain.depth_preferences import DepthRing, load_enabled_rings
 from domain.detection import CompletionDetected, DetectionCandidate, detect_completions
 from domain.detection_facts import DetectionClock
 from domain.practice_resolution import effective_config
@@ -76,6 +84,7 @@ from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
 from models.wallet_audit import (
+    REASON_REFUND_DEMO,
     REASON_REFUND_FAILED_ESSAY,
     REASON_REFUND_FAILED_RESONANCE,
     REASON_REFUND_NO_ESSAY,
@@ -103,6 +112,7 @@ from schemas.marginalia import (
     EssayResponse,
     MarginaliaListResponse,
     MarginaliaResponse,
+    PassProvenance,
     RelatedEddyResponse,
     RelatedPraxisResponse,
     ResonanceResponse,
@@ -137,14 +147,23 @@ from services.corpus_ingest import (
     withdraw_journal_entry as withdraw_local_journal_entry,
 )
 from services.corpus_invitation import record_completed_pass
+from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
     VaultRelatedSurfaces,
+    reflection_receipt,
     related_surfaces,
     select_reflection_llm,
 )
-from services.creek_vault_voice_drafts import mirror_voice_draft, retract_voice_draft
-from services.creek_vault_withdraw import withdraw_journal_from_vault
+from services.creek_vault_voice_drafts import (
+    EntryRef,
+    VoiceDraftCopy,
+    mark_entry_retractions_pending,
+    mirror_voice_draft,
+    record_mirror_intent,
+    retract_pending_voice_drafts,
+)
+from services.creek_vault_withdraw import withdraw_journal_copy
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -156,6 +175,15 @@ from services.generation_guardrails import (
     require_generation_minute_available,
 )
 from services.higher_self_grounding import Grounding, gather_grounding
+from services.inference_provenance import (
+    PassReceipts,
+    detection_receipt,
+    is_demo,
+    pass_provenance,
+    source_value,
+    stamp_letter,
+    stamp_note,
+)
 from services.llm_usage import (
     GenerationFeature,
     GenerationKey,
@@ -168,9 +196,11 @@ from services.llm_usage import (
 )
 from services.marginalia import (
     BotmasonResonanceLLM,
+    InferenceReceipt,
     reanchor_entry_marginalia,
     reanchor_entry_promoted_quotes,
     reanchor_entry_suggestions,
+    receipt_since,
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
 from services.reflection_boundary import (
@@ -375,6 +405,9 @@ async def _record_vault_outcome(
     """
     if entry.id is None:
         return
+    binding = await _bind_vault_destination(session, entry, vault_client)
+    if binding is _Binding.WITHHOLD:
+        return
     await session.commit()
     outcome = await store_and_classify(
         vault_client,
@@ -383,7 +416,8 @@ async def _record_vault_outcome(
         classification=entry.classification,
         created_at=entry.timestamp,
     )
-    if _apply_vault_outcome(entry, outcome):
+    # Bitwise ``|``, not ``or``: both helpers mutate ``entry`` and must both run.
+    if _apply_vault_outcome(entry, outcome) | _unbind_if_nothing_sent(entry, binding, outcome):
         session.add(entry)
         await session.commit()
         await session.refresh(entry)
@@ -396,38 +430,103 @@ async def _record_vault_outcome(
         )
 
 
-async def _withdraw_remote_journal_copy(
+class _Binding(enum.Enum):
+    """What staging a vault destination decided about one write."""
+
+    WITHHOLD = "withhold"  # an earlier copy is owed to another vault: do not offer
+    UNCHANGED = "unchanged"  # proceed; the recorded destination is already right
+    BOUND = "bound"  # proceed; this write staged a new destination
+
+
+#: Write outcomes that provably dialled no ingest: nothing reached any vault.
+_NOTHING_SENT = frozenset({VaultWriteStatus.SKIPPED_INTIMATE, VaultWriteStatus.UNAVAILABLE})
+
+
+async def _bind_vault_destination(
+    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
+) -> _Binding:
+    """Record which vault is about to be offered this entry, or withhold the offer.
+
+    Staged before the ingest dial (and committed with the caller's pre-dial
+    commit), so a crash or a lost acknowledgement after Creek stores the entry
+    still leaves a durable withdrawal marker bound to that vault. Nothing is
+    staged when nothing can be sent: a local fallback dials nothing, and an
+    Intimate entry is withheld from the wire before any dial. An entry whose
+    earlier copy is owed to a *different* vault keeps that marker and is not
+    offered to the new one: a single marker cannot describe two copies, and
+    the owed one wins.
+
+    The fingerprint comes from the same config read that built the request's
+    client (:func:`resolved_vault_destination`), so a reconnect landing after
+    that read cannot bind this write to a vault it does not dial.
+    """
+    undialled = _binding_without_a_dial(entry, vault_client)
+    if undialled is not None:
+        return undialled
+    destination = await resolved_vault_destination(session, entry.user_id)
+    if entry.vault_destination not in {None, destination}:
+        logger.warning(
+            "journal_vault_write_withheld",
+            extra={"entry_id": entry.id, "reason": "destination_changed"},
+        )
+        return _Binding.WITHHOLD
+    if entry.vault_destination is not None or destination is None:
+        return _Binding.UNCHANGED
+    entry.vault_destination = destination
+    session.add(entry)
+    return _Binding.BOUND
+
+
+def _binding_without_a_dial(entry: JournalEntry, vault_client: CreekVaultClient) -> _Binding | None:
+    """Decide the writes that can send nothing, so they stage nothing; ``None`` otherwise."""
+    if type(vault_client) is LocalFallbackCreekVaultClient:
+        return _Binding.UNCHANGED if entry.vault_destination is None else _Binding.WITHHOLD
+    if tier_ceiling_for(entry.classification) is VaultTierCeiling.INTIMATE:
+        return _Binding.UNCHANGED
+    return None
+
+
+def _unbind_if_nothing_sent(
+    entry: JournalEntry, binding: _Binding, outcome: VaultWriteOutcome
+) -> bool:
+    """Drop a destination this write staged when the write provably sent nothing.
+
+    A handshake that turned the write away, or an Intimate skip, dialled no
+    ingest; leaving the marker would make the entry owe a withdrawal for a
+    copy that does not exist. A degraded ingest *was* dialled and keeps it.
+    """
+    if binding is not _Binding.BOUND or outcome.status not in _NOTHING_SENT:
+        return False
+    entry.vault_destination = None
+    return True
+
+
+async def _withdraw_remote_copies(
     session: AsyncSession,
     entry: JournalEntry,
-    vault_client: CreekVaultClient,
-) -> None:
-    """Clear remote metadata only after Creek confirms the stable id absent.
+    vault_client: CreekVaultPipelineClient,
+) -> bool:
+    """Attempt every owed withdrawal for ``entry``; ``True`` only when all are confirmed.
 
-    ``vault_ref`` is the durable retry marker. A missing ref proves this row has
-    no known remote copy and needs no call; a present one survives every
-    unavailable, unsupported, malformed, or partial outcome. The request
-    session is committed before the HTTP call so no pooled connection rides
-    across Creek latency. Raising a stable 503 is intentional: a privacy change
-    or delete is not complete while the connected vault still may hold it.
+    Both the essay withdrawals and the journal copy are attempted every time,
+    so one failing never hides the other. Each is bound to the destination that
+    received it: a replaced or removed connection leaves the copy pending
+    rather than trusting the new vault's "unknown id, withdrawn". Callers have
+    already committed the stricter local state, so a ``False`` here costs the
+    writer nothing but a stable 503 and a retry.
     """
-    if entry.vault_ref is None:
-        if entry.vault_tags is not None:
-            entry.vault_tags = None
-            session.add(entry)
-            await session.commit()
-            await session.refresh(entry)
-        return
-    entry_id = entry.id
-    if entry_id is None:
-        raise RuntimeError("persisted vault reference requires a journal entry id")
-    await session.commit()
-    if not await withdraw_journal_from_vault(vault_client, entry_id=entry_id):
-        raise service_unavailable("vault_withdrawal_pending")
-    entry.vault_ref = None
-    entry.vault_tags = None
-    session.add(entry)
-    await session.commit()
-    await session.refresh(entry)
+    entry_id = cast("int", entry.id)
+    destination = await resolved_vault_destination(session, entry.user_id)
+    drafts_withdrawn = await retract_pending_voice_drafts(
+        session,
+        vault_client,
+        EntryRef(user_id=entry.user_id, entry_id=entry_id),
+        destination=destination,
+    )
+    journal_withdrawn = await withdraw_journal_copy(
+        session, entry, vault_client, destination=destination
+    )
+    return drafts_withdrawn and journal_withdrawn
 
 
 async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) -> None:
@@ -851,6 +950,7 @@ def _voice_draft(note: Marginalia) -> VoiceDraftResponse:
         anchor_text=note.anchor_text,
         essay=cast("str", note.essay),
         essay_generated_at=cast("datetime", note.essay_generated_at),
+        essay_source=note.essay_source,
     )
 
 
@@ -1005,7 +1105,7 @@ async def update_journal_entry(
     """
     reingests = bool(payload.model_fields_set & _REINGEST_FIELDS)
     if not reingests:
-        entry, _previous_classification = await _persist_entry_update(
+        entry = await _persist_entry_update(
             entry_id,
             payload,
             current_user,
@@ -1022,22 +1122,19 @@ async def update_journal_entry(
             journal_vault_mutations.hold(session, entry_id),
         ):
             await ensure_account_live(session, current_user)
-            entry, previous_classification = await _persist_entry_update(
+            entry = await _persist_entry_update(
                 entry_id,
                 payload,
                 current_user,
                 session,
             )
             if entry.classification == JournalClassification.INTIMATE:
-                await withdraw_local_journal_entry(
+                await _apply_intimate_update(
                     session,
-                    user_id=current_user,
-                    entry_id=entry_id,
+                    entry,
+                    vault_client,
+                    chose_intimate="classification" in payload.model_fields_set,
                 )
-                await session.commit()
-                if previous_classification != JournalClassification.INTIMATE:
-                    await _retract_entry_voice_drafts(session, entry, vault_client)
-                await _withdraw_remote_journal_copy(session, entry, vault_client)
             else:
                 await _record_vault_outcome(session, entry, vault_client)
                 await _record_corpus_fragment(session, entry)
@@ -1045,12 +1142,38 @@ async def update_journal_entry(
     return entry
 
 
+async def _apply_intimate_update(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultPipelineClient,
+    *,
+    chose_intimate: bool,
+) -> None:
+    """Keep an Intimate entry out of the corpus and, when it was chosen, withdraw its copies.
+
+    Every PATCH that sets Intimate -- including a repeat of the same value --
+    owes and retries every withdrawal, so "choose Intimate again" is a real
+    retry. The tier is committed first and never reverted; a 503 reports only
+    that remote cleanup is pending. A body edit or Finish on an entry that is
+    already Intimate never dials: it saves, and any owed withdrawal is left to
+    the background sweep, so a vault that can never confirm (#3060 escalation
+    1) cannot hold the writer's own page hostage.
+    """
+    entry_id = cast("int", entry.id)
+    await withdraw_local_journal_entry(session, user_id=entry.user_id, entry_id=entry_id)
+    if chose_intimate:
+        await mark_entry_retractions_pending(session, user_id=entry.user_id, entry_id=entry_id)
+    await session.commit()
+    if chose_intimate and not await _withdraw_remote_copies(session, entry, vault_client):
+        raise service_unavailable("vault_withdrawal_pending")
+
+
 async def _persist_entry_update(
     entry_id: int,
     payload: JournalEntryUpdate,
     current_user: int,
     session: AsyncSession,
-) -> tuple[JournalEntry, str]:
+) -> JournalEntry:
     """Load, apply, and commit one owned update inside any caller-held privacy lock."""
     result = await session.execute(
         select(JournalEntry).where(
@@ -1063,7 +1186,6 @@ async def _persist_entry_update(
     entry = result.scalars().first()
     if entry is None:
         raise not_found("journal_entry")
-    previous_classification = entry.classification
     await _apply_entry_update(entry, payload, session)
     session.add(entry)
     try:
@@ -1076,47 +1198,7 @@ async def _persist_entry_update(
             raise conflict("reflection_scope_taken") from exc
         raise
     await session.refresh(entry)
-    return entry, previous_classification
-
-
-async def _retract_entry_voice_drafts(
-    session: AsyncSession,
-    entry: JournalEntry,
-    vault_client: CreekVaultPipelineClient,
-) -> bool:
-    """Retract expanded essays and report whether every absence was confirmed.
-
-    The query projects ids only -- never essay text -- and the transaction it
-    opens is committed before the first network call, returning the pooled
-    connection. Each retraction is therefore content-free and cannot roll back
-    the privacy change, which was committed before this helper was reached.
-    A same-value INTIMATE patch never calls this helper, so a failed retraction
-    is not turned into an implicit retry channel. Journal deletion consumes the
-    return value: the shared mutation lock makes that DELETE run after an
-    in-flight draft PUT and retract it, or before a delayed writer that then
-    observes ``deleted_at``; an unconfirmed retraction keeps the row live for an
-    explicit retry.
-    """
-    if entry.id is None:
-        return True
-    result = await session.execute(
-        select(Marginalia.id).where(
-            Marginalia.journal_entry_id == entry.id,
-            Marginalia.user_id == entry.user_id,
-            col(Marginalia.essay).is_not(None),
-        )
-    )
-    marginalia_ids = tuple(result.scalars().all())
-    await session.commit()
-    confirmations = [
-        await retract_voice_draft(
-            vault_client,
-            owner_user_id=entry.user_id,
-            marginalia_id=marginalia_id,
-        )
-        for marginalia_id in marginalia_ids
-    ]
-    return all(confirmations)
+    return entry
 
 
 async def _load_user_entry(
@@ -1164,9 +1246,18 @@ async def _grounding_for(session: AsyncSession, user_id: int, entry_id: int) -> 
 
 
 def _persist_marginalia(
-    session: AsyncSession, entry_id: int, user_id: int, anchored: list[MarginaliaAnchored]
+    session: AsyncSession,
+    entry_id: int,
+    user_id: int,
+    anchored: list[MarginaliaAnchored],
+    *,
+    receipt: InferenceReceipt | None,
 ) -> list[Marginalia]:
-    """Stage one Marginalia row per anchored note (active, no essay yet)."""
+    """Stage one Marginalia row per anchored note (active, no essay yet), stamped with its source.
+
+    ``receipt`` is required by keyword so no writer can stage a note without
+    deciding what it records about who answered (#3062).
+    """
     rows = [
         Marginalia(
             journal_entry_id=entry_id,
@@ -1180,6 +1271,8 @@ def _persist_marginalia(
         )
         for note in anchored
     ]
+    for row in rows:
+        stamp_note(row, receipt)
     session.add_all(rows)
     return rows
 
@@ -1220,8 +1313,11 @@ def _suggestion_from_hit(
 
 @dataclass(frozen=True, slots=True)
 class _DetectionAttempt:
+    """What detection found, whether it returned, and whether it sent anything at all."""
+
     hits: list[CompletionDetected]
     checked: bool
+    dialled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1303,12 +1399,12 @@ async def _detect_hits_with_status(
             "journal_detection_failed",
             extra={"user_id": user_id, "entry_id": entry_id, "provider": exc.provider},
         )
-        return _DetectionAttempt(hits=[], checked=False)
+        return _DetectionAttempt(hits=[], checked=False, dialled=True)
     except LLMProviderError:
         logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
-        return _DetectionAttempt(hits=[], checked=False)
+        return _DetectionAttempt(hits=[], checked=False, dialled=True)
     _log_detection_checked(hits, user_id=user_id, entry_id=entry_id)
-    return _DetectionAttempt(hits=hits, checked=True)
+    return _DetectionAttempt(hits=hits, checked=True, dialled=True)
 
 
 def _stage_suggestions(
@@ -1321,7 +1417,12 @@ def _stage_suggestions(
 
 
 def _log_resonance_outcome(
-    outcome: MarginaliaOutcome, *, user_id: int, entry_id: int, count: int
+    outcome: MarginaliaOutcome,
+    receipts: PassReceipts,
+    *,
+    user_id: int,
+    entry_id: int,
+    count: int,
 ) -> None:
     """Record what the pass produced and, when nothing survived, that it did not.
 
@@ -1335,12 +1436,15 @@ def _log_resonance_outcome(
 
     Counts and ids only. Never a quote, a note, or any part of the body: the same
     reason the grounding path logs ids and counts, since journal text is
-    encrypted at rest.
+    encrypted at rest. The two sources are closed-vocabulary words (#3062); the
+    self-reported model string is never logged.
     """
     extra: dict[str, object] = {
         "user_id": user_id,
         "entry_id": entry_id,
         "count": count,
+        "notes_source": source_value(receipts.notes),
+        "detection_source": source_value(receipts.detection),
         **outcome.as_log_extra(),
     }
     logger.info("journal_resonance_generated", extra=extra)
@@ -1875,6 +1979,7 @@ class _PassSettlementInput:
     ``usage`` is every app-provider response the pass metered, recorded beside
     the rows it stages; it is empty when no app provider was dialled at all.
     ``key`` is the pass's generation, stamped on every usage row it meters.
+    ``receipt`` is which side answered the notes, stamped on every row (#3062).
     """
 
     entry_id: int
@@ -1884,6 +1989,7 @@ class _PassSettlementInput:
     hits: list[CompletionDetected]
     usage: Sequence[LLMResponse]
     key: GenerationKey
+    receipt: InferenceReceipt | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1903,10 +2009,11 @@ class _SettledPass:
     wallet: _WalletSnapshot
     no_notes_message: str | None
     reset_date: datetime
+    outcome: GenerationOutcome
 
 
 def _log_settled_pass(
-    prepared: _PassSettlementInput, usage: GenerationUsage, *, refunded_empty: bool
+    prepared: _PassSettlementInput, usage: GenerationUsage, outcome: GenerationOutcome
 ) -> None:
     """Write a committed pass's one settlement line (#623 PR3).
 
@@ -1919,9 +2026,7 @@ def _log_settled_pass(
             user_id=prepared.user_id,
             key=prepared.key,
             bucket=None if prepared.spent is None else prepared.spent.bucket,
-            outcome=(
-                GenerationOutcome.REFUNDED_EMPTY if refunded_empty else GenerationOutcome.KEPT
-            ),
+            outcome=outcome,
             attempts=prepared.anchored.attempts,
             usage=usage,
         )
@@ -1963,12 +2068,22 @@ async def _persist_settle_commit(
             hits=prepared.hits,
         )
         rows = _persist_marginalia(
-            session, prepared.entry_id, prepared.user_id, prepared.anchored.notes
+            session,
+            prepared.entry_id,
+            prepared.user_id,
+            prepared.anchored.notes,
+            receipt=prepared.receipt,
         )
         suggestions = _stage_suggestions(session, prepared.entry_id, prepared.user_id, fresh_hits)
         spent, no_notes_message, refund = await _settle_empty_pass(
             session, prepared.user_id, spent, prepared.anchored
         )
+        outcome = _pass_outcome(no_notes_message, demo=is_demo(prepared.receipt))
+        if outcome is GenerationOutcome.REFUNDED_DEMO and spent is not None:
+            refund = await refund_one_message(
+                session, prepared.user_id, spent, reason=REASON_REFUND_DEMO
+            )
+            spent = refund.balances
         # A completed pass -- notes or a refunded no-notes 200 alike -- is the
         # moment the corpus invitation's cooldown counts (#2407). Staged here so
         # the count lands with this commit and is rolled back with a failure.
@@ -1997,7 +2112,7 @@ async def _persist_settle_commit(
                     attempts=prepared.anchored.attempts,
                 ),
             )
-    _log_settled_pass(prepared, usage, refunded_empty=no_notes_message is not None)
+    _log_settled_pass(prepared, usage, outcome)
     return _SettledPass(
         rows=rows,
         suggestions=suggestions,
@@ -2007,7 +2122,21 @@ async def _persist_settle_commit(
         ),
         no_notes_message=no_notes_message,
         reset_date=spent_user.monthly_reset_date,
+        outcome=outcome,
     )
+
+
+def _pass_outcome(no_notes_message: str | None, *, demo: bool) -> GenerationOutcome:
+    """Classify a committed pass: empty, a demo, or kept.
+
+    Empty wins over demo: a stub pass that kept no notes is refunded once, as
+    an empty pass, under the reason the writer is told. A demo that kept notes
+    is delivered but handed back (#3062) -- canned text is never billed as a
+    reflection.
+    """
+    if no_notes_message is not None:
+        return GenerationOutcome.REFUNDED_EMPTY
+    return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
 
 
 # A user with no StageProgress row yet has never reached any stage, so their
@@ -2026,7 +2155,13 @@ async def _contraction_reflection(
     detects a sustained contraction, and — only when flagged — gates the copy by
     the highest stage the user has ever reached. It never writes and never touches
     progression, so it is safe to run on the resonance happy path.
+
+    It names a thinning *habit* foundation, so a user who declined the habits
+    ring is never shown it (#3073): the read-only ring check runs first and
+    short-circuits before any habit signal is gathered.
     """
+    if DepthRing.HABITS not in await load_enabled_rings(session, user_id):
+        return None
     user_timezone = await get_user_timezone(session, user_id)
     aggregates = await gather_contraction_aggregates(session, user_id, user_timezone)
     signal = detect_contraction(aggregates)
@@ -2058,12 +2193,15 @@ class _ResonanceSurfaces:
     off the reflection source rather than re-derived: empty for every pass a
     vault did not answer, which is what a cloud reflection, a degraded vault and
     a vault with no pages all report.
+
+    ``provenance`` is which side answered each operation and who paid (#3062).
     """
 
     care: CareResponse | None
     contraction: ContractionReflectionResponse | None = None
     no_notes_message: str | None = None
     related: VaultRelatedSurfaces = field(default_factory=VaultRelatedSurfaces)
+    provenance: PassProvenance | None = None
 
 
 def _resonance_response(
@@ -2094,6 +2232,7 @@ def _resonance_response(
             RelatedEddyResponse.model_validate(eddy, from_attributes=True)
             for eddy in surfaces.related.eddies
         ],
+        provenance=surfaces.provenance,
     )
 
 
@@ -2247,6 +2386,32 @@ async def run_resonance(
         return await _run_admitted_resonance(session, current_user, entry, clients)
 
 
+def _pass_receipts(
+    notes: InferenceReceipt | None,
+    detection_usage: Sequence[LLMResponse],
+    attempt: _DetectionAttempt,
+    *,
+    api_key: str | None,
+) -> PassReceipts:
+    """Gather one pass's receipts: the reflection's, and detection's own (#3062).
+
+    ``detection_usage`` is only the responses metered after the reflection, so
+    the reflection's answer can never be read as detection's.
+    """
+    return PassReceipts(
+        notes=notes,
+        detection=detection_receipt(
+            receipt_since(detection_usage), dialled=attempt.dialled, api_key=api_key
+        ),
+        detection_checked=attempt.checked,
+    )
+
+
+def _charge_kept(spent: SpendResult | None, settled: _SettledPass) -> bool:
+    """Whether the pass's wallet deduction was taken and still stands after settlement."""
+    return spent is not None and settled.outcome is GenerationOutcome.KEPT
+
+
 async def _run_admitted_resonance(
     session: AsyncSession,
     current_user: int,
@@ -2325,9 +2490,12 @@ async def _run_admitted_resonance(
         if isinstance(reflected, _CareInstead):
             return await _care_only_response(session, current_user, reflected.care)
         anchored, reflection_llm = reflected
+        notes_receipt = reflection_receipt(reflection_llm, usage)
+        detection_mark = len(usage)
         attempt = await _detect_hits_with_status(
             message, inputs=detection, llm=app_llm, user_id=current_user, entry_id=entry_id
         )
+        receipts = _pass_receipts(notes_receipt, usage[detection_mark:], attempt, api_key=byok_key)
         settled = await _persist_settle_commit(
             session,
             _PassSettlementInput(
@@ -2338,11 +2506,12 @@ async def _run_admitted_resonance(
                 hits=attempt.hits,
                 usage=usage,
                 key=key,
+                receipt=notes_receipt,
             ),
         )
         await _refresh_persisted(session, settled.rows, settled.suggestions)
     _log_resonance_outcome(
-        anchored, user_id=current_user, entry_id=entry_id, count=len(settled.rows)
+        anchored, receipts, user_id=current_user, entry_id=entry_id, count=len(settled.rows)
     )
     contraction = await _contraction_reflection(session, current_user)
     surfaces = _ResonanceSurfaces(
@@ -2350,6 +2519,9 @@ async def _run_admitted_resonance(
         contraction=contraction,
         no_notes_message=settled.no_notes_message,
         related=related_surfaces(reflection_llm),
+        provenance=pass_provenance(
+            receipts, byok=byok_key is not None, charge_kept=_charge_kept(spent, settled)
+        ),
     )
     return _resonance_response(
         settled.rows, settled.suggestions, settled.wallet, settled.reset_date, surfaces
@@ -3258,9 +3430,12 @@ async def _mirror_cached_essay(
     Serialize the final liveness/tier read and mirror: an already-completed
     deletion skips; an INTIMATE transition is refused by ``mirror_voice_draft``;
     and if this PUT linearized first, the competing mutation waits and retracts
-    it. The request transaction is committed before Creek I/O; PostgreSQL holds
-    the cross-worker lock on a non-pooled, dedicated connection rather than
-    consuming the application pool. Account outermost, entry innermost -- the
+    it. The content-free intent row -- bound to the destination being dialled --
+    is committed before the PUT, so even a lost acknowledgement leaves the
+    withdrawal that mutation owes on record. The request transaction is
+    committed before Creek I/O; PostgreSQL holds the cross-worker lock on a
+    non-pooled, dedicated connection rather than consuming the application
+    pool. Account outermost, entry innermost -- the
     fixed nesting everywhere the two meet.
     """
     async with (
@@ -3272,12 +3447,27 @@ async def _mirror_cached_essay(
         await session.commit()
         if entry.deleted_at is not None:
             return cached
+        marginalia_id = cast("int", cached.id)
+        destination = await resolved_vault_destination(session, entry.user_id)
+
+        async def _record_intent() -> bool:
+            return await record_mirror_intent(
+                session,
+                user_id=entry.user_id,
+                entry_id=cast("int", entry.id),
+                marginalia_id=marginalia_id,
+                destination=destination,
+            )
+
         await mirror_voice_draft(
             clients.vault_client,
-            owner_user_id=entry.user_id,
-            marginalia_id=cast("int", cached.id),
-            essay=essay,
-            classification=entry.classification,
+            VoiceDraftCopy(
+                owner_user_id=entry.user_id,
+                marginalia_id=marginalia_id,
+                essay=essay,
+                classification=entry.classification,
+            ),
+            record_intent=_record_intent,
         )
     return cached
 
@@ -3481,10 +3671,36 @@ async def _settle_essay(
             extra={"user_id": note.user_id, "id": note.id},
         )
         return
+    outcome = await _keep_letter(session, note, essay, receipt_since(llm.usage), charge)
+    _log_settled_essay(note, charge, usage, outcome)
+
+
+async def _keep_letter(
+    session: AsyncSession,
+    note: Marginalia,
+    essay: str,
+    receipt: InferenceReceipt | None,
+    charge: _EssayCharge,
+) -> GenerationOutcome:
+    """Cache the letter with its source; hand a demo letter's unit back in the same commit.
+
+    The letter's source is stamped beside the letter itself, so the two can
+    never be committed apart. A stub letter is still cached -- the writer asked
+    for it and sees it labelled as a demo -- but it is never billed (#3062).
+    Returns the outcome the settlement line reports.
+    """
     note.essay = essay
     note.essay_generated_at = datetime.now(UTC)
+    stamp_letter(note, receipt)
+    demo = is_demo(receipt)
+    refund = None
+    if demo and charge.spent is not None:
+        refund = await refund_one_message(
+            session, note.user_id, charge.spent, reason=REASON_REFUND_DEMO
+        )
     await session.commit()
-    _log_settled_essay(note, charge, usage, GenerationOutcome.KEPT)
+    log_committed_refund(refund)
+    return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -3524,11 +3740,10 @@ async def delete_journal_entry(
             user_id=current_user,
             entry_id=entry_id,
         )
+        await mark_entry_retractions_pending(session, user_id=current_user, entry_id=entry_id)
         await session.commit()
-        drafts_withdrawn = await _retract_entry_voice_drafts(session, current, vault_client)
-        if not drafts_withdrawn:
+        if not await _withdraw_remote_copies(session, current, vault_client):
             raise service_unavailable("vault_withdrawal_pending")
-        await _withdraw_remote_journal_copy(session, current, vault_client)
         current.deleted_at = datetime.now(UTC)
         session.add(current)
         await session.commit()
