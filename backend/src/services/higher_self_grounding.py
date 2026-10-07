@@ -72,7 +72,12 @@ from domain.stage_progress import get_user_progress
 from models.corpus_fragment import CorpusFragment
 from models.journal_entry import JournalEntry
 from security import sanitize_user_text
-from services.corpus_store import RetrievalQuery, resolve_stage_frequency, retrieve_fragments
+from services.corpus_store import (
+    RetrievalQuery,
+    RetrievedFragment,
+    resolve_stage_frequency,
+    retrieve_fragments,
+)
 from services.privacy_lineage import LineageOperation, observe_lineage
 
 # How many pieces of the reader's own writing may accompany their entry to the
@@ -208,23 +213,43 @@ async def gather_grounding(
         ),
     )
     if fragments:
-        fragment_ids = [fragment.fragment_id for fragment in fragments]
-        await _observe_prior_lineage(
-            session,
-            user_id=user_id,
-            subject_entry_id=exclude_entry_id,
-            entry_ids=await _fragment_source_entries(session, fragment_ids),
+        return await _corpus_grounding(
+            session, fragments, user_id=user_id, subject_entry_id=exclude_entry_id
         )
-        return Grounding(
-            bodies=tuple(fragment.content for fragment in fragments),
-            source=GroundingSource.CORPUS,
-            fragment_ids=tuple(fragment_ids),
-        )
-    window = await _recent_entries(session, user_id, exclude_entry_id)
+    return await _window_grounding(session, user_id=user_id, subject_entry_id=exclude_entry_id)
+
+
+async def _corpus_grounding(
+    session: AsyncSession,
+    fragments: list[RetrievedFragment],
+    *,
+    user_id: int,
+    subject_entry_id: int,
+) -> Grounding:
+    """The corpus answer, after shadow-counting the entries its fragments came from."""
+    fragment_ids = [fragment.fragment_id for fragment in fragments]
     await _observe_prior_lineage(
         session,
         user_id=user_id,
-        subject_entry_id=exclude_entry_id,
+        subject_entry_id=subject_entry_id,
+        entry_ids=await _fragment_source_entries(session, fragment_ids),
+    )
+    return Grounding(
+        bodies=tuple(fragment.content for fragment in fragments),
+        source=GroundingSource.CORPUS,
+        fragment_ids=tuple(fragment_ids),
+    )
+
+
+async def _window_grounding(
+    session: AsyncSession, *, user_id: int, subject_entry_id: int
+) -> Grounding:
+    """The recency-window answer, after shadow-counting the entries it carries."""
+    window = await _recent_entries(session, user_id, subject_entry_id)
+    await _observe_prior_lineage(
+        session,
+        user_id=user_id,
+        subject_entry_id=subject_entry_id,
         entry_ids=[entry_id for entry_id, _ in window],
     )
     return Grounding(
