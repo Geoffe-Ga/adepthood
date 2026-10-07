@@ -17,8 +17,18 @@
 (`docs/adr/0009-privacy-custody-and-inference-architecture.md`), Accepted
 2026-10-07, decider Geoff. It selects **Option BD**:
 
-- **The operator cannot read stored journal entries.** This covers stored
-  content and the BYOK and device inference paths.
+- **Target: the operator will not be able to decrypt stored journal
+  content.** The target covers stored content and the BYOK and device
+  inference paths, once this epic's phases land. Today the server holds the
+  keys.
+  - A passive thief of the database, backups or host storage is to get
+    ciphertext only.
+  - Against the operator or the update channel, for stored history and
+    future content alike: on web, protection rests on trusting the code we
+    serve until signed builds ship. On native, it holds only while the signed
+    build is honest.
+  - Until phase (a), BYOK is relayed through our server, and without BYOK
+    the app's own key pays.
 - **Keys are user-held, with no operator escrow.**
   - Recovery is a written-down recovery phrase plus the person's passphrase.
   - Losing both means the data is gone, and the person agrees to that up
@@ -190,5 +200,6 @@ there too.
 
 - Server key escrow.
 - Transparent recovery by support.
-- Unqualified future-capture immunity in a mutable web client.
+- Immunity from the operator or update channel, for stored or future
+  content, in a mutable web client.
 - Attested confidential compute (B14).

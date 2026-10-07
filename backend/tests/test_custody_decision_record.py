@@ -997,3 +997,13 @@ def test_header_lists_only_what_is_still_open() -> None:
 
     assert "D03 recovery semantics are still open" not in header
     assert "the recovery factors are Decision item 11" in header
+
+
+def test_b13_epic_draft_carries_the_per_platform_caveat() -> None:
+    """The draft states the premise as a target with the caveat, and no stored/future split."""
+    draft = _flat(_EPIC_DRAFT.read_text(encoding="utf-8"))
+
+    assert "The operator cannot read stored journal entries." not in draft
+    assert "rests on trusting the code we serve until signed builds ship" in draft
+    assert "only while the signed build is honest" in draft
+    assert "future-capture" not in draft
