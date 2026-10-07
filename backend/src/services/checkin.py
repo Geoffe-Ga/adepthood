@@ -42,12 +42,15 @@ from services.goal_completion_idempotency import (
 )
 from services.streaks import (
     PendingCompletion,
+    PeriodCadence,
     StreakScope,
     SubtractiveContext,
     check_milestones,
     compute_consecutive_streak,
     compute_habit_streak,
     compute_streak_before_and_after,
+    period_cadence_for_goals,
+    period_streak_before_and_after,
     subtractive_context_for_goals,
 )
 
@@ -87,6 +90,9 @@ class _CheckInJob:
     # on an "abstain from sugar" habit is success, not a chain break.
     # ``None`` selects the additive code path.
     subtractive: SubtractiveContext | None
+    # Weekly / monthly cadence: the streak counts met periods over the whole
+    # habit's history instead of days (#2819). ``None`` keeps the day streak.
+    cadence: PeriodCadence | None = None
 
 
 @dataclass(frozen=True)
@@ -99,6 +105,7 @@ class _ResponseScope:
     user_timezone: str
     day: date
     subtractive: SubtractiveContext | None
+    cadence: PeriodCadence | None = None
 
 
 async def _completion_on_day(
@@ -182,14 +189,10 @@ async def _habit_day_completions(
     return list(result.scalars().all())
 
 
-async def _habit_streak(
-    session: AsyncSession,
-    habit_id: int,
-    user_id: int,
-    user_timezone: str,
-    subtractive: SubtractiveContext | None,
-) -> int:
-    """Compute the streak from every tier, matching the habit reload path."""
+async def _habit_completions(
+    session: AsyncSession, habit_id: int, user_id: int
+) -> list[GoalCompletion]:
+    """Load the habit's every-tier completion history for one user."""
     result = await session.execute(
         select(GoalCompletion)
         .join(Goal, col(Goal.id) == col(GoalCompletion.goal_id))
@@ -198,10 +201,34 @@ async def _habit_streak(
             GoalCompletion.user_id == user_id,
         )
     )
+    return list(result.scalars().all())
+
+
+async def _habit_streak(session: AsyncSession, source: _CheckInJob | _ResponseScope) -> int:
+    """Compute the streak from every tier, matching the habit reload path."""
     return compute_habit_streak(
-        list(result.scalars().all()),
-        user_timezone,
-        subtractive,
+        await _habit_completions(session, source.habit_id, source.user_id),
+        source.user_timezone,
+        source.subtractive,
+        source.cadence,
+    )
+
+
+async def _scope_streak(session: AsyncSession, scope: _ResponseScope) -> int:
+    """Current streak for a response that writes nothing.
+
+    A day-cadence habit keeps the per-goal day streak these responses have
+    always reported; a weekly / monthly one reads the habit-wide period streak
+    so the check-in agrees with ``GET /habits``.
+    """
+    if scope.cadence is not None:
+        return await _habit_streak(session, scope)
+    return await compute_consecutive_streak(
+        session,
+        scope.goal_id,
+        scope.user_id,
+        scope.user_timezone,
+        scope.subtractive,
     )
 
 
@@ -210,13 +237,7 @@ async def _idempotent_already_logged_response(
     scope: _ResponseScope,
 ) -> CheckInResult:
     """Build the ``already_logged_today`` response shape used by both fast + race paths."""
-    streak = await compute_consecutive_streak(
-        session,
-        scope.goal_id,
-        scope.user_id,
-        scope.user_timezone,
-        scope.subtractive,
-    )
+    streak = await _scope_streak(session, scope)
     return CheckInResult(
         streak=streak,
         milestones=[],
@@ -225,21 +246,26 @@ async def _idempotent_already_logged_response(
     )
 
 
-async def _subtractive_context_for_goal(
+async def _streak_contexts_for_habit(
     session: AsyncSession, habit: Habit
-) -> SubtractiveContext | None:
-    """Build the subtractive-streak context for the habit, else ``None``.
+) -> tuple[SubtractiveContext | None, PeriodCadence | None]:
+    """Build the habit's subtractive-streak context and period cadence.
 
     The parent habit arrives without eager relationships, so load its complete
-    ladder explicitly and pass it to the same pure polarity helper used by the
-    habit list. Looking only at the posted tier made partial direction flips
-    report an additive check-in streak and a subtractive list streak.
+    ladder explicitly and pass it to the same pure polarity and cadence helpers
+    used by the habit list. Looking only at the posted tier made partial
+    direction flips report an additive check-in streak and a subtractive list
+    streak.
     """
     result = await session.execute(
         select(Goal).where(Goal.habit_id == habit.id).order_by(col(Goal.id))
     )
+    goals = result.scalars().all()
     try:
-        return subtractive_context_for_goals(result.scalars().all(), habit.start_date)
+        return (
+            subtractive_context_for_goals(goals, habit.start_date),
+            period_cadence_for_goals(goals, habit.start_date),
+        )
     except MultipleResultsFound as exc:
         logger.exception(
             "subtractive_check_in_duplicate_clear_goal",
@@ -375,6 +401,7 @@ async def _try_persist_or_idempotent(session: AsyncSession, job: _CheckInJob) ->
                 job.user_timezone,
                 job.target_day,
                 job.subtractive,
+                job.cadence,
             ),
         )
 
@@ -404,13 +431,7 @@ def _subtract_across_tiers(
 
 async def _explicit_replay_response(session: AsyncSession, job: _CheckInJob) -> CheckInResult:
     """Return current authoritative state without reapplying a spent operation."""
-    streak = await _habit_streak(
-        session,
-        job.habit_id,
-        job.user_id,
-        job.user_timezone,
-        job.subtractive,
-    )
+    streak = await _habit_streak(session, job)
     return CheckInResult(
         streak=streak,
         milestones=[],
@@ -500,22 +521,10 @@ async def _record_explicit_completion(
     # Resolve mutable state only after the operation claim. The caller's parent
     # lock owns the serialized writer lane; reading earlier would preserve a
     # stale row across that wait and reintroduce lost updates.
-    old_streak = await _habit_streak(
-        session,
-        job.habit_id,
-        job.user_id,
-        job.user_timezone,
-        job.subtractive,
-    )
+    old_streak = await _habit_streak(session, job)
     adjusted_existing = await _apply_explicit_delta(session, job)
     await session.flush()
-    new_streak = await _habit_streak(
-        session,
-        job.habit_id,
-        job.user_id,
-        job.user_timezone,
-        job.subtractive,
-    )
+    new_streak = await _habit_streak(session, job)
     await session.commit()
     reason, milestones = _explicit_response_metadata(
         old_streak,
@@ -577,7 +586,7 @@ async def current_check_in(
     day, or the view reports a day the completion was never on.
     """
     goal_id = cast("int", ctx.goal.id)
-    subtractive = await _subtractive_context_for_goal(session, ctx.habit)
+    subtractive, cadence = await _streak_contexts_for_habit(session, ctx.habit)
     return await _idempotent_already_logged_response(
         session,
         _ResponseScope(
@@ -587,6 +596,7 @@ async def current_check_in(
             ctx.user_timezone,
             on_day or today_in_tz(ctx.user_timezone),
             subtractive,
+            cadence,
         ),
     )
 
@@ -602,9 +612,7 @@ async def _held_if_unscheduled(
     """Return the no-write response for an unscheduled miss, if applicable."""
     if did_complete or is_scheduled_on(ctx.habit.notification_days, target_day.strftime("%a")):
         return None
-    old_streak = await compute_consecutive_streak(
-        session, scope.goal_id, ctx.user_id, ctx.user_timezone, scope.subtractive
-    )
+    old_streak = await _scope_streak(session, scope)
     return _held_response(
         ctx.user_id,
         scope.goal_id,
@@ -625,6 +633,24 @@ async def _legacy_existing_response(
     if existing is None:
         return None
     return await _idempotent_already_logged_response(session, scope)
+
+
+async def _legacy_streak_transition(
+    session: AsyncSession, job: _CheckInJob, pending: PendingCompletion
+) -> tuple[int, int]:
+    """Streak before and after a legacy write, from one history read.
+
+    Day cadences keep the per-goal day streak; a weekly / monthly cadence uses
+    the habit-wide period streak so the response agrees with ``GET /habits``.
+    """
+    if job.cadence is not None:
+        history = await _habit_completions(session, job.habit_id, job.user_id)
+        return period_streak_before_and_after(history, job.user_timezone, job.cadence, pending)
+    return await compute_streak_before_and_after(
+        session,
+        StreakScope(job.goal_id, job.user_id, job.user_timezone, job.subtractive),
+        pending,
+    )
 
 
 def _requested_units(goal_target: float, *, did_complete: bool, explicit: float | None) -> float:
@@ -660,7 +686,7 @@ async def record_goal_completion(
     # An already-owned, persisted goal always carries a PK.
     goal_id = cast("int", ctx.goal.id)
     target_day = _resolve_target_day(command.completed_on, ctx.user_timezone)
-    subtractive = await _subtractive_context_for_goal(session, ctx.habit)
+    subtractive, cadence = await _streak_contexts_for_habit(session, ctx.habit)
     habit_id = cast("int", ctx.habit.id)
     response_scope = _ResponseScope(
         goal_id,
@@ -669,6 +695,7 @@ async def record_goal_completion(
         ctx.user_timezone,
         target_day,
         subtractive,
+        cadence,
     )
     # Every tier shares one parent lock. It serializes day-total arithmetic and
     # also closes the empty-row insert window that row locks cannot cover.
@@ -712,13 +739,14 @@ async def record_goal_completion(
         target_day=target_day,
         timestamp=_completion_timestamp(command.completed_on, ctx.user_timezone),
         subtractive=subtractive,
+        cadence=cadence,
     )
     if command.completed_units is not None:
         return await _record_explicit_completion(session, job, command.idempotency_key)
 
-    old_streak, new_streak = await compute_streak_before_and_after(
+    old_streak, new_streak = await _legacy_streak_transition(
         session,
-        StreakScope(goal_id, ctx.user_id, ctx.user_timezone, subtractive),
+        job,
         PendingCompletion(
             target_day,
             _pending_units(

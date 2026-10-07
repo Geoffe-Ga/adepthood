@@ -117,6 +117,35 @@
     "issue": 2814
   },
   {
+    "id": "habits.weekly-cadence-fills-over-the-week",
+    "description": "A user whose Lifting habit is three sessions per week logs once on Monday, rests on Tuesday, and still sees one of three rather than an empty day or a full bar. Wednesday advances the same bar to two of three, Friday fills it, the following Monday starts a new period, and a monthly habit follows its account-local calendar month. The marker, tier, colour, tooltip, and long-press fill all read the same period total. Uncovered because the current habits browser journey creates only daily goals and never opens GoalModal to persist a weekly cadence; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by HabitUtils.test.ts for ISO-week/month, timezone, DST, additive/subtractive, and rollover behavior; HabitTileTooltip.test.tsx for the rendered fraction and marker; and starFill.test.ts for the logged delta.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitTile.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": ["GET /habits/", "PUT /habits/{habit_id}/goals/units", "POST /goal_completions/"],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2814
+  },
+  {
+    "id": "habits.weekly-streak-survives-a-rest-day",
+    "description": "A user whose Lifting habit is three sessions per week met that target in each of the last two ISO weeks and has logged once so far this week. The tile, GET /habits, GET /habits/{habit_id}/stats and every check-in response all report a streak of 2 weeks: a rest day never breaks it, the still-open week is grace until it is met, and completing it makes 3 weeks. The tile, stats sheet and reminder say weeks or months instead of days. Uncovered because the current habits browser journey creates only daily goals and never persists a weekly cadence; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by one shared parity fixture (backend/tests/fixtures/streak_parity/cadence_streaks.json) evaluated by backend tests/domain/test_period_streaks.py and frontend periodStreaks.test.ts for per_day, per_week and per_month, additive and subtractive; by backend test_habit_cadence_streaks_api.py across GET /habits, stats and both check-in paths; and by HabitUtils.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitTile.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": [
+        "GET /habits/",
+        "GET /habits/{habit_id}/stats",
+        "PUT /habits/{habit_id}/goals/units",
+        "POST /goal_completions/"
+      ],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2814
+  },
+  {
     "id": "habits.subtractive-no-log-streak",
     "description": "A user creates a subtractive habit that began today and has not logged the behavior. The server classifies the three-goal habit by the shared any-goal polarity rule and reports a one-day abstention streak; after a real reload, the Habits tile shows 1 DAYS — ACHIEVED TODAY!, because zero behavior is both a no-log streak day and within the clear ceiling. The browser runs in the user's America/Los_Angeles timezone, so the create/load round-trip also exercises the local calendar boundary rather than reparsing the server's date as UTC midnight.",
     "crosses": {
