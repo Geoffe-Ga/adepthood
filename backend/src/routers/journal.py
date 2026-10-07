@@ -416,6 +416,7 @@ async def _record_vault_outcome(
         classification=entry.classification,
         created_at=entry.timestamp,
     )
+    # Bitwise ``|``, not ``or``: both helpers mutate ``entry`` and must both run.
     if _apply_vault_outcome(entry, outcome) | _unbind_if_nothing_sent(entry, binding, outcome):
         session.add(entry)
         await session.commit()
