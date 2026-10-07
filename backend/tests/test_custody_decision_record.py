@@ -661,10 +661,9 @@ def _journal_scope() -> tuple[frozenset[str], frozenset[str]]:
     return in_scope, out_of_scope
 
 
-def _in_scope_targets() -> list[EncryptedColumn]:
-    """The in-scope journal columns, as the encryption inventory names them."""
-    in_scope, _ = _journal_scope()
-    return [target for target in encrypted_columns() if target.qualified in in_scope]
+def _server_codec_column(qualified: str) -> EncryptedColumn | None:
+    """The inventory entry for ``table.column`` if it is under the server codec, else None."""
+    return next((target for target in encrypted_columns() if target.qualified == qualified), None)
 
 
 def test_journal_scope_proposal_classifies_every_encrypted_column() -> None:
@@ -705,9 +704,9 @@ def test_custody_codec_has_no_per_principal_key() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("target", _in_scope_targets(), ids=lambda target: target.qualified)
+@pytest.mark.parametrize("qualified", sorted(_journal_scope()[0]))
 async def test_server_env_keys_alone_recover_every_in_scope_journal_column(
-    db_session: AsyncSession, target: EncryptedColumn, monkeypatch: pytest.MonkeyPatch
+    db_session: AsyncSession, qualified: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Baseline: with only ``JOURNAL_ENCRYPTION_KEYS``, the server reads the journal.
 
@@ -717,7 +716,12 @@ async def test_server_env_keys_alone_recover_every_in_scope_journal_column(
     Like the codec test above, this **fails by design** when B13 phase (c)
     lands: client-held ciphertext no longer opens under the env key alone.
     """
-    canary = f"custody canary for {target.qualified}"
+    # Parametrized over the scorecard's own names, not the inventory, so a
+    # column that leaves the server codec fails here instead of vanishing
+    # from the parametrization.
+    target = _server_codec_column(qualified)
+    assert target is not None, f"{qualified} is no longer under the server-key codec"
+    canary = f"custody canary for {qualified}"
     monkeypatch.setenv(je.KEYS_ENV_VAR, Fernet.generate_key().decode())
     je.reset_cache()
     try:
