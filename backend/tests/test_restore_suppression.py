@@ -27,9 +27,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
-from sqlmodel import col
+from sqlmodel import SQLModel, col
 
 from domain import retention
 from domain.account_deletion import POLICY
@@ -37,6 +37,7 @@ from main import app, lifespan
 from models.journal_entry import JournalEntry
 from models.restore_marker import RestoreMarker, RestoreState
 from models.user import User
+from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
 from services import restore_suppression
 from services.account_deletion import (
     Account,
@@ -58,6 +59,7 @@ from services.restore_suppression import (
     export_tombstones,
     reapply_tombstones,
 )
+from tests.helpers.account_seed import SeedAccount, seed_one_row_everywhere, seed_shared_tables
 from tests.helpers.telemetry_canaries import SHORT_CANARY, assert_no_canary
 
 _PASSWORD = "securepassword123"  # pragma: allowlist secret
@@ -643,3 +645,121 @@ async def test_a_backdated_new_page_is_still_recognised_as_new(
     assert (
         await client.get(f"/journal/{entry_id}", headers=jo.headers)
     ).status_code == HTTPStatus.OK
+
+
+_VAULT_REF = "synthetic-vault-ref"
+# A second, already-settled obligation on the same entry. Its marginalia id only
+# has to differ from the seeded one (the obligation is unique per account and note).
+_SETTLED_MARGINALIA_OFFSET = 1000
+
+
+async def _seed_deletable_entry(factory: async_sessionmaker[AsyncSession], person: _Person) -> int:
+    """Give ``person`` a row in every table, an entry offered to a vault, and two obligations.
+
+    One obligation is still ``mirror_intent`` (an essay offered, not withdrawn);
+    the other is already ``confirmed``. Returns the entry id.
+    """
+    async with factory() as session:
+        shared = await seed_shared_tables(session)
+        await seed_one_row_everywhere(
+            session, SeedAccount(user_id=person.user_id, email=person.email), shared
+        )
+        entry_id = (
+            await session.execute(
+                select(col(JournalEntry.id)).where(col(JournalEntry.user_id) == person.user_id)
+            )
+        ).scalar_one()
+        await session.execute(
+            update(JournalEntry)
+            .where(col(JournalEntry.id) == entry_id)
+            .values(vault_ref=_VAULT_REF)
+        )
+        seeded = (
+            await session.execute(
+                select(VoiceDraftRetraction).where(
+                    col(VoiceDraftRetraction.journal_entry_id) == entry_id
+                )
+            )
+        ).scalar_one()
+        seeded.state = VoiceDraftRetractionState.MIRROR_INTENT.value
+        session.add(
+            VoiceDraftRetraction(
+                user_id=person.user_id,
+                journal_entry_id=entry_id,
+                marginalia_id=seeded.marginalia_id + _SETTLED_MARGINALIA_OFFSET,
+                state=VoiceDraftRetractionState.CONFIRMED.value,
+            )
+        )
+        await session.commit()
+        assert entry_id is not None
+        return entry_id
+
+
+async def _delete_as_the_journal_route_does(
+    factory: async_sessionmaker[AsyncSession], entry_id: int
+) -> None:
+    """What a successful DELETE /journal/{id} leaves behind, once Creek confirmed absence."""
+    fragments = SQLModel.metadata.tables["corpusfragment"]
+    async with factory() as session:
+        await session.execute(delete(fragments).where(fragments.c["source_entry_id"] == entry_id))
+        await session.execute(
+            update(VoiceDraftRetraction)
+            .where(col(VoiceDraftRetraction.journal_entry_id) == entry_id)
+            .values(state=VoiceDraftRetractionState.CONFIRMED.value)
+        )
+        await session.execute(
+            update(JournalEntry)
+            .where(col(JournalEntry.id) == entry_id)
+            .values(vault_ref=None, deleted_at=datetime.now(UTC))
+        )
+        await session.commit()
+
+
+async def _retraction_states(factory: async_sessionmaker[AsyncSession], entry_id: int) -> list[str]:
+    async with factory() as session:
+        rows = await session.execute(
+            select(col(VoiceDraftRetraction.state))
+            .where(col(VoiceDraftRetraction.journal_entry_id) == entry_id)
+            .order_by(col(VoiceDraftRetraction.marginalia_id))
+        )
+        return list(rows.scalars())
+
+
+async def _vault_ref(factory: async_sessionmaker[AsyncSession], entry_id: int) -> str | None:
+    async with factory() as session:
+        entry = await session.get(JournalEntry, entry_id)
+        assert entry is not None
+        return entry.vault_ref
+
+
+@pytest.mark.asyncio
+async def test_reapply_reowes_resurrected_withdrawals_and_clears_the_vault_handle(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """A resurrected essay offer becomes an owed withdrawal; a settled one is untouched.
+
+    The restored row also carries the remote handle the original delete had
+    already cleared, and reapply clears it again.
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    kai = await _signup(client, "kai")
+    entry_id = await _seed_deletable_entry(factory, kai)
+    snapshot = await _snapshot(factory, tmp_path)
+    await _delete_as_the_journal_route_does(factory, entry_id)
+    tombstones = await _export(factory)
+    await _restore(factory, snapshot)
+
+    assert await _vault_ref(factory, entry_id) == _VAULT_REF  # resurrection is real
+    mirrored, settled = VoiceDraftRetractionState.MIRROR_INTENT, VoiceDraftRetractionState.CONFIRMED
+    assert await _retraction_states(factory, entry_id) == [mirrored.value, settled.value]
+
+    receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    assert receipt.entries_reapplied == 1
+    assert await _vault_ref(factory, entry_id) is None
+    assert await _retraction_states(factory, entry_id) == [
+        VoiceDraftRetractionState.PENDING.value,
+        settled.value,
+    ]
