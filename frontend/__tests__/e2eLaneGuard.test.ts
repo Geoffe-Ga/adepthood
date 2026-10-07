@@ -64,6 +64,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'feedback-resilience.browser.e2e.test.ts',
   'habit-add-cadence.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
+  'habit-reveal-without-course.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
   DEMO_TILE_JOURNEY,
   'habits-day-rollover.browser.e2e.test.ts',
