@@ -563,7 +563,7 @@ async def test_get_habits_reports_subtractive_streak_from_start_date(
 
     The check-in path (``POST /goal_completions``) and the list path
     (``GET /habits``) build the ``SubtractiveContext`` through two
-    separate helpers -- ``_subtractive_context_for_goal`` queries the
+    separate helpers -- ``_streak_contexts_for_habit`` queries the
     DB directly, while ``_populate_streak`` reads the eager-loaded
     ``habit.goals`` relationship.  Per the PR #379 review, only the
     former was HTTP-covered; this test closes the loop on the second

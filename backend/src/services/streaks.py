@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
+from typing import cast
 
 from sqlalchemy.exc import MultipleResultsFound
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,8 +26,12 @@ from sqlmodel import col, select
 
 from domain.dates import today_in_tz
 from domain.streaks import (
+    PERIOD_UNITS,
+    PeriodCadence,
+    PeriodUnit,
     SubtractiveContext,
     current_consecutive_streak,
+    period_current_streak,
     subtractive_current_streak,
     sum_units_by_user_day,
 )
@@ -36,12 +41,15 @@ from schemas.milestone import Milestone
 
 __all__ = [
     "PendingCompletion",
+    "PeriodCadence",
     "StreakScope",
     "SubtractiveContext",
     "check_milestones",
     "compute_consecutive_streak",
     "compute_habit_streak",
     "compute_streak_before_and_after",
+    "period_cadence_for_goals",
+    "period_streak_before_and_after",
     "subtractive_context_for_goals",
 ]
 
@@ -61,6 +69,40 @@ def subtractive_context_for_goals(
         return None
     threshold_goal = _single_clear_goal(goals) or non_additive[0]
     return SubtractiveContext(clear_threshold=threshold_goal.target, start_date=start_date)
+
+
+def period_cadence_for_goals(goals: Sequence[Goal], start_date: date) -> PeriodCadence | None:
+    """Return the period cadence a habit's streak is counted in, else ``None``.
+
+    The cadence (``frequency`` / ``frequency_unit``) is shared by every tier,
+    so the clear tier speaks for the habit; without one, the polarity rule's
+    threshold goal (subtractive) or the first goal (additive) does. Daily and
+    per-session cadences return ``None`` so their callers keep the day-based
+    streak bit for bit. The period target is that goal's ``target *
+    frequency`` -- the same period target the frontend scores against.
+    """
+    goal = _cadence_goal(goals)
+    if goal is None or goal.frequency_unit not in PERIOD_UNITS:
+        return None
+    return PeriodCadence(
+        unit=cast("PeriodUnit", goal.frequency_unit),
+        period_target=goal.target * goal.frequency,
+        start_date=start_date,
+        subtractive=bool(_non_additive_goals(goals)),
+    )
+
+
+def _cadence_goal(goals: Sequence[Goal]) -> Goal | None:
+    """Return the goal whose cadence speaks for the habit, else ``None``.
+
+    Ladder ambiguity is the polarity helper's to refuse (it raises for a
+    subtractive habit); an additive ladder tolerates extra clear rows.
+    """
+    if not goals:
+        return None
+    non_additive = _non_additive_goals(goals)
+    fallback = non_additive[0] if non_additive else goals[0]
+    return next((g for g in goals if g.tier == "clear"), fallback)
 
 
 def _non_additive_goals(goals: Sequence[Goal]) -> list[Goal]:
@@ -193,10 +235,29 @@ def _completed_user_dates(
     return {c.local_day for c in completions if c.completed_units > 0}
 
 
+def period_streak_before_and_after(
+    completions: Sequence[GoalCompletion],
+    user_timezone: str,
+    cadence: PeriodCadence,
+    pending: PendingCompletion,
+) -> tuple[int, int]:
+    """Period streak before and after folding in a not-yet-persisted completion.
+
+    The period counterpart of :func:`compute_streak_before_and_after`, over the
+    habit's every-tier history so it agrees with ``GET /habits``.
+    """
+    day_totals = sum_units_by_user_day(completions)
+    today = today_in_tz(user_timezone)
+    before = period_current_streak(day_totals, today, cadence)
+    day_totals[pending.day] = day_totals.get(pending.day, 0.0) + pending.units
+    return before, period_current_streak(day_totals, today, cadence)
+
+
 def compute_habit_streak(
     completions: Sequence[GoalCompletion],
     user_timezone: str = "UTC",
     subtractive: SubtractiveContext | None = None,
+    cadence: PeriodCadence | None = None,
 ) -> int:
     """Compute current consecutive-day streak from in-memory completions.
 
@@ -217,7 +278,15 @@ def compute_habit_streak(
     invert the correct behavior.  Pass a :class:`SubtractiveContext`
     bundling the sibling clear-tier goal's target and the habit's
     ``start_date`` to walk backwards counting abstention days instead.
+
+    For a **weekly or monthly** cadence pass ``cadence`` (see
+    :func:`period_cadence_for_goals`): the streak then counts consecutive met
+    periods for either polarity, and ``subtractive`` is not consulted.
     """
+    if cadence is not None:
+        return period_current_streak(
+            sum_units_by_user_day(completions), today_in_tz(user_timezone), cadence
+        )
     if subtractive is not None:
         day_totals = sum_units_by_user_day(completions)
         return subtractive_current_streak(day_totals, user_timezone, subtractive)

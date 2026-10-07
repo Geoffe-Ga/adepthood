@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from domain.dates import today_in_tz
 
@@ -44,6 +44,137 @@ class SubtractiveContext:
 
     clear_threshold: float
     start_date: date
+
+
+# Goal cadences whose streak counts completed periods instead of days.
+PeriodUnit = Literal["per_week", "per_month"]
+
+PERIOD_UNITS: frozenset[str] = frozenset({"per_week", "per_month"})
+
+_DAYS_PER_WEEK = 7
+# Any day 32 days after the 1st of a month falls inside the following month.
+_DAYS_PAST_MONTH_START = 32
+
+
+@dataclass(frozen=True)
+class PeriodCadence:
+    """Everything a period-based (weekly / monthly) streak walk needs.
+
+    A habit whose goals are ``per_week`` or ``per_month`` is scored in
+    periods, not days (#2819): an ISO week starting Monday, or a calendar
+    month, in the user's calendar. A period is *met* when its summed units
+    reach ``period_target`` (the clear tier's ``target * frequency``) for an
+    additive habit, or stay at or under it for a subtractive one.
+    ``start_date`` is the habit's birth: a subtractive walk never counts
+    periods before it, since an absent row there is not an abstention.
+    """
+
+    unit: PeriodUnit
+    period_target: float
+    start_date: date
+    subtractive: bool
+
+
+def period_start(day: date, unit: PeriodUnit) -> date:
+    """Return the first day of ``day``'s period: its ISO Monday or the 1st."""
+    if unit == "per_week":
+        return day - timedelta(days=day.weekday())
+    return day.replace(day=1)
+
+
+def _previous_period(start: date, unit: PeriodUnit) -> date:
+    """Return the start of the period before the one beginning at ``start``."""
+    if unit == "per_week":
+        return start - timedelta(days=_DAYS_PER_WEEK)
+    return (start - timedelta(days=1)).replace(day=1)
+
+
+def _next_period(start: date, unit: PeriodUnit) -> date:
+    """Return the start of the period after the one beginning at ``start``."""
+    if unit == "per_week":
+        return start + timedelta(days=_DAYS_PER_WEEK)
+    return (start + timedelta(days=_DAYS_PAST_MONTH_START)).replace(day=1)
+
+
+def _period_totals(day_totals: dict[date, float], unit: PeriodUnit) -> dict[date, float]:
+    """Re-bucket per-day totals into per-period totals keyed by period start."""
+    totals: dict[date, float] = {}
+    for day, units in day_totals.items():
+        key = period_start(day, unit)
+        totals[key] = totals.get(key, 0.0) + units
+    return totals
+
+
+def _period_met(total: float, cadence: PeriodCadence) -> bool:
+    """Whether a period's summed units satisfy the cadence's clear target."""
+    if cadence.subtractive:
+        return total <= cadence.period_target
+    return total >= cadence.period_target
+
+
+def _first_period(day_totals: dict[date, float], cadence: PeriodCadence) -> date:
+    """Earliest period a walk may count.
+
+    Subtractive walks start at the habit's birth. Additive walks also reach
+    back to the earliest logged day, matching the day-based additive streak,
+    which never consults ``start_date``.
+    """
+    first = period_start(cadence.start_date, cadence.unit)
+    if cadence.subtractive or not day_totals:
+        return first
+    return min(first, period_start(min(day_totals), cadence.unit))
+
+
+def period_current_streak(
+    day_totals: dict[date, float], today: date, cadence: PeriodCadence
+) -> int:
+    """Count the current streak of consecutive met periods (the single owner).
+
+    The period analogue of :func:`current_consecutive_streak`, mirrored by the
+    frontend ``periodStreakFromCompletions``. The still-open period (the one
+    containing ``today``) counts when already met and is grace otherwise: it
+    never breaks the chain while it can still be met. Walking back from the
+    most recent *closed* period, each met period extends the streak and the
+    first unmet one ends it, so an unmet last closed period with an unmet open
+    period yields 0.
+    """
+    unit = cadence.unit
+    totals = _period_totals(day_totals, unit)
+    first = _first_period(day_totals, cadence)
+    open_period = period_start(today, unit)
+    if first > open_period:
+        return 0
+    streak = 1 if _period_met(totals.get(open_period, 0.0), cadence) else 0
+    cursor = _previous_period(open_period, unit)
+    while cursor >= first and _period_met(totals.get(cursor, 0.0), cadence):
+        streak += 1
+        cursor = _previous_period(cursor, unit)
+    return streak
+
+
+def period_longest_streak(
+    day_totals: dict[date, float], today: date, cadence: PeriodCadence
+) -> int:
+    """Longest run of consecutive met periods up to and including the open one.
+
+    Walks forwards from the first countable period. A met period extends the
+    run; an unmet *closed* period resets it, while an unmet open period simply
+    does not extend it (the same grace :func:`period_current_streak` gives).
+    """
+    unit = cadence.unit
+    totals = _period_totals(day_totals, unit)
+    open_period = period_start(today, unit)
+    longest = 0
+    run = 0
+    cursor = _first_period(day_totals, cadence)
+    while cursor <= open_period:
+        if _period_met(totals.get(cursor, 0.0), cadence):
+            run += 1
+            longest = max(longest, run)
+        else:
+            run = 0
+        cursor = _next_period(cursor, unit)
+    return longest
 
 
 def sum_units_by_user_day(
