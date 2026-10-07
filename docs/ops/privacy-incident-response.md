@@ -183,8 +183,12 @@ deployment is the owner's (#3075).
 ## 9. Known side effects of the switches
 
 - `PRIVACY_SUSPEND_VAULT_SEND` also refuses the pipeline's classify and link
-  steps, so a resumable pipeline keeps retrying until the switch is unset.
-  That is expected, not a second incident.
+  steps. A refused stage is recorded `failed` on its first attempt, with the
+  log line `creek vault pipeline stage suspended by operator`. It is not
+  retried, and it is not recorded `ambiguous`, because the request never left
+  the process. Nothing re-runs the stage when the switch is unset: it runs
+  again only when a later trigger (a new journal write, for example) starts a
+  new pipeline run. That is expected, not a second incident.
 - Entries written under the vault-send suspension are not re-sent
   automatically afterwards (§5).
 - `PRIVACY_SUSPEND_EXTERNAL_AI` refuses the resonance route before it decides

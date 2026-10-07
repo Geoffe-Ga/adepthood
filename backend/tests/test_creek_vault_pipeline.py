@@ -76,6 +76,7 @@ from services.creek_vault_telemetry import (
     reset_vault_telemetry_for_tests,
     vault_outcome_counts,
 )
+from services.privacy_suspension import VAULT_SEND_SUSPEND_ENV_VAR
 
 _VAULT_URL = "https://vault.example.test"
 _API_KEY = "test-key"  # pragma: allowlist secret
@@ -2450,6 +2451,39 @@ async def test_a_classification_missing_a_required_field_is_a_payload_error(
 
     rows = await _rows(db_session)
     assert [row.outcome for row in rows] == [VaultPipelineOutcome.FAILED]
+
+
+@pytest.mark.asyncio
+async def test_a_stage_refused_by_the_operator_suspension_is_failed_not_ambiguous(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A send the vault-send switch refused never left the process (#3075).
+
+    So it is a definitive refusal, recorded FAILED on its first attempt and not
+    retried, never AMBIGUOUS ("may have landed"), which would be false.
+    """
+    recorder = _Recorder()
+    client = await handshaken(recorder, http_clients(recorder))
+    recorder.requests.clear()
+    monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+
+    with caplog.at_level("INFO"):
+        await drive_vault_pipeline(
+            db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
+
+    rows = await _rows(db_session)
+    assert [row.outcome for row in rows] == [VaultPipelineOutcome.FAILED]
+    assert rows[0].attempt_count == 1
+    assert recorder.requests == []
+    assert any(
+        record.getMessage() == "creek vault pipeline stage suspended by operator"
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio

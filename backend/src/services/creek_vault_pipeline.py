@@ -88,6 +88,7 @@ from domain.creek_vault import (
     VaultPipelineJob,
     VaultPipelineJobState,
     VaultPipelineStage,
+    VaultSendSuspendedError,
 )
 from domain.dates import ensure_aware
 from models.vault_pipeline_follow_up import VaultPipelineFollowUp
@@ -861,6 +862,27 @@ async def _run_stage(
     return await _attempt_committed_run(session, client, run, context.stage, budget)
 
 
+#: Failures that are a definitive answer, recorded FAILED on the first attempt
+#: rather than retried. :class:`VaultSendSuspendedError` is listed first because
+#: it subclasses the transient :class:`CreekVaultUnavailableError`: the operator's
+#: vault-send switch refused it before the request was built (#3075), so it
+#: provably never left the process and "ambiguous" would be false.
+_DEFINITIVE_REFUSALS: tuple[type[Exception], ...] = (
+    VaultSendSuspendedError,
+    CreekCapabilityUnsupportedError,
+    CreekVaultAuthError,
+    CreekVaultContractError,
+    CreekVaultPayloadError,
+)
+
+
+def _refusal_event(exc: Exception) -> str:
+    """The log event for a definitive refusal, naming an operator suspension apart."""
+    if isinstance(exc, VaultSendSuspendedError):
+        return "creek vault pipeline stage suspended by operator"
+    return "creek vault pipeline stage was refused"
+
+
 async def _attempt_committed_run(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
@@ -873,16 +895,8 @@ async def _attempt_committed_run(
         raise RuntimeError("persisted vault pipeline run has no id")
     try:
         outcome, counts = await _perform_within_budget(session, client, run, stage, budget)
-    except (
-        CreekCapabilityUnsupportedError,
-        CreekVaultAuthError,
-        CreekVaultContractError,
-        CreekVaultPayloadError,
-    ):
-        _LOGGER.info(
-            "creek vault pipeline stage was refused",
-            extra={"stage": stage.value},
-        )
+    except _DEFINITIVE_REFUSALS as exc:
+        _LOGGER.info(_refusal_event(exc), extra={"stage": stage.value})
         await _commit_finished_run(
             session,
             run,
