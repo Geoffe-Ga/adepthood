@@ -53,11 +53,16 @@ jest.mock('../../HabitUtils', () => ({
     completionRate: api.completion_rate,
     completionDates: api.completion_dates,
   })),
+  formatStreakCount:
+    jest.requireActual<typeof HabitUtilsModule>('../../HabitUtils').formatStreakCount,
+  streakPeriodKind:
+    jest.requireActual<typeof HabitUtilsModule>('../../HabitUtils').streakPeriodKind,
 }));
 
 // Import after mocks
 import { habits as habitsApi } from '../../../../api';
 import type { Habit, HabitStatsData } from '../../Habits.types';
+import type * as HabitUtilsModule from '../../HabitUtils';
 import { STATS_CLOSE_LABEL } from '../modalCloseLabels';
 import { StatsModal } from '../StatsModal';
 

@@ -23,12 +23,14 @@ import type { HabitTileProps, Goal, Habit } from './Habits.types';
 import {
   getProgressPercentage,
   clampPercentage,
+  formatStreakCount,
   getGoalTarget,
   getGoalTier,
   getMarkerPositions,
   getProgressBarColor,
   isGoalAchieved,
   periodOf,
+  streakPeriodKind,
   type HabitPeriodKind,
   unitsInCurrentPeriod,
 } from './HabitUtils';
@@ -774,11 +776,13 @@ const TileProgressSection = ({
 };
 
 const formatStreakText = (
-  streak: number,
+  habit: Habit,
   hasCompletedGoal: boolean,
   achievementPeriod: HabitPeriodKind,
 ): string =>
-  `${streak} days${hasCompletedGoal ? ` — ${ACHIEVED_COPY[achievementPeriod]}!` : ''}`.toUpperCase();
+  `${formatStreakCount(habit.streak, streakPeriodKind(habit))}${
+    hasCompletedGoal ? ` — ${ACHIEVED_COPY[achievementPeriod]}!` : ''
+  }`.toUpperCase();
 
 const UnlockedTile = ({
   habit,
@@ -809,7 +813,7 @@ const UnlockedTile = ({
         achievedTextColor={achievedTextColor}
         scale={scale}
         gridType={gridType}
-        streakText={formatStreakText(habit.streak, hasCompletedGoal, achievementPeriod)}
+        streakText={formatStreakText(habit, hasCompletedGoal, achievementPeriod)}
         hasCompletedGoal={hasCompletedGoal}
         iconInline={iconInline}
         streakStacked={streakStacked}

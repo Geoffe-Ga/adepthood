@@ -1921,7 +1921,7 @@ describe('cadence-period scoring', () => {
     expect(getProgressBarColor(habit, 'UTC')).toBe(STAGE_COLORS.Orange);
   });
 
-  test('period scoring does not partially change the still-daily subtractive streak contract', () => {
+  test('a weekly subtractive streak counts the open week while it stays within the limit', () => {
     const subtractiveGoals = weeklyGoals.map((goal, index) => ({
       ...goal,
       target: [14, 7, 3.5][index]!,
@@ -1941,8 +1941,10 @@ describe('cadence-period scoring', () => {
       ],
     };
 
+    // 2 of a 7-per-week clear limit: the open week is met (#2819), where the
+    // old day walk scored the same log against a 1/day limit and broke it.
     const stats = generateStatsForHabit(habit, 'UTC');
-    expect(stats.currentStreak).toBe(0);
-    expect(stats.longestStreak).toBe(0);
+    expect(stats.currentStreak).toBe(1);
+    expect(stats.longestStreak).toBe(1);
   });
 });
