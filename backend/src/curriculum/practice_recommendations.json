@@ -1,0 +1,271 @@
+{
+  "entries": [
+    {
+      "chapter": 6,
+      "id": "beige-6",
+      "stage": 1,
+      "status": "unreviewed",
+      "title": "The Grounding Protocol: 5-4-3-2-1"
+    },
+    {
+      "chapter": 17,
+      "id": "beige-17",
+      "stage": 1,
+      "status": "unreviewed",
+      "title": "Alternative Practice Options"
+    },
+    {
+      "chapter": 18,
+      "id": "beige-18",
+      "stage": 1,
+      "status": "unreviewed",
+      "title": "A Note on Beige Practice"
+    },
+    {
+      "chapter": 6,
+      "id": "purple-6",
+      "stage": 2,
+      "status": "unreviewed",
+      "title": "The Practice of Purple: A Daily Tarot Draw"
+    },
+    {
+      "chapter": 7,
+      "id": "purple-7",
+      "stage": 2,
+      "status": "unreviewed",
+      "title": "Alternative Purple Practices: Eight Five-Minute Receptivity Meditations"
+    },
+    {
+      "chapter": 6,
+      "id": "red-6",
+      "stage": 3,
+      "status": "unreviewed",
+      "title": "The Practice of Red: Paced Breathing"
+    },
+    {
+      "chapter": 7,
+      "id": "red-7",
+      "stage": 3,
+      "status": "unreviewed",
+      "title": "Alternatives for Red Practice"
+    },
+    {
+      "chapter": 13,
+      "id": "red-13",
+      "stage": 3,
+      "status": "unreviewed",
+      "title": "The Archetypal Wavelength Reveals Everything is a Practice"
+    },
+    {
+      "chapter": 6,
+      "id": "blue-6",
+      "stage": 4,
+      "status": "unreviewed",
+      "title": "The Practice of Blue: Metta Meditation"
+    },
+    {
+      "chapter": 7,
+      "id": "blue-7",
+      "stage": 4,
+      "status": "unreviewed",
+      "title": "Alternatives for Blue Practice"
+    },
+    {
+      "chapter": 6,
+      "id": "orange-6",
+      "stage": 5,
+      "status": "unreviewed",
+      "title": "The Practice of Orange: Wim Hof Method"
+    },
+    {
+      "chapter": 7,
+      "id": "orange-7",
+      "stage": 5,
+      "status": "unreviewed",
+      "title": "The Basic Wim Hof Protocol: A Step-by-Step Guide"
+    },
+    {
+      "chapter": 14,
+      "id": "orange-14",
+      "stage": 5,
+      "status": "unreviewed",
+      "title": "Alternatives for Orange Practice"
+    },
+    {
+      "chapter": 17,
+      "id": "orange-17",
+      "stage": 5,
+      "status": "unreviewed",
+      "title": "How to Structure Your Exercise Practice"
+    },
+    {
+      "chapter": 6,
+      "id": "green-6",
+      "stage": 6,
+      "status": "unreviewed",
+      "title": "The Practice of Green: Shadow Work Ritual"
+    },
+    {
+      "chapter": 9,
+      "id": "green-9",
+      "stage": 6,
+      "status": "unreviewed",
+      "title": "Alternatives for Green Practice"
+    },
+    {
+      "chapter": 22,
+      "id": "green-22",
+      "stage": 6,
+      "status": "unreviewed",
+      "title": "The Katabasis: Descent as Spiritual Practice"
+    },
+    {
+      "chapter": 7,
+      "id": "yellow-7",
+      "stage": 7,
+      "status": "unreviewed",
+      "title": "The Practice of Yellow: Blissy Meditation"
+    },
+    {
+      "chapter": 9,
+      "id": "yellow-9",
+      "stage": 7,
+      "status": "unreviewed",
+      "title": "What to Track: Building Your Practice Log"
+    },
+    {
+      "chapter": 10,
+      "id": "yellow-10",
+      "stage": 7,
+      "status": "unreviewed",
+      "title": "Alternatives for Yellow Practice"
+    },
+    {
+      "chapter": 19,
+      "id": "yellow-19",
+      "stage": 7,
+      "status": "unreviewed",
+      "title": "How to Practice Model Integration"
+    },
+    {
+      "chapter": 6,
+      "id": "teal-6",
+      "stage": 8,
+      "status": "unreviewed",
+      "title": "The Practice of Teal: Dog Walkin' Shamanism"
+    },
+    {
+      "chapter": 7,
+      "id": "teal-7",
+      "stage": 8,
+      "status": "unreviewed",
+      "title": "Alternatives for Teal Practice"
+    },
+    {
+      "chapter": 8,
+      "id": "teal-8",
+      "stage": 8,
+      "status": "unreviewed",
+      "title": "The Practice Decoded: What Dog Walkin' Shamanism Actually Is"
+    },
+    {
+      "chapter": 10,
+      "id": "teal-10",
+      "stage": 8,
+      "status": "unreviewed",
+      "title": "Advanced Dog Walkin': Sensory Gating Practice"
+    },
+    {
+      "chapter": 19,
+      "id": "teal-19",
+      "stage": 8,
+      "status": "unreviewed",
+      "title": "Baby Waterfall Conventions: The Architecture of Micro-Practice"
+    },
+    {
+      "chapter": 6,
+      "id": "ultraviolet-6",
+      "stage": 9,
+      "status": "unreviewed",
+      "title": "The Practice of Ultraviolet: Cultivating Samatha Jhanas"
+    },
+    {
+      "chapter": 7,
+      "id": "ultraviolet-7",
+      "stage": 9,
+      "status": "unreviewed",
+      "title": "Alternatives for Ultraviolet Practice"
+    },
+    {
+      "chapter": 14,
+      "id": "ultraviolet-14",
+      "stage": 9,
+      "status": "unreviewed",
+      "title": "The 75-Minute Threshold: Why This Is the Gateway Practice"
+    },
+    {
+      "chapter": 17,
+      "id": "ultraviolet-17",
+      "stage": 9,
+      "status": "unreviewed",
+      "title": "The Practice as Prayer: What Happens at 75 Minutes"
+    },
+    {
+      "chapter": 21,
+      "id": "ultraviolet-21",
+      "stage": 9,
+      "status": "unreviewed",
+      "title": "The Void Practice: Advanced Meditation Techniques for Ultraviolet"
+    },
+    {
+      "chapter": 6,
+      "id": "clearlight-6",
+      "stage": 10,
+      "status": "unreviewed",
+      "title": "The Practice of Clear Light: Cultivating Vipassana"
+    },
+    {
+      "chapter": 11,
+      "id": "clearlight-11",
+      "stage": 10,
+      "status": "unreviewed",
+      "title": "The Practice IS the Path"
+    },
+    {
+      "chapter": 12,
+      "id": "clearlight-12",
+      "stage": 10,
+      "status": "unreviewed",
+      "title": "The 90-Minute Sit: The Practice of Adepts"
+    },
+    {
+      "chapter": 16,
+      "id": "clearlight-16",
+      "stage": 10,
+      "status": "unreviewed",
+      "title": "The Practice Never Ends: Maintenance and Deepening"
+    },
+    {
+      "chapter": 17,
+      "id": "clearlight-17",
+      "stage": 10,
+      "status": "unreviewed",
+      "title": "The Ecology of Practice: Sustaining 90 Minutes for Life"
+    },
+    {
+      "chapter": 19,
+      "id": "clearlight-19",
+      "stage": 10,
+      "status": "unreviewed",
+      "title": "Three Decades of Practice: The Long View"
+    },
+    {
+      "chapter": 23,
+      "id": "clearlight-23",
+      "stage": 10,
+      "status": "unreviewed",
+      "title": "Teaching as Practice: Becoming a Holder of Space"
+    }
+  ],
+  "notice": "Generated by `python -m scripts.content_completeness` from the manifest (issue #3070): every chapter whose title names a practice or protocol. Every status is 'unreviewed'; regeneration overwrites this file, so owner-reviewed mappings to practice presets belong in a separate sidecar keyed by id."
+}

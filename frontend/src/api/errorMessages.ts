@@ -203,6 +203,13 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // wants its own real limit can override this locally.
   rate_limit_exceeded: "That's a lot of requests in a short time. Give it a moment and try again.",
   llm_provider_error: PROVIDER_TROUBLE,
+  // A vault-bound pass whose one permitted source could not answer (#3061). The
+  // server refunds the pass and asks no other model, so the copy says only what
+  // the client can stand behind: nothing was produced, nothing was charged, the
+  // entry is intact, and waiting may help. It deliberately names no source and
+  // makes no claim about where writing is or is not processed.
+  reflection_source_unavailable:
+    "The reflection couldn't be prepared just now, and nothing was charged. Your entry is saved, so give it a moment and try again.",
   malformed_stream_frame: PROVIDER_TROUBLE,
   incomplete_stream:
     'The connection dropped before BotMason finished its reply. Tap retry to send the same message again.',

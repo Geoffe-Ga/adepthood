@@ -44,6 +44,10 @@ const RETRYABLE_WITHDRAWAL = 'vault_withdrawal_pending';
 const PAGE =
   'The cedar held the rain all night. By morning I could hear each drop arrive and leave.';
 
+/** What `fakeCreekVault.mjs` answers every reflection with, quoting the page's first sentence. */
+const LANE_VAULT_NOTE = 'The lane vault reads this line back to you.';
+const PAGE_FIRST_SENTENCE = 'The cedar held the rain all night';
+
 const lane = readLaneState();
 
 function required<T>(value: T | undefined, name: string): T {
@@ -111,7 +115,14 @@ describe('journal withdrawal from a connected Creek vault', () => {
     const expanded = await resonance.essay(note.id, { priceAcknowledged: true });
 
     expect((expanded.essay ?? '').trim()).not.toBe('');
-    const { fragments } = await vaultLedger();
+    const { fragments, received } = await vaultLedger();
+    // The owner is vault-bound (#3061): the note is the vault's own answer,
+    // quoting the page, and never an app-provider substitute.
+    expect(note.note).toBe(LANE_VAULT_NOTE);
+    expect(note.anchor_text).toBe(PAGE_FIRST_SENTENCE);
+    expect(received.some((call) => call.method === 'POST' && call.path === '/v1/reflections')).toBe(
+      true,
+    );
     expect(
       fragments.some(
         (fragment) => fragment.kind === 'journal' && fragment.externalId === String(entryId),

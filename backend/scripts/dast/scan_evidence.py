@@ -44,19 +44,25 @@ from pathlib import Path
 
 from scripts.dast.report import EXIT_CLEAN, EXIT_HARNESS_ERROR
 
-# Uvicorn's access line, e.g.::
+# The app's own access record, as ``middleware/logging.py`` renders it, e.g.::
 #
-#     INFO:     127.0.0.1:52012 - "GET /habits/ HTTP/1.1" 200 OK
+#     2026-10-06 12:00:00,000 INFO adepthood.access [-] request_completed
+#         method=GET route=/habits/ status=200 elapsed_ms=3.10
 #
-# Anchored on the quoted request and the status that follows it rather than on
-# the prefix, which carries a level, an address and a port that all vary.
-_ACCESS_LINE = re.compile(r'"(?P<method>[A-Z]+) (?P<path>\S+) HTTP/[\d.]+" (?P<status>\d{3})')
+# (one line). uvicorn's own access line used to be read here, but it carries the
+# raw request line with its query string, so it is switched off everywhere
+# (#3064). The route is the matched *template*, so a request to an unmatched
+# path reads ``<unmatched>`` -- and an attacked probe route still reads as that
+# route, which is the property the gate needs.
+_ACCESS_LINE = re.compile(
+    r"request_completed method=(?P<method>[A-Z]+) route=(?P<path>\S+) status=(?P<status>\d{3})"
+)
 
 # The two answers the door gives. Every other status -- including a 500 -- means
 # a handler ran, which is the thing being proved here.
 DENIAL_STATUSES = frozenset({401, 403})
 
-# One parsed access line: method, path, status.
+# One parsed access line: method, route template, status.
 Request = tuple[str, str, int]
 
 
@@ -68,7 +74,8 @@ def requests_in(log_text: str) -> list[Request]:
     """Return every request the target logged.
 
     Args:
-        log_text: The contents of the target's uvicorn log.
+        log_text: The contents of the target's log (the app writes to stderr,
+            which the workflow captures alongside uvicorn's output).
 
     Returns:
         One ``(method, path, status)`` triple per access line, in log order.

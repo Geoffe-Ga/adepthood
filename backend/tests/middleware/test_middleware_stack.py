@@ -27,7 +27,8 @@ from middleware import (
     SecurityHeadersMiddleware,
     UnhandledExceptionMiddleware,
 )
-from observability import TRACE_ID_HEADER
+from observability import TRACE_ID_HEADER, UNMATCHED_ROUTE
+from tests.helpers.log_lines import records_for
 
 client = TestClient(app)
 
@@ -83,7 +84,7 @@ def test_every_middleware_side_effect_fires_on_one_request(
     exposed = response.headers.get("access-control-expose-headers", "")
     assert TRACE_ID_HEADER.lower() in exposed.lower()
     # RequestLoggingMiddleware (outermost logging layer) emitted the access record.
-    assert any(r.message == "request_completed" for r in caplog.records)
+    assert records_for(caplog.records, "request_completed")
 
 
 def test_forwarded_proto_middleware_is_the_outermost_layer() -> None:
@@ -187,7 +188,7 @@ def test_request_logging_middleware_emits_one_record_per_request(
     """The outermost logging layer, RequestLoggingMiddleware, logs a record on every call."""
     with caplog.at_level(logging.INFO, logger="adepthood.access"):
         client.get("/auth/login")
-    completed = [r for r in caplog.records if r.message == "request_completed"]
+    completed = records_for(caplog.records, "request_completed")
     assert completed, "expected at least one request_completed record"
     record = completed[-1]
     # ``LogRecord`` does not statically know about ``extra`` keys, so we
@@ -244,4 +245,6 @@ def test_request_logging_middleware_logs_inner_middleware_panic(
     failed = [r for r in caplog.records if r.message == "request_failed"]
     assert failed, "expected one request_failed record from the panic branch"
     assert getattr(failed[-1], "http_method", None) == "GET"
-    assert getattr(failed[-1], "http_path", None) == "/probe"
+    # The panic fires before routing, so no template exists: the marker is
+    # logged rather than the raw path the caller typed (#3064).
+    assert getattr(failed[-1], "http_path", None) == UNMATCHED_ROUTE

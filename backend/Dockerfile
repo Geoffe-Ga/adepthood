@@ -88,4 +88,11 @@ EXPOSE 8000
 # for the scheme, client_ip for the address.  One trust set, one parser.  The
 # flag also disarms FORWARDED_ALLOW_IPS, which would otherwise re-arm that layer
 # from the environment without any flag appearing in this CMD.
-CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --no-proxy-headers"]
+#
+# --no-access-log: uvicorn's own access line is the raw request line, query
+# string included -- and a journal search travels as ?search=<the user's words>
+# (#3064). The app's adepthood.access record (method, route template, status,
+# latency, trace id) is the only access record; observability.configure_logging
+# also disables the uvicorn.access logger, for a host that starts uvicorn
+# without this CMD.
+CMD ["sh", "-c", "python -m alembic upgrade head && python -m uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers ${WEB_CONCURRENCY:-2} --no-proxy-headers --no-access-log"]
