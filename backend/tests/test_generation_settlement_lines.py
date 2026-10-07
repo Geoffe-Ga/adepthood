@@ -24,7 +24,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
 from domain.creek_vault import CreekVaultCareEscalationError
 from main import app
 from models.goal import Goal
@@ -46,9 +46,10 @@ from services import marginalia as marginalia_service
 from services.botmason import LLMProviderError, LLMResponse
 from services.llm_pricing import estimate_cost_usd
 from services.llm_usage import OUTCOME_FOR_REFUND_REASON
+from services.reflection_boundary import ReflectionBoundary
 from services.wallet import SpendResult, StagedRefund
 from tests.helpers.log_lines import assert_no_text, production_line, records_for
-from tests.test_journal_vault_read import ReflectingVaultClient
+from tests.support.reflecting_vault import ReflectingVaultClient
 from tests.transcription_helpers import (
     JPEG_BYTES,
     SENTINEL_TEXT,
@@ -578,6 +579,8 @@ async def test_a_vault_care_escalation_settles_once_as_refunded_failed(
     monkeypatch.setattr(marginalia_service, "generate_response", _ScriptedLLM(_notes(_QUOTE)))
     vault = ReflectingVaultClient(reflect_error=CreekVaultCareEscalationError())
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    # Only a vault-bound caller's pass is answered by the vault at all (#3061).
+    app.dependency_overrides[get_reflection_boundary] = lambda: ReflectionBoundary.VAULT_BOUND
     headers, user_id = await _signup(async_client, "settle_vault_care")
     entry_id = await _create_entry(async_client, headers)
     _capture(caplog)

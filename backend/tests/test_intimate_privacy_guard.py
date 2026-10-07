@@ -31,13 +31,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
 from domain.care import CARE_TITLE
+from main import app
 from models.journal_entry import JournalClassification, JournalEntry
 from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia, MarginaliaKind
 from models.user import User
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
+from services.reflection_boundary import ReflectionBoundary
+from tests.support.reflecting_vault import ReflectingVaultClient
 
 # ---------------------------------------------------------------------------
 # Exact private-response copy (the implementation MUST match this string)
@@ -778,3 +782,39 @@ async def test_only_eligible_prior_letters_reach_the_cloud_prompt(
         assert _INTIMATE_ESSAY_SENTINEL not in captured, (
             f"prompt #{index} carries a letter about an INTIMATE entry to the cloud"
         )
+
+
+# ---------------------------------------------------------------------------
+# Vault-bound writers (#3061): the floor holds for the vault and the app alike
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_intimate_entry_under_vault_boundary_reaches_neither_vault_nor_app_provider(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A vault-bound writer's intimate entry asks no vault and no model, on either route.
+
+    The concurrent Personal->Intimate PATCH that wins the hold is pinned under
+    the same boundary by ``test_account_egress_barrier_llm``'s connected-vault
+    race; this is the fast path both routes take before any hold.
+    """
+    spy = _SpyLLM()
+    vault = ReflectingVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    app.dependency_overrides[get_reflection_boundary] = lambda: ReflectionBoundary.VAULT_BOUND
+    headers, _ = await _signup(async_client, "intimate_vault_bound")
+    entry_id = await _create_entry(async_client, headers, classification="intimate")
+    handshakes_before = vault.handshake_calls
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+
+    resonance = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    detect = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+
+    assert resonance.status_code == HTTPStatus.OK, resonance.text
+    assert resonance.json()["private"] is True
+    assert detect.status_code == HTTPStatus.OK, detect.text
+    assert detect.json() == {"items": [], "checked": False}
+    assert vault.reflect_calls == []
+    assert vault.handshake_calls == handshakes_before
+    assert spy.calls == 0

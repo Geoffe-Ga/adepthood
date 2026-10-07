@@ -582,17 +582,28 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     expect(setup).not.toContain('dependency_overrides');
   });
 
-  it('advertises only the five capabilities the two vault journeys exercise', () => {
+  it('advertises only the six capabilities the two vault journeys exercise', () => {
     // The sharpest constraint on this boundary: every added word is a new class
     // of production traffic. The deployment owner is reserved for the upload
     // and withdrawal specs, while all other accounts stay on local fallback.
+    // `reflections` is the one deliberate addition (#3061): the owner is
+    // vault-bound, so the withdrawal journey's margin note can only come from
+    // this vault -- the app provider is never asked in its place.
     const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
 
-    expect(fake).toContain("  'capabilities',\n  'upload',\n  'journal-upsert',");
-    expect(fake).toContain("  'journal-withdraw',\n  'voice-drafts',");
-    expect(fake).not.toContain("'reflections'");
+    expect(fake).toContain(
+      "  'capabilities',\n  'upload',\n  'journal-upsert',\n  'journal-withdraw',\n  'voice-drafts',\n  'reflections',\n];",
+    );
     expect(fake).not.toContain("'wheel'");
     expect(fake).not.toContain("'pipeline'");
+    expect(fake).not.toContain("'classify'");
+  });
+
+  it('serves reflections on the published request shape and an admitted ceiling only', () => {
+    const fake = read(FAKE_VAULT, 'The withdrawal journey needs a vault that reflects.');
+
+    expect(fake).toContain("const REFLECTION_REQUEST_FIELDS = ['content', 'max_notes']");
+    expect(fake).toContain('ADMITTED_TIERS.includes(ceiling)');
   });
 
   it('requires the contract version on capability routes and admits no third tier', () => {

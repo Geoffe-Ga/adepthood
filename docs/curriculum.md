@@ -35,6 +35,10 @@ credentials surface.)
 | Loader + dataset tests | `backend/tests/test_curriculum.py` |
 | Seeder golden-value tests | `backend/tests/test_seed_stages.py` |
 | Course-copy pins + archetype drift guard | `backend/tests/test_vendored_course_copy_pins.py` |
+| Course completeness gate + inventory generator (#3070) | `backend/scripts/content_completeness.py` |
+| Recorded Course content gaps (hand-reviewed) | `backend/src/curriculum/content_gaps.json` |
+| External-link inventory (generated, not a bibliography) | `backend/src/curriculum/source_references.json` |
+| Practice-recommendation inventory (generated, unreviewed) | `backend/src/curriculum/practice_recommendations.json` |
 
 ## Provenance
 
@@ -211,6 +215,13 @@ running database.
    CI runs that `--check` in the `content-drift` job of `backend-ci.yml`, right
    after `sync_content --check`, so a re-pin that skips this step fails there.
    If a supersession has gone stale, the generator refuses to build; see below.
+   Regenerate the Course inventories too, and clear any gap the re-pin fixed
+   (see [Course content completeness gate](#course-content-completeness-gate-3070)):
+
+   ```bash
+   cd backend && python -m scripts.content_completeness
+   cd backend && python -m scripts.content_completeness --check
+   ```
 4. **Run the parity and consumer tests.** `backend/tests/test_stage_correspondence.py`
    holds `archetypal_wavelength.json`'s copy of the seven fields equal to the
    artifact, stage by stage, and pins the #1637 stages literally.
@@ -261,11 +272,12 @@ No migration is needed for a data change.
 **Verify** after deploy by reading `GET /stages/correspondence`. Each stage's
 `provenance` names `source_repo`, `source_sha` (the new pin), `source_path`,
 `source_sha256` and `schema_version`, and `reconciled_at` shows which rows
-moved. Before merging, the three drift gates must all exit 0:
+moved. Before merging, the four drift gates must all exit 0:
 
 ```bash
 cd backend && python -m scripts.sync_content --check
 cd backend && python -m scripts.build_stage_correspondence --check
+cd backend && python -m scripts.content_completeness --check
 python scripts/backend/export_openapi.py --check
 ```
 
@@ -279,6 +291,63 @@ Re-pin the previous upstream SHA (step 2 with the old `REF`), regenerate
 and stamps a fresh `reconciled_at` on each one that changed. Because no
 migration is involved, there is nothing to downgrade. A supersession added or
 removed in the bad change is reverted in the same commit.
+
+## Course content completeness gate (#3070)
+
+`sync_content --check` proves the vendored tree is the pinned commit, and
+`build_stage_correspondence --check` proves the correspondence is generated
+from it. Neither proves the Course a reader is served is complete.
+`backend/scripts/content_completeness.py` does, over exactly the files the
+manifest serves (chapters, stage intros and site resources; `backup/` and the
+export tables of contents are not graded). Every stage intro shares its file
+with chapter 1 upstream, so each file is graded once.
+
+| Check | Fails when | Waivable? |
+| ----- | ---------- | --------- |
+| `stage_coverage` | a stage 1–10 lacks exactly one intro or any chapter, or a stage is out of range | no |
+| `duplicate_ref` | a chapter id, per-stage chapter slug, intro id or resource slug repeats | no |
+| `thin_chapter` | a chapter body has fewer than `MIN_CHAPTER_WORDS` (50) words | yes |
+| `numbering_gap` | a stage's chapter numbers skip (`<stage>:<n>`) or repeat (`<stage>:<n>:duplicate`) | yes |
+| `broken_relative_link` | a relative link or image leaves the content dir, is missing, or its `.md#fragment` names no heading | no |
+| `broken_anchor` | an in-file `#anchor` names no heading of that file | no |
+| `insecure_external_link` | an external link is plain `http` | no |
+| `redirect_wrapper_link` | a link is a `google.com/url` redirect wrapper | no |
+
+**Word floor.** Words are counted in the served body (frontmatter stripped
+exactly as `services.content_repository` does, which a parity test pins) with
+heading lines excluded. On the pinned tree teal-7 has 0, orange-7 has 29 and the
+next-thinnest chapter (orange-13) has 75, so 50 separates a missing body from a
+short one with room either side.
+
+**Recording a gap.** Only content the owner writes upstream is waivable. A
+thin chapter or numbering gap that cannot be fixed in the same change is
+listed in `backend/src/curriculum/content_gaps.json` with `kind`, `key`,
+`reason`, `owner_review: "pending"`, `upstream` and `issue`; the gate refuses
+any other kind, a blank field, a duplicate or an unknown key. The generator
+never writes this file. Fixing a gap means editing `aptitude-course`, re-pinning
+(step 2 above), and deleting the entry in the same PR: a recorded gap that no
+longer reproduces fails the gate as stale. The current record lists teal-7
+(heading-only), orange-7 (a 29-word framing chapter) and beige chapter 12
+(missing), all pending the owner.
+
+**Inventories.** `python -m scripts.content_completeness` regenerates two files
+and then runs the gate; `--check` writes nothing and also fails when either
+committed file differs from a regeneration.
+
+- `source_references.json` lists every external link in served content, keyed
+  by file and the refs that serve it, with the pinned `CONTENT_VERSION` sha. It
+  is **not a bibliography**: it carries no author, edition or rights status,
+  and a link is not a citation. It is the input the owner's bibliography and
+  rights review start from.
+- `practice_recommendations.json` lists every chapter whose title names a
+  practice or protocol (`id`, `stage`, `chapter`, `title`), each with status
+  `unreviewed`. Regeneration overwrites the file, so reviewed mappings to
+  practice presets (or an explicit "unsupported") belong in a separate,
+  owner-reviewed sidecar keyed by chapter id, not in this file.
+
+CI runs `content_completeness --check` in the `content-drift` job after the two
+checks above; `tests/scripts/test_stage_correspondence_drift_gate.py` fails if
+the step is removed, reordered, or allowed to swallow its exit code.
 
 ## Consumers
 

@@ -432,7 +432,8 @@ async def test_a_failed_draft_ships_no_prose_to_error_monitoring(
         )
 
     assert resp.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
-    _assert_one_clean_event(events, path, _DRAFT_SENTINEL)
+    # The event names the route template, not the report's public id (#3064).
+    _assert_one_clean_event(events, "/admin/feedback/{public_id}/draft", _DRAFT_SENTINEL)
     assert _DRAFT_SENTINEL not in _emitted(caplog.records)
 
 

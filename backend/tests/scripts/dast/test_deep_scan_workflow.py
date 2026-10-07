@@ -293,11 +293,17 @@ def test_the_scan_proves_it_got_past_the_front_door(workflow: str) -> None:
 
 
 def test_the_instance_records_the_traffic_that_evidence_is_read_from(workflow: str) -> None:
-    """At ``warning`` uvicorn logs no request lines, and the evidence check reads nothing."""
+    """The evidence is the app's INFO access record on stderr; nothing may silence it.
+
+    A raised ``LOG_LEVEL`` drops the record, and an uncaptured stderr loses it:
+    either way the evidence check reads nothing and every scan looks identical.
+    """
     live = without_comment_lines(workflow)
 
     assert "--log-level info" in live, live
     assert "--log-level warning" not in live, live
+    assert "LOG_LEVEL" not in live, live
+    assert '> "$UVICORN_LOG" 2>&1' in live, live
 
 
 def test_the_findings_are_converted_and_summarised_in_one_step(workflow: str) -> None:
