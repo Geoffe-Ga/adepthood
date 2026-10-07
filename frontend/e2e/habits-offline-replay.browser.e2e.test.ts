@@ -147,6 +147,8 @@ interface CompletionLog {
   sinceMark: () => PostedCompletion[];
   /** Exactly `count` responses since the mark, and no more after a quiet window. */
   settleAt: (count: number, because: string) => Promise<PostedCompletion[]>;
+  /** The same, counting only responses carrying idempotency key `key`. */
+  settleOnKey: (key: string, count: number, because: string) => Promise<PostedCompletion[]>;
 }
 
 /** Record every POST /goal_completions/ the SERVER answered: a failed fetch has no response. */
@@ -164,19 +166,24 @@ function completionLog(page: Page): CompletionLog {
     });
   });
   const sinceMark = (): PostedCompletion[] => seen.slice(marked);
+  const settle = async (
+    matching: () => PostedCompletion[],
+    count: number,
+    because: string,
+  ): Promise<PostedCompletion[]> => {
+    await expect.poll(() => matching().length, { message: because }).toBeGreaterThanOrEqual(count);
+    await page.waitForTimeout(SETTLE_MS);
+    expect(matching().length, because).toBe(count);
+    return matching();
+  };
   return {
     mark: () => {
       marked = seen.length;
     },
     sinceMark,
-    settleAt: async (count, because) => {
-      await expect
-        .poll(() => sinceMark().length, { message: because })
-        .toBeGreaterThanOrEqual(count);
-      await page.waitForTimeout(SETTLE_MS);
-      expect(sinceMark().length, because).toBe(count);
-      return sinceMark();
-    },
+    settleAt: (count, because) => settle(sinceMark, count, because),
+    settleOnKey: (key, count, because) =>
+      settle(() => sinceMark().filter((post) => post.key === key), count, because),
   };
 }
 
@@ -541,11 +548,24 @@ test('a head entry the server keeps refusing past the attempt cap and a week is 
   }
   expect(completionsOf(await readHabit(request, token, poisonId))).toEqual([]);
   expect(await readScoped(page, REPLAY_STATE_KEY_BASE)).toBeNull();
-  const answered = log.sinceMark();
-  expect(answered.filter((post) => post.key === keptKey).map((post) => post.ok)).toEqual([true]);
-  const refusals = answered.filter((post) => post.key === poisonKey);
+  // The refused key is retried by the transport, so the total is not fixed;
+  // the kept key's count is, and it is held for the same quiet window.
+  const kept = await log.settleOnKey(keptKey, 1, 'the entry behind the head posts exactly once');
+  expect(kept.map((post) => post.ok)).toEqual([true]);
+  const refusals = log.sinceMark().filter((post) => post.key === poisonKey);
   expect(refusals.length).toBeGreaterThan(0);
   expect(refusals.every((post) => post.status === HTTP_SERVER_ERROR)).toBe(true);
+
+  // Given up on, not rejected outright: the quarantine says which, and names the entry.
+  const quarantine = (await readScoped(page, DROPPED_KEY_BASE)) as Array<
+    Record<string, unknown>
+  > | null;
+  expect(quarantine).toHaveLength(1);
+  expect(quarantine![0]).toMatchObject({
+    reason: 'gave_up',
+    status: HTTP_SERVER_ERROR,
+    operation_id: poisonOp,
+  });
 
   await openHabits(page);
   await expect(page.getByRole('alert').filter({ hasText: DROPPED_ONE })).toBeVisible();
