@@ -47,7 +47,7 @@ describe('unlockTimeline', () => {
   });
 
   it('falls back to the condition when no anchor is set', () => {
-    expect(unlockTimeline(null)).toContain('reaches it');
+    expect(unlockTimeline(null)).toBe('Opens with the course');
   });
 });
 

@@ -17,7 +17,7 @@ export const journeyRead = (
 
 /** "Opens in N days" / already-reached copy for a stage the calendar has not reached. */
 export const unlockTimeline = (daysUntil: number | null): string => {
-  if (daysUntil === null) return 'Opens when the course reaches it';
+  if (daysUntil === null) return 'Opens with the course';
   if (daysUntil <= 0) return 'Opening now';
   return `Opens in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
 };

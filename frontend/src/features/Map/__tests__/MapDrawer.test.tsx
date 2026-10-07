@@ -321,7 +321,7 @@ describe('MapDrawer', () => {
     );
     const unlockLine = tree.root.findByProps({ testID: 'map-drawer-unlock-9' });
     expect(unlockLine.props.children).toBe(unlockTimeline(null));
-    expect(unlockLine.props.children).toBe('Opens when the course reaches it');
+    expect(unlockLine.props.children).toBe('Opens with the course');
   });
 
   it('fires onSelectStage with the stage number when an unlocked row is tapped', () => {

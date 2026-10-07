@@ -141,7 +141,7 @@ const BADGE_CORNER_STYLE: Readonly<Record<LabelCorner, StyleProp<ViewStyle>>> = 
 };
 
 /**
- * "Unlocks in N days" / unlock-condition copy for a locked stage, computed from
+ * "Opens in N days" / opening-condition copy for a locked stage, computed from
  * the existing calendar drip (no new backend). Falls back to the condition when
  * no program anchor is set. Its text aligns to the note's corner so the copy
  * reads away from the wave strand.
