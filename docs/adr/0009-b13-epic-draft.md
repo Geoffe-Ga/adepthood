@@ -47,13 +47,20 @@ PR, and update ADR 0009's Context section there too.
 - Remove the server `LLM_API_KEY` fallback in
   `services/botmason.py::resolve_chat_api_key` for any request carrying a
   person's content.
+- **Move BYOK client-side.** The device calls the vendor directly with the
+  person's key. Retire the `X-LLM-API-Key` header and the server-side BYOK
+  call. Today BYOK is server-proxied, so the server sees the key and the
+  plaintext on every BYOK call; that is a known gap this phase closes. Where
+  a browser cannot reach a vendor directly, the feature is unavailable on web
+  rather than relayed.
 - Credits route only to the vault-local model or a no-retention runtime we
   control. Without credits or BYOK, refuse, with no fallback.
 - Every receipt names payer and location (B07 provenance).
 - **Exit tests:** a provider-factory and socket spy records zero cloud calls
   without BYOK across chat, marginalia, essays, completion detection,
   classification and transcription. A credit debit appears only beside a
-  non-cloud receipt.
+  non-cloud receipt. A BYOK request recorded at our server carries no
+  synthetic canary and no `X-LLM-API-Key` header.
 - **Owed:** the privacy and vendor-terms review, and B01 copy, before the
   promise changes.
 

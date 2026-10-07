@@ -418,7 +418,7 @@
     },
     "BD": {
       "boundary": {
-        "value": "Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key.",
+        "value": "Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server.",
         "source": "owner:2026-10-07"
       },
       "key_custody": {
@@ -434,7 +434,7 @@
         "source": "repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS"
       },
       "inference_location": {
-        "value": "Device first; then the person's vault-local model or a no-retention runtime we control (paid by credits); cloud only with the person's own key.",
+        "value": "Device first; then the person's vault-local model or a no-retention runtime we control (paid by credits); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a).",
         "source": "owner:2026-10-07"
       },
       "supported_platforms": {
@@ -450,8 +450,8 @@
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {
-        "value": "Defeats DB thief, backup holder, host, privileged operator and stored-data subpoena for stored content; a compelled web update and a compromised device remain; runtime-we-control inference is not operator-blind while it runs.",
-        "source": "repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext"
+        "value": "Defeats DB thief, backup holder, host, privileged operator and stored-data subpoena for stored content; a compelled web update and a compromised device remain; runtime-we-control inference is not operator-blind while it runs; until phase (a) our server relays BYOK calls and sees their plaintext.",
+        "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
       },
       "budget_usd_per_active_account_month": {
         "status": "unknown",

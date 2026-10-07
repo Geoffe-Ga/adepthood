@@ -98,6 +98,17 @@ vault-local inference (D), with BYOK cloud as an explicit opt-in.
    per-feature opt-in. Without such a key, **none of their data reaches a
    cloud model**. The app's own cloud key never carries a person's journal
    content.
+
+   **BYOK calls go from the person's device straight to the vendor.** This
+   follows directly from the premise. If the server relayed a BYOK call, it
+   would see the plaintext it forwards. So the person's key and the content
+   of a BYOK call never pass through our server.
+
+   **Known gap until phase (a) lands:** today the client sends the person's
+   key to our backend in the `X-LLM-API-Key` header
+   (`frontend/src/api/index.ts`). The server then calls the vendor itself
+   (`services/botmason.py::resolve_chat_api_key`), so it sees both the key
+   and the plaintext on every BYOK call.
 4. **BotMason credits pay for non-cloud inference only.** That means the
    vault-local model (B05, [Creek-Vault#1849](https://github.com/Geoffe-Ga/Creek-Vault/issues/1849))
    or a no-retention runtime we control. Credits never pay for a call made
@@ -124,6 +135,7 @@ the option once that option's gates have passed.
 | Malicious or compelled client update | reads | reads | reads on web, harder on signed native | reads on web | reads on web, harder on signed native | reads | reads on web until signed or pinned builds ship; harder on signed native |
 | XSS in the web client | reads | reads | reads open sessions | reads open sessions | reads open sessions | reads | reads open sessions; CSP enforcement narrows it |
 | Compromised device | reads | reads | reads | reads | reads | reads | reads |
+| Our server relaying a BYOK call | reads (relays today) | reads | blocked once BYOK is client-direct | blocked once BYOK is client-direct | blocked once BYOK is client-direct | reads | **reads today** (server-proxied BYOK, a known gap); blocked once phase (a) makes BYOK client-direct |
 | Subpoena to the operator (stored data) | reads | reads | ciphertext only | ciphertext only | nothing | reads | ciphertext and metadata only |
 | Malicious support request | reads | reads | cannot help | cannot help | cannot help | reads | cannot help (no escrow); D03 governs what support may do |
 
@@ -237,15 +249,15 @@ the option once that option's gates have passed.
 
 *Selected: user-held keys plus device-side and vault-local inference, BYOK cloud as explicit opt-in.*
 
-- **Boundary:** Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key. (`owner:2026-10-07`)
+- **Boundary:** Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server. (`owner:2026-10-07`)
 - **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07`)
 - **Recovery:** **unknown; owner input required.** See D03 below.
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
-- **Inference location:** Device first; then the person's vault-local model or a no-retention runtime we control (paid by credits); cloud only with the person's own key. (`owner:2026-10-07`)
+- **Inference location:** Device first; then the person's vault-local model or a no-retention runtime we control (paid by credits); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07`)
 - **Supported platforms:** Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve, mitigated by signed or pinned builds. (`owner:2026-10-07`)
 - **Client delivery and update trust:** Native: store-signed builds. Web: an enforced CSP plus signed or pinned builds; the CSP is report-only today. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** All 18 EncryptedString columns that carry journal prose, DERIVED_FROM_PROSE plaintext, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
-- **Threat actors:** Defeats DB thief, backup holder, host, privileged operator and stored-data subpoena for stored content; a compelled web update and a compromised device remain; runtime-we-control inference is not operator-blind while it runs. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
+- **Threat actors:** Defeats DB thief, backup holder, host, privileged operator and stored-data subpoena for stored content; a compelled web update and a compromised device remain; runtime-we-control inference is not operator-blind while it runs; until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
 - **Reopen triggers:** Key-non-possession prototype fails; no web anchor is buildable; D03 user testing shows unacceptable loss; B09 finds no supported non-cloud configuration. (`owner:2026-10-07`)
@@ -454,16 +466,25 @@ review gate.
 ### Phase (a): BYOK-only cloud plus non-cloud credits
 
 Remove the server `LLM_API_KEY` path for anything carrying a person's
-content. Route credit-funded requests only to the vault-local model or a
-no-retention runtime we control. Refuse otherwise, with no fallback. Label
-every receipt with payer and location (B07). This composes with #3096.
+content. **Move BYOK inference client-side:** the device calls the vendor
+directly with the person's key. Retire the `X-LLM-API-Key` header and the
+server-side BYOK call in `resolve_chat_api_key`, so neither the key nor the
+content of a BYOK call reaches our server. Whether a browser can call each
+vendor directly is checked in this phase. Where it cannot, that feature is
+unavailable on web; it does not fall back to a server relay.
+
+Route credit-funded requests only to the vault-local model or a no-retention
+runtime we control. Refuse otherwise, with no fallback. Label every receipt
+with payer and location (B07). This composes with #3096.
 
 - **Shippable on its own:** yes, without crypto. It only narrows where
   content may go. It removes cloud AI for people without BYOK until B05 ships.
 - **Exit tests:** a provider-factory and socket spy records zero cloud calls
   without BYOK on every route (chat, marginalia, essays, detection,
   classification, transcription). A credit debit is present only beside a
-  non-cloud receipt.
+  non-cloud receipt. A BYOK request recorded at the Adepthood server carries
+  no synthetic canary and no `X-LLM-API-Key` header, because the BYOK call
+  went from the device to the vendor.
 - **Owed before release:** the privacy and vendor-terms review, and B01's
   copy.
 

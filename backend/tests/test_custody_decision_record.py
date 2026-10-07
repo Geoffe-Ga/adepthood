@@ -612,3 +612,23 @@ def test_b13_epic_draft_exists_and_points_at_the_record() -> None:
 
     assert "0009-privacy-custody-and-inference-architecture.md" in draft
     assert "test_custody_codec_has_no_per_principal_key" in draft
+
+
+def test_custody_adr_records_the_server_proxied_byok_gap() -> None:
+    """Under the premise, BYOK goes device-to-vendor; today it is relayed, so say so.
+
+    While the client still sends the person's key to our server in the
+    ``X-LLM-API-Key`` header, the record must name that relay as a known gap
+    and phase (a) must require the client-direct path. When phase (a) retires
+    the header, this fails: rewrite the gap note as closed, here and in ADR
+    0009, in the same change.
+    """
+    text = _flat(_adr_text())
+    client = (_REPO_ROOT / "frontend" / "src" / "api" / "index.ts").read_text(encoding="utf-8")
+    phase_a = _flat(text[text.index("### Phase (a)") : text.index("### Phase (b)")])
+
+    assert "'X-LLM-API-Key'" in client
+    assert "Known gap until phase (a) lands" in text
+    assert "BYOK calls go from the person's device straight to the vendor" in text
+    assert "Move BYOK inference client-side" in phase_a
+    assert "no `X-LLM-API-Key` header" in phase_a
