@@ -206,3 +206,33 @@ The operational procedure and rollback matrix live in
   they are not described as no-escrow, user-held, or confidential compute.
 - Full private Higher-Self behavior remains unavailable for INTIMATE material
   until a separately specified attested path ships.
+
+## Amended by ADR 0009 (2026-10-07)
+
+On 2026-10-07 the owner decided that **the operator cannot read people's
+journal entries**.
+[ADR 0009](0009-privacy-custody-and-inference-architecture.md) records the
+decision. The text above stays as written, because it truthfully describes
+the launch service. This section states exactly what changes.
+
+- **Decision 4, launch custody.** `provider_managed` stays an accurate
+  description of what an ordinary Fly vault does today: provider-managed
+  custody is not operator-blind. It **stops being an acceptable resting
+  place for journal content.** Under ADR 0009, journal content in a managed
+  vault is ciphertext under the person's user-held key. Provider-managed
+  custody remains for operational state only (credentials, job state,
+  configuration). Any vault-local inference that sees plaintext falls under
+  ADR 0009's open RUNTIME question.
+- **Decision 6, what a VM is not.** Items 1 and 2 (a user-held key with no
+  escrow, and client-side ciphertext through Adepthood) are now **required
+  for all journal content**, not only INTIMATE. Items 3-5 (attestation, key
+  release into an enclave, and confidential inference) are **not selected**.
+  They return only through ADR 0009's reopen triggers. INTIMATE stays
+  skip-only for inference until ADR 0009's phase (d) moves a feature onto the
+  device or into a vault the owner has approved under RUNTIME.
+- **Decisions 1-3, 5, 7 and 8** (on-demand activation, the control plane,
+  scale-to-zero, the cost floor, the hosting revisit and server gating) are
+  unchanged.
+
+Nothing here is a public claim. Each claim waits for B24
+([#3076](https://github.com/Geoffe-Ga/adepthood/issues/3076)).

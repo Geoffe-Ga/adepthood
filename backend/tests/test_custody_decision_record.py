@@ -575,6 +575,26 @@ def test_custody_adr_states_provider_managed_is_not_operator_blind(option: str) 
     assert _card()["unlocks_public_claims"] is False
 
 
+@pytest.mark.parametrize(("filename", "kept"), sorted(_AMENDED_ADRS.items()))
+def test_non_compliant_adrs_carry_the_amendment_without_rewriting_history(
+    filename: str, kept: str
+) -> None:
+    """ADR 0002 and 0007 are amended by an appended section; the original stands."""
+    text = (_ADR_DIR / filename).read_text(encoding="utf-8")
+    amendment = text[text.index(_AMENDMENT_HEADING) :]
+
+    assert kept in text
+    assert text.index(kept) < text.index(_AMENDMENT_HEADING)
+    assert "0009-privacy-custody-and-inference-architecture.md" in amendment
+
+
+def test_adr_0007_amendment_keeps_the_status_quo_phrase() -> None:
+    """The amended managed-vault record still describes ordinary Fly truthfully."""
+    text = (_ADR_DIR / "0007-demand-provisioned-confidential-vaults.md").read_text(encoding="utf-8")
+
+    assert _NOT_OPERATOR_BLIND in _flat(text[text.index(_AMENDMENT_HEADING) :])
+
+
 def test_implementation_plan_has_four_independently_shippable_phases() -> None:
     """Phases (a)-(d) are in the record, in order, and mirrored in the twin."""
     text = _adr_text()

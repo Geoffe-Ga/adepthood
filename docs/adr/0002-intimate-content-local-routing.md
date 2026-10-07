@@ -187,3 +187,33 @@ Nothing in Decisions 1–4 depends on which protocol crosses the seam.
 The chokepoint, the custody model, and the intimate-tier rule are
 claims about where routing is decided and who holds the keys, and
 those survive the transport swap untouched.
+
+## Amended by ADR 0009 (2026-10-07)
+
+On 2026-10-07 the owner decided that **the operator cannot read people's
+journal entries**.
+[ADR 0009](0009-privacy-custody-and-inference-architecture.md) records the
+decision. The text above stays as written. This section states exactly what
+changes.
+
+- **Decision 2, key custody.** User-held keys with no operator escrow are no
+  longer a future, Creek-volume-only design. They become the custody model for
+  **the journal itself**, meaning Adepthood's own database and every prose
+  derivative in it. Confidential compute (TEE) is **not** required for that
+  guarantee and is not selected. Keys are generated on the person's device,
+  and the server stores ciphertext only.
+- **Decision 3, routing.** BYOK is no longer a supplement to an app-paid
+  cloud path. It is the **only** way any of a person's content reaches a
+  cloud model. Without their own key, none of their data reaches one. Within
+  BYOK, the tier rule is unchanged: INTIMATE never reaches the cloud, and
+  Creek's `ModelRouter` stays the single chokepoint for vault-side routing.
+  BotMason credits fund only non-cloud inference.
+- **Decision 4, recovery.** "No operator escrow and no operator-assisted
+  recovery reset" is kept and now applies to the journal. The specific
+  passphrase plus one-time recovery-key mechanism is **no longer decided**. It
+  is reopened as D03 (an open owner question in ADR 0009), with this text as
+  prior art. Account and password reset cannot recover the data key.
+- **Decision 1 and the INTIMATE skip-only interim** are unchanged.
+
+Nothing here is a public claim. Each claim waits for B24
+([#3076](https://github.com/Geoffe-Ga/adepthood/issues/3076)).
