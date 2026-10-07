@@ -16,6 +16,7 @@
 // never reached and the failure was invisible in the logs as well as the room.
 
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { Platform } from 'react-native';
 
 import type { AudioAdapter, CueKind, IntervalBellTone } from '../types';
 
@@ -148,6 +149,23 @@ interface PlayableSound {
   seekTo: (seconds: number) => Promise<void>;
   play: () => void;
   remove: () => void;
+  /** expo-audio's paused state; on web it mirrors the media element synchronously. */
+  readonly paused?: boolean;
+}
+
+/**
+ * Whether the browser refused the play just requested.
+ *
+ * expo-audio's web player calls the media element's `play()` and drops the
+ * promise it returns, and its `seekTo` never rejects, so a blocked autoplay
+ * (NotAllowedError) never reaches a catch. It is still observable without a
+ * timer: the HTML `play()` algorithm refuses *before* it clears `paused`, and
+ * an allowed play clears it before returning, so an element still paused
+ * straight after `play()` was refused. Native players settle `paused`
+ * asynchronously, so the check is web-only.
+ */
+function playbackRefused(sound: PlayableSound): boolean {
+  return Platform.OS === 'web' && sound.paused === true;
 }
 
 interface SoundEntry {
@@ -190,8 +208,8 @@ function onceDeferred(onUnavailable?: () => void): UnavailableReporter {
  * to a no-op and a single warning is emitted (subsequent plays do not re-warn).
  *
  * `onUnavailable` is told (once) when a bell *fails* — the player cannot be
- * built, or a play rejects (e.g. blocked web autoplay) — so the session can say
- * so. A cue that is silent by design (the metronome tick) is not a failure and
+ * built, a play throws, or the browser refuses the play (blocked web autoplay,
+ * see {@link playbackRefused}) — so the session can say so. A cue that is silent by design (the metronome tick) is not a failure and
  * never reports.
  */
 export function createExpoAudioAdapter(onUnavailable?: () => void): AudioAdapter {
@@ -254,6 +272,9 @@ async function playCue(
   try {
     await entry.sound.seekTo(0);
     entry.sound.play();
+    // Not marked failed: a refused autoplay can be allowed on a later play
+    // (after a user gesture), so the cue keeps trying.
+    if (playbackRefused(entry.sound)) report();
   } catch (err) {
     markFailed(entry, key, err);
     report();

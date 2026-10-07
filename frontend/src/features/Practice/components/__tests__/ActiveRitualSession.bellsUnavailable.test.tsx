@@ -1,6 +1,6 @@
 /**
- * When the bells cannot play (the audio player fails to construct, or a play
- * rejects — e.g. blocked web autoplay), the session says so without blocking:
+ * When the bells cannot play (the audio player fails to construct, or the
+ * browser refuses a play — blocked web autoplay), the session says so without blocking:
  * the timer still runs, completes and saves (#3072 AC10). The metronome's
  * deliberate silence is not a failure and must not raise the notice.
  */
@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { act, fireEvent, render } from '@testing-library/react-native';
 import { createAudioPlayer } from 'expo-audio';
 import React from 'react';
+import { Platform } from 'react-native';
 
 import type { PracticeSessionCreate, PracticeSessionResponse, UserPractice } from '@/api';
 import ActiveRitualSession, {
@@ -54,6 +55,25 @@ function renderSession(config: ModeConfig) {
   );
 }
 
+/**
+ * A player shaped like expo-audio's web `AudioPlayerWeb`: `play()` returns
+ * void and drops the media element's `play()` promise, and `seekTo` only
+ * assigns `currentTime`, so neither ever rejects. A blocked autoplay surfaces
+ * only as the element staying `paused` after `play()` (the HTML algorithm
+ * refuses before it clears `paused`).
+ */
+function webPlayer(allowed: boolean) {
+  const sound = {
+    paused: true,
+    seekTo: () => Promise.resolve(),
+    play: (): void => {
+      if (allowed) sound.paused = false;
+    },
+    remove: () => undefined,
+  };
+  return sound;
+}
+
 async function flushMicrotasks(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
@@ -62,6 +82,7 @@ async function flushMicrotasks(): Promise<void> {
 
 describe('ActiveRitualSession bells-unavailable notice', () => {
   const player = createAudioPlayer as jest.Mock;
+  const originalOS = Platform.OS;
   let warn: ReturnType<typeof jest.spyOn>;
 
   beforeEach(() => {
@@ -73,6 +94,7 @@ describe('ActiveRitualSession bells-unavailable notice', () => {
   });
 
   afterEach(() => {
+    Platform.OS = originalOS;
     player.mockReset();
     warn.mockRestore();
     jest.useRealTimers();
@@ -100,12 +122,9 @@ describe('ActiveRitualSession bells-unavailable notice', () => {
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the notice when a bell play rejects', async () => {
-    player.mockImplementation(() => ({
-      seekTo: () => Promise.reject(new Error('autoplay blocked')),
-      play: () => undefined,
-      remove: () => undefined,
-    }));
+  it('shows the notice when the browser refuses to play a bell', async () => {
+    Platform.OS = 'web';
+    player.mockImplementation(() => webPlayer(false));
     const { getByTestId, queryByTestId } = renderSession({
       mode: 'meditation_timer',
       duration_minutes: 1,
@@ -120,6 +139,40 @@ describe('ActiveRitualSession bells-unavailable notice', () => {
     await flushMicrotasks();
 
     expect(getByTestId('ritual-bells-unavailable')).toBeTruthy();
+  });
+
+  it('stays quiet when the browser plays the bell', async () => {
+    Platform.OS = 'web';
+    player.mockImplementation(() => webPlayer(true));
+    const { getByTestId, queryByTestId } = renderSession({
+      mode: 'meditation_timer',
+      duration_minutes: 1,
+    });
+    act(() => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(queryByTestId('ritual-bells-unavailable')).toBeNull();
+  });
+
+  it('does not read a native player still settling as a refusal', async () => {
+    // Native players flip `paused` asynchronously, so a just-started native
+    // bell can still read paused; only the web element answers synchronously.
+    Platform.OS = 'ios';
+    player.mockImplementation(() => webPlayer(false));
+    const { getByTestId, queryByTestId } = renderSession({
+      mode: 'meditation_timer',
+      duration_minutes: 1,
+    });
+    act(() => {
+      fireEvent.press(getByTestId('ritual-start'));
+    });
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(queryByTestId('ritual-bells-unavailable')).toBeNull();
   });
 
   it('a working player on a metronome leaves the notice absent (its silence is by design)', async () => {
