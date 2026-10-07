@@ -72,6 +72,8 @@ import {
   type CorpusConsentT,
   type CorpusInvitationT,
   type VoiceDraftT,
+  type MarginaliaSourceT,
+  type PassProvenanceT,
   type VoiceDraftListT,
   type VoiceReadinessT,
   type CompletionTargetTypeT,
@@ -1657,6 +1659,17 @@ export interface Marginalia {
   status: MarginaliaStatus;
   created_at: string;
   updated_at: string;
+  /**
+   * Which side answered the note and its letter, as the server recorded it
+   * (#3062). Optional and nullable: a note written before receipts existed, or
+   * served by an older server, has none -- render it as "Source not recorded"
+   * and never infer it from the vault connection.
+   */
+  source?: MarginaliaSourceT | null;
+  source_provider?: string | null;
+  source_model?: string | null;
+  essay_source?: MarginaliaSourceT | null;
+  receipt_version?: number | null;
 }
 
 /**
@@ -1760,6 +1773,8 @@ export interface ResonanceResponse {
   related_praxis?: RelatedPraxis[];
   /** Recurring corpus patterns this reflection touched; absent on legacy responses. */
   related_eddies?: RelatedEddy[];
+  /** Which side answered each operation and who paid (#3062); absent on legacy responses. */
+  provenance?: PassProvenanceT | null;
 }
 
 export interface MarginaliaListResponse {

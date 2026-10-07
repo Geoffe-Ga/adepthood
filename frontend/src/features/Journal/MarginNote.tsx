@@ -3,12 +3,15 @@
  * refers to. Presentational: a serif card with a kind pin (in the kind accent),
  * the note text, and a subtle open affordance. Stale notes render dimmed and
  * show a caption noting the passage has changed. Tapping signals ``onOpen``.
+ * A caption under the note says which side answered it, as the server recorded
+ * it (#3062) -- "Source not recorded" when it did not.
  */
 import React from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
 
 import { usePressScale } from './motion';
 import { paperMarginCard } from './noteCards';
+import { sourceLabel } from './sourceLabel';
 import { STALE_OPACITY } from './staleTreatment';
 
 import type { Marginalia } from '@/api';
@@ -45,6 +48,9 @@ function MarginNote({ note, onOpen }: MarginNoteProps): React.JSX.Element {
             The passage this noted has changed.
           </Text>
         ) : null}
+        <Text style={styles.sourceCaption} testID={`margin-note-source-${note.id}`}>
+          {sourceLabel(note.source)}
+        </Text>
         <Text style={styles.open}>Open</Text>
       </TouchableOpacity>
     </Animated.View>
@@ -70,6 +76,11 @@ const styles = StyleSheet.create({
   staleCaption: {
     ...editorialType.caption,
     fontStyle: 'italic',
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(0.5),
+  },
+  sourceCaption: {
+    ...editorialType.caption,
     color: colors.paper.inkSoft,
     paddingTop: spacing(0.5),
   },

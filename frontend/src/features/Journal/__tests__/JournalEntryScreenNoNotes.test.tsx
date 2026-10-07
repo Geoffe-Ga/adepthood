@@ -165,3 +165,42 @@ describe('JournalEntryScreen — a pass that yields no notes', () => {
     expect(queryByTestId('journal-resonance-no-notes')).toBeNull();
   });
 });
+
+describe('JournalEntryScreen — the pass names its source (#3062)', () => {
+  function provenance(source: 'creek_vault' | 'app_provider' | 'demo') {
+    return {
+      notes: { source, provider: null, model: null, receipt_version: 1 },
+      detection: { source: 'none' as const, provider: null, model: null, receipt_version: 1 },
+      detection_checked: false,
+      paid_by: 'free' as const,
+    };
+  }
+
+  it('flags a demo pass before any one note is read', async () => {
+    const { findByTestId } = await runPass(
+      payload({ marginalia: [marginNote()], provenance: provenance('demo') }),
+    );
+
+    expect((await findByTestId('resonance-pass-source')).props.children).toMatch(/^Demo/);
+  });
+
+  it('names which source answered an empty pass, beside its reason', async () => {
+    const { findByTestId } = await runPass(
+      payload({ no_notes_message: NO_NOTES, provenance: provenance('creek_vault') }),
+    );
+
+    expect((await findByTestId('resonance-pass-source')).props.children).toBe(
+      'From your Creek vault',
+    );
+    expect((await findByTestId('journal-resonance-no-notes')).props.children).toBe(NO_NOTES);
+  });
+
+  it('adds no pass line to an ordinary pass whose notes carry their own labels', async () => {
+    const { findByText, queryByTestId } = await runPass(
+      payload({ marginalia: [marginNote()], provenance: provenance('app_provider') }),
+    );
+
+    await findByText('You return to water.');
+    expect(queryByTestId('resonance-pass-source')).toBeNull();
+  });
+});

@@ -76,3 +76,24 @@ describe('MarginNote', () => {
     expect(onOpen).toHaveBeenCalledWith(n);
   });
 });
+
+describe('MarginNote source label (#3062)', () => {
+  it('labels a demo note unmistakably', () => {
+    const { getByTestId } = render(
+      <MarginNote note={note({ id: 7, source: 'demo' })} onOpen={jest.fn()} />,
+    );
+    expect(getByTestId('margin-note-source-7').props.children).toMatch(/^Demo/);
+  });
+
+  it('shows "Source not recorded" for a note written before receipts', () => {
+    const { getByTestId } = render(<MarginNote note={note({ id: 8 })} onOpen={jest.fn()} />);
+    expect(getByTestId('margin-note-source-8').props.children).toBe('Source not recorded');
+  });
+
+  it('labels a vault note without any locality claim', () => {
+    const { getByTestId } = render(
+      <MarginNote note={note({ id: 9, source: 'creek_vault' })} onOpen={jest.fn()} />,
+    );
+    expect(getByTestId('margin-note-source-9').props.children).toBe('From your Creek vault');
+  });
+});

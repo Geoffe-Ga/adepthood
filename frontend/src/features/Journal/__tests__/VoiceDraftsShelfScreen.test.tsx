@@ -46,6 +46,7 @@ interface Draft {
   anchor_text: string;
   essay: string;
   essay_generated_at: string;
+  essay_source?: string | null;
 }
 
 function draft(overrides: Partial<Draft> = {}): Draft {
@@ -275,6 +276,20 @@ describe('the Voice Drafts shelf', () => {
     // Nor the count of what is on screen, which is the same nudge cheaply made.
     expect(text).not.toMatch(/\b3\b/);
     expect(text.toLowerCase()).not.toMatch(/you have|unread|waiting for you|new draft/);
+  });
+});
+
+describe('the Voice Drafts shelf — letter source (#3062)', () => {
+  it('labels each letter with the source the server recorded, and an old one as not recorded', async () => {
+    mockList.mockResolvedValueOnce(
+      page([draft({ essay_source: 'demo' }), draft({ marginalia_id: 5, essay_source: null })]),
+    );
+
+    const screen = render(<VoiceDraftsShelfScreen />);
+
+    await waitFor(() => expect(screen.getByTestId('voice-draft-source-4')).toBeTruthy());
+    expect(screen.getByTestId('voice-draft-source-4').props.children).toMatch(/^Demo/);
+    expect(screen.getByTestId('voice-draft-source-5').props.children).toBe('Source not recorded');
   });
 });
 
