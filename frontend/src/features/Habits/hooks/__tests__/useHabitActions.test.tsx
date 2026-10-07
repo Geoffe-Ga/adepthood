@@ -615,23 +615,6 @@ describe('useHabitActions.addHabit', () => {
   });
 });
 
-describe('useHabitActions tz binding for date-shifted mutations', () => {
-  it('forwards the hook tz prop as the third argument to backfillMissedDays', () => {
-    // Spy before render: useMemo captures whatever habitManager.backfillMissedDays
-    // currently is, so the spy must already be in place at capture time.
-    const backfillSpy = jest.spyOn(habitManager, 'backfillMissedDays').mockImplementation(() => {});
-    const { result } = renderActions();
-    const days = [new Date('2025-01-02')];
-
-    act(() => {
-      result.current.actions.backfillMissedDays(1, days);
-    });
-
-    expect(backfillSpy).toHaveBeenCalledWith(1, days, 'UTC');
-    backfillSpy.mockRestore();
-  });
-});
-
 describe('useHabitActions — referential stability', () => {
   let stableShowToast: jest.Mock;
 

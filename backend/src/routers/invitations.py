@@ -8,7 +8,9 @@ no ``user_id`` is accepted from the body or path, and it is never returned.
 
 ``GET`` generates before it lists — it calls the idempotent generation pass
 (dismissed rows block re-creation) and then returns the caller's pending rows
-(``dismissed_at IS NULL``), so the endpoint is safe to poll on every load.
+(``dismissed_at IS NULL``), so the endpoint is safe to poll on every load. Both
+steps honour the caller's depth preferences: a declined ring is neither
+generated into nor listed (see :func:`services.invitations.list_pending_invitations`).
 Dismiss is idempotent: declining an already-declined row is a 200 no-op. A
 dismiss for a row the caller does not own — whether it belongs to another user
 or does not exist at all — returns the same 404 so the endpoint never confirms
@@ -34,7 +36,7 @@ from errors import not_found
 from models.invitation_signal import InvitationSignal
 from routers.auth import get_current_user
 from schemas.invitations import InvitationResponse
-from services.invitations import generate_invitation_signals
+from services.invitations import list_pending_invitations
 
 router = build_router(prefix="/invitations", tags=["invitations"])
 
@@ -65,20 +67,13 @@ async def list_invitations(
     The generation pass runs first and is idempotent — it inserts only
     coordinates that have no prior row (dismissed rows included), so polling
     this endpoint never accumulates duplicates. A connected vault also feeds a
-    corpus-theme source into that pass. The listing that follows returns only
-    the caller's rows with ``dismissed_at IS NULL``, ordered by ``created_at``;
-    declined and other users' invitations are excluded.
+    corpus-theme source into that pass while the course ring is enabled. The
+    listing that follows returns only the caller's rows with
+    ``dismissed_at IS NULL`` whose ring the caller has not declined, ordered by
+    ``created_at``; declined, quieted and other users' invitations are excluded.
     """
-    await generate_invitation_signals(session, user_id, user_timezone, vault_client=vault_client)
-    result = await session.execute(
-        select(InvitationSignal)
-        .where(
-            col(InvitationSignal.user_id) == user_id,
-            col(InvitationSignal.dismissed_at).is_(None),
-        )
-        .order_by(col(InvitationSignal.created_at))
-    )
-    return [_to_response(row) for row in result.scalars().all()]
+    rows = await list_pending_invitations(session, user_id, user_timezone, vault_client)
+    return [_to_response(row) for row in rows]
 
 
 @router.post("/{invitation_id}/dismiss", response_model=InvitationResponse)

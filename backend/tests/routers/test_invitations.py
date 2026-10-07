@@ -562,6 +562,7 @@ class _ThemeVaultClient:
         wheel_result: VaultWheelBalance | None = None,
     ) -> None:
         """Store the scripted handshake outcome and wheel result."""
+        self.wheel_calls = 0
         self._available = available
         self._capabilities = capabilities
         self._wheel_result = wheel_result
@@ -601,7 +602,8 @@ class _ThemeVaultClient:
         raise NotImplementedError((body, tier_ceiling))
 
     async def wheel(self) -> VaultWheelBalance:
-        """Return the scripted balance."""
+        """Record the call and return the scripted balance."""
+        self.wheel_calls += 1
         assert self._wheel_result is not None
         return self._wheel_result
 
@@ -642,3 +644,134 @@ async def test_get_invitations_includes_vault_theme_candidate(
     assert course_items[0]["target_id"] == theme_stage
     assert course_items[0]["kind"] == "readiness"
     assert habit_id in [i["target_id"] for i in habit_items]
+
+
+# ---------------------------------------------------------------------------
+# 10. Declined depth rings quiet their invitations (#3073)
+# ---------------------------------------------------------------------------
+
+_DEPTH_URL = "/depth-preferences"
+
+_RING_FLAG_FOR_TARGET = {
+    "habit": "enable_habits",
+    "practice": "enable_practices",
+    "course": "enable_course",
+    "sangha": "enable_sangha",
+    "embodied_community": "enable_sangha",
+}
+
+_ALL_RINGS_OFF = {
+    "enable_habits": False,
+    "enable_practices": False,
+    "enable_course": False,
+    "enable_sangha": False,
+}
+
+
+async def _user_id_for(session: AsyncSession, username: str) -> int:
+    """Resolve the id of the account created by :func:`_signup`."""
+    result = await session.execute(select(User).where(col(User.email) == f"{username}@example.com"))
+    user = result.scalars().one()
+    assert user.id is not None
+    return user.id
+
+
+async def _patch_depth(
+    client: AsyncClient, headers: dict[str, str], body: dict[str, bool]
+) -> dict[str, bool]:
+    """PATCH the caller's depth preferences and return the new state."""
+    resp = await client.patch(_DEPTH_URL, json=body, headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    state: dict[str, bool] = resp.json()
+    return state
+
+
+async def _listed_ids(client: AsyncClient, headers: dict[str, str]) -> list[int]:
+    """GET /invitations and return the listed ids."""
+    resp = await client.get(_LIST_URL, headers=headers)
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    return [item["id"] for item in resp.json()]
+
+
+async def _signal_count(session: AsyncSession, user_id: int) -> int:
+    """Count every invitation row stored for one user."""
+    result = await session.execute(
+        select(InvitationSignal).where(col(InvitationSignal.user_id) == user_id)
+    )
+    return len(result.scalars().all())
+
+
+@pytest.mark.parametrize("target_type", list(_RING_FLAG_FOR_TARGET))
+@pytest.mark.asyncio
+async def test_disabled_rings_hide_pending_invitations(
+    async_client: AsyncClient, db_session: AsyncSession, target_type: str
+) -> None:
+    """A pending invitation is hidden while its ring is off and returns when it is back on."""
+    username = f"inv_ring_{target_type}"
+    headers = await _signup(async_client, username)
+    user_id = await _user_id_for(db_session, username)
+    target_id = None if target_type == "embodied_community" else 1
+    kind = "readiness"
+    pending_id = await _seed_pending_signal(db_session, user_id, target_type, target_id, kind)
+    dismissed_id = await _seed_dismissed_signal(
+        db_session, user_id, target_type, None if target_id is None else 2, "mastery"
+    )
+    flag = _RING_FLAG_FOR_TARGET[target_type]
+
+    first_off = await _patch_depth(async_client, headers, {flag: False})
+    second_off = await _patch_depth(async_client, headers, {flag: False})
+    assert first_off == second_off
+    assert first_off[flag] is False
+    hidden = await _listed_ids(async_client, headers)
+
+    await _patch_depth(async_client, headers, {flag: True})
+    shown = await _listed_ids(async_client, headers)
+
+    assert pending_id not in hidden
+    assert pending_id in shown
+    assert dismissed_id not in hidden
+    assert dismissed_id not in shown
+    db_session.expire_all()
+    stored = await db_session.execute(
+        select(InvitationSignal).where(col(InvitationSignal.id) == pending_id)
+    )
+    assert stored.scalars().one().dismissed_at is None
+
+
+@pytest.mark.asyncio
+async def test_get_invitations_course_off_never_reads_wheel(async_client: AsyncClient) -> None:
+    """With the course ring declined the listing never dials the vault wheel."""
+    fake_vault = _ThemeVaultClient(
+        wheel_result=VaultWheelBalance(
+            aspects=tuple(
+                VaultWheelAspect(stage_number=n, aspect=f"Aspect-{n}", fullness=0.9)
+                for n in range(1, TOTAL_STAGES + 1)
+            )
+        )
+    )
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    headers = await _signup(async_client, "inv_course_off_wheel")
+    await _patch_depth(async_client, headers, {"enable_course": False})
+
+    resp = await async_client.get(_LIST_URL, headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json() == []
+    assert fake_vault.wheel_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_all_rings_off_lists_nothing_and_generates_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A journal-only user (every ring declined) is offered nothing and nothing is stored."""
+    username = "inv_all_rings_off"
+    headers = await _signup(async_client, username)
+    user_id = await _user_id_for(db_session, username)
+    await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
+    await _patch_depth(async_client, headers, _ALL_RINGS_OFF)
+
+    listed = await _listed_ids(async_client, headers)
+
+    assert listed == []
+    assert await _signal_count(db_session, user_id) == 0

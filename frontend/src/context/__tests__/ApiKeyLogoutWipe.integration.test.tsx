@@ -8,6 +8,7 @@ import { LLM_API_KEY_HEADER, auth as authApi, resonance } from '@/api';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { clearUserTimezone } from '@/storage/authStorage';
+import { clearCheckInReplayState } from '@/storage/checkInReplayState';
 import { loadFeedbackDraft, saveFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
@@ -56,6 +57,10 @@ jest.mock('@/storage/habitStorage', () => ({
   clearDroppedCheckIns: jest.fn(() => Promise.resolve()),
 }));
 
+jest.mock('@/storage/checkInReplayState', () => ({
+  clearCheckInReplayState: jest.fn(() => Promise.resolve()),
+}));
+
 jest.mock('@/storage/notificationStorage', () => ({
   clearAllNotificationData: jest.fn(() => Promise.resolve()),
 }));
@@ -77,6 +82,9 @@ const mockClearUserTimezone = clearUserTimezone as jest.MockedFunction<typeof cl
 const mockClearHabits = clearHabits as jest.MockedFunction<typeof clearHabits>;
 const mockClearPendingCheckIns = clearPendingCheckIns as jest.MockedFunction<
   typeof clearPendingCheckIns
+>;
+const mockClearCheckInReplayState = clearCheckInReplayState as jest.MockedFunction<
+  typeof clearCheckInReplayState
 >;
 const mockClearAllNotificationData = clearAllNotificationData as jest.MockedFunction<
   typeof clearAllNotificationData
@@ -181,6 +189,8 @@ describe('BYOK key does not leak across a logout on a shared device', () => {
     expect(mockClearUserTimezone).toHaveBeenCalled();
     expect(mockClearHabits).toHaveBeenCalled();
     expect(mockClearPendingCheckIns).toHaveBeenCalled();
+    // #2473: the queue head's retry record names the user's check-in too.
+    expect(mockClearCheckInReplayState).toHaveBeenCalled();
     expect(mockClearAllNotificationData).toHaveBeenCalled();
   });
 

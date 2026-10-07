@@ -214,15 +214,34 @@ export function nextDayKey(dayKey: string): string {
   return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
 }
 
+/**
+ * The calendar day before `dayKey`, as `YYYY-MM-DD` -- the mirror of `nextDayKey`,
+ * through `Date.UTC` for the same DST reason.
+ */
+export function previousDayKey(dayKey: string): string {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new Error(`not a YYYY-MM-DD day key: ${dayKey}`);
+  }
+  return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, ISO_DATE_LENGTH);
+}
+
 export async function tokenFor(request: APIRequestContext, email: string): Promise<string> {
   return (await sessionFor(request, email)).token;
 }
 
+/**
+ * Create a habit for `token`'s account out of band.
+ *
+ * @param revealed - Seed it already unlocked, so its tile can be logged on
+ *   straight away; a locked tile opens no goal sheet.
+ */
 export async function seedHabit(
   request: APIRequestContext,
   token: string,
   name: string,
   startDate: string = START_DATE,
+  revealed = false,
 ): Promise<number> {
   const response = await request.post(`${backendUrl()}/habits/`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -232,6 +251,7 @@ export async function seedHabit(
       start_date: startDate,
       energy_cost: 2,
       energy_return: 4,
+      ...(revealed ? { revealed: true } : {}),
     },
   });
   if (!response.ok()) throw new Error(`seeding ${name} failed with ${response.status()}`);
@@ -242,6 +262,24 @@ export async function openHabits(page: Page): Promise<void> {
   await page.getByRole('button', { name: JOURNAL_MENU }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Habits', exact: true }).click();
   await expect(page.getByTestId('habits-list')).toBeVisible();
+}
+
+/**
+ * Take the device offline and wait until the app itself says so. Anything that
+ * acts on the app's offline -> online edge (a reconnect retry, a reconnect
+ * load) tests nothing if the device reconnects before the app has registered
+ * the outage. `setOffline` drives the real window offline/online events, which
+ * the app bridges into its connectivity signal.
+ */
+export async function goOffline(page: Page): Promise<void> {
+  await page.context().setOffline(true);
+  await expect(page.getByTestId('offline-banner')).toBeVisible();
+}
+
+/** Bring the device back online and wait until the app has registered it. */
+export async function goOnline(page: Page): Promise<void> {
+  await page.context().setOffline(false);
+  await expect(page.getByTestId('offline-banner')).toHaveCount(0);
 }
 
 /** Back to the journal shelf from the Habits tab, through its drawer -- a return, not a remount. */

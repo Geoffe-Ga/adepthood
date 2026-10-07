@@ -4,7 +4,7 @@ These tests FAIL until both ``backend/src/services/invitations.py`` and
 ``backend/src/domain/invitations.py`` exist.  That is the correct RED state.
 
 Pinned service contract:
-  generate_invitation_signals(session, user_id, user_timezone="UTC")
+  generate_invitation_signals(session, user_id, user_timezone="UTC", vault_client=None, *, enabled)
       -> list[InvitationSignal]
 
 The function gathers readiness aggregates, calls the pure domain fn, deduplicates
@@ -40,7 +40,8 @@ from domain.creek_vault import (
     VaultWheelBalance,
 )
 from domain.dates import now_in_tz, to_user_date_bucket
-from domain.invitations import SUSTAINED_PRACTICE_WEEKS
+from domain.depth_preferences import ALL_RINGS, DepthRing
+from domain.invitations import HIGH_ENGAGEMENT_ACTIVE_DAYS, SUSTAINED_PRACTICE_WEEKS
 from domain.practice_insights import PracticeInsights
 from domain.practice_insights import build_insights as _real_build_insights
 from models.goal import Goal
@@ -68,6 +69,8 @@ _EXPECTED_GATHER_SELECTS = 5
 _SUSTAINED_STREAK = 21  # mirrors SUSTAINED_HABIT_STREAK_DAYS
 _SUSTAINED_WEEKS = 4  # mirrors SUSTAINED_PRACTICE_WEEKS
 _ENGAGEMENT_WINDOW_DAYS = 30  # mirrors ENGAGEMENT_WINDOW_DAYS
+_HIGH_ENGAGEMENT_DAYS = HIGH_ENGAGEMENT_ACTIVE_DAYS
+_SESSIONS_PER_SUSTAINED_WEEK = 4  # the practice cadence target per week
 _LA_TZ = "America/Los_Angeles"
 
 
@@ -241,7 +244,7 @@ async def test_generates_and_persists_habit_consistency_signal(
     user_id = await _make_user(db_session)
     habit_id = await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
 
-    returned = await generate_invitation_signals(db_session, user_id)
+    returned = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
 
     assert len(returned) == 1
     assert returned[0].target_type == "habit"
@@ -271,8 +274,8 @@ async def test_second_call_is_idempotent_and_returns_empty(
     user_id = await _make_user(db_session)
     await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
 
-    first = await generate_invitation_signals(db_session, user_id)
-    second = await generate_invitation_signals(db_session, user_id)
+    first = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
+    second = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
 
     assert len(first) == 1
     assert second == []
@@ -296,7 +299,7 @@ async def test_dismissed_signal_is_never_regenerated(
     habit_id = await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
 
     # First call creates the row.
-    first_batch = await generate_invitation_signals(db_session, user_id)
+    first_batch = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
     assert len(first_batch) == 1
     row = first_batch[0]
     assert row.id is not None
@@ -318,7 +321,7 @@ async def test_dismissed_signal_is_never_regenerated(
     assert dismissed_signal.dismissed_at is not None
 
     # Second call must return nothing and must not create a duplicate.
-    second_batch = await generate_invitation_signals(db_session, user_id)
+    second_batch = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
     assert second_batch == []
 
     all_rows = await _signals_for(db_session, user_id)
@@ -362,7 +365,7 @@ async def test_null_target_embodied_community_not_duplicated(
         )
     await db_session.commit()
 
-    result = await generate_invitation_signals(db_session, user_id)
+    result = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
 
     # Dedup must block a second embodied_community row.
     assert not any(r.target_type == "embodied_community" for r in result)
@@ -386,7 +389,7 @@ async def test_below_threshold_user_produces_no_signals(
     user_id = await _make_user(db_session)
     await _make_habit_with_streak(db_session, user_id, streak_days=1)
 
-    result = await generate_invitation_signals(db_session, user_id)
+    result = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
 
     assert result == []
     persisted = await _signals_for(db_session, user_id)
@@ -502,7 +505,9 @@ async def test_active_days_window_boundary_uses_utc_instant_under_non_utc_tz(
     assert len(in_window_days) == 24
     assert to_user_date_bucket(stale_utc, _LA_TZ) not in in_window_days
 
-    result = await generate_invitation_signals(db_session, user_id, user_timezone=_LA_TZ)
+    result = await generate_invitation_signals(
+        db_session, user_id, user_timezone=_LA_TZ, enabled=ALL_RINGS
+    )
 
     # True UTC-instant window counts 24 active days (< 25) → no community signal.
     assert not any(r.target_type == "embodied_community" for r in result)
@@ -571,7 +576,7 @@ async def test_practice_streak_at_exact_threshold_yields_mastery_candidate(
             )
     await db_session.commit()
 
-    result = await generate_invitation_signals(db_session, user_id)
+    result = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
 
     mastery = [r for r in result if r.target_type == "practice"]
     assert len(mastery) == 1
@@ -650,7 +655,9 @@ async def test_practice_streak_oldest_week_at_local_midnight_still_counted_under
             )
     await db_session.commit()
 
-    result = await generate_invitation_signals(db_session, user_id, user_timezone=_LA_TZ)
+    result = await generate_invitation_signals(
+        db_session, user_id, user_timezone=_LA_TZ, enabled=ALL_RINGS
+    )
 
     mastery = [r for r in result if r.target_type == "practice" and r.kind == "mastery"]
     assert len(mastery) == 1
@@ -714,7 +721,7 @@ async def test_practice_gather_excludes_sessions_older_than_the_sustained_window
 
     monkeypatch.setattr("services.invitations.build_insights", _spy)
 
-    await generate_invitation_signals(db_session, user_id)
+    await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
 
     # _make_practice_with_sessions(weeks=1) seeds 4 rows in the current week;
     # the stale row placed far outside the window must not be among them.
@@ -805,7 +812,9 @@ async def test_valid_vault_wheel_persists_course_readiness_row(
     theme_stage = 8
     client = _ThemeVaultClient(wheel_result=_valid_vault_wheel(theme_stage, 0.9))
 
-    result = await generate_invitation_signals(db_session, user_id, vault_client=client)
+    result = await generate_invitation_signals(
+        db_session, user_id, vault_client=client, enabled=ALL_RINGS
+    )
 
     course_rows = [r for r in result if r.target_type == "course"]
     assert len(course_rows) == 1
@@ -824,7 +833,9 @@ async def test_no_vault_client_yields_behavioral_only(db_session: AsyncSession) 
     user_id = await _make_user(db_session)
     await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
 
-    result = await generate_invitation_signals(db_session, user_id, vault_client=None)
+    result = await generate_invitation_signals(
+        db_session, user_id, vault_client=None, enabled=ALL_RINGS
+    )
 
     assert not any(r.target_type == "course" for r in result)
     assert any(r.target_type == "habit" for r in result)
@@ -837,7 +848,9 @@ async def test_degraded_vault_yields_behavioral_only(db_session: AsyncSession) -
     await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
     client = _ThemeVaultClient(available=False, wheel_result=_valid_vault_wheel(3, 0.95))
 
-    result = await generate_invitation_signals(db_session, user_id, vault_client=client)
+    result = await generate_invitation_signals(
+        db_session, user_id, vault_client=client, enabled=ALL_RINGS
+    )
 
     assert not any(r.target_type == "course" for r in result)
     assert any(r.target_type == "habit" for r in result)
@@ -868,7 +881,9 @@ async def test_vault_failure_after_snapshot_leaves_no_partial_signal_state(
     monkeypatch.setattr("services.invitations.fetch_vault_wheel", _stop_after_snapshot)
 
     with pytest.raises(RuntimeError, match="simulated process stop"):
-        await generate_invitation_signals(db_session, user_id, vault_client=client)
+        await generate_invitation_signals(
+            db_session, user_id, vault_client=client, enabled=ALL_RINGS
+        )
 
     assert observed, "the vault boundary was not observed"
     assert observed == [(False, False, False, False)]
@@ -887,7 +902,9 @@ async def test_dismissed_course_readiness_row_blocks_regeneration(
     theme_stage = 5
     client = _ThemeVaultClient(wheel_result=_valid_vault_wheel(theme_stage, 0.9))
 
-    first_batch = await generate_invitation_signals(db_session, user_id, vault_client=client)
+    first_batch = await generate_invitation_signals(
+        db_session, user_id, vault_client=client, enabled=ALL_RINGS
+    )
     course_rows = [r for r in first_batch if r.target_type == "course"]
     assert len(course_rows) == 1
     row = course_rows[0]
@@ -895,7 +912,9 @@ async def test_dismissed_course_readiness_row_blocks_regeneration(
     db_session.add(row)
     await db_session.commit()
 
-    second_batch = await generate_invitation_signals(db_session, user_id, vault_client=client)
+    second_batch = await generate_invitation_signals(
+        db_session, user_id, vault_client=client, enabled=ALL_RINGS
+    )
 
     assert not any(r.target_type == "course" for r in second_batch)
     persisted = await _signals_for(db_session, user_id)
@@ -916,9 +935,181 @@ async def test_behavioral_candidates_identical_with_and_without_vault(
     # Below-threshold theme: no course candidate should leak into the comparison.
     client = _ThemeVaultClient(wheel_result=_valid_vault_wheel(2, 0.1))
 
-    without_vault = await generate_invitation_signals(db_session, user_a, vault_client=None)
-    with_vault = await generate_invitation_signals(db_session, user_b, vault_client=client)
+    without_vault = await generate_invitation_signals(
+        db_session, user_a, vault_client=None, enabled=ALL_RINGS
+    )
+    with_vault = await generate_invitation_signals(
+        db_session, user_b, vault_client=client, enabled=ALL_RINGS
+    )
 
     without_shapes = {(r.target_type, r.kind) for r in without_vault}
     with_shapes = {(r.target_type, r.kind) for r in with_vault}
     assert without_shapes == with_shapes == {("habit", "consistency")}
+
+
+# ---------------------------------------------------------------------------
+# 19. Declined depth rings are never offered (#3073)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_high_engagement(session: AsyncSession, user_id: int) -> None:
+    """Seed journal entries on enough distinct days to clear the community threshold."""
+    now = datetime.now(UTC)
+    for day_offset in range(_HIGH_ENGAGEMENT_DAYS):
+        session.add(
+            JournalEntry(
+                message=f"Entry {day_offset}",
+                sender="user",
+                user_id=user_id,
+                timestamp=now - timedelta(days=day_offset),
+            )
+        )
+    await session.commit()
+
+
+async def _seed_sustained_practice(session: AsyncSession, user_id: int) -> None:
+    """Seed a practice whose last SUSTAINED_PRACTICE_WEEKS calendar weeks each met cadence.
+
+    Anchored to Monday-start weeks (as in the exact-threshold test above) so
+    every required week clears the cadence target whatever weekday the suite
+    runs on; ``_make_practice_with_sessions`` counts back from *now* and can
+    split a week.
+    """
+    practice = Practice(
+        stage_number=1,
+        name="Depth-gate sit",
+        description="x",
+        instructions="x",
+        default_duration_minutes=10.0,
+        mode="meditation_timer",
+        mode_config={"mode": "meditation_timer", "duration_minutes": 10},
+    )
+    session.add(practice)
+    await session.commit()
+    await session.refresh(practice)
+    assert practice.id is not None
+    now = datetime.now(UTC)
+    current_monday = (now - timedelta(days=now.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    user_practice = UserPractice(
+        user_id=user_id,
+        practice_id=practice.id,
+        stage_number=1,
+        start_date=(current_monday - timedelta(weeks=_SUSTAINED_WEEKS - 1)).date(),
+    )
+    session.add(user_practice)
+    await session.commit()
+    await session.refresh(user_practice)
+    assert user_practice.id is not None
+    for week in range(_SUSTAINED_WEEKS):
+        week_monday = current_monday - timedelta(weeks=week)
+        for day_offset in range(_SESSIONS_PER_SUSTAINED_WEEK):
+            session.add(
+                PracticeSession(
+                    user_id=user_id,
+                    user_practice_id=user_practice.id,
+                    duration_minutes=10.0,
+                    timestamp=week_monday + timedelta(days=day_offset),
+                )
+            )
+    await session.commit()
+
+
+async def _seed_every_behavioral_signal(session: AsyncSession, user_id: int) -> None:
+    """Seed a sustained habit, a sustained practice and high engagement for one user."""
+    await _make_habit_with_streak(session, user_id, streak_days=_SUSTAINED_STREAK)
+    await _seed_sustained_practice(session, user_id)
+    await _seed_high_engagement(session, user_id)
+
+
+@pytest.mark.asyncio
+async def test_course_off_generates_no_course_invitation_and_never_dials_wheel(
+    db_session: AsyncSession,
+) -> None:
+    """With the course ring declined the vault wheel is never read and no course row exists."""
+    user_id = await _make_user(db_session, "inv_course_off@example.com")
+    client = _ThemeVaultClient(wheel_result=_valid_vault_wheel(3, 0.9))
+
+    result = await generate_invitation_signals(
+        db_session, user_id, vault_client=client, enabled=ALL_RINGS - {DepthRing.COURSE}
+    )
+
+    assert client.wheel_calls == 0
+    assert not any(r.target_type == "course" for r in result)
+    assert not any(r.target_type == "course" for r in await _signals_for(db_session, user_id))
+
+
+@pytest.mark.parametrize(
+    ("declined", "suppressed_type"),
+    [
+        (DepthRing.HABITS, "habit"),
+        (DepthRing.PRACTICES, "practice"),
+        (DepthRing.SANGHA, "embodied_community"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_disabled_ring_candidate_never_persisted(
+    db_session: AsyncSession, declined: DepthRing, suppressed_type: str
+) -> None:
+    """A declined ring's candidate is neither returned nor stored; other rings still are."""
+    user_id = await _make_user(db_session, f"inv_off_{declined.value}@example.com")
+    await _seed_every_behavioral_signal(db_session, user_id)
+
+    result = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS - {declined})
+
+    every_behavioral = {"habit", "practice", "embodied_community"}
+    assert {r.target_type for r in result} == every_behavioral - {suppressed_type}
+    persisted = {r.target_type for r in await _signals_for(db_session, user_id)}
+    assert persisted == every_behavioral - {suppressed_type}
+
+
+@pytest.mark.asyncio
+async def test_all_rings_off_generates_nothing(db_session: AsyncSession) -> None:
+    """With every ring declined, even a fully engaged user gets no invitation row."""
+    user_id = await _make_user(db_session, "inv_all_off@example.com")
+    await _seed_every_behavioral_signal(db_session, user_id)
+    client = _ThemeVaultClient(wheel_result=_valid_vault_wheel(3, 0.9))
+
+    result = await generate_invitation_signals(
+        db_session, user_id, vault_client=client, enabled=frozenset()
+    )
+
+    assert result == []
+    assert await _signals_for(db_session, user_id) == []
+    assert client.wheel_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_reenabling_ring_generates_previously_suppressed_invitation(
+    db_session: AsyncSession,
+) -> None:
+    """A suppressed candidate was never stored, so re-enabling the ring offers it fresh."""
+    user_id = await _make_user(db_session, "inv_reenable@example.com")
+    habit_id = await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
+
+    off = await generate_invitation_signals(
+        db_session, user_id, enabled=ALL_RINGS - {DepthRing.HABITS}
+    )
+    on = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
+
+    assert off == []
+    assert [(r.target_type, r.target_id) for r in on] == [("habit", habit_id)]
+
+
+@pytest.mark.asyncio
+async def test_dismissed_row_still_blocks_after_toggle_cycle(db_session: AsyncSession) -> None:
+    """Toggling a ring off and back on never resurrects an invitation the user declined."""
+    user_id = await _make_user(db_session, "inv_toggle_dismissed@example.com")
+    await _make_habit_with_streak(db_session, user_id, streak_days=_SUSTAINED_STREAK)
+    (row,) = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
+    row.dismissed_at = datetime.now(UTC)
+    db_session.add(row)
+    await db_session.commit()
+
+    await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS - {DepthRing.HABITS})
+    again = await generate_invitation_signals(db_session, user_id, enabled=ALL_RINGS)
+
+    assert again == []
+    persisted = await _signals_for(db_session, user_id)
+    assert [(r.id, r.dismissed_at is not None) for r in persisted] == [(row.id, True)]

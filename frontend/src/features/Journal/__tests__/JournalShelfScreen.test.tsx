@@ -12,6 +12,7 @@ import type {
   StagePromptsResponse,
 } from '@/api';
 import { accent, surface } from '@/design/tokens';
+import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -642,6 +643,18 @@ describe('JournalShelfScreen', () => {
     expect(headerIndex).toBeGreaterThan(invitationIndex);
     // The morning-pages tip sits in the shelf's top matter, below the action row.
     expect(tipIndex).toBeGreaterThan(headerIndex);
+  });
+
+  it('hides the Return surface once the habits ring is declined, keeping invitations (#3073)', async () => {
+    useDepthPreferencesStore.setState({ enable_habits: false });
+    try {
+      const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+      // Invitations stay mounted: the server already filters them by ring.
+      await findByTestId('invitation-stack-stub');
+      expect(queryByTestId('return-stack-stub')).toBeNull();
+    } finally {
+      useDepthPreferencesStore.getState().reset();
+    }
   });
 
   it('opens the past-prompt history from the shelf and reads it from the server', async () => {

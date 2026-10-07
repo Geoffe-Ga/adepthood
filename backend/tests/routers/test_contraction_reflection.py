@@ -196,6 +196,30 @@ async def test_flagged_user_receives_contraction_reflection(
     assert body["contraction"]["message"]
 
 
+@pytest.mark.asyncio
+async def test_habits_ring_off_suppresses_contraction(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user who declined the habits ring is never told their foundation is thinning (#3073).
+
+    Same flagged fixture as the test above (the control); only the declined
+    ring differs, so a ``None`` here can only come from the depth gate.
+    """
+    _fake_llm(monkeypatch, {"kind": "theme", "quote": "the willow bent", "note": "It holds."})
+    headers, user_id = await _signup(async_client, "habitsoffuser")
+    await _make_flagged_habit(db_session, user_id)
+    patched = await async_client.patch(
+        "/depth-preferences", json={"enable_habits": False}, headers=headers
+    )
+    assert patched.status_code == HTTPStatus.OK, patched.text
+    entry_id = await _create_entry(async_client, headers, classification="personal")
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["contraction"] is None
+
+
 # ---------------------------------------------------------------------------
 # 2. Healthy user -> contraction is null/absent
 # ---------------------------------------------------------------------------
