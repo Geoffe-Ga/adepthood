@@ -106,6 +106,18 @@
       "expected": { "current": 2, "longest": 2 }
     },
     {
+      "name": "weekly subtractive begun mid-week: the start week counts, no earlier week does",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-02-25",
+      "is_additive": false,
+      "frequency": 1,
+      "frequency_unit": "per_week",
+      "targets": { "low": 4, "clear": 2, "stretch": 0 },
+      "completions": [],
+      "expected": { "current": 3, "longest": 3 }
+    },
+    {
       "name": "daily additive keeps the consecutive-day streak",
       "timezone": "America/Los_Angeles",
       "today": "2026-03-11",

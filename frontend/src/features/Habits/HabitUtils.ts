@@ -596,7 +596,11 @@ export interface PeriodStreakCadence {
   kind: Exclude<HabitPeriodKind, 'day'>;
   /** The clear tier's `target × frequency`. */
   periodTarget: number;
-  /** The habit's start as a `YYYY-MM-DD` key; subtractive walks never count before it. */
+  /**
+   * The habit's start as a `YYYY-MM-DD` key. A subtractive walk starts at the
+   * period containing it (judged on the days the habit existed) and never
+   * counts an earlier period — the backend `PeriodCadence` rule.
+   */
   startDay: string;
   subtractive: boolean;
 }

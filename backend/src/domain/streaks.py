@@ -65,8 +65,11 @@ class PeriodCadence:
     month, in the user's calendar. A period is *met* when its summed units
     reach ``period_target`` (the clear tier's ``target * frequency``) for an
     additive habit, or stay at or under it for a subtractive one.
-    ``start_date`` is the habit's birth: a subtractive walk never counts
-    periods before it, since an absent row there is not an abstention.
+    ``start_date`` is the habit's birth: a subtractive walk starts at the
+    period *containing* it and never counts an earlier one, since an absent
+    row there is not an abstention. A habit begun mid-period has that whole
+    first period judged on the days it existed (the earlier days carry no
+    rows), so staying within the limit since the start counts it as met.
     """
 
     unit: PeriodUnit

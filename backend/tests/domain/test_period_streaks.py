@@ -40,6 +40,14 @@ from services.streaks import (
 
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures/streak_parity/cadence_streaks.json"
 _CASES: list[dict[str, Any]] = json.loads(_FIXTURE.read_text(encoding="utf-8"))["cases"]
+
+
+def _case(prefix: str) -> dict[str, Any]:
+    """The one fixture case whose name starts with ``prefix``."""
+    [match] = [c for c in _CASES if c["name"].startswith(prefix)]
+    return match
+
+
 _NOON = time(12)
 _TIERS = ("low", "clear", "stretch")
 
@@ -106,7 +114,7 @@ def test_parity_fixture_through_both_server_owners(
 @pytest.mark.parametrize("unit", ["per_day", "per_session"])
 def test_day_cadences_have_no_period_cadence(unit: str) -> None:
     """Daily and per-session habits stay on the day-based owner, bit for bit."""
-    case = {**_CASES[0], "frequency_unit": unit}
+    case = {**_case("weekly additive: two met"), "frequency_unit": unit}
     assert period_cadence_for_goals(_goals(case), date(2026, 1, 1)) is None
 
 
@@ -117,7 +125,11 @@ def test_no_goals_have_no_period_cadence() -> None:
 
 def test_period_target_is_the_clear_tier_target_times_frequency() -> None:
     """The clear tier's ``target * frequency`` is what a period must reach."""
-    case = {**_CASES[0], "targets": {"low": 1, "clear": 2, "stretch": 3}, "frequency": 3}
+    case = {
+        **_case("weekly additive: two met"),
+        "targets": {"low": 1, "clear": 2, "stretch": 3},
+        "frequency": 3,
+    }
     cadence = period_cadence_for_goals(_goals(case), date(2026, 1, 1))
     assert cadence == PeriodCadence(
         unit="per_week", period_target=6, start_date=date(2026, 1, 1), subtractive=False
@@ -126,16 +138,19 @@ def test_period_target_is_the_clear_tier_target_times_frequency() -> None:
 
 def test_period_cadence_falls_back_to_the_first_goal_without_a_clear_tier() -> None:
     """With no clear tier the first goal's cadence and target speak for the habit."""
-    goals = [g for g in _goals(_CASES[3]) if g.tier != "clear"]
+    goals = [g for g in _goals(_case("monthly additive")) if g.tier != "clear"]
     cadence = period_cadence_for_goals(goals, date(2026, 1, 1))
     assert cadence is not None
     assert cadence.unit == "per_month"
-    assert cadence.period_target == _CASES[3]["targets"]["low"] * _CASES[3]["frequency"]
+    assert (
+        cadence.period_target
+        == _case("monthly additive")["targets"]["low"] * _case("monthly additive")["frequency"]
+    )
 
 
 def test_daily_owner_is_unchanged_for_daily_habits(monkeypatch: pytest.MonkeyPatch) -> None:
     """A daily habit's streak is exactly the day-based owner's answer."""
-    case = _CASES[6]
+    case = _case("daily additive")
     today = date.fromisoformat(case["today"])
     _freeze_today(monkeypatch, today, case["timezone"])
     days = sorted({date.fromisoformat(day) for day, _ in case["completions"]}, reverse=True)
@@ -199,7 +214,7 @@ def test_streak_before_and_after_folds_the_pending_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The third session of the open week turns it met and extends the streak."""
-    case = _CASES[0]
+    case = _case("weekly additive: two met")
     _freeze_today(monkeypatch, date.fromisoformat(case["today"]), case["timezone"])
     cadence = period_cadence_for_goals(_goals(case), date.fromisoformat(case["start_date"]))
     assert cadence is not None
