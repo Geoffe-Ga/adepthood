@@ -200,17 +200,42 @@ describe('WritingSessionOffer — only the depths the writer kept (#3073)', () =
     expect(view.getByLabelText(SAVE_AS_HABIT_DECLINE_A11Y)).toBeTruthy();
   });
 
-  it('makes no offer at all when both rings are declined', async () => {
+  it('makes no offer at all when both rings are declined, and says so once settled', async () => {
     useDepthPreferencesStore.setState({ enable_habits: false, enable_practices: false });
     const view = render(<WritingSessionOffer result={RESULT} />);
 
-    // Let the stored-answer read land, so a null here is the gate and not the
-    // "still reading" state the offer also renders as nothing.
+    // A positive settle point: the marker renders only once the stored answer
+    // has been read and the rings have withheld the offer, so "no offer" is
+    // never confused with "still reading".
+    await waitFor(() =>
+      expect(
+        view.queryByTestId('writing-session-offer-withheld', { includeHiddenElements: true }),
+      ).not.toBeNull(),
+    );
+    expect(view.queryByTestId('save-as-habit-offer')).toBeNull();
+    expect(view.queryByTestId('save-as-habit-accept')).toBeNull();
+    expect(view.queryByTestId('save-as-practice-accept')).toBeNull();
+  });
+
+  it('shows no withheld marker while either depth is still offered', async () => {
+    useDepthPreferencesStore.setState({ enable_habits: false });
+    const view = render(<WritingSessionOffer result={RESULT} />);
+
+    await waitFor(() => expect(view.queryByTestId('save-as-practice-accept')).not.toBeNull());
+    expect(
+      view.queryByTestId('writing-session-offer-withheld', { includeHiddenElements: true }),
+    ).toBeNull();
+  });
+
+  it('shows no withheld marker for an offer already answered', async () => {
+    loadAnswered.mockImplementation(() => Promise.resolve(true));
+    useDepthPreferencesStore.setState({ enable_habits: false, enable_practices: false });
+    const view = render(<WritingSessionOffer result={RESULT} />);
+
     await waitFor(() => expect(loadAnswered).toHaveBeenCalled());
     await act(async () => {
       await Promise.resolve();
     });
-    expect(view.queryByTestId('save-as-habit-offer')).toBeNull();
     expect(view.toJSON()).toBeNull();
   });
 });

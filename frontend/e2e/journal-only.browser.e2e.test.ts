@@ -17,17 +17,33 @@ import { readLaneState, type LaneState } from './laneState';
  *    may not have, so it is declined over HTTP and read back, which is the
  *    same server state the switch would write.
  *  - The drawer then lists no Habits, Practice or Course destination.
- *  - A page is written and a timed writing session is run to the end. This is
- *    the one offer that showed with habits off before #3073 (the finished
- *    session's "keep this as a habit"), so the path is not vacuous: with both
- *    habits and practices declined, the note carries no offer and no
- *    link-a-habit pointer.
+ *  - A page is written and a timed writing session is run to the end. The
+ *    finished session's "keep this" note is the one ring offer a fresh account
+ *    can reach, and it showed with habits off before #3073. The spec waits for
+ *    a positive settle point first: the note's withheld marker renders only
+ *    after the offer has read its stored answer and found both depths
+ *    declined. Only then does it assert that no accept or offer is there, so
+ *    the absence cannot be read during the offer's own loading window. With
+ *    the ring gate reverted, the offer renders instead of the marker and the
+ *    spec fails on `save-as-habit-accept`.
  *  - The page is found by search, reopened, exported (both export routes, and
  *    the Export screen renders) and deleted.
- *  - Throughout, the shelf shows no Return or invitation card and the entry no
- *    contraction reflection; `GET /invitations` is empty.
  *  - Finally, the lane's fake language-model provider and fake Creek vault
  *    saw nothing from this journey: their counters are unchanged.
+ *
+ * What this spec deliberately does not assert. A fresh account has no habit
+ * streak, no Return eligibility, no invitation row and no resonance pass, so
+ * an absence check on the Return cards, invitation cards, the contraction
+ * reflection or the link-a-habit pointer (which waits for an answered offer)
+ * could not fail here and would only look like coverage. Those gates are
+ * pinned where their data can be arranged: JournalShelfScreen.test.tsx and
+ * InvitationStack.test.tsx (Return and invitation cards),
+ * JournalEntryScreenContraction.test.tsx and
+ * backend/tests/routers/test_contraction_reflection.py (contraction),
+ * JournalEntryScreenTimer.test.tsx (link-a-habit pointer), and
+ * backend/tests/routers/test_invitations.py (generation and listing).
+ * `GET /invitations` is still read once, to cross the all-rings-off path of
+ * the live route.
  *
  * Time is Playwright's clock, as in `journal-unlinked-timer-nudge`.
  */
@@ -47,14 +63,8 @@ const RINGS_OFF = {
 const SWITCHED_IN_SETTINGS = ['habits', 'practices', 'course'] as const;
 /** Drawer destinations that belong to a declinable ring. */
 const RING_DESTINATIONS = ['Habits', 'Practice', 'Course'] as const;
-/** Every surface that invites the writer back into a ring. */
-const RING_PROMPTS = [
-  'save-as-habit-offer',
-  'save-as-habit-accept',
-  'save-as-practice-accept',
-  'link-habit-nudge',
-  'contraction-reflection',
-] as const;
+/** What the finished-session note would offer were either depth still kept. */
+const SESSION_OFFERS = ['save-as-habit-accept', 'save-as-practice-accept', 'save-as-habit-offer'];
 const HTTP_OK = 200;
 
 function lane(): LaneState {
@@ -80,12 +90,25 @@ function visible(page: Page, testId: string): Locator {
   return page.locator(`[data-testid="${testId}"]:visible`);
 }
 
-/** No ring prompt of any kind is on the page. */
-async function expectNoRingPrompt(page: Page): Promise<void> {
-  for (const testId of RING_PROMPTS) {
-    await expect(page.getByTestId(testId)).toHaveCount(0);
+/**
+ * Wait for the finished-session note to settle, then assert it offers nothing.
+ *
+ * The note renders nothing while it reads its stored answer, so an absence
+ * check made right away would pass in that window whatever the gate does. The
+ * wait is on the first of two positive signals: the withheld marker (the
+ * gate's answer) or the offer itself (no gate). Whichever comes, the
+ * assertions below then decide.
+ */
+async function expectSessionNoteWithheld(page: Page): Promise<void> {
+  const banner = page.getByTestId('writing-session-banner');
+  const settled = banner
+    .getByTestId('writing-session-offer-withheld')
+    .or(banner.getByTestId('save-as-habit-offer'));
+  await expect(settled).toBeAttached();
+  for (const testId of SESSION_OFFERS) {
+    await expect(banner.getByTestId(testId)).toHaveCount(0);
   }
-  await expect(page.getByTestId(/^(return|invitation)-/u)).toHaveCount(0);
+  await expect(banner.getByTestId('writing-session-offer-withheld')).toBeAttached();
 }
 
 async function declineEveryRing(page: Page, headers: Record<string, string>): Promise<void> {
@@ -143,7 +166,6 @@ test('a writer who declines every depth keeps a whole journal and is offered no 
     await expect(drawer.getByRole('button', { name, exact: true })).toHaveCount(0);
   }
   await page.keyboard.press('Escape');
-  await expectNoRingPrompt(page);
 
   // --- Write a page, and run a timed session to its end. ---
   await visible(page, 'journal-new-entry').click();
@@ -155,7 +177,7 @@ test('a writer who declines every depth keeps a whole journal and is offered no 
   await page.getByTestId('journal-body-input').fill(BODY);
   const entryId = ((await (await created).json()) as { id: number }).id;
   await runASession(page);
-  await expectNoRingPrompt(page);
+  await expectSessionNoteWithheld(page);
   await visible(page, 'journal-close-entry').click();
 
   // --- Find it by search, and reopen it. ---
@@ -165,10 +187,8 @@ test('a writer who declines every depth keeps a whole journal and is offered no 
   await visible(page, 'search-input').fill(SEARCH_TERM);
   const found = visible(page, `journal-shelf-open-${entryId}`);
   await expect(found).toContainText(TITLE);
-  await expectNoRingPrompt(page);
   await found.click();
   await expect(page.locator('[data-testid="journal-body-input"]:visible')).toHaveValue(BODY);
-  await expectNoRingPrompt(page);
   await visible(page, 'journal-close-entry').click();
 
   // --- Export: both routes carry the page, and the screen renders. ---
@@ -189,9 +209,8 @@ test('a writer who declines every depth keeps a whole journal and is offered no 
   await visible(page, `journal-shelf-delete-${entryId}`).click();
   await visible(page, 'journal-delete-confirm').click();
   await expect(page.getByTestId(`journal-shelf-open-${entryId}`)).toHaveCount(0);
-  await expectNoRingPrompt(page);
 
-  // --- Nothing was offered, and nothing left the box. ---
+  // --- The live all-off listing answers empty, and nothing left the box. ---
   const invitations = await page.request.get(`${backendUrl()}/invitations`, { headers });
   expect(invitations.ok()).toBe(true);
   expect(await invitations.json()).toEqual([]);

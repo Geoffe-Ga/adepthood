@@ -98,6 +98,7 @@ import SaveAsPracticeStep from './SaveAsPracticeStep';
 import WritingHabitPicker from './WritingHabitPicker';
 import type { WritingSessionResult } from './writingSession';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, editorialType } from '@/design/tokens';
 import { useRingEnabled } from '@/features/Depth/depthRings';
@@ -545,19 +546,42 @@ function WritingSessionOffer({
 
   const { phase } = moves;
   if (answered !== false || phase === 'declined') return null;
-  if (phase === 'offered' && withholdsInvitation(knownLink, offers)) return null;
+  if (phase === 'offered') {
+    const withheld = withheldInvitation(knownLink, offers);
+    if (withheld !== undefined) return withheld;
+  }
 
   return renderHabitChoice(moves, habits) ?? renderPhase(moves, habits, placement, writing, offers);
 }
 
 /**
- * Whether the untouched invitation is withheld. A link the server already holds
- * is this account's answer, on any device; and with both depths this note
- * invites into declined (#3073) there is nothing left to offer. A writer
- * mid-choice keeps the note either way.
+ * What stands in for the untouched invitation when it is withheld, or
+ * ``undefined`` when it is not. A link the server already holds is this
+ * account's answer, on any device, and the note says nothing. With both depths
+ * the note invites into declined (#3073) there is nothing left to offer, and
+ * the note holds only the settle point below. A writer mid-choice keeps the
+ * note either way, which is why only the ``offered`` phase asks.
  */
-function withholdsInvitation(knownLink: boolean, offers: OfferedDepths): boolean {
-  return knownLink || (!offers.habit && !offers.practice);
+function withheldInvitation(
+  knownLink: boolean,
+  offers: OfferedDepths,
+): React.JSX.Element | null | undefined {
+  if (knownLink) return null;
+  if (!offers.habit && !offers.practice) return <WithheldMarker />;
+  return undefined;
+}
+
+/**
+ * What the note holds when both depths it invites into were declined (#3073):
+ * nothing a writer can see or hear, only a settle point. It renders once the
+ * stored answer has been read, so a test can tell "the rings withheld the
+ * offer" apart from "the offer is still reading its stored answer", which also
+ * renders nothing.
+ */
+function WithheldMarker(): React.JSX.Element {
+  return (
+    <View testID="writing-session-offer-withheld" {...decorativeHidden()} pointerEvents="none" />
+  );
 }
 
 /** The "which habit?" phases, or ``null`` when the offer is in another one. */
