@@ -32,7 +32,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
     CreekCapability,
+    CreekVaultError,
+    CreekVaultUnavailableError,
     VaultIngestAction,
+    VaultIngestRequest,
+    VaultIngestResult,
     VaultTierCeiling,
     VaultVoiceDraftDeleteResult,
     VaultVoiceDraftRequest,
@@ -542,6 +546,55 @@ async def test_each_egress_operation_on_a_tainted_review_emits_its_shadow(
             LineageOperation.VOICE_DRAFT_MIRROR,
         )
     )
+    _assert_no_canary_in_logs(caplog)
+
+
+class _DegradingVault(_DiallingVault):
+    """A vault that receives the body but does not confirm storing it."""
+
+    def __init__(self, *, failure: CreekVaultError | None) -> None:
+        super().__init__()
+        self._failure = failure
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        """Record the body as sent, then fail the acknowledgement or decline to store."""
+        self.ingest_calls.append(request)
+        if self._failure is not None:
+            raise self._failure
+        return VaultIngestResult(stored=False, vault_ref=None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [CreekVaultUnavailableError("synthetic timeout after receipt"), None],
+    ids=["ingest_raises", "not_stored"],
+)
+async def test_a_degraded_vault_write_still_counts_as_sent(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    failure: CreekVaultError | None,
+) -> None:
+    """The body reached the vault even when the write degraded, so the shadow fires once."""
+    vault = _DegradingVault(failure=failure)
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id = await _signup(async_client, "lineage_degraded_vault")
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+    review = await db_session.get(JournalEntry, chain.review_id)
+    assert review is not None
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        patch = await async_client.patch(
+            f"/journal/{chain.review_id}",
+            json={"message": f"{review.message}\n\nOne more line."},
+            headers=headers,
+        )
+
+    assert patch.status_code == HTTPStatus.OK, patch.text
+    assert vault.ingest_calls, "the degraded write never dialled"
+    assert _shadowed_operations(caplog, chain.review_id) == [LineageOperation.VAULT_WRITE.value]
     _assert_no_canary_in_logs(caplog)
 
 

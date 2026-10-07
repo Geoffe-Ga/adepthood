@@ -408,11 +408,14 @@ async def _record_vault_outcome(
         session.add(entry)
         await session.commit()
         await session.refresh(entry)
-    if outcome.status is VaultWriteStatus.INGESTED:
-        # Shadow only (#3059), and only once the body has actually reached the
-        # vault. ``drive_vault_pipeline`` commits before it dials, so this read
-        # holds no connection across its network calls.
+    if outcome.status not in _NOTHING_SENT:
+        # Shadow only (#3059), whenever the ingest was dialled -- a DEGRADED
+        # write (a lost acknowledgement, or ``stored=False``) has still handed
+        # the body to the vault. The same predicate decides whether the staged
+        # destination is kept. Committed so nothing is held across what follows.
         await observe_entry_lineage(session, LineageOperation.VAULT_WRITE, entry)
+        await session.commit()
+    if outcome.status is VaultWriteStatus.INGESTED:
         await drive_vault_pipeline(
             session,
             vault_client,
