@@ -2,7 +2,7 @@
 
 Deleting an account removes it from the live database at once, but every
 backup taken before the deletion still holds a copy until that backup ages out.
-The public documents used to call deletion "immediate and irreversible" and
+The user-facing copy used to call deletion "immediate and irreversible" and
 "total" with no word about backups. It now says how long the last copy can
 survive, and that number is derived here from the backup table in
 ``DEPLOYMENT.md`` rather than transcribed:
@@ -34,12 +34,16 @@ _DEPLOYMENT_DOC = _REPO_ROOT / "DEPLOYMENT.md"
 _PRIVACY_POLICY = _REPO_ROOT / "docs" / "legal" / "privacy-policy.md"
 _TERMS_OF_SERVICE = _REPO_ROOT / "docs" / "legal" / "terms-of-service.md"
 _YOUR_DATA = _REPO_ROOT / "docs" / "your-data.md"
+_DELETE_ACCOUNT_SCREEN = (
+    _REPO_ROOT / "frontend" / "src" / "features" / "Settings" / "DeleteAccountScreen.tsx"
+)
 
 # Every surface that tells a person what deleting their account reaches.
 _DELETION_SURFACES: Final[tuple[Path, ...]] = (
     _PRIVACY_POLICY,
     _TERMS_OF_SERVICE,
     _YOUR_DATA,
+    _DELETE_ACCOUNT_SCREEN,
 )
 
 # The two legs of the backup table, by the name its first column gives them.

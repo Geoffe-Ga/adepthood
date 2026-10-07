@@ -59,6 +59,18 @@ describe('DeleteAccountScreen', () => {
     expect(warning).toContain('no grace period');
   });
 
+  test('says a backup taken before the deletion still holds a copy until it ages out', () => {
+    setAuthState();
+
+    const { getByTestId } = render(<DeleteAccountScreen />);
+
+    // The day count is derived from DEPLOYMENT.md's backup table and pinned by
+    // backend/tests/test_deletion_backup_copy.py; this pins that it is said here.
+    const warning = getByTestId('delete-account-warning').props.children as string;
+    expect(warning).toContain('Backups made before you delete still hold a copy');
+    expect(warning).not.toContain('nothing left to restore');
+  });
+
   test('lists both what is erased and what deliberately survives', () => {
     setAuthState();
 
@@ -103,6 +115,21 @@ describe('DeleteAccountScreen', () => {
     expect(getByTestId('delete-account-vault-guidance').props.children).toBe(
       RECEIPT.vault.guidance,
     );
+  });
+
+  test('the receipt says the live service is clear and backups age out, not that nothing remains', async () => {
+    setAuthState();
+    mockDeleteMyAccount.mockResolvedValue(RECEIPT);
+    const { getByTestId } = render(<DeleteAccountScreen />);
+
+    fireEvent.changeText(getByTestId('delete-account-email-input'), 'writer@example.com');
+    fireEvent.press(getByTestId('delete-account-submit'));
+
+    await waitFor(() => expect(getByTestId('delete-account-receipt-summary')).toBeTruthy());
+    const summary = getByTestId('delete-account-receipt-summary').props.children as string;
+    expect(summary).toContain(`We removed ${RECEIPT.rows_erased} records belonging to you`);
+    expect(summary).toContain('Backups made before now age out');
+    expect(summary).not.toContain('nothing left to restore');
   });
 
   test('clears the local session only once the server has confirmed', async () => {
@@ -151,7 +178,7 @@ describe('DeleteAccountScreen — navigation owns the title (#2962)', () => {
     const screen = render(<DeleteAccountScreen />);
     const warning = screen.getByTestId('delete-account-warning');
     expect(warning.props.children).toMatch(
-      /^Deleting your account is immediate and irreversible\./,
+      /^Deleting your account removes it from Adepthood immediately and is irreversible\./,
     );
     expect(warning.props.accessibilityRole).toBeUndefined();
     expect(screen.queryAllByRole('header')).toHaveLength(0);

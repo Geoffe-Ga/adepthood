@@ -23,8 +23,9 @@ import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
  * requires of any app that lets people sign up, and the honest end of a
  * journal-first product's promise that the writing is theirs.
  *
- * Two things this screen refuses to do. It does not soften: deletion is
- * immediate, irreversible, and says so before the button is pressable. And it
+ * Two things this screen refuses to do. It does not soften: deletion from the
+ * live service is immediate and cannot be undone, and says so before the button is
+ * pressable, along with how long backups taken before it survive. And it
  * does not overclaim: what survives — the anonymous catalogue contribution,
  * the purchase receipt, a Creek Vault the app cannot reach — is listed beside
  * what goes, because a promise of total erasure that is not quite true is
@@ -32,8 +33,17 @@ import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
  */
 
 const IRREVERSIBLE_LEAD =
-  'Deleting your account is immediate and irreversible. There is no grace period, ' +
-  'and afterwards there is nothing left to restore — not by us, not by support.';
+  'Deleting your account removes it from Adepthood immediately and is irreversible. ' +
+  'There is no grace period, and no way back — not in the app, not through support. ' +
+  'Backups made before you delete still hold a copy until they age out, within about 97 days.';
+
+/** The receipt's account of what was removed, and of what ages out after. */
+function receiptSummary(rowsErased: number): string {
+  return (
+    `We removed ${rowsErased} records belonging to you. ` +
+    'Backups made before now age out within about 97 days.'
+  );
+}
 
 /** What the server's policy erases, in the language of the app rather than of tables. */
 const WHAT_GOES = [
@@ -126,8 +136,8 @@ const Receipt = ({
       <Text style={[face.title, settingsFormStyles.title]} accessibilityRole="header">
         Your account is gone
       </Text>
-      <Text style={settingsFormStyles.body}>
-        {`We removed ${receipt.rows_erased} records belonging to you. There is nothing left to restore.`}
+      <Text style={settingsFormStyles.body} testID="delete-account-receipt-summary">
+        {receiptSummary(receipt.rows_erased)}
       </Text>
       <Text style={styles.vaultGuidance} testID="delete-account-vault-guidance">
         {receipt.vault.guidance}
