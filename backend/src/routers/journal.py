@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import logging
 from collections.abc import Sequence
 from contextlib import suppress
@@ -17,7 +18,11 @@ from sqlmodel import col, select
 
 from bounds import INT32_MAX, MAX_PAGE_OFFSET, MIN_ROW_ID, RowIdPath
 from database import get_session
-from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
+from dependencies.creek_vault import (
+    get_creek_vault_client,
+    get_reflection_boundary,
+    resolved_vault_destination,
+)
 from dependencies.ownership import (
     require_owned_journal_entry,
     resolve_owned_practice_session,
@@ -30,6 +35,8 @@ from domain.creek_vault import (
     CreekVaultCareEscalationError,
     CreekVaultClient,
     CreekVaultPipelineClient,
+    VaultTierCeiling,
+    tier_ceiling_for,
 )
 from domain.dates import (
     MAX_BACKFILL_DAYS,
@@ -140,6 +147,7 @@ from services.corpus_ingest import (
     withdraw_journal_entry as withdraw_local_journal_entry,
 )
 from services.corpus_invitation import record_completed_pass
+from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
     VaultRelatedSurfaces,
@@ -147,8 +155,15 @@ from services.creek_vault_reflect import (
     related_surfaces,
     select_reflection_llm,
 )
-from services.creek_vault_voice_drafts import mirror_voice_draft, retract_voice_draft
-from services.creek_vault_withdraw import withdraw_journal_from_vault
+from services.creek_vault_voice_drafts import (
+    EntryRef,
+    VoiceDraftCopy,
+    mark_entry_retractions_pending,
+    mirror_voice_draft,
+    record_mirror_intent,
+    retract_pending_voice_drafts,
+)
+from services.creek_vault_withdraw import withdraw_journal_copy
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -390,6 +405,9 @@ async def _record_vault_outcome(
     """
     if entry.id is None:
         return
+    binding = await _bind_vault_destination(session, entry, vault_client)
+    if binding is _Binding.WITHHOLD:
+        return
     await session.commit()
     outcome = await store_and_classify(
         vault_client,
@@ -398,7 +416,7 @@ async def _record_vault_outcome(
         classification=entry.classification,
         created_at=entry.timestamp,
     )
-    if _apply_vault_outcome(entry, outcome):
+    if _apply_vault_outcome(entry, outcome) | _unbind_if_nothing_sent(entry, binding, outcome):
         session.add(entry)
         await session.commit()
         await session.refresh(entry)
@@ -411,38 +429,103 @@ async def _record_vault_outcome(
         )
 
 
-async def _withdraw_remote_journal_copy(
+class _Binding(enum.Enum):
+    """What staging a vault destination decided about one write."""
+
+    WITHHOLD = "withhold"  # an earlier copy is owed to another vault: do not offer
+    UNCHANGED = "unchanged"  # proceed; the recorded destination is already right
+    BOUND = "bound"  # proceed; this write staged a new destination
+
+
+#: Write outcomes that provably dialled no ingest: nothing reached any vault.
+_NOTHING_SENT = frozenset({VaultWriteStatus.SKIPPED_INTIMATE, VaultWriteStatus.UNAVAILABLE})
+
+
+async def _bind_vault_destination(
+    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
+) -> _Binding:
+    """Record which vault is about to be offered this entry, or withhold the offer.
+
+    Staged before the ingest dial (and committed with the caller's pre-dial
+    commit), so a crash or a lost acknowledgement after Creek stores the entry
+    still leaves a durable withdrawal marker bound to that vault. Nothing is
+    staged when nothing can be sent: a local fallback dials nothing, and an
+    Intimate entry is withheld from the wire before any dial. An entry whose
+    earlier copy is owed to a *different* vault keeps that marker and is not
+    offered to the new one: a single marker cannot describe two copies, and
+    the owed one wins.
+
+    The fingerprint comes from the same config read that built the request's
+    client (:func:`resolved_vault_destination`), so a reconnect landing after
+    that read cannot bind this write to a vault it does not dial.
+    """
+    undialled = _binding_without_a_dial(entry, vault_client)
+    if undialled is not None:
+        return undialled
+    destination = await resolved_vault_destination(session, entry.user_id)
+    if entry.vault_destination not in {None, destination}:
+        logger.warning(
+            "journal_vault_write_withheld",
+            extra={"entry_id": entry.id, "reason": "destination_changed"},
+        )
+        return _Binding.WITHHOLD
+    if entry.vault_destination is not None or destination is None:
+        return _Binding.UNCHANGED
+    entry.vault_destination = destination
+    session.add(entry)
+    return _Binding.BOUND
+
+
+def _binding_without_a_dial(entry: JournalEntry, vault_client: CreekVaultClient) -> _Binding | None:
+    """Decide the writes that can send nothing, so they stage nothing; ``None`` otherwise."""
+    if type(vault_client) is LocalFallbackCreekVaultClient:
+        return _Binding.UNCHANGED if entry.vault_destination is None else _Binding.WITHHOLD
+    if tier_ceiling_for(entry.classification) is VaultTierCeiling.INTIMATE:
+        return _Binding.UNCHANGED
+    return None
+
+
+def _unbind_if_nothing_sent(
+    entry: JournalEntry, binding: _Binding, outcome: VaultWriteOutcome
+) -> bool:
+    """Drop a destination this write staged when the write provably sent nothing.
+
+    A handshake that turned the write away, or an Intimate skip, dialled no
+    ingest; leaving the marker would make the entry owe a withdrawal for a
+    copy that does not exist. A degraded ingest *was* dialled and keeps it.
+    """
+    if binding is not _Binding.BOUND or outcome.status not in _NOTHING_SENT:
+        return False
+    entry.vault_destination = None
+    return True
+
+
+async def _withdraw_remote_copies(
     session: AsyncSession,
     entry: JournalEntry,
-    vault_client: CreekVaultClient,
-) -> None:
-    """Clear remote metadata only after Creek confirms the stable id absent.
+    vault_client: CreekVaultPipelineClient,
+) -> bool:
+    """Attempt every owed withdrawal for ``entry``; ``True`` only when all are confirmed.
 
-    ``vault_ref`` is the durable retry marker. A missing ref proves this row has
-    no known remote copy and needs no call; a present one survives every
-    unavailable, unsupported, malformed, or partial outcome. The request
-    session is committed before the HTTP call so no pooled connection rides
-    across Creek latency. Raising a stable 503 is intentional: a privacy change
-    or delete is not complete while the connected vault still may hold it.
+    Both the essay withdrawals and the journal copy are attempted every time,
+    so one failing never hides the other. Each is bound to the destination that
+    received it: a replaced or removed connection leaves the copy pending
+    rather than trusting the new vault's "unknown id, withdrawn". Callers have
+    already committed the stricter local state, so a ``False`` here costs the
+    writer nothing but a stable 503 and a retry.
     """
-    if entry.vault_ref is None:
-        if entry.vault_tags is not None:
-            entry.vault_tags = None
-            session.add(entry)
-            await session.commit()
-            await session.refresh(entry)
-        return
-    entry_id = entry.id
-    if entry_id is None:
-        raise RuntimeError("persisted vault reference requires a journal entry id")
-    await session.commit()
-    if not await withdraw_journal_from_vault(vault_client, entry_id=entry_id):
-        raise service_unavailable("vault_withdrawal_pending")
-    entry.vault_ref = None
-    entry.vault_tags = None
-    session.add(entry)
-    await session.commit()
-    await session.refresh(entry)
+    entry_id = cast("int", entry.id)
+    destination = await resolved_vault_destination(session, entry.user_id)
+    drafts_withdrawn = await retract_pending_voice_drafts(
+        session,
+        vault_client,
+        EntryRef(user_id=entry.user_id, entry_id=entry_id),
+        destination=destination,
+    )
+    journal_withdrawn = await withdraw_journal_copy(
+        session, entry, vault_client, destination=destination
+    )
+    return drafts_withdrawn and journal_withdrawn
 
 
 async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) -> None:
@@ -1021,7 +1104,7 @@ async def update_journal_entry(
     """
     reingests = bool(payload.model_fields_set & _REINGEST_FIELDS)
     if not reingests:
-        entry, _previous_classification = await _persist_entry_update(
+        entry = await _persist_entry_update(
             entry_id,
             payload,
             current_user,
@@ -1038,22 +1121,19 @@ async def update_journal_entry(
             journal_vault_mutations.hold(session, entry_id),
         ):
             await ensure_account_live(session, current_user)
-            entry, previous_classification = await _persist_entry_update(
+            entry = await _persist_entry_update(
                 entry_id,
                 payload,
                 current_user,
                 session,
             )
             if entry.classification == JournalClassification.INTIMATE:
-                await withdraw_local_journal_entry(
+                await _apply_intimate_update(
                     session,
-                    user_id=current_user,
-                    entry_id=entry_id,
+                    entry,
+                    vault_client,
+                    chose_intimate="classification" in payload.model_fields_set,
                 )
-                await session.commit()
-                if previous_classification != JournalClassification.INTIMATE:
-                    await _retract_entry_voice_drafts(session, entry, vault_client)
-                await _withdraw_remote_journal_copy(session, entry, vault_client)
             else:
                 await _record_vault_outcome(session, entry, vault_client)
                 await _record_corpus_fragment(session, entry)
@@ -1061,12 +1141,38 @@ async def update_journal_entry(
     return entry
 
 
+async def _apply_intimate_update(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultPipelineClient,
+    *,
+    chose_intimate: bool,
+) -> None:
+    """Keep an Intimate entry out of the corpus and, when it was chosen, withdraw its copies.
+
+    Every PATCH that sets Intimate -- including a repeat of the same value --
+    owes and retries every withdrawal, so "choose Intimate again" is a real
+    retry. The tier is committed first and never reverted; a 503 reports only
+    that remote cleanup is pending. A body edit or Finish on an entry that is
+    already Intimate never dials: it saves, and any owed withdrawal is left to
+    the background sweep, so a vault that can never confirm (#3060 escalation
+    1) cannot hold the writer's own page hostage.
+    """
+    entry_id = cast("int", entry.id)
+    await withdraw_local_journal_entry(session, user_id=entry.user_id, entry_id=entry_id)
+    if chose_intimate:
+        await mark_entry_retractions_pending(session, user_id=entry.user_id, entry_id=entry_id)
+    await session.commit()
+    if chose_intimate and not await _withdraw_remote_copies(session, entry, vault_client):
+        raise service_unavailable("vault_withdrawal_pending")
+
+
 async def _persist_entry_update(
     entry_id: int,
     payload: JournalEntryUpdate,
     current_user: int,
     session: AsyncSession,
-) -> tuple[JournalEntry, str]:
+) -> JournalEntry:
     """Load, apply, and commit one owned update inside any caller-held privacy lock."""
     result = await session.execute(
         select(JournalEntry).where(
@@ -1079,7 +1185,6 @@ async def _persist_entry_update(
     entry = result.scalars().first()
     if entry is None:
         raise not_found("journal_entry")
-    previous_classification = entry.classification
     await _apply_entry_update(entry, payload, session)
     session.add(entry)
     try:
@@ -1092,47 +1197,7 @@ async def _persist_entry_update(
             raise conflict("reflection_scope_taken") from exc
         raise
     await session.refresh(entry)
-    return entry, previous_classification
-
-
-async def _retract_entry_voice_drafts(
-    session: AsyncSession,
-    entry: JournalEntry,
-    vault_client: CreekVaultPipelineClient,
-) -> bool:
-    """Retract expanded essays and report whether every absence was confirmed.
-
-    The query projects ids only -- never essay text -- and the transaction it
-    opens is committed before the first network call, returning the pooled
-    connection. Each retraction is therefore content-free and cannot roll back
-    the privacy change, which was committed before this helper was reached.
-    A same-value INTIMATE patch never calls this helper, so a failed retraction
-    is not turned into an implicit retry channel. Journal deletion consumes the
-    return value: the shared mutation lock makes that DELETE run after an
-    in-flight draft PUT and retract it, or before a delayed writer that then
-    observes ``deleted_at``; an unconfirmed retraction keeps the row live for an
-    explicit retry.
-    """
-    if entry.id is None:
-        return True
-    result = await session.execute(
-        select(Marginalia.id).where(
-            Marginalia.journal_entry_id == entry.id,
-            Marginalia.user_id == entry.user_id,
-            col(Marginalia.essay).is_not(None),
-        )
-    )
-    marginalia_ids = tuple(result.scalars().all())
-    await session.commit()
-    confirmations = [
-        await retract_voice_draft(
-            vault_client,
-            owner_user_id=entry.user_id,
-            marginalia_id=marginalia_id,
-        )
-        for marginalia_id in marginalia_ids
-    ]
-    return all(confirmations)
+    return entry
 
 
 async def _load_user_entry(
@@ -3364,9 +3429,12 @@ async def _mirror_cached_essay(
     Serialize the final liveness/tier read and mirror: an already-completed
     deletion skips; an INTIMATE transition is refused by ``mirror_voice_draft``;
     and if this PUT linearized first, the competing mutation waits and retracts
-    it. The request transaction is committed before Creek I/O; PostgreSQL holds
-    the cross-worker lock on a non-pooled, dedicated connection rather than
-    consuming the application pool. Account outermost, entry innermost -- the
+    it. The content-free intent row -- bound to the destination being dialled --
+    is committed before the PUT, so even a lost acknowledgement leaves the
+    withdrawal that mutation owes on record. The request transaction is
+    committed before Creek I/O; PostgreSQL holds the cross-worker lock on a
+    non-pooled, dedicated connection rather than consuming the application
+    pool. Account outermost, entry innermost -- the
     fixed nesting everywhere the two meet.
     """
     async with (
@@ -3378,12 +3446,27 @@ async def _mirror_cached_essay(
         await session.commit()
         if entry.deleted_at is not None:
             return cached
+        marginalia_id = cast("int", cached.id)
+        destination = await resolved_vault_destination(session, entry.user_id)
+
+        async def _record_intent() -> bool:
+            return await record_mirror_intent(
+                session,
+                user_id=entry.user_id,
+                entry_id=cast("int", entry.id),
+                marginalia_id=marginalia_id,
+                destination=destination,
+            )
+
         await mirror_voice_draft(
             clients.vault_client,
-            owner_user_id=entry.user_id,
-            marginalia_id=cast("int", cached.id),
-            essay=essay,
-            classification=entry.classification,
+            VoiceDraftCopy(
+                owner_user_id=entry.user_id,
+                marginalia_id=marginalia_id,
+                essay=essay,
+                classification=entry.classification,
+            ),
+            record_intent=_record_intent,
         )
     return cached
 
@@ -3656,11 +3739,10 @@ async def delete_journal_entry(
             user_id=current_user,
             entry_id=entry_id,
         )
+        await mark_entry_retractions_pending(session, user_id=current_user, entry_id=entry_id)
         await session.commit()
-        drafts_withdrawn = await _retract_entry_voice_drafts(session, current, vault_client)
-        if not drafts_withdrawn:
+        if not await _withdraw_remote_copies(session, current, vault_client):
             raise service_unavailable("vault_withdrawal_pending")
-        await _withdraw_remote_journal_copy(session, current, vault_client)
         current.deleted_at = datetime.now(UTC)
         session.add(current)
         await session.commit()

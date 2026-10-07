@@ -19,6 +19,8 @@ ASPECT_MIN = 1
 # schemas (JournalEntryUpdate, PromptSubmit) so the DB column bound and the
 # request validation can't drift.
 JOURNAL_TITLE_MAX_LENGTH = 200
+#: Width of an opaque vault-destination fingerprint (hex characters).
+VAULT_DESTINATION_WIDTH = 32
 
 # Bound at module scope so the partial unique index's ``*_where`` predicates can
 # resolve these columns by name at table-creation time (mirrors
@@ -251,6 +253,16 @@ class JournalEntry(SQLModel, table=True):
     # existing rows.
     vault_ref: str | None = Field(default=None, sa_column=Column(String, nullable=True))
     vault_tags: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    # Opaque fingerprint of the vault this entry was offered to, written and
+    # committed *before* the ingest is dialled. A withdrawal is trusted only
+    # from that same destination: a replaced connection answering "unknown id,
+    # withdrawn" proves nothing about the vault that actually holds the copy.
+    # NULL for legacy rows and for entries never offered to a dialable vault.
+    vault_destination: str | None = Field(
+        default=None,
+        max_length=VAULT_DESTINATION_WIDTH,
+        nullable=True,
+    )
     # When the consent backfill last *offered* this entry to the corpus writer,
     # whatever came of it. NULL means never offered. Not a record of success --
     # the fragment's own existence is that -- but of attention, and the sweep

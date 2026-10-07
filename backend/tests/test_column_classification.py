@@ -54,6 +54,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "gumroadsale.gumroad_sale_id",
             "gumroadsale.product_id",
             "journalentry.idem_key",
+            "journalentry.vault_destination",
             "journalentry.vault_ref",
             "licensebinding.gumroad_sale_id",
             "licensebinding.product_id",
@@ -75,6 +76,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultpipelinerun.job_id",
             "vaultpipelinerun.resume_claim_id",
             "vaultteardownreceipt.creek_job_id",
+            "voicedraftretraction.destination",
         }
     ),
     # Enum states and other closed vocabularies the code chooses from. Reading
@@ -128,6 +130,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultpipelinerun.stage",
             "vaultpipelinerun.trigger",
             "vaultteardownreceipt.state",
+            "voicedraftretraction.state",
             "walletaudit.bucket",
             "walletaudit.reason",
         }
@@ -196,6 +199,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "accountdeletionaudit.row_counts",
             "vaultactivation.failure_reason",
             "vaultteardownreceipt.failure_reason",
+            "voicedraftretraction.safe_failure_code",
         }
     ),
     # Derived from a person's prose and stored in the clear. An embedding and a

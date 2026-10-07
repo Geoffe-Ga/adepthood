@@ -22,6 +22,7 @@ from domain.creek_vault import (
 )
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import (
+    VoiceDraftCopy,
     mirror_voice_draft,
     retract_voice_draft,
     voice_draft_external_id,
@@ -114,10 +115,12 @@ async def test_personal_voice_draft_is_mirrored_once_after_a_capability_handshak
 
     await mirror_voice_draft(
         client,
-        owner_user_id=12,
-        marginalia_id=34,
-        essay=_ESSAY,
-        classification="personal",
+        VoiceDraftCopy(
+            owner_user_id=12,
+            marginalia_id=34,
+            essay=_ESSAY,
+            classification="personal",
+        ),
     )
 
     assert client.handshake_calls == 1
@@ -136,10 +139,12 @@ async def test_intimate_voice_draft_never_touches_the_client() -> None:
 
     await mirror_voice_draft(
         client,
-        owner_user_id=12,
-        marginalia_id=34,
-        essay=_ESSAY,
-        classification="intimate",
+        VoiceDraftCopy(
+            owner_user_id=12,
+            marginalia_id=34,
+            essay=_ESSAY,
+            classification="intimate",
+        ),
     )
 
     assert client.handshake_calls == 0
@@ -160,10 +165,12 @@ async def test_unavailable_or_unsupported_vault_silently_skips_the_draft(
 
     await mirror_voice_draft(
         client,
-        owner_user_id=12,
-        marginalia_id=34,
-        essay=_ESSAY,
-        classification="public",
+        VoiceDraftCopy(
+            owner_user_id=12,
+            marginalia_id=34,
+            essay=_ESSAY,
+            classification="public",
+        ),
     )
 
     assert client.handshake_calls == 1
@@ -177,10 +184,12 @@ async def test_failed_voice_draft_upsert_is_swallowed_and_never_retried() -> Non
 
     await mirror_voice_draft(
         client,
-        owner_user_id=12,
-        marginalia_id=34,
-        essay=_ESSAY,
-        classification="public",
+        VoiceDraftCopy(
+            owner_user_id=12,
+            marginalia_id=34,
+            essay=_ESSAY,
+            classification="public",
+        ),
     )
 
     assert client.handshake_calls == 1
