@@ -30,7 +30,8 @@ jest.mock('@/api', () => {
   const actual = jest.requireActual<typeof ApiModule>('@/api');
   return {
     ...actual,
-    auth: { ...actual.auth, login: jest.fn(), refresh: jest.fn() },
+    auth: { ...actual.auth, login: jest.fn() },
+    refreshSessionToken: jest.fn(),
     setTokenGetter: jest.fn(),
     setOnUnauthorized: jest.fn(),
     setOnTokenRefreshed: jest.fn(),
@@ -54,7 +55,7 @@ jest.mock('@/features/Habits/services/habitManager', () => ({
   habitManager: { loadHabits: jest.fn(() => Promise.resolve()) },
 }));
 
-import { auth as authApi } from '@/api';
+import { refreshSessionToken } from '@/api';
 import type * as ApiModule from '@/api';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import type { Habit } from '@/features/Habits/Habits.types';
@@ -62,7 +63,7 @@ import { useHabitsSummary } from '@/features/Journal/useHabitsSummary';
 import { loadToken, loadUserTimezone } from '@/storage/authStorage';
 import { useHabitStore } from '@/store/useHabitStore';
 
-const mockAuthApi = authApi as jest.Mocked<typeof authApi>;
+const mockRefreshSession = refreshSessionToken as jest.MockedFunction<typeof refreshSessionToken>;
 const mockLoadToken = loadToken as jest.MockedFunction<typeof loadToken>;
 const mockLoadUserTimezone = loadUserTimezone as jest.MockedFunction<typeof loadUserTimezone>;
 
@@ -132,7 +133,7 @@ beforeEach(() => {
   // The sliding renewal this token is armed for lands 15 days out; jest's
   // teardown runs pending timers, so give it a real response to settle on
   // rather than an unstubbed mock that throws inside the teardown.
-  mockAuthApi.refresh.mockResolvedValue({ token: 'fresh-jwt', user_id: 7, timezone: WEST_TZ });
+  mockRefreshSession.mockResolvedValue({ token: 'fresh-jwt', user_id: 7, timezone: WEST_TZ });
   useHabitStore.getState().setHabits([yesterdayEveningHabit()]);
 });
 

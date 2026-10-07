@@ -44,6 +44,8 @@ const BROWSER_E2E_SCRIPT = 'test:e2e:web';
 const AUTH_OVERFLOW_JOURNEY = 'auth-overflow.browser.e2e.test.ts';
 const BROWSER_JOURNEY = 'course-passage.browser.e2e.test.ts';
 const HABITS_VIEWPORT_JOURNEY = 'habits-viewport.browser.e2e.test.ts';
+/** The one browser journey that boots its own, demo-configured frontend (#2491). */
+const DEMO_TILE_JOURNEY = 'habits-demo-tile.browser.e2e.test.ts';
 const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
 /**
  * Sorted, because `e2eFiles` is a bare `readdirSync` filter and directory order
@@ -63,7 +65,9 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'habit-add-cadence.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
+  DEMO_TILE_JOURNEY,
   'habits-day-rollover.browser.e2e.test.ts',
+  'habits-resumed-session.browser.e2e.test.ts',
   'journal-care-support.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
   'journal-corpus-drawer.browser.e2e.test.ts',
@@ -100,6 +104,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'map-stage-persona.browser.e2e.test.ts',
   'practice-catalog-details.browser.e2e.test.ts',
   'practice-deep-link.browser.e2e.test.ts',
+  'practice-quick-launch-green.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',
   'practice-unconfirmed-stage.browser.e2e.test.ts',
   'practice-weekly-count.browser.e2e.test.ts',
@@ -435,6 +440,28 @@ describe('the real-browser journey is wired as a separate mandatory lane', () =>
     expect(spec).toContain('element.scrollTop = element.scrollHeight');
   });
 
+  it('keeps the default browser lane non-demo and confines the demo build to one spec', () => {
+    // `EXPO_PUBLIC_HABIT_DEMO_MODE` is inlined into the bundle at build time, so
+    // a server started with it changes the app for every spec that runs there.
+    // Keyed on what STARTS a server with it -- the demo env constant and the
+    // launcher -- rather than on the flag's name, which a spec may mention in
+    // prose (habits-viewport explains why it does not use it).
+    for (const [path, why] of [
+      [join(E2E_DIR, 'browserGlobalSetup.ts'), 'The browser lane boot is missing.'],
+      [BROWSER_E2E_CONFIG, 'The browser journey needs a Playwright config.'],
+      [WORKFLOW, 'The e2e lane only runs once a workflow invokes it.'],
+    ] as const) {
+      const text = read(path, why);
+      expect(text).not.toContain('HABIT_DEMO_ENV');
+      expect(text).not.toContain('EXPO_PUBLIC_HABIT_DEMO_MODE');
+    }
+    const demoServers = EXPECTED_BROWSER_JOURNEYS.filter((name) => {
+      const spec = read(join(E2E_DIR, name), `The browser journey spec ${name} is missing.`);
+      return spec.includes('HABIT_DEMO_ENV') || spec.includes('launchFrontend(');
+    });
+    expect(demoServers).toEqual([DEMO_TILE_JOURNEY]);
+  });
+
   it('keeps Playwright specs out of the Jest API journey lane', () => {
     const config = read(E2E_CONFIG, 'The API journey needs a Jest config.');
 
@@ -556,17 +583,28 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     expect(setup).not.toContain('dependency_overrides');
   });
 
-  it('advertises only the five capabilities the two vault journeys exercise', () => {
+  it('advertises only the six capabilities the two vault journeys exercise', () => {
     // The sharpest constraint on this boundary: every added word is a new class
     // of production traffic. The deployment owner is reserved for the upload
     // and withdrawal specs, while all other accounts stay on local fallback.
+    // `reflections` is the one deliberate addition (#3061): the owner is
+    // vault-bound, so the withdrawal journey's margin note can only come from
+    // this vault -- the app provider is never asked in its place.
     const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
 
-    expect(fake).toContain("  'capabilities',\n  'upload',\n  'journal-upsert',");
-    expect(fake).toContain("  'journal-withdraw',\n  'voice-drafts',");
-    expect(fake).not.toContain("'reflections'");
+    expect(fake).toContain(
+      "  'capabilities',\n  'upload',\n  'journal-upsert',\n  'journal-withdraw',\n  'voice-drafts',\n  'reflections',\n];",
+    );
     expect(fake).not.toContain("'wheel'");
     expect(fake).not.toContain("'pipeline'");
+    expect(fake).not.toContain("'classify'");
+  });
+
+  it('serves reflections on the published request shape and an admitted ceiling only', () => {
+    const fake = read(FAKE_VAULT, 'The withdrawal journey needs a vault that reflects.');
+
+    expect(fake).toContain("const REFLECTION_REQUEST_FIELDS = ['content', 'max_notes']");
+    expect(fake).toContain('ADMITTED_TIERS.includes(ceiling)');
   });
 
   it('requires the contract version on capability routes and admits no third tier', () => {
