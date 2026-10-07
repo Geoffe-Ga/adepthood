@@ -3,7 +3,9 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import {
   ApiError,
   auth as authApi,
+  refreshSessionToken,
   resetLlmApiKey,
+  resetTokenRotations,
   setOnTokenRefreshed,
   setOnUnauthorized,
   setTokenGetter,
@@ -155,11 +157,22 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/**
+ * Refresh ``currentToken`` in the background. It goes through the HTTP
+ * client's session coalescer, never the raw endpoint, so the backfill and both
+ * proactive paths share one refresh with any 401 that races them: the server
+ * revokes the token on refresh and allows one a minute, so a second refresh of
+ * the same token is a 429 that would sign the user out (#3034).
+ *
+ * The coalescer also publishes the rotation through ``onTokenRefreshed``;
+ * ``onSuccess`` applying the same token again is harmless, because both go
+ * through ``saveTokenThenApply``'s identity guard with the same prior token.
+ */
 function silentRefresh(
   currentToken: string,
   onSuccess: (t: string, timezone: string | undefined, expectedPriorToken: string) => void,
 ): void {
-  authApi.refresh(currentToken).then(
+  refreshSessionToken(currentToken).then(
     (res) => onSuccess(res.token, res.timezone, currentToken),
     () => {
       /* silent fail — 401 retry is the fallback */
@@ -403,6 +416,8 @@ async function clearTokenForReauth(
   mutators: AuthMutators,
   reason: UnauthorizedReason,
 ): Promise<void> {
+  // The session is over: no request may be forwarded to one of its tokens.
+  resetTokenRotations();
   if (!(await clearTokenSafely('onUnauthorized'))) {
     await armLogoutPending('onUnauthorized');
   }
@@ -654,6 +669,9 @@ interface AuthActions extends SocialLogins {
  * device storage knows nothing about.
  */
 async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators): Promise<void> {
+  // A fresh sign-in starts a fresh rotation history (#3034): a late request of
+  // the previous session must never be forwarded to that session's successor.
+  resetTokenRotations();
   // BUG-FE-STATE-001: before anything else, and before any state the navigator
   // renders from — a device whose owner just changed must not carry the
   // previous owner's rows into this session.
@@ -824,6 +842,7 @@ function useSocialLogins(mutators: AuthMutators): SocialLogins {
  * duplicated across two callbacks.
  */
 async function tearDownSession(mutators: AuthMutators, where: string): Promise<void> {
+  resetTokenRotations();
   if (!(await clearTokenSafely(where))) {
     await armLogoutPending(where);
   }

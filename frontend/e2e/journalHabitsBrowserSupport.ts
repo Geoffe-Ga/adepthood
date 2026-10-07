@@ -127,9 +127,19 @@ export function setProgramAnchorSixDaysAgo(email: string): void {
   setProgramAnchorDaysAgo(email, SIX_DAYS);
 }
 
-export async function signUp(page: Page, prefix: string): Promise<string> {
+/**
+ * Make a fresh account through the real sign-up screen, landing on the journal.
+ *
+ * @param origin - The frontend to sign up on; the lane's own by default. Only a
+ *   spec that boots its own, differently configured frontend passes another.
+ */
+export async function signUp(
+  page: Page,
+  prefix: string,
+  origin: string = frontendUrl(),
+): Promise<string> {
   const email = `${prefix}-${randomBytes(6).toString('hex')}@example.com`;
-  await page.goto(`${frontendUrl()}/get-started`);
+  await page.goto(`${origin}/get-started`);
   await page.getByRole('button', { name: 'I have a license key' }).click();
   await page.getByRole('textbox', { name: 'Email' }).fill(email);
   await page.getByRole('textbox', { name: 'Password', exact: true }).fill(ACCOUNT_PHRASE);
