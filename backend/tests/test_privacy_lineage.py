@@ -525,6 +525,63 @@ def test_every_lineage_operation_is_wired() -> None:
 
 
 # --- the leak, pinned until D01 ---------------------------------------------------
+#
+# Each strict xfail below has a passing control that runs the identical flow
+# over a fixture whose review keeps the lineage link but not the spliced text.
+# The control proves the flow reaches the model and that the canary arrives
+# only through the fold, so the xfail is failing on the leak and nothing else.
+
+
+#: An unrelated page's own words: distinct from the review, so finding the
+#: review's prose in a prompt proves it arrived as grounding. Starts with the
+#: phrase the canned reply quotes, so the pass anchors.
+_UNRELATED_PROSE = "Some personal thoughts about the garden, a page of its own."
+
+
+async def _unrelated_entry(session: AsyncSession, user_id: int) -> int:
+    unrelated = JournalEntry(
+        user_id=user_id,
+        message=_UNRELATED_PROSE,
+        sender="user",
+        classification=JournalClassification.PERSONAL,
+    )
+    session.add(unrelated)
+    await session.commit()
+    await session.refresh(unrelated)
+    return int(unrelated.id or 0)
+
+
+@pytest.mark.asyncio
+async def test_control_unfolded_review_reaches_the_model_without_the_canary(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same flow as the direct pin, minus the spliced text: the model is reached, no canary."""
+    spy = _CapturingLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+    headers, user_id = await _signup(async_client, "lineage_control_direct")
+    chain = await seed_folded_lineage(db_session, user_id=user_id, fold_text_into_review=False)
+
+    await _resonate(async_client, headers, chain.review_id)
+
+    assert spy.prompts
+    assert all(LINEAGE_SENTINEL not in prompt for prompt in spy.prompts)
+
+
+@pytest.mark.asyncio
+async def test_control_unfolded_review_grounds_an_unrelated_entry_without_the_canary(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same flow as the grounding pin, minus the spliced text: grounded, no canary."""
+    spy = _CapturingLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+    headers, user_id = await _signup(async_client, "lineage_control_prior")
+    await seed_folded_lineage(db_session, user_id=user_id, fold_text_into_review=False)
+
+    await _resonate(async_client, headers, await _unrelated_entry(db_session, user_id))
+
+    assert spy.prompts
+    assert any(REVIEW_PROSE in prompt for prompt in spy.prompts)
+    assert all(LINEAGE_SENTINEL not in prompt for prompt in spy.prompts)
 
 
 @pytest.mark.asyncio
