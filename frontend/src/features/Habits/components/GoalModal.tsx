@@ -351,6 +351,7 @@ const LogUnitSection = ({
         value={logAmount}
         onChangeText={setLogAmount}
         keyboardType="numeric"
+        testID="goal-log-amount"
       />
       <Button label="Log Units" onPress={onLog} testID="goal-log-units" />
     </View>
