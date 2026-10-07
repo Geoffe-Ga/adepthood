@@ -86,10 +86,10 @@ GAPS_PATH = _CURRICULUM_DIR / "content_gaps.json"
 SOURCES_PATH = _CURRICULUM_DIR / "source_references.json"
 PRACTICES_PATH = _CURRICULUM_DIR / "practice_recommendations.json"
 
-#: Minimum body words for a chapter, counted after the frontmatter with heading
-#: lines excluded. On the pinned tree teal-7 has 0, orange-7 has 29 and the
-#: next-thinnest (orange-13) has 75, so the floor separates a missing body from
-#: a short one with room on both sides.
+#: Minimum body words for a chapter, counted in the served body (frontmatter
+#: stripped once) with heading lines excluded. On the pinned tree teal-7 has 0,
+#: orange-7 has 29 and the next-thinnest (orange-13) has 75, so the floor
+#: separates a missing body from a short one with room on both sides.
 MIN_CHAPTER_WORDS: Final[int] = 50
 
 #: The only kinds a gaps record may waive: content the owner writes upstream.
@@ -303,10 +303,14 @@ def _is_heading(line: str) -> bool:
     return _HEADING.match(line) is not None
 
 
-def body_word_count(text: str) -> int:
-    """Count words in the served body, excluding the frontmatter and heading lines."""
-    lines = strip_frontmatter(text).splitlines()
-    return sum(len(line.split()) for line in lines if not _is_heading(line))
+def body_word_count(body: str) -> int:
+    """Count words in an already-served body, excluding heading lines.
+
+    ``body`` is :attr:`Document.body`, whose frontmatter :func:`load_corpus` has
+    already stripped once, exactly as the server does. It is never stripped
+    again: a served body may itself open with a ``---`` thematic break.
+    """
+    return sum(len(line.split()) for line in body.splitlines() if not _is_heading(line))
 
 
 def heading_slug(text: str) -> str:

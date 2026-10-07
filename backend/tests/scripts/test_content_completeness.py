@@ -278,10 +278,36 @@ def test_thin_threshold_boundary(tree: Tree) -> None:
     assert CHECKS["thin_chapter"](tree.corpus()) == []
 
 
-def test_body_word_count_excludes_frontmatter_and_headings() -> None:
+def test_body_word_count_excludes_headings_of_a_served_body() -> None:
     """The count grades the prose a reader is served, not its labels."""
-    text = "---\ntitle: a b c\n---\n# One two\n## Three\nfour five\n  ### six\n#tag seven\n"
-    assert body_word_count(text) == 4
+    served = "# One two\n## Three\nfour five\n  ### six\n#tag seven\n"
+    assert body_word_count(served) == 4
+
+
+def test_body_word_count_never_strips_frontmatter_again() -> None:
+    """A served body that opens with a ``---`` thematic break is counted whole.
+
+    Every whitespace-separated token on a non-heading line counts, the breaks too:
+    ``---``, ``not:``, ``frontmatter``, ``---``, then three more words.
+    """
+    served = "---\nnot: frontmatter\n---\nthree more words\n"
+    assert body_word_count(served) == 7
+
+
+#: Frontmatter, then a body that itself opens with a ``---`` thematic break and
+#: has a later one: stripping twice would drop everything but ``end``.
+_THEMATIC_BREAK_CHAPTER = (
+    "---\ntitle: x\n---\n---\n" + " ".join(["word"] * MIN_CHAPTER_WORDS) + "\n---\nend\n"
+)
+
+
+def test_a_body_opening_with_a_thematic_break_is_not_thin(tree: Tree) -> None:
+    """Regression: the gate strips the frontmatter once, as the server does."""
+    tree.write(_FIRST, _THEMATIC_BREAK_CHAPTER)
+    corpus = tree.corpus()
+    # The prose, both ``---`` breaks and ``end``; stripped twice it would be 1.
+    assert body_word_count(corpus.body(_FIRST)) == MIN_CHAPTER_WORDS + 3
+    assert CHECKS["thin_chapter"](corpus) == []
 
 
 # --- numbering ------------------------------------------------------------------------
