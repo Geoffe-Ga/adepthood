@@ -131,6 +131,8 @@ PR, and update ADR 0009's Context section there too.
 - **NATIVE:** whether and when to ship native apps (store and signing
   accounts).
 - **BYOK-WEB:** whether a provider key may sit in localStorage on web.
+- **BYOK-CONSENT:** a proposal only. Is BYOK consent granted per key, per
+  feature, or per call?
 - **BUDGET:** USD per active account-month and staffing per phase. Unknown.
 - **REVIEWERS:** who the four owed reviewers are.
 

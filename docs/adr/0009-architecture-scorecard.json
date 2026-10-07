@@ -107,6 +107,10 @@
       "question": "Whether web may keep a person's provider key in localStorage."
     },
     {
+      "id": "BYOK-CONSENT",
+      "question": "Proposal only: whether BYOK consent is granted once per key, per feature, or per call."
+    },
+    {
       "id": "BUDGET",
       "question": "Budget per active account-month and staffing per phase."
     },

@@ -648,3 +648,22 @@ def test_claim_scoping_has_no_stored_versus_future_split_for_active_attackers() 
     assert "stop at stored history" not in flat
     assert "stored history and future content alike" in flat
     assert "Protected **only while the signed build is honest**" in flat
+
+
+def test_every_open_owner_question_is_listed_in_the_record() -> None:
+    """The twin's open questions and the record's list agree, so none is hidden."""
+    text = _adr_text()
+    section = text[text.index("## Open owner questions") : text.index("## What this record")]
+    listed = set(re.findall(r"^- \*\*([A-Z0-9-]+):\*\*", section, re.MULTILINE))
+    questions = {_as_dict(entry).get("id") for entry in _as_list(_card()["open_owner_questions"])}
+
+    assert listed == questions
+
+
+def test_decision_three_does_not_invent_byok_consent_granularity() -> None:
+    """The owner decided BYOK-only cloud; consent granularity is a proposal, not a decision."""
+    text = _adr_text()
+    decision = _flat(text[text.index("## Decision\n") : text.index("## Threat actors")])
+
+    assert "per-feature opt-in" not in decision
+    assert "BYOK-CONSENT" in decision

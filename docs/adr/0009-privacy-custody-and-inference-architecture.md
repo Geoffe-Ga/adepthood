@@ -94,9 +94,9 @@ vault-local inference (D), with BYOK cloud as an explicit opt-in.
    open.
 3. **Cloud models are used only with the person's own key.** Anthropic,
    OpenAI and any other cloud model are reached only when the person adds
-   their own key in Settings (BYOK), and every BYOK call is an explicit,
-   per-feature opt-in. Without such a key, **none of their data reaches a
-   cloud model**. The app's own cloud key never carries a person's journal
+   their own key in Settings (BYOK). Without such a key, **none of their
+   data reaches a cloud model**. How finely BYOK consent is granted (per key,
+   per feature or per call) is not decided; see open question BYOK-CONSENT. The app's own cloud key never carries a person's journal
    content.
 
    **BYOK calls go from the person's device straight to the vendor.** This
@@ -582,6 +582,29 @@ The B13 epic body that carries this plan is drafted at
 - Confidential compute becomes affordable enough to make the
   runtime-we-control path operator-blind (C and D05).
 - The owner's budget for any phase is exceeded.
+
+## Open owner questions
+
+Mirrored in the scorecard's `open_owner_questions`. None is decided here.
+
+- **D03:** recovery, account reset, device pairing, revocation, double loss,
+  death or incapacity, malicious support requests (detailed above).
+- **RUNTIME:** is credit-funded inference on a no-retention runtime we
+  control, or on an ordinary-Fly vault, compatible with the premise, and how
+  is it labelled?
+- **WEB-ANCHOR:** which signed or pinned web delivery mechanism, and may web
+  accounts enrol before it ships?
+- **SCOPE:** which encrypted columns are journal content?
+- **MIGRATION:** opt-in or required enrolment, the retirement date for
+  server-held keys, dormant accounts, and backup expiry values.
+- **FEATURE-LOSS:** what enrolled accounts are told before phase (d).
+- **D02-PRIMITIVES:** which reviewed primitives, envelope format and library.
+- **NATIVE:** whether and when to ship native apps.
+- **BYOK-WEB:** whether web may keep a person's provider key in localStorage.
+- **BYOK-CONSENT:** a proposal only. Is BYOK consent granted once per key,
+  per feature, or per call?
+- **BUDGET:** budget per active account-month and staffing per phase.
+- **REVIEWERS:** who the four owed reviewers are.
 
 ## What this record does not unlock
 
