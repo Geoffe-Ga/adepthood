@@ -45,6 +45,23 @@ jest.mock('../../../../storage/habitStorage', () => ({
   clearDroppedCheckIns: jest.fn(() => Promise.resolve(undefined)),
 }));
 
+// A stateful in-memory stand-in for the replay head's out-of-band retry record
+// (#2473). Stateful rather than a bare ``jest.fn`` so a test can seed the record
+// one replay pass would have left and read back what the next pass wrote.
+let mockReplayState: unknown = null;
+
+jest.mock('../../../../storage/checkInReplayState', () => ({
+  loadCheckInReplayState: jest.fn(() => Promise.resolve(mockReplayState)),
+  saveCheckInReplayState: jest.fn((state: unknown) => {
+    mockReplayState = state;
+    return Promise.resolve(undefined);
+  }),
+  clearCheckInReplayState: jest.fn(() => {
+    mockReplayState = null;
+    return Promise.resolve(undefined);
+  }),
+}));
+
 jest.mock('../../hooks/useHabitNotifications', () => ({
   updateHabitNotifications: jest.fn(() => Promise.resolve([])),
   cancelForHabit: jest.fn(() => Promise.resolve(undefined)),
@@ -67,6 +84,7 @@ import type * as ApiModule from '../../../../api';
 import type { CheckInResult } from '../../../../api';
 import {
   ApiError,
+  ApiTimeoutError,
   ApiValidationError,
   habits as habitsApi,
   goalCompletions as goalCompletionsApi,
@@ -101,6 +119,7 @@ import {
 } from '../../HabitUtils';
 import { cancelForHabit } from '../../hooks/useHabitNotifications';
 import { applyGoalUpdate, habitManager } from '../habitManager';
+import { MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS, checkInIdentity } from '../replayPolicy';
 
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   id: 1,
@@ -5136,6 +5155,290 @@ describe('habitManager', () => {
 
       expect(clearPendingCheckIns).not.toHaveBeenCalled();
       expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[2]!]);
+    });
+
+    // #2473: an unclassified status that keeps recurring must not wedge the
+    // queue forever, but neither an offline spell nor an outage may ever count
+    // toward giving up on a check-in the user really made.
+    describe('bounded give-up on a recurring unclassified rejection (#2473)', () => {
+      const NOW = Date.parse('2025-06-01T12:00:00.000Z');
+      const iso = (ms: number): string => new Date(ms).toISOString();
+
+      interface SeededState {
+        identity: string;
+        attempts: number;
+        first_rejected_at: string;
+        last_status: number;
+      }
+
+      const seedState = (
+        head: QueuedCheckIn,
+        attempts: number,
+        ageMs: number,
+        lastStatus = 500,
+      ): SeededState => {
+        const state = {
+          identity: checkInIdentity(head),
+          attempts,
+          first_rejected_at: iso(NOW - ageMs),
+          last_status: lastStatus,
+        };
+        mockReplayState = state;
+        return state;
+      };
+
+      const rejectOnce = (err: unknown): void => {
+        (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(err as never);
+      };
+
+      beforeEach(() => {
+        mockReplayState = null;
+        jest.spyOn(Date, 'now').mockReturnValue(NOW);
+      });
+
+      it('gives up on an unclassified rejection that has recurred past the attempt cap and age floor, quarantining it and draining the queue behind it', async () => {
+        const head = queued(121, '2025-04-01');
+        const pending = [head, queued(122, '2025-04-02')];
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS + 1);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay(pending);
+
+        expect(postedGoalIds()).toEqual([121, 122]);
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect(recordDroppedCheckIn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            goal_id: 121,
+            status: 500,
+            reason: 'gave_up',
+            dropped_at: expect.any(String),
+          }),
+        );
+        const warnMock = console.warn as unknown as jest.Mock;
+        const logged = warnMock.mock.calls
+          .map((call) => (call as unknown[]).map((arg) => String(arg)).join(' '))
+          .join('\n');
+        expect(logged).toContain('121');
+        expect(logged).toContain('500');
+        expect(clearPendingCheckIns).toHaveBeenCalled();
+        expect(replacePendingCheckIns).not.toHaveBeenCalled();
+        expect(mockReplayState).toBeNull();
+      });
+
+      // The whole record, not a subset: every field the quarantine carries is
+      // the user's own check-in, and a field silently lost is a report the
+      // user can no longer act on.
+      const signedEntry = (goalId: number) => ({
+        goal_id: goalId,
+        did_complete: true,
+        completed_units: 2,
+        operation_id: `op-${goalId}`,
+        timestamp: '2025-04-01T00:00:00Z',
+        completed_on: '2025-04-01',
+      });
+
+      it('quarantines a given-up signed entry with every field it was queued with', async () => {
+        const head = signedEntry(131);
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect((recordDroppedCheckIn as jest.Mock).mock.calls[0]![0]).toStrictEqual({
+          ...head,
+          status: 500,
+          dropped_at: expect.any(String),
+          reason: 'gave_up',
+        });
+      });
+
+      it('quarantines a permanently rejected signed entry with every field it was queued with', async () => {
+        const head = signedEntry(132);
+        rejectOnce(new ApiError(404, 'goal_not_found'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect((recordDroppedCheckIn as jest.Mock).mock.calls[0]![0]).toStrictEqual({
+          ...head,
+          status: 404,
+          dropped_at: expect.any(String),
+          reason: 'rejected',
+        });
+      });
+
+      it('forgets the given-up entry even when the drain then stops behind it', async () => {
+        const head = queued(125, '2025-04-01');
+        const pending = [head, queued(126, '2025-04-02')];
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS);
+        rejectOnce(new ApiError(500, 'server_error'));
+        rejectOnce(new ApiError(503, 'unavailable'));
+
+        await replay(pending);
+
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[1]!]);
+        // The record named a check-in that has left the queue; it leaves too.
+        expect(mockReplayState).toBeNull();
+      });
+
+      it.each([
+        ['a fetch TypeError', () => new TypeError('Network request failed')],
+        ['a client timeout', () => new ApiTimeoutError('/goal_completions/', 1000)],
+        ['an offline fast-fail', () => new ApiError(0, 'network_error')],
+      ])(
+        'never counts or drops on %s, however many times replay runs',
+        async (_label, makeError) => {
+          const head = queued(131, '2025-04-01');
+          const pending = [head, queued(132, '2025-04-02')];
+          const seed = seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS * 2);
+          const REPLAY_PASSES = 3;
+
+          for (let pass = 0; pass < REPLAY_PASSES; pass += 1) {
+            rejectOnce(makeError());
+            await replay(pending);
+          }
+
+          const calls = (replacePendingCheckIns as jest.Mock).mock.calls;
+          expect(calls).toHaveLength(REPLAY_PASSES);
+          for (const call of calls) expect(call[0]).toEqual(pending);
+          expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+          expect(mockReplayState).toStrictEqual(seed);
+        },
+      );
+
+      it.each([401, 408, 429, 502, 503, 504])(
+        'treats a %i as an availability or auth signal that never counts',
+        async (status) => {
+          const head = queued(141, '2025-04-01');
+          const pending = [head, queued(142, '2025-04-02')];
+          const seed = seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS * 2);
+          rejectOnce(new ApiError(status, 'unavailable'));
+
+          await replay(pending);
+
+          expect(replacePendingCheckIns).toHaveBeenCalledWith(pending);
+          expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+          expect(mockReplayState).toStrictEqual(seed);
+        },
+      );
+
+      it('starts counting a legacy entry with no retry record without dropping it', async () => {
+        const pending = [queued(151, '2025-04-01'), queued(152, '2025-04-02')];
+        rejectOnce(new ApiError(451, 'unavailable_for_legal_reasons'));
+
+        await replay(pending);
+
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[0]!, pending[1]!]);
+        expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+        expect(mockReplayState).toEqual({
+          identity: checkInIdentity(pending[0]!),
+          attempts: 1,
+          first_rejected_at: iso(NOW),
+          last_status: 451,
+        });
+      });
+
+      it('keeps a head that reached the cap but is younger than the age floor', async () => {
+        const head = queued(161, '2025-04-01');
+        const pending = [head, queued(162, '2025-04-02')];
+        const seed = seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS - 1);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay(pending);
+
+        expect(postedGoalIds()).toEqual([161]);
+        expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+        expect(replacePendingCheckIns).toHaveBeenCalledWith(pending);
+        expect(mockReplayState).toEqual({
+          ...seed,
+          attempts: MAX_CHECK_IN_REPLAY_ATTEMPTS,
+          first_rejected_at: seed.first_rejected_at,
+        });
+      });
+
+      it('keeps a head that is old enough but has failed only once before', async () => {
+        const head = queued(171, '2025-04-01');
+        const seed = seedState(head, 1, MIN_POISON_AGE_MS * 10);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([head]);
+        expect(mockReplayState).toEqual({ ...seed, attempts: 2 });
+      });
+
+      it('restarts the count when the record names an entry that is no longer the head', async () => {
+        const head = queued(181, '2025-04-01');
+        seedState(queued(180, '2025-03-01'), MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS * 2);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([head]);
+        expect(mockReplayState).toEqual({
+          identity: checkInIdentity(head),
+          attempts: 1,
+          first_rejected_at: iso(NOW),
+          last_status: 500,
+        });
+      });
+
+      it.each([400, 403, 404, 409, 422])(
+        'still drops a permanent %i on its first failure, as a plain rejection',
+        async (status) => {
+          const head = queued(191, '2025-04-01');
+          seedState(head, 0, 0);
+          rejectOnce(new ApiError(status, 'rejected'));
+
+          await replay([head, queued(192, '2025-04-02')]);
+
+          expect(postedGoalIds()).toEqual([191, 192]);
+          expect(recordDroppedCheckIn).toHaveBeenCalledWith(
+            expect.objectContaining({ goal_id: 191, status, reason: 'rejected' }),
+          );
+          expect(clearPendingCheckIns).toHaveBeenCalled();
+        },
+      );
+
+      it('never sends the retry bookkeeping in the replayed request body', async () => {
+        const head = { ...queued(201, '2025-04-01'), completed_on: '2025-04-01' };
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, 0);
+
+        await replay([head]);
+
+        const [body] = (goalCompletionsApi.create as jest.Mock).mock.calls[0] as unknown[];
+        expect(body).toStrictEqual({
+          goal_id: 201,
+          did_complete: true,
+          completed_on: '2025-04-01',
+        });
+        expect(mockReplayState).toBeNull();
+      });
+
+      it('publishes a given-up check-in to the notice store', async () => {
+        const head = queued(211, '2025-04-01');
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS);
+        rejectOnce(new ApiError(500, 'server_error'));
+        (loadDroppedCheckIns as jest.Mock).mockResolvedValueOnce([
+          {
+            ...head,
+            status: 500,
+            dropped_at: iso(NOW),
+            reason: 'gave_up',
+          },
+        ] as never);
+        droppedStore().getState().reset();
+
+        await replay([head]);
+
+        const { entries } = droppedStore().getState();
+        expect(entries).toHaveLength(1);
+        expect(entries[0]!.goal_id).toBe(211);
+      });
     });
   });
 });
