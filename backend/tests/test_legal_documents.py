@@ -270,6 +270,49 @@ def test_exactly_the_pinned_columns_are_encrypted() -> None:
     assert _encrypted_columns() == _ENCRYPTED_COLUMNS
 
 
+# Columns derived from a person's writing that the schema stores in the clear,
+# each mapped to the bolded name the policy discloses it under. The owner chose
+# to disclose rather than encrypt these (#3058 AC5, B01), so the disclosure is
+# held to the schema: encrypting one, or adding another derived plaintext
+# column the policy does not name, fails here.
+_DERIVED_PLAINTEXT_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "corpusfragment.embedding": "**embeddings**",
+        "corpusfragment.frequency_weights": "**frequency weights**",
+        "journalentry.vault_tags": "**vault tags**",
+    }
+)
+
+# The broad claim the policy made before it named those columns. True of the
+# prose derived from an entry; false of the numbers and labels derived from it.
+_RETIRED_DERIVED_CLAIMS: Final[tuple[str, ...]] = (
+    "and so is everything derived from it",
+    "there is no version of this service that quietly stores your writing",
+)
+
+
+def test_the_policy_discloses_the_derived_data_it_stores_unencrypted() -> None:
+    """Embeddings, frequency weights and vault tags are named as unencrypted.
+
+    Each is something about a person's writing rather than the writing itself,
+    and each is plaintext in the schema, so the policy may neither call
+    everything derived from an entry encrypted nor leave these unnamed.
+    """
+    policy = _read(_PRIVACY_POLICY)
+    prose = _prose(_PRIVACY_POLICY)
+    encrypted = _encrypted_columns()
+
+    still_encrypted = sorted(set(_DERIVED_PLAINTEXT_DISCLOSURES) & encrypted)
+    assert not still_encrypted, f"now encrypted; narrow the disclosure: {still_encrypted}"
+    undisclosed = sorted(
+        column for column, name in _DERIVED_PLAINTEXT_DISCLOSURES.items() if name not in policy
+    )
+    assert not undisclosed, f"the policy does not name these derived columns: {undisclosed}"
+    assert "stored unencrypted" in prose
+    restated = [claim for claim in _RETIRED_DERIVED_CLAIMS if claim in prose]
+    assert not restated, f"the policy still claims all derived data is encrypted: {restated}"
+
+
 # The one sentence in the policy that lists what is *not* encrypted, identified
 # by the phrase it ends on. Everything it names must genuinely be plaintext, and
 # nothing it names may be a column the schema encrypts -- the two halves of

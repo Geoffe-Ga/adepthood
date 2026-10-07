@@ -65,7 +65,7 @@ that record.
 Your entries live in the operator's PostgreSQL database.
 
 Everything you write in the journal is encrypted in that database, and so
-is everything derived from it: **the body and title of every entry**, **the
+is the text derived from it: **the body and title of every entry**, **the
 text of a passage you promote out of one**, **each fragment of your writing
 held in the corpus your reflections are drawn from**, **every margin note —
 including the sentence of yours it quotes back at you**, **the suggestions
@@ -77,8 +77,17 @@ protected for the same reason. One thing that is not your writing is
 encrypted alongside all of it: **the access key for a private vault, if you
 connect one**. They are encrypted with a key the
 operator configures, and a production server refuses to start without one, so
-there is no version of this service that quietly stores your writing in the
-clear.
+a production deployment of this service cannot quietly store your writing in
+the clear.
+
+Some of what is derived from your writing is not text, and it is stored
+unencrypted. **Frequency weights**: when the corpus is on, each passage in it
+is stored with a score for each frequency the sorting found in it. **Embeddings**: the corpus can also hold, for each passage, an embedding —
+a list of numbers a model computes from the text so that passages with
+similar meaning can be found. **Vault tags**: when an entry is sent to a Creek
+Vault, the frequency and Wavelength-phase labels the vault gives back are kept
+on the entry. None of these is your words, but each says something about
+them, and anyone who can read the database can read them.
 
 **If you connect your own vault or activate a managed one**, Adepthood stores
 the address and access credential and uses them only to send your own entries
