@@ -1817,5 +1817,41 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/practice-deep-link.browser.e2e.test.ts"
+  },
+  {
+    "id": "practice.paused-sitting-records-the-full-sitting",
+    "description": "A practitioner starts a timed sitting, pauses it part-way, steps away, resumes and lets it run to its end, then saves it -- and the sitting is recorded as the whole time they practised. The completion window used to restamp its start on every move into running, resume included, so a three-minute sit paused after one minute posted started_at as the last resume and the server counted two minutes. The spec drives the real player in a browser against the real server on Playwright's clock and pins both halves of the seam: the started_at/ended_at the page posts span exactly the practised time (pause excluded), and the duration_minutes the server derives from them matches. Clock-jump clamping, the missed-cue burst and the foreground reconcile are pinned meanwhile by jest (reducer.clock, useRitualEngine.background, ActiveRitualSession.pauseResume, presetLaunchMatrix).",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": ["POST /practice-sessions/"],
+      "tables": ["practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-paused-sitting.browser.e2e.test.ts"
+  },
+  {
+    "id": "practice.every-mode-family-launches-from-the-catalog",
+    "description": "A practitioner picks any seeded practice from the catalog -- each of the eleven engine modes, every stage's canonical preset and the course's own alternatives (Yellow's and Ultraviolet's forty-five-minute alternatives among them) -- and can start it, pause and resume it where the view offers that, finish it and save it. Uncovered in the browser: presetLaunchMatrix.test.tsx launches every seeded preset end to end in jest from a fixture the backend gates equal to PRESET_PRACTICES, and modeParity.test.tsx holds every backend PracticeMode to a picker entry, a configurator form, valid defaults and a session view, but no browser spec yet walks one preset per mode family from the catalog through a real save (#3072 AC19). Stage 10 Clear Light has no alternatives chapter in the course, so it offers only its canonical sit.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/screens/PracticeCatalogScreen.tsx",
+      "client": ["practices", "userPractices", "practiceSessions"],
+      "routes": ["GET /practices/", "POST /user-practices/", "POST /practice-sessions/"],
+      "tables": ["practice", "userpractice", "practicesession"]
+    },
+    "status": "uncovered",
+    "issue": 3072
+  },
+  {
+    "id": "practice.session-returns-from-the-background-calmly",
+    "description": "A practitioner leaves the app mid-sit and comes back after several bells fell due. They hear one bell for where the sitting now is rather than a burst of every bell missed, the display catches up the moment the app is foregrounded, a sitting that ran past its end is recorded as the length planned, the time-only mindful-anchor practices count the minutes spent away, and the metronome dot stands still under Reduce Motion. Uncovered: backgrounding a native app and the OS Reduce Motion setting are not drivable from this repository's browser or node lanes (there is no frontend/ios or frontend/android); pinned meanwhile by useRitualEngine.background, RandomIntervalBellView.background, MindfulAnchorView.engineClock, reducer.clock and MetronomeView.reducedMotion (#3072 AC3-AC5, real-device evidence AC20).",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": ["POST /practice-sessions/"],
+      "tables": ["practicesession"]
+    },
+    "status": "uncovered",
+    "issue": 3072
   }
 ]
