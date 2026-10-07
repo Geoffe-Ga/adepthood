@@ -30,9 +30,19 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from services import journal_encryption as je
+from services.encryption_inventory import (
+    ROW_ID_COLUMN,
+    EncryptedColumn,
+    encrypted_columns,
+    raw_table,
+)
 from services.journal_encryption import EncryptedString
+from tests.support.encrypted_rows import insert_row
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ADR_DIR = _REPO_ROOT / "docs" / "adr"
@@ -71,6 +81,9 @@ _STATUSES = frozenset({"proposed", "accepted"})
 _REVIEW_CONSULTED = "consulted"
 _REVIEW_OWED = "not_yet_consulted"
 _PHASE_IDS = ("a", "b", "c", "d")
+# The journal tables carry at least body, title and the AI notes on them; a
+# scope that shrinks below this has stopped describing the journal.
+_MIN_IN_SCOPE_JOURNAL_COLUMNS = 10
 
 _ACCEPTED_STATUS = "- **Status:** Accepted"
 _DECIDER_LINE = "- **Decider:** Geoff"
@@ -107,7 +120,10 @@ _PINNING_TESTS = {
         "test_the_pinned_inventory_is_exactly_what_the_schema_encrypts",
         "test_every_encrypted_table_has_a_row_factory",
     ),
-    "test_custody_decision_record.py": ("test_custody_codec_has_no_per_principal_key",),
+    "test_custody_decision_record.py": (
+        "test_custody_codec_has_no_per_principal_key",
+        "test_server_env_keys_alone_recover_every_in_scope_journal_column",
+    ),
 }
 
 # The records the owner's premise makes non-compliant, and one sentence from
@@ -544,25 +560,89 @@ def test_custody_adr_cites_pinning_tests_that_exist() -> None:
             assert re.search(rf"^(?:async )?def {name}\(", source, re.MULTILINE)
 
 
+def _journal_scope() -> tuple[frozenset[str], frozenset[str]]:
+    """The scorecard's SCOPE proposal: (in-scope journal columns, proposed out of scope)."""
+    scope = _as_dict(_card()["journal_scope_proposal"])
+    in_scope = frozenset(str(name) for name in _as_list(scope.get("in_scope")))
+    out_of_scope = frozenset(str(name) for name in _as_list(scope.get("proposed_out_of_scope")))
+    return in_scope, out_of_scope
+
+
+def _in_scope_targets() -> list[EncryptedColumn]:
+    """The in-scope journal columns, as the encryption inventory names them."""
+    in_scope, _ = _journal_scope()
+    return [target for target in encrypted_columns() if target.qualified in in_scope]
+
+
+def test_journal_scope_proposal_classifies_every_encrypted_column() -> None:
+    """Every EncryptedString column is proposed in or out of the premise; none is unclassified."""
+    in_scope, out_of_scope = _journal_scope()
+    schema = {target.qualified for target in encrypted_columns()}
+
+    assert in_scope.isdisjoint(out_of_scope)
+    assert in_scope | out_of_scope == schema
+    assert len(in_scope) >= _MIN_IN_SCOPE_JOURNAL_COLUMNS
+
+
 def test_custody_codec_has_no_per_principal_key() -> None:
-    """Baseline: one server-held key registry encrypts every person's prose.
+    """Baseline: every in-scope journal column is still under the server-key codec.
 
-    This is the measurable custody baseline ADR 0009 must invert. It is
-    **expected to fail by design** when B13 (#3067) lands user-held keys: a
-    codec that takes a per-person key, or an ``EncryptedString`` bound to an
-    owner, is the change this test is waiting for. When it fails for that
-    reason, replace it with the inverted assertion and update ADR 0009's
-    "Reopen triggers" and "Context" sections in the same change -- do not
-    delete it to make the suite pass.
+    This is the structural custody baseline ADR 0009 must invert, checked on
+    the schema rather than on prose. It holds while every in-scope journal
+    column is typed ``EncryptedString``, the codec takes no per-person key, and
+    ``EncryptedString`` adds no constructor of its own (so no owner can be
+    bound to a column). Its companion,
+    ``test_server_env_keys_alone_recover_every_in_scope_journal_column``,
+    proves on a real database that the env keys alone recover each column.
+
+    It is **expected to fail by design** when B13 (#3067) phase (c) moves a
+    journal column to client-held ciphertext, or gives the codec a per-person
+    key. When it fails for that reason, replace it with the inverted assertion
+    and update ADR 0009's Context and Reopen triggers in the same change. Do
+    not delete it to make the suite pass.
     """
-    encrypt_parameters = list(inspect.signature(je.encrypt).parameters)
-    decrypt_parameters = list(inspect.signature(je.decrypt).parameters)
-    column_parameters = list(inspect.signature(EncryptedString.__init__).parameters)
+    in_scope, _ = _journal_scope()
+    under_server_codec = {target.qualified for target in encrypted_columns()}
 
-    assert encrypt_parameters == ["plaintext"]
-    assert decrypt_parameters == ["value"]
-    assert [name for name in column_parameters if _KEY_PARAMETER.search(name)] == []
+    assert sorted(in_scope - under_server_codec) == []
+    assert list(inspect.signature(je.encrypt).parameters) == ["plaintext"]
+    assert list(inspect.signature(je.decrypt).parameters) == ["value"]
+    assert "__init__" not in vars(EncryptedString)
     assert je.KEYS_ENV_VAR == "JOURNAL_ENCRYPTION_KEYS"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", _in_scope_targets(), ids=lambda target: target.qualified)
+async def test_server_env_keys_alone_recover_every_in_scope_journal_column(
+    db_session: AsyncSession, target: EncryptedColumn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Baseline: with only ``JOURNAL_ENCRYPTION_KEYS``, the server reads the journal.
+
+    A synthetic canary is written through the ORM. The raw stored bytes are
+    then read and decrypted with nothing but the env key, after the key cache
+    is dropped. That is the operator's power over stored journal prose today.
+    Like the codec test above, this **fails by design** when B13 phase (c)
+    lands: client-held ciphertext no longer opens under the env key alone.
+    """
+    canary = f"custody canary for {target.qualified}"
+    monkeypatch.setenv(je.KEYS_ENV_VAR, Fernet.generate_key().decode())
+    je.reset_cache()
+    try:
+        row_id = await insert_row(db_session, target.table, lambda _column: canary)
+        await db_session.commit()
+        raw = raw_table(target)
+        stored = (
+            await db_session.execute(
+                select(raw.c[target.column]).where(raw.c[ROW_ID_COLUMN] == row_id)
+            )
+        ).scalar_one()
+        je.reset_cache()
+
+        assert isinstance(stored, str)
+        assert canary not in stored
+        assert je.decrypt(stored) == canary
+    finally:
+        je.reset_cache()
 
 
 @pytest.mark.parametrize("option", ["status_quo", "A", "E"])

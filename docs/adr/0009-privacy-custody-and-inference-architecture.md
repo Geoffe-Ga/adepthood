@@ -31,9 +31,18 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
   reads its MultiFernet keys from the env var `JOURNAL_ENCRYPTION_KEYS`
   (`KEYS_ENV_VAR`). `EncryptedString` encrypts on write and decrypts on
   every ORM read in the server process. `encrypt(plaintext)` and
-  `decrypt(value)` take no per-person key. The guard
-  `test_custody_codec_has_no_per_principal_key` holds that baseline, and it
-  is built to fail when B13 lands user-held keys.
+  `decrypt(value)` take no per-person key. Two guards hold that baseline
+  structurally, over the in-scope journal columns of the scorecard's
+  `journal_scope_proposal`:
+  - `test_custody_codec_has_no_per_principal_key` checks that every one of
+    those columns is still typed `EncryptedString` under the per-person-key-free
+    codec;
+  - `test_server_env_keys_alone_recover_every_in_scope_journal_column` writes
+    a canary to each on a real database and recovers it with nothing but the
+    env key.
+
+  Both are built to fail when B13 phase (c) moves a journal column to
+  client-held ciphertext.
 - **That covers 18 columns across 10 tables.** The count comes from
   `services/encryption_inventory.py::encrypted_columns()`. The comment in
   `models/_prose_repr.py`, "13 across 8 tables", is stale. B02's raw canary
@@ -519,7 +528,8 @@ autosave included. Unenrolled accounts are unchanged.
 Enrol existing accounts on their devices and re-encrypt their history. Delete
 the server-key ciphertext and the derived plaintext. Withdraw Creek copies
 (B04) and let backups expire (B08). Then retire `JOURNAL_ENCRYPTION_KEYS`
-for journal content and invert `test_custody_codec_has_no_per_principal_key`.
+for journal content. Invert `test_custody_codec_has_no_per_principal_key`
+and `test_server_env_keys_alone_recover_every_in_scope_journal_column`.
 
 - **Shippable on its own:** yes, per account. Each enrolled account is done
   when its legacy copies are gone. The server key path is retired only after
@@ -579,9 +589,11 @@ The B13 epic body that carries this plan is drafted at
 - B09 finds no supported device or vault configuration for non-cloud
   inference.
 - A regulatory requirement forces a recovery path.
-- A per-person key parameter appears on the codec, so
-  `test_custody_codec_has_no_per_principal_key` fails. That is expected: it
-  is the signal to update this record's Context and invert the test.
+- A journal column leaves the server-key codec, or the codec gains a
+  per-person key, so `test_custody_codec_has_no_per_principal_key` or
+  `test_server_env_keys_alone_recover_every_in_scope_journal_column` fails.
+  That is expected: it is the signal to update this record's Context and
+  invert the tests.
 - Confidential compute becomes affordable enough that it could make the
   runtime-we-control path operator-blind, if D05 is proven (C).
 - The owner's budget for any phase is exceeded.

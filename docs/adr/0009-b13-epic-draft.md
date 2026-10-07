@@ -33,12 +33,23 @@ reopen triggers.
 
 ## Baseline this epic must invert
 
-`backend/tests/test_custody_decision_record.py::test_custody_codec_has_no_per_principal_key`
-pins today's custody. `encrypt(plaintext)` and `decrypt(value)` take no
+Two tests in `backend/tests/test_custody_decision_record.py` pin today's
+custody structurally, over the in-scope journal columns in
+`docs/adr/0009-architecture-scorecard.json` (`journal_scope_proposal`):
+
+- `test_custody_codec_has_no_per_principal_key` checks that every in-scope
+  column is still typed `EncryptedString` under a codec with no per-person
+  key;
+- `test_server_env_keys_alone_recover_every_in_scope_journal_column` shows,
+  on a real database, that the env key alone recovers a canary from each
+  column.
+
+In detail: `encrypt(plaintext)` and `decrypt(value)` take no
 per-person key, and `JOURNAL_ENCRYPTION_KEYS` on the server decrypts all 18
 `EncryptedString` columns (B02's `test_every_encrypted_column_stores_ciphertext`).
-The test **fails by design** when user-held keys land. Invert it in the same
-PR, and update ADR 0009's Context section there too.
+Both tests **fail by design** when phase (c) moves a journal column to
+client-held ciphertext. Invert them in the same PR, and update ADR 0009's
+Context section there too.
 
 ## Phases (each shippable on its own)
 

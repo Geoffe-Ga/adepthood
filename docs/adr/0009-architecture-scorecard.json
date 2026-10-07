@@ -47,6 +47,31 @@
       "reason": "Provider-managed custody is not operator-blind; only its vault-local inference is kept, inside BD."
     }
   ],
+  "journal_scope_proposal": {
+    "status": "proposal; open owner question SCOPE",
+    "in_scope": [
+      "completionsuggestion.anchor_text",
+      "completionsuggestion.label",
+      "corpusfragment.content",
+      "journalentry.message",
+      "journalentry.title",
+      "marginalia.anchor_text",
+      "marginalia.essay",
+      "marginalia.note",
+      "practicesession.insight",
+      "practicesession.reflection",
+      "promotedquote.anchor_text",
+      "promptresponse.response"
+    ],
+    "proposed_out_of_scope": [
+      "feedbacknote.body",
+      "feedbackreport.actual",
+      "feedbackreport.expected",
+      "feedbackreport.intent",
+      "feedbackreport.summary",
+      "uservaultconfig.api_key"
+    ]
+  },
   "phases": [
     {
       "id": "a",
