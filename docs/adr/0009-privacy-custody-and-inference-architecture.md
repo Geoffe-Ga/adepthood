@@ -124,15 +124,17 @@ vault-local inference (D), with BYOK cloud as an explicit opt-in.
 ## Threat actors
 
 Each cell says whether the actor can recover **stored** journal prose under
-the option once that option's gates have passed.
+the option once that option's gates have passed. An actor who controls the
+code the person runs can capture the user-held key, so for that actor stored
+history and future content stand or fall together.
 
 | Actor | status_quo | A | B | C | D | E | BD (selected) |
 |---|---|---|---|---|---|---|---|
 | Database thief (no env keys) | blocked | blocked | blocked | blocked | blocked | blocked | blocked |
 | Backup holder (with env keys) | reads | reads | blocked | blocked | blocked | reads | blocked |
-| Privileged operator | reads | reads | blocked | blocked\* | blocked | reads | blocked for storage; sees runtime-we-control inputs while they run |
+| Privileged operator | reads | reads | blocked on native while the signed build is honest; on web, reads through a served bundle until WEB-ANCHOR ships | blocked\* | same as B | reads | blocked on native while the signed build is honest; **on web, reads all stored history through a served bundle until WEB-ANCHOR ships**; sees runtime-we-control inputs while they run |
 | Hosting provider (Fly, DB host) | reads | reads | blocked | blocked\* | blocked | reads | blocked for storage; same runtime caveat |
-| Malicious or compelled client update | reads | reads | reads on web, harder on signed native | reads on web | reads on web, harder on signed native | reads | reads on web until signed or pinned builds ship; harder on signed native |
+| Malicious or compelled client update | reads | reads | reads all stored history (captured key); harder on signed native | reads on web | reads all stored history (captured key); harder on signed native | reads | reads all stored history once the key is captured: on web until signed or pinned builds ship, on native through a malicious signed build |
 | XSS in the web client | reads | reads | reads open sessions | reads open sessions | reads open sessions | reads | reads open sessions; CSP enforcement narrows it |
 | Compromised device | reads | reads | reads | reads | reads | reads | reads |
 | Our server relaying a BYOK call | reads (relays today) | reads | blocked once BYOK is client-direct | blocked once BYOK is client-direct | blocked once BYOK is client-direct | reads | **reads today** (server-proxied BYOK, a known gap); blocked once phase (a) makes BYOK client-direct |
@@ -189,7 +191,7 @@ the option once that option's gates have passed.
 - **Supported platforms:** Native and web; web depends on trusting the served bundle. (`repo:DEPLOYMENT.md`)
 - **Client delivery and update trust:** Native: store-signed builds. Web: operator-served code can exfiltrate keys unless signed or pinned delivery is built. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** Every server-readable copy must be re-encrypted client-side or deleted, including derived plaintext and backups. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
-- **Threat actors:** Defeats DB thief, backup holder, host and stored-data subpoena; a malicious or compelled web update and a compromised device still succeed. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
+- **Threat actors:** Defeats DB thief, backup holder, host and stored-data subpoena. A malicious or compelled update (on web, any served bundle) captures the key and reads all stored history; a compromised device also succeeds. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
 - **Reopen triggers:** Selected as half of BD; reopen if a key-non-possession prototype fails. (`owner:2026-10-07`)
@@ -223,7 +225,7 @@ the option once that option's gates have passed.
 - **Supported platforms:** Capable native devices; web limited by browser runtime and storage. (`repo:frontend/eas.json`)
 - **Client delivery and update trust:** Signed native builds; web has the same served-code problem as B. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** Does not by itself remove existing server copies; needs B's migration. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
-- **Threat actors:** Defeats every remote actor for unsent content; a compromised device and a malicious update still succeed. (`issue:#3067`)
+- **Threat actors:** Defeats every remote passive actor for unsent content; a compromised device, and a malicious update that captures the key (and with it any synced history), still succeed. (`issue:#3067`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
 - **Reopen triggers:** Selected as half of BD; reopen if B09 finds no supported-device configuration. (`issue:#1850`)
@@ -257,7 +259,7 @@ the option once that option's gates have passed.
 - **Supported platforms:** Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve, mitigated by signed or pinned builds. (`owner:2026-10-07`)
 - **Client delivery and update trust:** Native: store-signed builds. Web: an enforced CSP plus signed or pinned builds; the CSP is report-only today. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** All 18 EncryptedString columns that carry journal prose, DERIVED_FROM_PROSE plaintext, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
-- **Threat actors:** Defeats DB thief, backup holder, host, privileged operator and stored-data subpoena for stored content; a compelled web update and a compromised device remain; runtime-we-control inference is not operator-blind while it runs; until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
+- **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until WEB-ANCHOR ships. A compromised device remains; runtime-we-control inference is not operator-blind while it runs; until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
 - **Reopen triggers:** Key-non-possession prototype fails; no web anchor is buildable; D03 user testing shows unacceptable loss; B09 finds no supported non-cloud configuration. (`owner:2026-10-07`)
@@ -266,12 +268,19 @@ the option once that option's gates have passed.
 What may be said, after B13's gates **and** B24's certification. Nothing in
 this table is claimable today.
 
-| Platform | Stored history | Future content | Inference | What the claim rests on |
+There is no stored-versus-future split for the operator or the update
+channel. Under BD one user-held key opens every stored envelope. A build that
+captures that key can therefore decrypt the person's **whole stored history**
+as well as anything written afterwards. The split that does hold is between
+**passive** attackers (who only ever hold stored bytes) and **active**
+attackers (who control the code the person runs).
+
+| Platform | Passive: DB, backup or host-storage thief | Active: operator or update channel (stored history and future content alike) | Inference | What the claim rests on |
 |---|---|---|---|---|
-| Native iOS and Android (store-signed) | Operator cannot decrypt | Operator cannot decrypt, unless the store-signed build itself is malicious | Device-first; vault or credits runtime only with consent; cloud only with BYOK | OS keystore, store signing, and reproducible-build evidence once it exists |
-| Web (served by us) | Operator cannot decrypt **stored ciphertext**; a DB, backup or host thief gets nothing | **Rests on trusting the code we serve.** A malicious or compelled bundle could capture keys at the next load | Same routing as native, with browser runtime limits | Enforced CSP, signed or pinned builds (open question WEB-ANCHOR); until those ship, web claims stop at stored history |
+| Native iOS and Android (store-signed) | Ciphertext only | Protected **only while the signed build is honest**. A malicious or compelled signed build could capture the key and decrypt stored history and future content alike | Device-first; vault or credits runtime only with consent; cloud only with BYOK, device to vendor | OS keystore, store signing, and reproducible-build evidence once it exists |
+| Web (served by us) | Ciphertext only | **Rests on trusting the code we serve**, for stored history and future content alike. A malicious or compelled bundle could capture the key at the next load and decrypt everything stored. This stays true until WEB-ANCHOR ships | Same routing as native, with browser runtime limits | Enforced CSP and signed or pinned builds (open question WEB-ANCHOR) |
 | Person's own vault (self-hosted) | Theirs to protect | Theirs to protect | Vault-local model | The person's own machine |
-| Managed vault on ordinary Fly | Ciphertext only for journal content (replaces Creek-Vault ADR 0014 for this content) | Ciphertext only | Vault-local inference sees plaintext while it runs; this is not operator-blind (open question RUNTIME) | Creek's runtime plus Fly; provider-managed custody is not operator-blind for anything still stored in plaintext |
+| Managed vault on ordinary Fly | Ciphertext only for journal content, once B13 phases (b) and (c) land for the account | The same per-client caveat as the platform the person enrols from | Vault-local inference sees plaintext while it runs; this is not operator-blind (open question RUNTIME) | Creek's runtime plus Fly; provider-managed custody is not operator-blind for anything still stored in plaintext |
 
 No platform may advertise "end-to-end" or "operator-blind" until B24
 certifies that claim for that platform.
@@ -282,7 +291,8 @@ certifies that claim for that platform.
   `frontend/nginx.conf` sends `Content-Security-Policy-Report-Only` at both
   locations, so the CSP reports violations but does not enforce them. Nothing
   out-of-band lets a person check the code they ran. Under BD this is the
-  weakest link, and the reason the web claim is scoped.
+  weakest link: a served bundle can capture the key and so read stored
+  history as well as future content. That is why the web claim is scoped.
 - **Mitigations to choose from (open question WEB-ANCHOR):** an enforced CSP
   with `script-src 'self'` and Subresource Integrity; a signed release
   manifest, verified by a pinned service worker or browser extension;

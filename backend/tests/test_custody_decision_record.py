@@ -632,3 +632,19 @@ def test_custody_adr_records_the_server_proxied_byok_gap() -> None:
     assert "BYOK calls go from the person's device straight to the vendor" in text
     assert "Move BYOK inference client-side" in phase_a
     assert "no `X-LLM-API-Key` header" in phase_a
+
+
+def test_claim_scoping_has_no_stored_versus_future_split_for_active_attackers() -> None:
+    """A captured user-held key opens all stored history, not only future content.
+
+    So no platform may sell stored history as safe from the operator or the
+    update channel while future content carries the caveat.
+    """
+    text = _adr_text()
+    section = text[text.index("## Per-platform claim scoping") : text.index("## Client delivery")]
+    flat = _flat(section)
+
+    assert "| Future content |" not in section
+    assert "stop at stored history" not in flat
+    assert "stored history and future content alike" in flat
+    assert "Protected **only while the signed build is honest**" in flat

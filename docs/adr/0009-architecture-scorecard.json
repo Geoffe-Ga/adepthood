@@ -250,7 +250,7 @@
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {
-        "value": "Defeats DB thief, backup holder, host and stored-data subpoena; a malicious or compelled web update and a compromised device still succeed.",
+        "value": "Defeats DB thief, backup holder, host and stored-data subpoena. A malicious or compelled update (on web, any served bundle) captures the key and reads all stored history; a compromised device also succeeds.",
         "source": "repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext"
       },
       "budget_usd_per_active_account_month": {
@@ -350,7 +350,7 @@
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {
-        "value": "Defeats every remote actor for unsent content; a compromised device and a malicious update still succeed.",
+        "value": "Defeats every remote passive actor for unsent content; a compromised device, and a malicious update that captures the key (and with it any synced history), still succeed.",
         "source": "issue:#3067"
       },
       "budget_usd_per_active_account_month": {
@@ -450,7 +450,7 @@
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {
-        "value": "Defeats DB thief, backup holder, host, privileged operator and stored-data subpoena for stored content; a compelled web update and a compromised device remain; runtime-we-control inference is not operator-blind while it runs; until phase (a) our server relays BYOK calls and sees their plaintext.",
+        "value": "Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until WEB-ANCHOR ships. A compromised device remains; runtime-we-control inference is not operator-blind while it runs; until phase (a) our server relays BYOK calls and sees their plaintext.",
         "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
       },
       "budget_usd_per_active_account_month": {
