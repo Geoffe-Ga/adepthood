@@ -288,12 +288,16 @@ class VaultSendSuspendedError(CreekVaultUnavailableError):
 
     Raised by the vault adapter's single request site, before anything is put
     on the wire, for every request that carries content while
-    ``PRIVACY_SUSPEND_VAULT_SEND`` is on. It subclasses
-    :class:`CreekVaultUnavailableError` on purpose: every caller already
-    degrades on an absent vault -- the journal write is saved, a reflection
-    falls back or refunds, a pipeline step is retried later -- so a suspension
-    reads as a vault that is not answering, never as a failed request.
-    Content-free withdrawals and deletions are not refused.
+    ``PRIVACY_SUSPEND_VAULT_SEND`` is on. Content-free withdrawals and deletions
+    are not refused.
+
+    It subclasses :class:`CreekVaultUnavailableError` for the callers that
+    degrade: the journal write is saved without a vault copy, and a reflection
+    or upload degrades as if the vault were absent. The vault pipeline is the
+    exception. Its ladders list this subclass *ahead* of its transient parent,
+    so a refused stage is recorded FAILED on the first attempt the switch
+    refuses -- fresh, retried or resumed -- and is never retried or recorded
+    ambiguous, because the request provably never left the process.
     """
 
     def __init__(self) -> None:
