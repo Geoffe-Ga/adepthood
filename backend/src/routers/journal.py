@@ -3713,10 +3713,12 @@ async def delete_journal_entry(
 
     Stamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.
     This preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the
-    usage audit trail is never orphaned, and allows recovery within the
-    configurable retention window.  Soft-deleted rows are invisible to all
-    read paths (list, get, ``load_recent_conversation``) which filter
-    ``deleted_at IS NULL``.
+    usage audit trail is never orphaned.  Soft-deleted rows are invisible to
+    all read paths (list, get, ``load_recent_conversation``) which filter
+    ``deleted_at IS NULL``, and no recovery path is exposed.  There is no
+    automatic retention window: the row and its derivatives (margin notes,
+    promoted quotes, completion suggestions) persist until account deletion
+    or an operator purge (#3063; see ``domain.retention``).
     """
     entry_id = cast("int", entry.id)
     # The ownership dependency's read opened a transaction. End it before

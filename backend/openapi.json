@@ -17906,7 +17906,7 @@
     },
     "/journal/{entry_id}": {
       "delete": {
-        "description": "Soft-delete a journal entry (BUG-JOURNAL-007).\n\nStamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.\nThis preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the\nusage audit trail is never orphaned, and allows recovery within the\nconfigurable retention window.  Soft-deleted rows are invisible to all\nread paths (list, get, ``load_recent_conversation``) which filter\n``deleted_at IS NULL``.",
+        "description": "Soft-delete a journal entry (BUG-JOURNAL-007).\n\nStamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.\nThis preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the\nusage audit trail is never orphaned.  Soft-deleted rows are invisible to\nall read paths (list, get, ``load_recent_conversation``) which filter\n``deleted_at IS NULL``, and no recovery path is exposed.  There is no\nautomatic retention window: the row and its derivatives (margin notes,\npromoted quotes, completion suggestions) persist until account deletion\nor an operator purge (#3063; see ``domain.retention``).",
         "operationId": "delete_journal_entry_journal__entry_id__delete",
         "parameters": [
           {
