@@ -190,11 +190,21 @@ is the owner's (#3075).
   operator`. That holds for a fresh stage, for a retry of a stage already in
   flight when the switch was set, and for a stage resumed at startup. It is
   not retried further, and it is not recorded `ambiguous`, because the
-  refused request never left the process. Nothing re-runs the stage when the switch is unset: it runs
-  again only when a later trigger (a new journal write, for example) starts a
-  new pipeline run. That is expected, not a second incident.
+  refused request never left the process. Nothing re-runs the stage when the
+  switch is unset: it runs again only when a later trigger (a new journal
+  write, for example) starts a new pipeline run. That is expected, not a
+  second incident.
 - Entries written under the vault-send suspension are not re-sent
   automatically afterwards (§5).
+- Under `PRIVACY_SUSPEND_EXTERNAL_AI`, a corpus consent grant is recorded,
+  but its backfill sweep stops before the first entry and leaves every entry
+  unmarked. Entries written during the suspension are saved, but not
+  classified into the corpus. **Neither resumes on its own when the switch is
+  unset.** The only thing that runs the backfill is the user's own consent
+  grant, so the history waits until that user grants consent again (a
+  repeated yes re-runs the sweep). Before closing the incident, the owner
+  decides whether, and how, to invite affected users to re-grant:
+  [OPERATOR]. There is no operator tool to start a sweep.
 - `PRIVACY_SUSPEND_EXTERNAL_AI` refuses the resonance route before it decides
   where the reflection comes from, so for the duration a vault-bound writer
   also gets `ai_suspended` rather than a vault reflection.
