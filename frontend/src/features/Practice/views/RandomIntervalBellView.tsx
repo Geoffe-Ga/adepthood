@@ -2,7 +2,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text } from 'react-native';
 
-import { createExpoAudioAdapter } from '../engine/adapters/audio';
 import type {
   AudioAdapter,
   IntervalBellTone,
@@ -26,8 +25,13 @@ interface Props {
   controls: RitualControls;
   /** Injectable RNG for deterministic tests; defaults to `Math.random`. */
   random?: () => number;
-  /** Injectable audio adapter for tests; defaults to the bundled bell audio. */
-  audio?: AudioAdapter;
+  /**
+   * The session's audio adapter. Required: this mode's bells are played here
+   * (the engine schedules none), so they must go through the adapter whose
+   * failures raise the session's "bells unavailable" notice. The adapter
+   * belongs to the session, which disposes it; this view never does.
+   */
+  audio: AudioAdapter;
   /** Lifts session metadata up so the parent can harvest it on save. */
   onMetadataChange?: (metadata: RandomIntervalBellMetadata) => void;
 }
@@ -59,27 +63,6 @@ export function generateSchedule(config: RandomIntervalBellConfig, random: () =>
     deltas.push(Math.max(1, Math.round(gap)));
   }
   return { offsets, deltas };
-}
-
-/**
- * Resolve the audio adapter once. The session hands in its own adapter, so a
- * bell failure here reaches the same "bells unavailable" notice as every other
- * mode; that adapter belongs to the session and is not disposed here. Only an
- * adapter this view built for itself (standalone use) is disposed with it.
- */
-function useBellAudio(injected?: AudioAdapter): AudioAdapter {
-  const [{ adapter, owned }] = useState(() =>
-    injected === undefined
-      ? { adapter: createExpoAudioAdapter(), owned: true }
-      : { adapter: injected, owned: false },
-  );
-  useEffect(
-    () => () => {
-      if (owned) adapter.dispose?.();
-    },
-    [adapter, owned],
-  );
-  return adapter;
 }
 
 /** Generate the schedule on `idle → running`; clear it back on `→ idle`. */
@@ -173,7 +156,6 @@ const RandomIntervalBellView = ({
 }: Props): React.JSX.Element => {
   // Stabilise so a fresh `random` prop identity can't retrigger the schedule effect.
   const rng = useMemo(() => random ?? Math.random, [random]);
-  const adapter = useBellAudio(audio);
   const schedule = useSessionSchedule(config, state.status, rng);
 
   const struckCount = useMemo(() => {
@@ -181,8 +163,8 @@ const RandomIntervalBellView = ({
     return schedule.offsets.filter((offset) => offset * MS_PER_SECOND <= state.elapsedMs).length;
   }, [schedule, state.elapsedMs]);
 
-  useBoundaryBells(config, state.status, adapter);
-  useIntervalBells(schedule, struckCount, state.status, adapter, config.bell_tone);
+  useBoundaryBells(config, state.status, audio);
+  useIntervalBells(schedule, struckCount, state.status, audio, config.bell_tone);
 
   useReportedMetadata(schedule, struckCount, onMetadataChange);
 

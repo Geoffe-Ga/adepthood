@@ -207,12 +207,13 @@ describe('RandomIntervalBellView — boundary bells', () => {
 });
 
 describe('RandomIntervalBellView — adapter lifecycle', () => {
-  it('renders with the default audial and RNG dependencies', () => {
+  it('renders with the default RNG', () => {
     const { unmount, getByTestId } = render(
       <RandomIntervalBellView
         config={baseConfig}
         state={fakeState({ status: 'idle' })}
         controls={fakeControls()}
+        audio={fakeAudio()}
       />,
     );
     expect(getByTestId('random-interval-bell-view')).toBeTruthy();
