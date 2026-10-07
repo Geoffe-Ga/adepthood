@@ -1621,15 +1621,23 @@ async def test_list_with_no_habits_creates_no_progress_row(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("disable_rate_limit")
-async def test_concurrent_first_reads_provision_one_anchor_and_stamp_once(
+async def test_concurrent_first_reads_provision_one_anchor(
     concurrent_async_client: AsyncClient,
     concurrent_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Racing first reads leave one anchor, and each invitation is consumed once (AC8).
+    """Racing first reads leave exactly one calendar anchor, and it paces the reveal.
 
-    The first gathered pair races the provisioning SAVEPOINT; the second races
-    the Purple stamp at the stage-2 boundary. A stamp written twice would show
-    as a moved ``auto_revealed_at`` on a later read.
+    The first gathered pair races the provisioning SAVEPOINT in
+    ``ensure_user_progress``; the losing read must re-read the winner's row
+    rather than fail or insert a second one. The second pair, after a 21-day
+    rewind, shows that single row is the anchor both reads go on to use.
+
+    This proves the anchor, not the stamp. ``FOR UPDATE`` is a no-op on SQLite,
+    so nothing here can show that an invitation is written only once -- two
+    racing SQLite sessions may both stamp it. That AC8 claim is proved where the
+    row lock is real: ``tests/integration/test_habit_reveal_stamp_race.py``
+    counts every write the reveal pass makes under a forced interleaving on
+    PostgreSQL.
     """
     signup = await concurrent_async_client.post(
         "/auth/signup",
@@ -1651,8 +1659,6 @@ async def test_concurrent_first_reads_provision_one_anchor_and_stamp_once(
     async with concurrent_session_factory() as session:
         rows = await _progress_rows(session, user_id)
         assert len(rows) == 1
-        beige_marker = await _marker_by_name(session, user_id)
-        assert beige_marker["Purple ring"] is None
         (progress,) = rows
         progress.program_started_at = datetime.now(UTC) - timedelta(days=_BEIGE_WINDOW_DAYS)
         session.add(progress)
@@ -1661,28 +1667,12 @@ async def test_concurrent_first_reads_provision_one_anchor_and_stamp_once(
     second_pair = await asyncio.gather(
         *[concurrent_async_client.get("/habits/", headers=headers) for _ in range(2)]
     )
+
     assert [r.status_code for r in second_pair] == [HTTPStatus.OK, HTTPStatus.OK]
-    async with concurrent_session_factory() as session:
-        purple_marker = await _marker_by_name(session, user_id)
-
     third = await concurrent_async_client.get("/habits/", headers=headers)
-
     assert _revealed_by_name(third.json()) == {"Beige ring": True, "Purple ring": True}
     async with concurrent_session_factory() as session:
-        final_marker = await _marker_by_name(session, user_id)
         assert len(await _progress_rows(session, user_id)) == 1
-    assert purple_marker["Purple ring"] is not None
-    assert final_marker == {
-        "Beige ring": beige_marker["Beige ring"],
-        "Purple ring": purple_marker["Purple ring"],
-    }
-    assert final_marker["Beige ring"] is not None
-
-
-async def _marker_by_name(session: AsyncSession, user_id: int) -> dict[str, datetime | None]:
-    """Index a user's ``auto_revealed_at`` markers by habit name."""
-    result = await session.execute(select(Habit).where(Habit.user_id == user_id))
-    return {habit.name: habit.auto_revealed_at for habit in result.scalars().all()}
 
 
 @pytest.mark.asyncio
