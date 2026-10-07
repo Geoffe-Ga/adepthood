@@ -21,7 +21,7 @@ pinned by ``test_legacy_unbound_marker_is_withdrawn_from_the_current_vault``
 and left for an owner decision rather than widened here.
 
 After a reconnect or disconnect, a copy bound to the old vault is never
-dialled and never confirmed: the Intimate transition and DELETE answer a
+dialled and never confirmed: the Intimate reclassification and DELETE answer a
 standing 503 and log ``destination_changed`` (#3060 escalation 5).
 """
 

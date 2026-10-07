@@ -61,10 +61,12 @@ _PAST_BACKOFF = timedelta(hours=2)
 _TWO_ATTEMPTS = 2
 _STUCK_ENTRIES = 51
 
-#: Attributes every ``logging.LogRecord`` carries; anything else came from ``extra``.
+#: Attributes every ``logging.LogRecord`` carries, plus the request trace id the
+#: application's own log filter stamps on every record (``observability``) once
+#: any test has installed it; anything else came from the caller's ``extra``.
 _STANDARD_RECORD_KEYS = frozenset(
     logging.LogRecord("n", logging.INFO, "p", 1, "m", None, None).__dict__
-) | {"message", "asctime", "taskName"}
+) | {"message", "asctime", "taskName", "trace_id"}
 
 
 class _DraftVault(LocalFallbackCreekVaultClient):
