@@ -65,6 +65,8 @@ const ABORTED_INDEX = 1;
 const DEVICE_OWNER_KEY = '@adepthood/device_owner';
 /** `habitStorage.PENDING_CHECKINS_KEY_BASE`, scoped per account with `#u<id>`. */
 const PENDING_KEY_BASE = '@adepthood/pending_checkins';
+/** `habitStorage.DROPPED_CHECKINS_KEY_BASE`: the on-device quarantine. */
+const DROPPED_KEY_BASE = '@adepthood/dropped_checkins';
 /** `checkInReplayState`'s base key: the queue head's retry record (#2473). */
 const REPLAY_STATE_KEY_BASE = '@adepthood/pending_checkin_replay_state';
 /** `userScope.SCOPE_MARKER`. */
@@ -221,6 +223,15 @@ async function serverUnits(
   );
 }
 
+/** The ids of a habit's goals, read from the server. */
+async function goalIdsOf(
+  request: APIRequestContext,
+  token: string,
+  habitId: number,
+): Promise<number[]> {
+  return (await readHabit(request, token, habitId)).goals.map((goal) => goal.id);
+}
+
 interface Arranged {
   token: string;
   /** The day the pinned page clock reads, in the account's zone. */
@@ -258,17 +269,25 @@ async function arrange(
   return { token, pinnedDay, today, habitIds };
 }
 
-/** Go offline, tap, and wait until the device holds `expected` queued entries. */
+/**
+ * Go offline and tap, habit by habit, waiting after each habit until the device
+ * holds its taps. Each tap is queued only once its offline POST has finished
+ * failing, retries and all, so taps on two habits made back to back could land
+ * in either order; waiting between habits makes the queue order the tap order.
+ */
 async function queueOffline(
   page: Page,
   taps: Array<[name: string, count: number]>,
-  expected: number,
 ): Promise<QueuedCheckIn[]> {
   await goOffline(page);
-  for (const [name, count] of taps) await logUnits(page, name, count);
+  let queued = 0;
+  for (const [name, count] of taps) {
+    await logUnits(page, name, count);
+    queued += count;
+    await expect.poll(async () => (await readPendingQueue(page))?.length ?? 0).toBe(queued);
+  }
   // Identical toasts can stack while a retried offline POST fails, so `.first()`.
   await expect(page.getByText(OFFLINE_TOAST).first()).toBeVisible();
-  await expect.poll(async () => (await readPendingQueue(page))?.length ?? 0).toBe(expected);
   const queue = await readPendingQueue(page);
   if (queue === null) throw new Error('the queue vanished while offline');
   return queue;
@@ -281,10 +300,10 @@ test('a check-in tapped offline is queued on the device and replays exactly once
   const HABIT = 'Offline walk';
   const { token, today, habitIds } = await arrange(page, request, 'offline-drain', [HABIT]);
   const [habitId] = habitIds as [number];
-  const goalIds = (await readHabit(request, token, habitId)).goals.map((goal) => goal.id);
+  const goalIds = await goalIdsOf(request, token, habitId);
   expect(completionsOf(await readHabit(request, token, habitId))).toEqual([]);
 
-  const queue = await queueOffline(page, [[HABIT, QUEUED_TAPS]], QUEUED_TAPS);
+  const queue = await queueOffline(page, [[HABIT, QUEUED_TAPS]]);
   // The optimistic count stays on the tile while the taps wait on the device.
   await expect(tile(page, HABIT).getByTestId('progress-fill')).not.toHaveCSS('width', '0px');
   const ids = operationIds(queue);
@@ -325,15 +344,13 @@ test('a queued check-in the server permanently rejects is dropped, the rest stil
   const KEPT = 'Kept while away';
   const { token, habitIds } = await arrange(page, request, 'offline-poison', [GONE, KEPT]);
   const [goneId, keptId] = habitIds as [number, number];
-  const queue = await queueOffline(
-    page,
-    [
-      [GONE, 1],
-      [KEPT, 1],
-    ],
-    2,
-  );
+  const queue = await queueOffline(page, [
+    [GONE, 1],
+    [KEPT, 1],
+  ]);
   const [goneKey, keptKey] = operationIds(queue).map(replayKey);
+  expect(await goalIdsOf(request, token, goneId)).toContain(queue[0]!.goal_id);
+  expect(await goalIdsOf(request, token, keptId)).toContain(queue[1]!.goal_id);
 
   // Out of band, the habit behind the head entry goes away: its replay is a real 404.
   const deleted = await request.delete(`${backendUrl()}/habits/${goneId}`, {
@@ -378,7 +395,7 @@ test('a replay cut off mid-queue keeps exactly the unposted suffix and never re-
   const HABIT = 'Interrupted run';
   const { token, habitIds } = await arrange(page, request, 'offline-suffix', [HABIT]);
   const [habitId] = habitIds as [number];
-  const ids = operationIds(await queueOffline(page, [[HABIT, QUEUED_TAPS]], QUEUED_TAPS));
+  const ids = operationIds(await queueOffline(page, [[HABIT, QUEUED_TAPS]]));
   const cutKey = replayKey(ids[ABORTED_INDEX]!);
 
   // Every attempt for one entry's key fails as a dropped connection -- the
@@ -424,7 +441,7 @@ test('a check-in queued yesterday replays today onto yesterday', async ({ page, 
   );
   const [habitId] = habitIds as [number];
   expect(pinnedDay).not.toBe(today);
-  const [entry] = await queueOffline(page, [[HABIT, 1]], 1);
+  const [entry] = await queueOffline(page, [[HABIT, 1]]);
   expect(dayKeyIn(entry!.timestamp, USER_TIMEZONE)).toBe(pinnedDay);
 
   // The device reconnects on the server's today, still on a pinned clock.
@@ -452,15 +469,13 @@ test('a head entry the server keeps refusing past the attempt cap and a week is 
     KEPT,
   ]);
   const [poisonId, keptId] = habitIds as [number, number];
-  const queue = await queueOffline(
-    page,
-    [
-      [POISON, 1],
-      [KEPT, 1],
-    ],
-    2,
-  );
+  const queue = await queueOffline(page, [
+    [POISON, 1],
+    [KEPT, 1],
+  ]);
   const [poisonOp, keptOp] = operationIds(queue) as [string, string];
+  expect(await goalIdsOf(request, token, poisonId)).toContain(queue[0]!.goal_id);
+  expect(await goalIdsOf(request, token, keptId)).toContain(queue[1]!.goal_id);
   const keptKey = replayKey(keptOp);
 
   // The head has already been refused one time short of the cap, starting more
@@ -507,8 +522,23 @@ test('a head entry the server keeps refusing past the attempt cap and a week is 
   log.mark();
   await replayFromShelf(page, null);
 
-  // The entry behind the refused head finally lands.
-  await expect.poll(() => serverUnits(request, token, keptId)).toBe(1);
+  // The entry behind the refused head finally lands. A miss says what the
+  // server answered and what the device quarantined, so it is diagnosable.
+  const landed = await expect
+    .poll(() => serverUnits(request, token, keptId))
+    .toBe(1)
+    .then(
+      () => true,
+      () => false,
+    );
+  if (!landed) {
+    const quarantine = await readScoped(page, DROPPED_KEY_BASE);
+    throw new Error(
+      `the entry behind the refused head never landed; answered ${JSON.stringify(
+        log.sinceMark().map(({ key, status }) => ({ key, status })),
+      )}; quarantined ${JSON.stringify(quarantine)}`,
+    );
+  }
   expect(completionsOf(await readHabit(request, token, poisonId))).toEqual([]);
   expect(await readScoped(page, REPLAY_STATE_KEY_BASE)).toBeNull();
   const answered = log.sinceMark();
