@@ -425,14 +425,13 @@ async def _bind_vault_destination(
     if type(vault_client) is LocalFallbackCreekVaultClient:
         return entry.vault_destination is None
     destination = await vault_destination_fingerprint(session, entry.user_id)
-    recorded = entry.vault_destination
-    if recorded is not None and recorded != destination:
+    if entry.vault_destination not in {None, destination}:
         logger.warning(
             "journal_vault_write_withheld",
             extra={"entry_id": entry.id, "reason": "destination_changed"},
         )
         return False
-    if destination is not None and recorded is None:
+    if entry.vault_destination is None and destination is not None:
         entry.vault_destination = destination
         session.add(entry)
     return True

@@ -162,17 +162,10 @@ async def mirror_voice_draft(
     intent row keeps any later withdrawal honest.
     """
     tier = tier_ceiling_for(draft.classification)
-    if not _expressible_on_the_wire(tier):
+    if not _expressible_on_the_wire(tier) or not await _supports_voice_drafts(client):
         return
-    if not await _supports_voice_drafts(client):
-        return
-
     external_id = voice_draft_external_id(draft.owner_user_id, draft.marginalia_id)
-    if record_intent is not None and not await record_intent():
-        _LOGGER.warning(
-            _MIRROR_WITHHELD_EVENT,
-            extra={"external_id": external_id, "reason": "withdrawal_outstanding"},
-        )
+    if not await _intent_recorded(record_intent, external_id):
         return
     request = VaultVoiceDraftRequest(
         external_id=external_id,
@@ -180,6 +173,25 @@ async def mirror_voice_draft(
         tier=tier,
         tier_ceiling=tier,
     )
+    await _put_draft(client, request)
+
+
+async def _intent_recorded(
+    record_intent: Callable[[], Awaitable[bool]] | None, external_id: str
+) -> bool:
+    """Record the offer when a recorder is wired; ``False`` withholds the PUT."""
+    if record_intent is None or await record_intent():
+        return True
+    _LOGGER.warning(
+        _MIRROR_WITHHELD_EVENT,
+        extra={"external_id": external_id, "reason": "withdrawal_outstanding"},
+    )
+    return False
+
+
+async def _put_draft(client: CreekVaultVoiceDraftClient, request: VaultVoiceDraftRequest) -> None:
+    """Attempt the one PUT, logging a content-free outcome; never raises a vault error."""
+    external_id = request.external_id
     try:
         result = await client.upsert_voice_draft(request)
     except CreekVaultError:
@@ -470,6 +482,54 @@ async def retract_pending_voice_drafts(
     ``None`` and retries every owed row, because the writer just asked. The
     sweep's ``due_by`` is also the clock its backoff is scheduled from.
     """
+    rows = await _owed_rows(session, target, due_by)
+    attempt = _AttemptContext(
+        client=client,
+        target=target,
+        destination=destination,
+        now=_utcnow() if due_by is None else due_by,
+    )
+    failures = [await _attempt_and_settle(session, attempt, row) for row in rows]
+    return not any(failures) and not await _still_owed(session, target)
+
+
+@dataclass(frozen=True)
+class _AttemptContext:
+    """What every row of one retry pass is attempted against."""
+
+    client: CreekVaultVoiceDraftClient
+    target: EntryRef
+    destination: str | None
+    now: datetime
+
+
+async def _attempt_and_settle(
+    session: AsyncSession,
+    attempt: _AttemptContext,
+    row: tuple[int, int, str | None, int],
+) -> RetractionFailureCode | None:
+    """Attempt one owed row and persist its outcome; return the failure, if any."""
+    obligation_id, marginalia_id, recorded, attempt_count = row
+    failure = await _attempt_one(
+        attempt.client,
+        owner_user_id=attempt.target.user_id,
+        marginalia_id=marginalia_id,
+        bound_elsewhere=recorded not in {None, attempt.destination},
+    )
+    await _settle(
+        session,
+        obligation_id=obligation_id,
+        attempt_count=attempt_count,
+        failure=failure,
+        now=attempt.now,
+    )
+    return failure
+
+
+async def _owed_rows(
+    session: AsyncSession, target: EntryRef, due_by: datetime | None
+) -> tuple[tuple[int, int, str | None, int], ...]:
+    """Project the owed rows' ids (never essay text), then end the transaction."""
     query = select(
         VoiceDraftRetraction.id,
         VoiceDraftRetraction.marginalia_id,
@@ -482,26 +542,29 @@ async def retract_pending_voice_drafts(
     )
     if due_by is not None:
         query = query.where(_is_due(due_by))
-    rows = tuple((await session.execute(query.order_by(col(VoiceDraftRetraction.id)))).all())
+    result = await session.execute(query.order_by(col(VoiceDraftRetraction.id)))
+    rows = tuple(
+        (obligation_id, marginalia_id, recorded, attempt_count)
+        for obligation_id, marginalia_id, recorded, attempt_count in result.all()
+        if obligation_id is not None
+    )
     await session.commit()
-    confirmed = True
-    for obligation_id, marginalia_id, recorded, attempt_count in rows:
-        failure: RetractionFailureCode | None
-        if recorded is not None and recorded != destination:
-            failure = RetractionFailureCode.DESTINATION_CHANGED
-        else:
-            failure = await retraction_failure(
-                client, owner_user_id=target.user_id, marginalia_id=marginalia_id
-            )
-        await _settle(
-            session,
-            obligation_id=obligation_id,
-            attempt_count=attempt_count,
-            failure=failure,
-            now=due_by if due_by is not None else _utcnow(),
-        )
-        confirmed = confirmed and failure is None
-    return confirmed and not await _still_owed(session, target)
+    return rows
+
+
+async def _attempt_one(
+    client: CreekVaultVoiceDraftClient,
+    *,
+    owner_user_id: int,
+    marginalia_id: int,
+    bound_elsewhere: bool,
+) -> RetractionFailureCode | None:
+    """Dial one owed DELETE, unless the copy lives in a vault other than this one."""
+    if bound_elsewhere:
+        return RetractionFailureCode.DESTINATION_CHANGED
+    return await retraction_failure(
+        client, owner_user_id=owner_user_id, marginalia_id=marginalia_id
+    )
 
 
 async def _still_owed(session: AsyncSession, target: EntryRef) -> bool:

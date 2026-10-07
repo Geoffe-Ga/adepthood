@@ -76,6 +76,11 @@ async def withdraw_journal_from_vault(client: CreekVaultClient, *, entry_id: int
     return True
 
 
+def _holds_no_remote_copy(entry: JournalEntry) -> bool:
+    """Whether no vault was ever offered this entry, or its copy is already withdrawn."""
+    return entry.vault_ref is None and entry.vault_destination is None
+
+
 async def _clear_stale_tags(session: AsyncSession, entry: JournalEntry) -> None:
     """Drop orphaned vault tags from an entry that holds no remote marker."""
     if entry.vault_tags is None:
@@ -103,22 +108,27 @@ async def withdraw_journal_copy(
     before the HTTP call so no pooled connection rides across Creek latency,
     and the marker is cleared only on Creek's confirmation.
     """
-    if entry.vault_ref is None and entry.vault_destination is None:
+    if _holds_no_remote_copy(entry):
         await _clear_stale_tags(session, entry)
         return True
     entry_id = entry.id
     if entry_id is None:
         raise RuntimeError("persisted vault reference requires a journal entry id")
-    recorded = entry.vault_destination
+    bound_elsewhere = entry.vault_destination not in {None, destination}
     await session.commit()
-    if recorded is not None and recorded != destination:
+    if bound_elsewhere:
         return _degraded(entry_id, "destination_changed")
     if not await withdraw_journal_from_vault(client, entry_id=entry_id):
         return False
+    await _clear_marker(session, entry)
+    return True
+
+
+async def _clear_marker(session: AsyncSession, entry: JournalEntry) -> None:
+    """Drop every remote-copy column once its destination confirmed absence."""
     entry.vault_ref = None
     entry.vault_tags = None
     entry.vault_destination = None
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
-    return True
