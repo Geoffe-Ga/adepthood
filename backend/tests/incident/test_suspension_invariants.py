@@ -19,6 +19,8 @@ import ast
 from pathlib import Path
 from typing import Final
 
+import pytest
+
 from tests.support.egress_call_graph import (
     Route,
     Site,
@@ -35,6 +37,21 @@ _PROVIDER_CONSTRUCTORS: Final = ("AsyncOpenAI", "AsyncAnthropic")
 _CALL_LEAVES: Final = frozenset({"_call_openai", "_call_anthropic"})
 _AI_LEAVES: Final = frozenset({"services.botmason.generate_response", ".complete()"})
 _ADMISSION: Final = "require_external_ai_available"
+#: Every send method an ``httpx`` client offers.
+_HTTP_SEND_METHODS: Final = frozenset(
+    {"request", "send", "stream", "get", "post", "put", "patch", "delete"}
+)
+_MAPPING: Final = "a mapping lookup, not an HTTP send"
+#: ``.get`` receivers in ``creek_vault_client.py`` that are lookups, not clients.
+_MAPPING_GETS: Final[dict[str, str]] = {
+    "_CAPABILITY_BY_WIRE_NAME": _MAPPING,
+    "_HANDSHAKE_OUTCOME_BY_DEGRADE_REASON": _MAPPING,
+    "_LINK_STAGE_DEADLINE_SECONDS": _MAPPING,
+    "payload": f"{_MAPPING} over a decoded response body",
+    "vault": f"{_MAPPING} over a decoded response body",
+    "_VAULT_HTTP_POOL": "the pool's accessor for its shared client; it sends nothing",
+    "_PINNED_VAULT_HTTP_POOL": "the pool's accessor for its shared client; it sends nothing",
+}
 _EXPECTED_CONSTRUCTION_SITES: Final = 2
 _MIN_GUARDED_ROUTES: Final = 4
 
@@ -137,25 +154,72 @@ def test_provider_clients_constructed_only_in_call_leaves() -> None:
     assert _calls_named(first.test, "external_ai_suspended")
 
 
-def test_vault_adapter_has_one_request_site() -> None:
-    """Every vault request leaves through ``_authorized_request``, guard first."""
-    tree = ast.parse(_VAULT_CLIENT.read_text(encoding="utf-8"))
+def _send_sites(tree: ast.Module) -> list[tuple[str, str]]:
+    """Every ``(method, enclosing function)`` that calls an HTTP client send method.
+
+    Every send verb ``httpx`` offers counts, on any receiver, because the vault's
+    client is reached through locals and attributes no static pass can type. The
+    one exception is a ``.get`` on a receiver :data:`_MAPPING_GETS` names, since
+    a dictionary lookup and ``client.get(url)`` are spelled the same.
+    """
     owner = _enclosing_functions(tree)
-    sites = [
-        owner[id(node)]
+    return [
+        (node.func.attr, owner[id(node)])
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "request"
+        and node.func.attr in _HTTP_SEND_METHODS
+        and not (node.func.attr == "get" and ast.unparse(node.func.value) in _MAPPING_GETS)
     ]
 
-    assert sites, "no request site found: the walk itself is broken"
-    assert set(sites) == {"_authorized_request"}, sites
+
+def test_vault_adapter_has_one_request_site() -> None:
+    """Every vault request leaves through ``_authorized_request``, guard first."""
+    tree = ast.parse(_VAULT_CLIENT.read_text(encoding="utf-8"))
+    sites = _send_sites(tree)
+
+    assert sites, "no send site found: the walk itself is broken"
+    assert {owner for _, owner in sites} == {"_authorized_request"}, sites
 
     first = _first_statement(_find_function(tree, "_authorized_request"))
     assert isinstance(first, ast.If), ast.dump(first)
     assert _calls_named(first.test, "vault_send_suspended")
     assert _calls_named(first.test, "carries_content")
+
+
+def test_mapping_gets_name_only_live_receivers() -> None:
+    """No exemption outlives the lookup it was written for."""
+    tree = ast.parse(_VAULT_CLIENT.read_text(encoding="utf-8"))
+    receivers = {
+        ast.unparse(node.func.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    }
+    stale = sorted(set(_MAPPING_GETS) - receivers)
+    assert stale == [], f"exemptions naming no live .get receiver: {stale}"
+    assert all(reason.strip() for reason in _MAPPING_GETS.values())
+
+
+@pytest.mark.parametrize(
+    ("method", "call"),
+    [
+        ("post", "self._client.post(url, json=body)"),
+        ("put", "client.put(url, json=body)"),
+        ("patch", "client.patch(url)"),
+        ("delete", "client.delete(url)"),
+        ("get", "client.get(url)"),
+        ("send", "client.send(request)"),
+        ("stream", "client.stream('POST', url)"),
+        ("request", "client.request('POST', url)"),
+    ],
+)
+def test_a_second_send_site_of_any_verb_is_found(method: str, call: str) -> None:
+    """The walk sees every ``httpx`` send verb outside the one request site."""
+    source = f"async def _smuggle(self, client, url, body, request):\n    await {call}\n"
+
+    assert _send_sites(ast.parse(source)) == [(method, "_smuggle")]
 
 
 def _ai_trails(handler: Site) -> list[tuple[str, ...]]:
