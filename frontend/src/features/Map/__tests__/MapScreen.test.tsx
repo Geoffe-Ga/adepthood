@@ -19,7 +19,6 @@ import {
   fitRightLabel,
   fittedTitleFontSize,
   GRID_COLUMN_FLEX,
-  MAP_ROWS,
   RIGHT_LABEL_LADDER,
   RIGHT_LABEL_LINE_HEIGHT_RATIO,
   RIGHT_LABEL_MAX_FONT_SIZE,
@@ -33,13 +32,13 @@ import { STAGE_COUNT } from '../stageData';
 import { nominalAnchorY } from '../waveGeometry';
 import { FULLNESS_ALIVE_THRESHOLD } from '../wheelBalance';
 
+import { mockBeginAgain, mockMapState, mockNavigate, resetMapMocks } from './mapTestHarness';
 import {
-  mockBeginAgain,
-  mockMakeStage,
-  mockMapState,
-  mockNavigate,
-  resetMapMocks,
-} from './mapTestHarness';
+  GOLDEN_ROWS,
+  GOLDEN_WATERMARKS,
+  goldenStage,
+  mockMakeCanonicalStage,
+} from './stageVocabularyGolden';
 
 jest.mock('react-native/Libraries/Interaction/InteractionManager', () =>
   jest.requireActual('./mapTestHarness').mockInteractionManagerModule(),
@@ -88,7 +87,7 @@ describe('MapScreen', () => {
   beforeEach(() => {
     resetMapMocks();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+      mockMakeCanonicalStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
@@ -107,7 +106,7 @@ describe('MapScreen', () => {
     mockMapState.stages = Array.from({ length: 10 }, (_, i) => {
       const stageNumber = 10 - i;
       return stageNumber === 1
-        ? mockMakeStage(1, {
+        ? mockMakeCanonicalStage(1, {
             progress: 0.5,
             category: 'Zorbonic Category',
             aspect: 'Zorbonic Aspect',
@@ -116,7 +115,7 @@ describe('MapScreen', () => {
             relationshipToFreeWill: 'Zorbonic Free Will Relationship',
             freeWillDescription: 'Zorbonic free will description text.',
           })
-        : mockMakeStage(stageNumber);
+        : mockMakeCanonicalStage(stageNumber);
     });
     const tree = create(<MapScreen />);
     act(() => {
@@ -554,8 +553,8 @@ describe('MapScreen', () => {
   it('renders a fitted right-label wrapper for all six Aspect rows after the wave overlay renders', () => {
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
-    for (const row of MAP_ROWS) {
-      expect(tree.root.findByProps({ testID: rightLabelFitTestId(row.rightLabel) })).toBeTruthy();
+    for (const row of GOLDEN_ROWS) {
+      expect(tree.root.findByProps({ testID: rightLabelFitTestId(row.category) })).toBeTruthy();
     }
   });
 
@@ -601,13 +600,13 @@ describe('MapScreen', () => {
     fireGridLayout(tree);
     const capped: string[] = [];
     for (const width of CELL_WIDTHS) {
-      for (const row of MAP_ROWS) {
-        fireRightLabelLayout(tree, row.rightLabel, width);
-        const wrapper = tree.root.findByProps({ testID: rightLabelFitTestId(row.rightLabel) });
+      for (const row of GOLDEN_ROWS) {
+        fireRightLabelLayout(tree, row.category, width);
+        const wrapper = tree.root.findByProps({ testID: rightLabelFitTestId(row.category) });
         const lines = wrapper.findAllByType(Text);
         expect(lines.length).toBeGreaterThan(0);
         if (lines.some((node: TestNode) => node.props.numberOfLines !== undefined)) {
-          capped.push(`${row.rightLabel}@${String(width)}`);
+          capped.push(`${row.category}@${String(width)}`);
         }
       }
     }
@@ -620,8 +619,8 @@ describe('MapScreen', () => {
     // single stable target per row, independent of hyphenation strategy.
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
-    for (const row of MAP_ROWS) {
-      const node = tree.root.findByProps({ children: row.rightLabel });
+    for (const row of GOLDEN_ROWS) {
+      const node = tree.root.findByProps({ children: row.category });
       expect(node.props.android_hyphenationFrequency).toBe('none');
       expect(node.props.textBreakStrategy).toBe('simple');
     }
@@ -645,10 +644,10 @@ describe('MapScreen', () => {
     expect(styles.rightLabelInset.paddingHorizontal).toBeGreaterThan(0);
     const tree = create(<MapScreen />);
     fireGridLayout(tree);
-    for (const row of MAP_ROWS) {
-      const band = tree.root.findByProps({ testID: `map-row-${row.rightLabel}` });
+    for (const row of GOLDEN_ROWS) {
+      const band = tree.root.findByProps({ testID: `map-row-${row.category}` });
       const inset = band.findByProps({ style: styles.rightLabelInset });
-      expect(inset.findByProps({ testID: rightLabelFitTestId(row.rightLabel) })).toBeTruthy();
+      expect(inset.findByProps({ testID: rightLabelFitTestId(row.category) })).toBeTruthy();
     }
   });
 
@@ -763,7 +762,7 @@ describe('MapScreen', () => {
 describe('MapScreen stage-expressions modal integration', () => {
   beforeEach(() => {
     resetMapMocks();
-    mockMapState.stages = Array.from({ length: 10 }, (_, i) => mockMakeStage(10 - i));
+    mockMapState.stages = Array.from({ length: 10 }, (_, i) => mockMakeCanonicalStage(10 - i));
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
 
@@ -779,8 +778,8 @@ describe('MapScreen stage-expressions modal integration', () => {
     mockMapState.stages = Array.from({ length: 10 }, (_, i) => {
       const stageNumber = 10 - i;
       return stageNumber === 1
-        ? mockMakeStage(1, { manifestations: [] })
-        : mockMakeStage(stageNumber);
+        ? mockMakeCanonicalStage(1, { manifestations: [] })
+        : mockMakeCanonicalStage(stageNumber);
     });
     const tree = create(<MapScreen />);
     act(() => {
@@ -792,11 +791,98 @@ describe('MapScreen stage-expressions modal integration', () => {
   });
 });
 
+describe('MapScreen stage words follow the served stage (#2666)', () => {
+  /** Stage 2 and stage 10 as a server that rewrote their words would serve them. */
+  const rewrittenStages = () =>
+    Array.from({ length: 10 }, (_, i) => {
+      const stageNumber = 10 - i;
+      if (stageNumber === 2) {
+        return mockMakeCanonicalStage(2, {
+          relationshipToFreeWill: 'Sentinel Persona',
+          title: 'Sentinel Title',
+          aspect: 'Quiet Listening',
+          category: 'Zeal',
+        });
+      }
+      if (stageNumber === 10) return mockMakeCanonicalStage(10, { aspect: 'Stillness' });
+      return mockMakeCanonicalStage(stageNumber);
+    });
+
+  const textsUnder = (node: { findAllByType: (_t: unknown) => TestNode[] }): string[] =>
+    node
+      .findAllByType(Text)
+      .map((n) => n.props.children)
+      .filter((c): c is string => typeof c === 'string');
+
+  beforeEach(() => {
+    resetMapMocks();
+    mockMapState.stages = rewrittenStages();
+    mockMapState.currentStage = 2;
+    mockMapState.derivedStage = 2;
+    jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
+  });
+
+  it('renders the served persona and title in the left column and its spoken label', () => {
+    const tree = create(<MapScreen />);
+    const left = tree.root.findByProps({ testID: 'stage-text-fit-2' });
+    expect(textsUnder(left).slice(0, 2)).toEqual(['Sentinel Persona', 'Sentinel Title']);
+    expect(tree.root.findByProps({ testID: 'stage-hotspot-2-0' }).props.accessibilityLabel).toMatch(
+      /^Sentinel Persona - Sentinel Title - /u,
+    );
+  });
+
+  it('shortens the served aspect onto the arrow', () => {
+    const tree = create(<MapScreen />);
+    expect(textsUnder(tree.root.findByProps({ testID: 'aspect-label-2' }))[0]).toBe('Quiet');
+  });
+
+  it('labels the row with the served category, from its first loaded stage', () => {
+    const tree = create(<MapScreen />);
+    expect(tree.root.findByProps({ testID: 'map-row-Zeal' })).toBeTruthy();
+    expect(textsUnder(tree.root.findByProps({ testID: 'right-label-fit-Zeal' }))).toEqual(['Zeal']);
+    expect(tree.root.findAllByProps({ testID: 'map-row-Yes-And-Ness' })).toHaveLength(0);
+  });
+
+  it('watermarks a title stage with its served aspect', () => {
+    const tree = create(<MapScreen />);
+    expect(textsUnder(tree.root.findByProps({ testID: 'title-fit-STILLNESS' }))).toEqual([
+      'STILLNESS',
+    ]);
+    expect(tree.root.findAllByProps({ testID: 'title-fit-EMPTINESS' })).toHaveLength(0);
+  });
+
+  it('names the served stage in the lens a screen reader hears', () => {
+    const tree = create(<MapScreen />);
+    act(() => {
+      tree.root.findByProps({ testID: 'map-grid' }).props.onLayout({
+        nativeEvent: { layout: { width: 300, height: 600 } },
+      });
+    });
+    expect(tree.root.findByProps({ testID: 'map-magnifier' }).props.accessibilityLabel).toContain(
+      'Magnifier over Quiet, stage 2 · PURPLE, Sentinel Persona.',
+    );
+  });
+
+  it('leaves a row whose stages have not loaded without a label rather than a guess', () => {
+    mockMapState.stages = rewrittenStages().filter(
+      (stage) =>
+        stage.stageNumber !== 9 &&
+        stage.stageNumber !== 10 &&
+        stage.stageNumber !== 8 &&
+        stage.stageNumber !== 7,
+    );
+    const tree = create(<MapScreen />);
+    expect(tree.root.findByProps({ testID: 'map-row-10' })).toBeTruthy();
+    expect(tree.root.findByProps({ testID: 'map-row-8-7' })).toBeTruthy();
+    expect(tree.root.findAllByProps({ testID: 'right-label-fit-Awareness' })).toHaveLength(0);
+  });
+});
+
 describe('MapScreen center-cell overlay layout', () => {
   beforeEach(() => {
     resetMapMocks();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+      mockMakeCanonicalStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
@@ -898,9 +984,8 @@ describe('MapScreen center-cell overlay layout', () => {
     const texts = leftHotspot
       .findAll((node: TestNode) => typeof node.props.children === 'string')
       .map((node: TestNode) => node.props.children as string);
-    const display = STAGE_DISPLAY[8];
     expect(texts.indexOf('🔒')).toBeGreaterThanOrEqual(0);
-    expect(texts.indexOf('🔒')).toBeLessThan(texts.indexOf(display!.persona));
+    expect(texts.indexOf('🔒')).toBeLessThan(texts.indexOf(goldenStage(8).persona));
   });
 
   it('centers the three text lines of an unlocked left block across its height', () => {
@@ -978,7 +1063,7 @@ describe('MapScreen left-column stage text color', () => {
   beforeEach(() => {
     resetMapMocks();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+      mockMakeCanonicalStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
@@ -986,12 +1071,13 @@ describe('MapScreen left-column stage text color', () => {
   // Sample rows spanning the top, a paired middle row, and the two bottom rows.
   const SAMPLE_STAGES = [10, 8, 3, 1];
 
+  /** A stage's static colours and practice beside the words the server serves for it. */
   const requireDisplay = (stageNumber: number) => {
     const display = STAGE_DISPLAY[stageNumber];
     if (!display) {
       throw new Error(`no STAGE_DISPLAY entry for stage ${stageNumber}`);
     }
-    return display;
+    return { ...display, ...goldenStage(stageNumber) };
   };
 
   it('renders persona, descriptor, and practice in the leftTextColor, not the wave textColor', () => {
@@ -1031,7 +1117,7 @@ describe('MapScreen left-column stage text color', () => {
       });
       const node = tree.root.findByProps({ children: title });
       const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
-      expect(flat.fontSize).toBe(fittedTitleFontSize(MEASURED_WIDTH));
+      expect(flat.fontSize).toBe(fittedTitleFontSize(MEASURED_WIDTH, GOLDEN_WATERMARKS));
       expect(flat.fontSize).toBe(editorialType.heading.fontSize);
     }
   });
@@ -1050,7 +1136,7 @@ describe('MapScreen stage-text fit-to-width', () => {
   beforeEach(() => {
     resetMapMocks();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+      mockMakeCanonicalStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
@@ -1063,7 +1149,7 @@ describe('MapScreen stage-text fit-to-width', () => {
   const stage8 = (() => {
     const display = STAGE_DISPLAY[STAGE];
     if (!display) throw new Error(`no STAGE_DISPLAY entry for stage ${STAGE}`);
-    return display;
+    return { ...display, ...goldenStage(STAGE) };
   })();
 
   const driveLayout = (tree: ReturnType<typeof create>, testID: string, width: number): void => {
@@ -1163,7 +1249,7 @@ describe('MapScreen locked title-row unlock estimate', () => {
   beforeEach(() => {
     resetMapMocks();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+      mockMakeCanonicalStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
@@ -1228,7 +1314,7 @@ describe('MapScreen locked title-row unlock estimate', () => {
       });
       const node = tree.root.findByProps({ children: title });
       const flat = StyleSheet.flatten(node.props.style) as { fontSize?: number };
-      expect(flat.fontSize).toBe(fittedTitleFontSize(MEASURED_WIDTH));
+      expect(flat.fontSize).toBe(fittedTitleFontSize(MEASURED_WIDTH, GOLDEN_WATERMARKS));
     }
   });
 });
@@ -1252,7 +1338,7 @@ describe('MapScreen soft grid lines', () => {
   beforeEach(() => {
     resetMapMocks();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+      mockMakeCanonicalStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
@@ -1303,7 +1389,7 @@ describe('MapScreen content-width cap', () => {
   beforeEach(() => {
     resetMapMocks();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+      mockMakeCanonicalStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
@@ -1326,7 +1412,7 @@ describe('MapScreen stage annotations keep clear of the wave (#2657)', () => {
   beforeEach(() => {
     resetMapMocks();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+      mockMakeCanonicalStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });
@@ -1372,8 +1458,8 @@ describe('MapScreen stage annotations keep clear of the wave (#2657)', () => {
   // grid squeeze a band below its own text and paint one stage onto the next.
   it('never squeezes a band below its content, so a short grid scrolls', () => {
     const tree = create(<MapScreen />);
-    for (const row of MAP_ROWS) {
-      const band = tree.root.findByProps({ testID: `map-row-${row.rightLabel}` });
+    for (const row of GOLDEN_ROWS) {
+      const band = tree.root.findByProps({ testID: `map-row-${row.category}` });
       const flat = StyleSheet.flatten(band.props.style) as { minHeight?: string; flex?: number };
       expect(flat.minHeight).toBe(FIT_CONTENT);
       expect(flat.flex).toBe(row.stageNumbers.length);
@@ -1485,7 +1571,7 @@ describe('MapScreen stage annotations keep clear of the wave (#2657)', () => {
     [1, 'left'],
   ])('pins stage %i check badge to the bottom of its %s (label) corner', (stage, corner) => {
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, { progress: 10 - i <= 2 ? 1 : 0 }),
+      mockMakeCanonicalStage(10 - i, { progress: 10 - i <= 2 ? 1 : 0 }),
     );
     const tree = create(<MapScreen />);
     const badge = tree.root.findByProps({ testID: `stage-complete-${stage}` });
@@ -1516,7 +1602,7 @@ describe('MapScreen scroller and the magnifier (#2657)', () => {
   beforeEach(() => {
     resetMapMocks();
     mockMapState.stages = Array.from({ length: 10 }, (_, i) =>
-      mockMakeStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
+      mockMakeCanonicalStage(10 - i, 10 - i === 1 ? { progress: 0.5 } : {}),
     );
     jest.spyOn(Image, 'getSize').mockImplementation((_, success) => success(100, 200));
   });

@@ -1,0 +1,29 @@
+{
+  "description": "Known gaps in the served Course (issue #3070), each pending the owner's upstream fix in Geoffe-Ga/aptitude-course. Hand-reviewed; `python -m scripts.content_completeness --check` fails on any thin chapter or numbering gap not listed here, and on any entry here that no longer reproduces. Only thin_chapter and numbering_gap may be recorded; link failures must be fixed. Vendored content is never edited in this repo (ADR-0001): fix upstream, re-sync, and delete the entry in the same PR.",
+  "gaps": [
+    {
+      "issue": "#3070",
+      "key": "1:12",
+      "kind": "numbering_gap",
+      "owner_review": "pending",
+      "reason": "Beige chapters run 1-11 then 13-18: there is no chapter 12 in the manifest and no 12-*.md upstream. Either a chapter was dropped or the numbering should be closed up; the owner decides which.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
+      "issue": "#3070",
+      "key": "orange-7",
+      "kind": "thin_chapter",
+      "owner_review": "pending",
+      "reason": "'The Basic Wim Hof Protocol: A Step-by-Step Guide' has 29 body words, under the 50-word floor: it is a framing paragraph, and the steps follow as their own chapters (orange-8 onward). The owner decides whether a framing-only chapter is intended or should be merged into its steps upstream.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
+      "issue": "#3070",
+      "key": "teal-7",
+      "kind": "thin_chapter",
+      "owner_review": "pending",
+      "reason": "'Alternatives for Teal Practice' is heading-only: 0 body words. Every other stage's Alternatives chapter has a body; this one needs its upstream text written.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    }
+  ]
+}

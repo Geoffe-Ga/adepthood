@@ -30,6 +30,7 @@ from services.creek_provisioning_client import (
     ProvisioningRejectedError,
     ProvisioningUnavailableError,
 )
+from services.user_vault_config import lock_vault_connection_owner
 
 _ACTIVE_STATES: Final[frozenset[str]] = frozenset(
     {
@@ -73,6 +74,7 @@ async def ensure_vault_activation(
     user_id: int,
 ) -> VaultActivation:
     """Create or return one stable activation identity under the DB constraint."""
+    await lock_vault_connection_owner(session, user_id)
     existing = await load_vault_activation(session, user_id)
     if existing is not None:
         await session.commit()

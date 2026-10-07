@@ -61,13 +61,13 @@ describe('useVaultConnectionState', () => {
     expect(result.current.state).toEqual({ kind: 'connected', address: 'https://v.example' });
   });
 
-  test('reads a managed vault, answered with no address, as unknown', async () => {
+  test('reads a managed vault, answered with no address, as managed', async () => {
     mockConnection.mockResolvedValue({ connected: true, vault_url: null });
 
     const { result } = renderHook(() => useVaultConnectionState());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.state).toEqual({ kind: 'unknown' });
+    expect(result.current.state).toEqual({ kind: 'managed' });
   });
 
   test('reads a failed read as unknown, never as none, and reports it once', async () => {

@@ -10,6 +10,8 @@ import { freshLicenseKey } from './licenseKey';
 
 const ACCOUNT_PHRASE = 'Journal-habits-browser-passphrase';
 const START_DATE = '2026-01-01';
+/** The journal's drawer toggle: the landmark every signed-in arrival waits for. */
+const JOURNAL_MENU = 'Open Journal menu';
 const HTTP_OK = 200;
 const MS_PER_DAY = 86_400_000;
 /** Length of the `YYYY-MM-DD` prefix of an ISO-8601 instant. */
@@ -125,9 +127,19 @@ export function setProgramAnchorSixDaysAgo(email: string): void {
   setProgramAnchorDaysAgo(email, SIX_DAYS);
 }
 
-export async function signUp(page: Page, prefix: string): Promise<string> {
+/**
+ * Make a fresh account through the real sign-up screen, landing on the journal.
+ *
+ * @param origin - The frontend to sign up on; the lane's own by default. Only a
+ *   spec that boots its own, differently configured frontend passes another.
+ */
+export async function signUp(
+  page: Page,
+  prefix: string,
+  origin: string = frontendUrl(),
+): Promise<string> {
   const email = `${prefix}-${randomBytes(6).toString('hex')}@example.com`;
-  await page.goto(`${frontendUrl()}/get-started`);
+  await page.goto(`${origin}/get-started`);
   await page.getByRole('button', { name: 'I have a license key' }).click();
   await page.getByRole('textbox', { name: 'Email' }).fill(email);
   await page.getByRole('textbox', { name: 'Password', exact: true }).fill(ACCOUNT_PHRASE);
@@ -135,8 +147,25 @@ export async function signUp(page: Page, prefix: string): Promise<string> {
   await page.getByRole('textbox', { name: 'Gumroad license key' }).fill(freshLicenseKey());
   await page.getByRole('button', { name: 'Create account' }).click();
   await page.getByRole('button', { name: 'Skip the welcome' }).click();
-  await expect(page.getByRole('button', { name: 'Open Journal menu' })).toBeVisible();
+  await expect(page.getByRole('button', { name: JOURNAL_MENU })).toBeVisible();
   return email;
+}
+
+/**
+ * Sign an existing account back in through the log-in screen, landing on the
+ * journal. Whether the welcome is offered again after a log-out is not this
+ * helper's question, so it is skipped when it is shown and not required.
+ */
+export async function logIn(page: Page, email: string): Promise<void> {
+  await page.goto(`${frontendUrl()}/login`);
+  await page.getByRole('textbox', { name: 'Email' }).fill(email);
+  await page.getByRole('textbox', { name: 'Password', exact: true }).fill(ACCOUNT_PHRASE);
+  await page.getByRole('button', { name: 'Log in' }).click();
+  const skipWelcome = page.getByRole('button', { name: 'Skip the welcome' });
+  const journalMenu = page.getByRole('button', { name: JOURNAL_MENU });
+  await expect(skipWelcome.or(journalMenu)).toBeVisible();
+  if (await skipWelcome.isVisible()) await skipWelcome.click();
+  await expect(journalMenu).toBeVisible();
 }
 
 /**
@@ -185,23 +214,44 @@ export function nextDayKey(dayKey: string): string {
   return new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
 }
 
+/**
+ * The calendar day before `dayKey`, as `YYYY-MM-DD` -- the mirror of `nextDayKey`,
+ * through `Date.UTC` for the same DST reason.
+ */
+export function previousDayKey(dayKey: string): string {
+  const [year, month, day] = dayKey.split('-').map(Number);
+  if (year === undefined || month === undefined || day === undefined) {
+    throw new Error(`not a YYYY-MM-DD day key: ${dayKey}`);
+  }
+  return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, ISO_DATE_LENGTH);
+}
+
 export async function tokenFor(request: APIRequestContext, email: string): Promise<string> {
   return (await sessionFor(request, email)).token;
 }
 
+/**
+ * Create a habit for `token`'s account out of band.
+ *
+ * @param revealed - Seed it already unlocked, so its tile can be logged on
+ *   straight away; a locked tile opens no goal sheet.
+ */
 export async function seedHabit(
   request: APIRequestContext,
   token: string,
   name: string,
+  startDate: string = START_DATE,
+  revealed = false,
 ): Promise<number> {
   const response = await request.post(`${backendUrl()}/habits/`, {
     headers: { Authorization: `Bearer ${token}` },
     data: {
       name,
       icon: '★',
-      start_date: START_DATE,
+      start_date: startDate,
       energy_cost: 2,
       energy_return: 4,
+      ...(revealed ? { revealed: true } : {}),
     },
   });
   if (!response.ok()) throw new Error(`seeding ${name} failed with ${response.status()}`);
@@ -209,9 +259,34 @@ export async function seedHabit(
 }
 
 export async function openHabits(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Open Journal menu' }).click();
+  await page.getByRole('button', { name: JOURNAL_MENU }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Habits', exact: true }).click();
   await expect(page.getByTestId('habits-list')).toBeVisible();
+}
+
+/**
+ * Take the device offline and wait until the app itself says so. Anything that
+ * acts on the app's offline -> online edge (a reconnect retry, a reconnect
+ * load) tests nothing if the device reconnects before the app has registered
+ * the outage. `setOffline` drives the real window offline/online events, which
+ * the app bridges into its connectivity signal.
+ */
+export async function goOffline(page: Page): Promise<void> {
+  await page.context().setOffline(true);
+  await expect(page.getByTestId('offline-banner')).toBeVisible();
+}
+
+/** Bring the device back online and wait until the app has registered it. */
+export async function goOnline(page: Page): Promise<void> {
+  await page.context().setOffline(false);
+  await expect(page.getByTestId('offline-banner')).toHaveCount(0);
+}
+
+/** Back to the journal shelf from the Habits tab, through its drawer -- a return, not a remount. */
+export async function openJournal(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Open Habits menu' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Journal', exact: true }).click();
+  await expect(page.getByTestId('journal-habits-tile')).toBeVisible();
 }
 
 export async function openReorder(page: Page): Promise<void> {

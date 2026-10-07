@@ -390,3 +390,46 @@ def test_refresh_doc_documents_the_dataset_and_path() -> None:
     text = (_REPO_ROOT / _refresh_doc()).read_text(encoding="utf-8")
     assert "archetypal_wavelength.json" in text
     assert "Archetypal Wavelength" in text
+
+
+#: The heading of the stage-correspondence runbook in the refresh doc (#2667).
+_RUNBOOK_HEADING = "## Updating stage correspondences"
+
+#: Everything the runbook must name: the re-pin, the regeneration and its gate,
+#: the supersession rules, the reconcile semantics, verification and rollback.
+_RUNBOOK_REQUIREMENTS = (
+    "python -m scripts.sync_content",
+    "CONTENT_VERSION",
+    "python -m scripts.build_stage_correspondence --check",
+    "export_openapi.py --check",
+    "### Supersessions",
+    "stage_correspondence_supersessions.json",
+    "csv_value",
+    "markdown/backup/",
+    "stage_key",
+    "reconciled_at",
+    "overview_url",
+    "GET /stages/correspondence",
+    "Rollback",
+    "docs/adr/0001",
+)
+
+
+def _runbook_section(text: str) -> str:
+    """Return the runbook section of the refresh doc, up to the next ``## `` heading."""
+    assert _RUNBOOK_HEADING in text, f"the refresh doc has no {_RUNBOOK_HEADING!r} section"
+    after = text.split(_RUNBOOK_HEADING, 1)[1]
+    return after.split("\n## ", 1)[0]
+
+
+def test_refresh_doc_carries_the_stage_correspondence_runbook() -> None:
+    """The refresh doc walks a correspondence change from upstream edit to rollback."""
+    section = _runbook_section((_REPO_ROOT / _refresh_doc()).read_text(encoding="utf-8"))
+    missing = [token for token in _RUNBOOK_REQUIREMENTS if token not in section]
+    assert missing == []
+
+
+def test_the_runbook_check_is_scoped_to_its_own_section() -> None:
+    """A token that appears only after the section ends does not satisfy it."""
+    doc = f"{_RUNBOOK_HEADING}\n\nre-pin first.\n\n## Consumers\n\nRollback\n"
+    assert "Rollback" not in _runbook_section(doc)

@@ -76,6 +76,7 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       // streaming / rate limits / network
       'rate_limit_exceeded',
       'llm_provider_error',
+      'reflection_source_unavailable',
       'malformed_stream_frame',
       'incomplete_stream',
       'network_error',
@@ -511,5 +512,23 @@ describe('generation guardrail refusals (#623)', () => {
     expect(formatApiError(new ApiError(429, 'rate_limit_exceeded'))).toBe(
       USER_FACING_ERROR_MESSAGES.rate_limit_exceeded,
     );
+  });
+});
+
+describe('vault-bound reflection refusal (#3061)', () => {
+  const copy = formatApiError(new ApiError(503, 'reflection_source_unavailable'));
+
+  it('maps the refusal to its own copy rather than the generic server error', () => {
+    expect(copy).toBe(USER_FACING_ERROR_MESSAGES.reflection_source_unavailable);
+    expect(copy).not.toBe(USER_FACING_ERROR_MESSAGES.llm_provider_error);
+  });
+
+  it('says the pass was not charged and the entry is intact', () => {
+    expect(copy).toMatch(/nothing was charged/);
+    expect(copy).toMatch(/entry is saved/);
+  });
+
+  it('makes no claim about where writing is or is not processed', () => {
+    expect(copy).not.toMatch(/vault|local|device|cloud|never leaves|boundary|private/i);
   });
 });

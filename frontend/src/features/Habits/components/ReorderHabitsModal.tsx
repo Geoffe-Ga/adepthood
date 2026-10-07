@@ -24,6 +24,7 @@ import {
 } from '../HabitUtils';
 import { displaySlots } from '../services/habitOrdering';
 
+import { REORDER_HABITS_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
 
 const SAVE_ORDER_LABEL = 'Save Order';
@@ -659,7 +660,7 @@ const ReorderBody = ({
   onSave,
 }: ReorderBodyProps) => (
   <View testID="reorder-modal-card" style={styles.reorderModalContent}>
-    <ModalHeader title="Reorder Habits" onClose={onClose} />
+    <ModalHeader title="Reorder Habits" onClose={onClose} closeLabel={REORDER_HABITS_CLOSE_LABEL} />
     <ReorderDateButton
       startDate={startDate}
       onOpenPicker={onOpenPicker}

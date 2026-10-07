@@ -679,3 +679,47 @@ def test_module_entry_point_exit_code_reaches_the_shell(workspace: Workspace) ->
     drifted = _run_module(*workspace.argv("--check"))
     assert drifted.returncode == 1
     assert "stale" in drifted.stderr
+
+
+def _edit_a_supersession_value(workspace: Workspace) -> None:
+    """Re-point blue's aspect at a value its authority still contains."""
+    entries = copy.deepcopy(_SUPERSESSIONS)
+    entries[0]["value"] = "Community"
+    workspace.write_supersessions(entries)
+
+
+def _drop_a_supersession(workspace: Workspace) -> None:
+    """Retire the teal free-will departure, so the CSV value returns."""
+    workspace.write_supersessions(copy.deepcopy(_SUPERSESSIONS[:-1]))
+
+
+def _bump_the_schema_version_const(workspace: Workspace) -> None:
+    """Move the schema contract under an artifact built to the old one."""
+    schema = json.loads(workspace.schema_path.read_text())
+    schema["properties"]["schema_version"] = {"const": "9.9.9"}
+    workspace.schema_path.write_text(json.dumps(schema))
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (_edit_a_supersession_value, "stale"),
+        (_drop_a_supersession, "stale"),
+        (_bump_the_schema_version_const, "9.9.9"),
+    ],
+    ids=["edited-supersession", "dropped-supersession", "schema-const"],
+)
+def test_module_check_fails_when_a_non_csv_input_moves(
+    workspace: Workspace, edit: Callable[[Workspace], None], message: str
+) -> None:
+    """Meta-test (#2667): supersession and schema edits reach the CI step's exit code too.
+
+    The CSV is not the gate's only input. A supersession edited or retired
+    without regenerating, or a schema contract bumped under the committed
+    artifact, must each turn the ``python -m`` exit status non-zero.
+    """
+    assert main(workspace.argv()) == 0
+    edit(workspace)
+    result = _run_module(*workspace.argv("--check"))
+    assert result.returncode == 1
+    assert message in result.stderr

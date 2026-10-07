@@ -12,6 +12,7 @@ import type { Habit, HabitSettingsModalProps } from '../Habits.types';
 import ConfirmDialog from './ConfirmDialog';
 import { EnergyCostReturnEditor } from './EnergyCostReturnEditor';
 import HabitEmojiPicker from './HabitEmojiPicker';
+import { EDIT_HABIT_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
 
 const LOCK_TOGGLE_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 };
@@ -599,7 +600,12 @@ const SettingsModalBody = ({
       testID="habit-settings-card"
       style={[styles.editModalCard, { borderTopColor: STAGE_COLORS[editedHabit.stage] }]}
     >
-      <ModalHeader title="Edit Habit" onClose={onClose} closeTestID="habit-settings-close" />
+      <ModalHeader
+        title="Edit Habit"
+        onClose={onClose}
+        closeLabel={EDIT_HABIT_CLOSE_LABEL}
+        closeTestID="habit-settings-close"
+      />
       <SettingsForm
         editedHabit={editedHabit}
         showEmojiSelector={showEmojiSelector}

@@ -144,6 +144,11 @@ the vendored tree's digest against `CONTENT_VERSION` **and** re-validates
 `backend/content/` fails CI; re-run the sync to fix. The bootstrap state
 (nothing vendored yet) passes — the gate arms itself with the first pin.
 Run it locally with `make sync-content-check`.
+The same job then runs `build_stage_correspondence --check` and
+`content_completeness --check` (#3070) on the verified tree: a re-pin that
+leaves a chapter thin, skips a chapter number, or adds a broken, `http` or
+`google.com/url` link fails there until it is fixed upstream (or, for a thin
+chapter or numbering gap only, recorded). See `docs/curriculum.md`.
 
 ## Deploying on Railway
 

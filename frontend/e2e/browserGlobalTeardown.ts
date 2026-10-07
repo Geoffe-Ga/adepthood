@@ -1,7 +1,7 @@
 import { clearBrowserLaneState, readBrowserLaneState } from './browserState';
 import apiGlobalTeardown from './globalTeardown';
 
-async function stopProcessGroup(pid: number): Promise<void> {
+export async function stopProcessGroup(pid: number): Promise<void> {
   if (pid <= 0) return;
   try {
     process.kill(-pid, 'SIGTERM');

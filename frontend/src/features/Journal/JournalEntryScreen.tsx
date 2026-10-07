@@ -66,6 +66,7 @@ import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeCardFacts } from './suggestionFacts';
+import { useAspectOptions } from './useAspectOptions';
 import { useEntryLoad } from './useEntryLoad';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
@@ -2332,6 +2333,9 @@ function EntryTagControls({
   WritingColumnProps,
   'classification' | 'chord' | 'onChangeClassification' | 'onChangeChord' | 'controlsDisabled'
 >) {
+  // The chord's personas come from the server, never from GET /stages, whose
+  // read counts as a program visit (#2666); see useAspectOptions.
+  const aspectOptions = useAspectOptions();
   return (
     <>
       <PrivacyTierControl
@@ -2339,7 +2343,12 @@ function EntryTagControls({
         onChange={onChangeClassification}
         disabled={controlsDisabled}
       />
-      <AspectChordControl value={chord} onChange={onChangeChord} disabled={controlsDisabled} />
+      <AspectChordControl
+        value={chord}
+        onChange={onChangeChord}
+        disabled={controlsDisabled}
+        options={aspectOptions}
+      />
     </>
   );
 }

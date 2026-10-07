@@ -84,6 +84,7 @@ import {
   VAULT_CONNECTED_LABEL,
   VAULT_CONNECTING_BUTTON,
   VAULT_CONNECTION_UNKNOWN,
+  VAULT_MANAGED_CONNECTED,
   VAULT_CONNECT_BUTTON,
   VAULT_CONNECT_FAILED,
   VAULT_CONNECT_INTRO,
@@ -196,6 +197,7 @@ const DISCONNECT_PROMPT: ConfirmPrompt = {
  */
 const REPLACE_PROMPTS = new Map<VaultConnectionState['kind'], ConfirmPrompt>([
   ['connected', { title: VAULT_REPLACE_CONFIRM_TITLE, body: VAULT_REPLACE_CONFIRM_BODY }],
+  ['managed', { title: VAULT_REPLACE_CONFIRM_TITLE, body: VAULT_REPLACE_CONFIRM_BODY }],
   [
     'unknown',
     { title: VAULT_REPLACE_UNKNOWN_CONFIRM_TITLE, body: VAULT_REPLACE_UNKNOWN_CONFIRM_BODY },
@@ -763,6 +765,9 @@ const VaultConnectionNotice = ({
   state: VaultConnectionState;
 }): React.JSX.Element | null => {
   if (state.kind === 'connected') return null;
+  if (state.kind === 'managed') {
+    return <Text style={settingsFormStyles.body}>{VAULT_MANAGED_CONNECTED}</Text>;
+  }
   if (state.kind === 'unknown') {
     return (
       <Text style={settingsFormStyles.body} testID="vault-connection-unknown">

@@ -11,12 +11,13 @@ import { act, create } from 'react-test-renderer';
 import { cycleLabel } from '../beginAgain';
 import { journeyRead, unlockTimeline } from '../journeyNarrative';
 import MapDrawer from '../MapDrawer';
-import { MAP_ROWS, STAGE_DISPLAY } from '../mapLayout';
+import { STAGE_DISPLAY } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
 import { drawerStageLabel } from '../stageLegend';
 
 import { mockMakeStage, mockMapState, resetMapMockState } from './mapTestHarness';
+import { goldenStage, mockMakeCanonicalStage } from './stageVocabularyGolden';
 
 jest.mock('../../../store/useProgramProgression', () =>
   jest.requireActual('./mapTestHarness').mockProgramProgressionModule(),
@@ -32,23 +33,20 @@ type Lookup = Readonly<Record<number, StageData | undefined>>;
 const buildLookup = (): Lookup => {
   const lookup: Record<number, StageData> = {};
   for (let n = 1; n <= STAGE_COUNT; n += 1) {
-    lookup[n] = mockMakeStage(n);
+    lookup[n] = mockMakeCanonicalStage(n);
   }
   return lookup;
 };
 
+/** A stage's static colours beside the words a seeded server serves for it. */
 const requireDisplay = (stageNumber: number) => {
   const display = STAGE_DISPLAY[stageNumber];
   if (!display) throw new Error(`no STAGE_DISPLAY entry for stage ${stageNumber}`);
-  return display;
+  return { ...display, ...goldenStage(stageNumber) };
 };
 
-/** The MAP_ROWS rightLabel (category) that contains the given stage number. */
-const categoryForStage = (stageNumber: number): string => {
-  const row = MAP_ROWS.find((r) => r.stageNumbers.includes(stageNumber));
-  if (!row) throw new Error(`no MAP_ROW for stage ${stageNumber}`);
-  return row.rightLabel;
-};
+/** The category a seeded server serves for the given stage. */
+const categoryForStage = (stageNumber: number): string => goldenStage(stageNumber).category;
 
 describe('MapDrawer', () => {
   beforeEach(() => {
@@ -275,6 +273,25 @@ describe('MapDrawer', () => {
     const row = tree.root.findByProps({ testID: 'map-drawer-stage-6' });
     expect(row.findAll((n: TestNode) => n.props.children === '🔒').length).toBeGreaterThan(0);
     expect(tree.root.findByProps({ testID: 'map-drawer-unlock-6' })).toBeTruthy();
+    // Not yet served, it still reads: by its colour, never as a blank row.
+    expect(row.props.accessibilityLabel).toBe('Green, locked');
+  });
+
+  it('reads each row from the served stage, so a rewritten one reads the new words', () => {
+    const lookup: Record<number, StageData> = {};
+    for (let n = 1; n <= STAGE_COUNT; n += 1) {
+      lookup[n] =
+        n === 2
+          ? mockMakeCanonicalStage(2, { category: 'Zeal', aspect: 'Quiet Listening' })
+          : mockMakeCanonicalStage(n);
+    }
+    const tree = create(
+      <MapDrawer lookup={lookup} currentStage={1} cycleNumber={1} onSelectStage={jest.fn()} />,
+    );
+    const row = tree.root.findByProps({ testID: 'map-drawer-stage-2' });
+    expect(row.props.accessibilityLabel).toBe('Zeal, Quiet');
+    expect(row.findAll((n: TestNode) => n.props.children === 'Zeal').length).toBeGreaterThan(0);
+    expect(row.findAll((n: TestNode) => n.props.children === 'Quiet').length).toBeGreaterThan(0);
   });
 
   it('singularises "day" when exactly one day remains', () => {

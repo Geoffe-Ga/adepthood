@@ -21,6 +21,8 @@ import styles from './JournalEntry.styles';
 
 import { RadioGroup } from '@/components/RadioOption';
 import { STAGE_ORDER, readableGlyphOn, resolveStageColor } from '@/design/tokens';
+import { STAGE_COUNT } from '@/domain/stageProgression';
+import { stageFallbackName } from '@/features/Map/stageVocabulary';
 
 /** The controlled chord value: a primary Aspect and an optional secondary. */
 export interface AspectChordValue {
@@ -58,29 +60,32 @@ export interface AspectChordControlProps {
   onChange: (_next: AspectChordValue) => void;
   /** When true, the trigger won't expand and changes are inert (failed load). */
   disabled?: boolean;
+  /**
+   * The Aspects on offer, each under the label to show -- the stage's persona
+   * as the server serves it (see ``useAspectOptions``). Defaults to every stage
+   * under its colour name, so the chooser works before anything has loaded.
+   */
+  options?: readonly AspectOption[];
 }
 
-/** One offered Aspect: its stage number and the Aspect name to show. */
-interface AspectOption {
+/** One offered Aspect: its stage number and the label (its persona) to show. */
+export interface AspectOption {
   stage: number;
   label: string;
 }
 
-/**
- * The stages offered as Aspects, ascending (1..10), labelled by the Aspect's
- * own name ("Beige", "Purple", "Blue" …) — never by the archetype persona. The
- * persona is what a capacity looks like when it runs the show unexamined, so a
- * chip reading "Victim" would have the writer tag their own words with the
- * shadow instead of the note they are naming.
- */
-const ASPECT_OPTIONS: readonly AspectOption[] = STAGE_ORDER.map((name, index) => ({
-  stage: index + 1,
-  label: name,
-}));
+/** Every stage, ascending, under its colour name: the chooser before personas load. */
+export function fallbackAspectOptions(): AspectOption[] {
+  return Array.from({ length: STAGE_COUNT }, (_, index) => ({
+    stage: index + 1,
+    label: stageFallbackName(index + 1),
+  }));
+}
 
-/** The Aspect name a stage is offered under, or an empty label if it has none. */
-function aspectNameFor(stage: number): string {
-  return STAGE_ORDER[stage - 1] ?? '';
+/** The label a stage is offered under; its colour name when the options lack one. */
+function labelFor(options: readonly AspectOption[], stage: number): string {
+  const label = options.find((option) => option.stage === stage)?.label.trim();
+  return label === undefined || label === '' ? stageFallbackName(stage) : label;
 }
 
 /**
@@ -99,6 +104,7 @@ function stageFill(stage: number): string {
 
 interface AspectChipProps {
   stage: number;
+  label: string;
   selected: boolean;
   onPress: () => void;
   disabled: boolean;
@@ -120,13 +126,13 @@ interface AspectChipProps {
  */
 function AspectChip({
   stage,
+  label,
   selected,
   onPress,
   disabled,
   testID,
 }: AspectChipProps): React.JSX.Element {
   const fill = stageFill(stage);
-  const label = aspectNameFor(stage);
   const container = selected
     ? [styles.aspectChordChip, styles.aspectChordChipSelected, { backgroundColor: fill }]
     : [styles.aspectChordChip, { borderColor: fill }];
@@ -151,6 +157,7 @@ function AspectChip({
 
 interface AspectChipRowProps {
   prefix: string;
+  options: readonly AspectOption[];
   selectedStage: number | null;
   omitStage: number | null;
   onSelect: (_stage: number) => void;
@@ -160,6 +167,7 @@ interface AspectChipRowProps {
 /** A wrapping row of Aspect chips, optionally omitting one stage. */
 function AspectChipRow({
   prefix,
+  options,
   selectedStage,
   omitStage,
   onSelect,
@@ -167,16 +175,19 @@ function AspectChipRow({
 }: AspectChipRowProps): React.JSX.Element {
   return (
     <RadioGroup style={styles.aspectChordRow}>
-      {ASPECT_OPTIONS.filter((option) => option.stage !== omitStage).map((option) => (
-        <AspectChip
-          key={option.stage}
-          stage={option.stage}
-          selected={option.stage === selectedStage}
-          onPress={() => onSelect(option.stage)}
-          disabled={disabled}
-          testID={`${prefix}-${option.stage}`}
-        />
-      ))}
+      {options
+        .filter((option) => option.stage !== omitStage)
+        .map((option) => (
+          <AspectChip
+            key={option.stage}
+            stage={option.stage}
+            label={labelFor(options, option.stage)}
+            selected={option.stage === selectedStage}
+            onPress={() => onSelect(option.stage)}
+            disabled={disabled}
+            testID={`${prefix}-${option.stage}`}
+          />
+        ))}
     </RadioGroup>
   );
 }
@@ -213,6 +224,7 @@ function ChordAction({
 
 interface AspectStepProps {
   role: AspectRole;
+  options: readonly AspectOption[];
   selectedStage: number | null;
   omitStage: number | null;
   /** True while the writer is re-picking this voice, which reopens its row. */
@@ -229,6 +241,7 @@ interface AspectStepProps {
  */
 function AspectStep({
   role,
+  options,
   selectedStage,
   omitStage,
   picking,
@@ -243,6 +256,7 @@ function AspectStep({
         <Text style={styles.aspectChordSectionLabel}>{ROLE_LABEL[role]}</Text>
         <AspectChip
           stage={selectedStage}
+          label={labelFor(options, selectedStage)}
           selected
           onPress={onReopen}
           disabled={disabled}
@@ -263,6 +277,7 @@ function AspectStep({
       <Text style={styles.aspectChordSectionLabel}>{ROLE_LABEL[role]}</Text>
       <AspectChipRow
         prefix={prefix}
+        options={options}
         selectedStage={selectedStage}
         omitStage={omitStage}
         onSelect={onSelect}
@@ -273,12 +288,12 @@ function AspectStep({
 }
 
 /** What the collapsed trigger says: the invitation, or the chord already named. */
-function triggerLabel(value: AspectChordValue): string {
+function triggerLabel(value: AspectChordValue, options: readonly AspectOption[]): string {
   const { primary, secondary } = value;
   if (primary === null) return TRIGGER_LABEL;
-  const named = aspectNameFor(primary);
+  const named = labelFor(options, primary);
   if (secondary === null) return `Aspect: ${named}`;
-  return `Aspect: ${named}${CHORD_SEPARATOR}${aspectNameFor(secondary)}`;
+  return `Aspect: ${named}${CHORD_SEPARATOR}${labelFor(options, secondary)}`;
 }
 
 /**
@@ -356,6 +371,7 @@ function ChordFooter({
 
 interface ExpandedChooserProps {
   value: AspectChordValue;
+  options: readonly AspectOption[];
   onChange: (_next: AspectChordValue) => void;
   onCollapse: () => void;
   disabled: boolean;
@@ -364,6 +380,7 @@ interface ExpandedChooserProps {
 /** The expanded state: the two voices, then the chord-level Clear and Collapse. */
 function ExpandedChooser({
   value,
+  options,
   onChange,
   onCollapse,
   disabled,
@@ -383,6 +400,7 @@ function ExpandedChooser({
     <View style={styles.aspectChordControl} accessibilityLabel="Aspect chord">
       <AspectStep
         role={PRIMARY}
+        options={options}
         selectedStage={primary}
         omitStage={null}
         picking={picking === PRIMARY}
@@ -393,6 +411,7 @@ function ExpandedChooser({
       {primary === null ? null : (
         <AspectStep
           role={SECONDARY}
+          options={options}
           selectedStage={value.secondary}
           omitStage={primary}
           picking={picking === SECONDARY}
@@ -414,10 +433,14 @@ function ExpandedChooser({
  * The collapsible Aspect chord chooser. Rendered in the writing column of
  * {@link JournalEntryScreen}, beside the privacy control.
  */
+/** The default offer: built once, since it never changes. */
+const FALLBACK_OPTIONS: readonly AspectOption[] = fallbackAspectOptions();
+
 function AspectChordControl({
   value = EMPTY_CHORD,
   onChange,
   disabled = false,
+  options = FALLBACK_OPTIONS,
 }: AspectChordControlProps): React.JSX.Element {
   // Derive expansion from the value so a loaded (pre-tagged) entry opens on its
   // chips instead of the "optional" trigger — even when the chord arrives after
@@ -436,7 +459,7 @@ function AspectChordControl({
     };
     return (
       <CollapsedTrigger
-        label={triggerLabel(value)}
+        label={triggerLabel(value, options)}
         placeholder={value.primary === null}
         onExpand={onExpand}
         disabled={disabled}
@@ -457,6 +480,7 @@ function AspectChordControl({
   return (
     <ExpandedChooser
       value={value}
+      options={options}
       onChange={handleChange}
       onCollapse={handleCollapse}
       disabled={disabled}

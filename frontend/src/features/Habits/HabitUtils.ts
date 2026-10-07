@@ -6,9 +6,7 @@ import { brightenColor, colors, STAGE_COLORS, STAGE_ORDER } from '../../design/t
 import {
   DEFAULT_TIMEZONE,
   MS_PER_DAY,
-  addDaysInTZ,
   dayKeyInTZ,
-  dayKeyToInstant,
   streakFromCompletions,
   subtractiveLongestStreakFromCompletions,
   subtractiveStreakFromCompletions,
@@ -697,46 +695,6 @@ export const toLocalHabitStats = (api: ApiHabitStats): HabitStatsData => ({
   completionRate: api.completion_rate,
   completionDates: api.completion_dates,
 });
-
-// A gap needs at least a first and a last day to bound it.
-const MIN_KEYS_TO_BOUND_GAP = 2;
-// Day step used when walking the range between first and last completion.
-const NEXT_DAY_OFFSET = 1;
-
-/**
- * Calculate days without completions between the first and last completion,
- * using each row's canonical ``local_day`` (with a timestamp-derived fallback
- * for legacy cached rows).
- *
- * Walking the gap purely on `YYYY-MM-DD` day keys (which sort and compare
- * lexicographically in chronological order) keeps the arithmetic in one
- * timezone, so consecutive local days that straddle the UTC boundary no
- * longer register a phantom missed day.
- */
-export const calculateMissedDays = (habit: Habit, tz: string = DEFAULT_TIMEZONE): Date[] => {
-  const completions = habit.completions;
-  if (!completions || completions.length === 0) return [];
-
-  const completedKeys = new Set<string>();
-  for (const c of completions) {
-    completedKeys.add(completionDayKey(c, tz));
-  }
-  if (completedKeys.size < MIN_KEYS_TO_BOUND_GAP) return [];
-
-  const sortedKeys = Array.from(completedKeys).sort();
-  const lastKey = sortedKeys[sortedKeys.length - 1]!;
-
-  const missed: Date[] = [];
-  let cursorKey = addDaysInTZ(sortedKeys[0]!, NEXT_DAY_OFFSET, tz);
-  while (cursorKey < lastKey) {
-    if (!completedKeys.has(cursorKey)) {
-      missed.push(dayKeyToInstant(cursorKey, tz));
-    }
-    cursorKey = addDaysInTZ(cursorKey, NEXT_DAY_OFFSET, tz);
-  }
-
-  return missed;
-};
 
 // Logs a number of units for the given habit. The additive optimistic streak
 // advances once per user-local day; a subtractive streak is already earned by

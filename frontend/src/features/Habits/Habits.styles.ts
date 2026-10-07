@@ -582,61 +582,6 @@ export const styles = StyleSheet.create({
     marginLeft: SPACING.md,
   },
 
-  // ===== Missed Days Modal =====
-  missedDaysContent: {
-    width: '90%',
-    backgroundColor: COLORS.background.card,
-    borderRadius: BORDER_RADIUS.xl,
-    padding: SPACING.xl,
-    alignItems: 'center',
-    ...SHADOWS.large,
-  },
-  missedDaysTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: SPACING.md,
-    textAlign: 'center',
-    color: COLORS.text.primary,
-  },
-  missedDaysSubtitle: {
-    fontSize: 16,
-    marginBottom: SPACING.md,
-    textAlign: 'center',
-    color: COLORS.text.secondary,
-  },
-  missedDaysQuestion: {
-    fontSize: 16,
-    marginBottom: SPACING.xl,
-    textAlign: 'center',
-    fontWeight: '500',
-    color: COLORS.text.primary,
-  },
-  missedDaysButtons: {
-    flexDirection: 'column',
-    width: '100%',
-  },
-  missedDaysButton: {
-    marginVertical: SPACING.xs,
-    paddingVertical: SPACING.md,
-    alignItems: 'center',
-    borderRadius: BORDER_RADIUS.xs,
-    ...SHADOWS.small,
-  },
-  missedDaysButtonText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: COLORS.text.light,
-  },
-  yesButton: {
-    backgroundColor: COLORS.success,
-  },
-  resetButton: {
-    backgroundColor: COLORS.warning,
-  },
-  cancelButton: {
-    backgroundColor: COLORS.neutral,
-  },
-
   // ===== Onboarding Modal =====
   onboardingModalContent: {
     width: '95%',

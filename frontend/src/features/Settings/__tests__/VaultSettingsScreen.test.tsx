@@ -563,13 +563,28 @@ describe('VaultSettingsScreen — reading the connection', () => {
     expect(view.getByTestId('vault-connection-unknown')).toBeTruthy();
   });
 
-  test('treats a connected answer with no address as unknown', async () => {
+  test('recognizes a managed connection without claiming a live health check', async () => {
     const view = await renderVault(CONNECTED_WITHOUT_ADDRESS);
 
     expect(
-      within(view.getByTestId('vault-connection-unknown')).getByText(VAULT_CONNECTION_UNKNOWN),
+      view.getByText(
+        'A managed vault is connected to your account. This does not check whether it is reachable right now.',
+      ),
     ).toBeTruthy();
+    expect(view.queryByTestId('vault-connection-unknown', HIDDEN_TOO)).toBeNull();
     expect(view.queryByTestId('vault-none-connected', HIDDEN_TOO)).toBeNull();
+    expect(view.queryByTestId('managed-vault-offer', HIDDEN_TOO)).toBeNull();
+  });
+
+  test('still asks before a managed connection could be replaced', async () => {
+    const view = await renderWithFormOpen(CONNECTED_WITHOUT_ADDRESS);
+    const raised = await pressConnectThroughDialog(
+      view,
+      { address: REPLACEMENT_VAULT_URL, key: TYPED_KEY },
+      'none',
+    );
+    expect(raised?.title).toBe(VAULT_REPLACE_CONFIRM_TITLE);
+    expect(mockConnect).not.toHaveBeenCalled();
   });
 
   test('offers the add heading when it could not check', async () => {
@@ -1102,8 +1117,8 @@ describe('VaultSettingsScreen — the Advanced fold with a vault of your own', (
   });
 
   test('stays closed for a vault the read could not name', async () => {
-    // A managed vault reads as "unknown" -- the server withholds its address --
-    // so only a vault somebody connected themselves opens the fold.
+    // A managed binding stays distinct from a user-supplied address;
+    // only a vault somebody connected themselves opens the fold.
     const view = await renderVault(CONNECTED_WITHOUT_ADDRESS);
 
     expect(foldExpanded(view)).toBe(false);

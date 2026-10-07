@@ -98,8 +98,9 @@ describe('ESSAY_ASK_WHAT names everything a letter sends to the model', () => {
 });
 
 describe('RESONANCE_EXPLAINER_WHAT names everything a reading sends to the model', () => {
-  // A pass sends the most when a vault degrades to the cloud, so the copy
-  // states that maximum (#2998). The reflection prompt (`build_prompt`)
+  // A pass sends the most to the app's AI model provider when no vault is
+  // connected (since #3061 a vault-bound pass never falls back to it), so the
+  // copy states that maximum (#2998). The reflection prompt (`build_prompt`)
   // carries the entry in <entry>, up to GROUNDING_LIMIT (3, the privacy
   // policy's "up to three") pieces of the writer's own writing in <prior> --
   // corpus fragments from `gather_grounding`, which may be uploaded or

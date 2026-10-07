@@ -330,7 +330,8 @@ def _reflection_notes(raw: object) -> list[dict[str, str]]:
     """Narrow a vault's note list to the ones adepthood can actually render.
 
     A :func:`_bounded_items` read over :data:`_MAX_REFLECT_NOTES`, so a malformed
-    reflection defers to the cloud rather than breaking the resonance pass, and
+    note list reads as no notes -- a pass that keeps none -- rather than breaking
+    the resonance pass, and
     an over-eager or hostile vault cannot grow this work (or the JSON it feeds)
     without bound.
     """

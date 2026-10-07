@@ -11,9 +11,10 @@
 
 import { editorialType, spacing, STAGE_ORDER } from '../../design/tokens';
 
-import { STAGE_DISPLAY, TITLE_BY_STAGE } from './mapLayout';
 import { STAGE_COUNT } from './stageData';
 import type { StageData } from './stageData';
+import { stageHeadline, stagePersona } from './stageVocabulary';
+import type { VocabularySource } from './stageVocabulary';
 import { centerColumnBounds, stageWavePoint } from './waveGeometry';
 import type { StageAnchors } from './waveGeometry';
 
@@ -244,32 +245,41 @@ export interface LensCaption {
   title: string;
   /** The stage's subtitle beneath it (e.g. "Active Yes-And-Ness"). */
   subtitle: string;
+  /** What a screen reader hears the lens is over (``lensStageIdentity``); never empty. */
+  identity: string;
 }
 
 /**
- * Resolve the lens caption from a stage's backend data: its title over its
- * subtitle. Both are sourced from ``StageData`` (never hardcoded) so ontology
- * corrections flow through automatically. Missing data — a cold start, a fetch
- * error, or an out-of-range hover — resolves to empty strings rather than
- * throwing, so a transient gap can never take the Map down.
+ * Screen-reader identity for a stage: its Aspect word (or the UNITY / EMPTINESS
+ * watermark carried by the title stages), stage number + Spiral color, and
+ * persona -- all from the served stage (#2666). The visible pill sheds this
+ * detail because it duplicates the Map's columns, but a screen-reader user
+ * can't cross-reference those columns, so the spoken label keeps it. A stage
+ * not yet served still reads as its number and color, never as nothing.
  */
-export const lensCaption = (stage: StageData | undefined): LensCaption =>
-  stage ? { title: stage.title, subtitle: stage.subtitle } : { title: '', subtitle: '' };
+export const lensStageIdentity = (
+  stage: VocabularySource | undefined,
+  stageNumber: number,
+): string => {
+  const colorName = (STAGE_ORDER[stageNumber - 1] ?? '').toUpperCase();
+  const position = `stage ${stageNumber} · ${colorName}`;
+  if (stage === undefined) return position;
+  return `${stageHeadline(stage)}, ${position}, ${stagePersona(stage)}`;
+};
 
 /**
- * Screen-reader identity for a stage: its Aspect word (or the UNITY / EMPTINESS
- * title carried by stages 9–10), stage number + Spiral color, and persona. The
- * visible pill sheds this detail because it duplicates the Map's columns, but a
- * screen-reader user can't cross-reference those columns, so the spoken label
- * keeps it. Unknown stages resolve to an empty string rather than throwing.
+ * Resolve the lens caption from a stage's backend data: its title over its
+ * subtitle, plus the spoken identity. All are sourced from ``StageData`` (never
+ * hardcoded) so ontology corrections flow through automatically. Missing data
+ * — a cold start, a fetch error, or an out-of-range hover — resolves the two
+ * visible lines to empty strings rather than throwing, so a transient gap can
+ * never take the Map down.
  */
-export const lensStageIdentity = (stageNumber: number): string => {
-  const display = STAGE_DISPLAY[stageNumber];
-  if (!display) return '';
-  const headline = display.arrowLabel || TITLE_BY_STAGE[display.stageNumber] || '';
-  const colorName = (STAGE_ORDER[display.stageNumber - 1] ?? '').toUpperCase();
-  return `${headline}, stage ${display.stageNumber} · ${colorName}, ${display.persona}`;
-};
+export const lensCaption = (stage: StageData | undefined, stageNumber: number): LensCaption => ({
+  title: stage?.title ?? '',
+  subtitle: stage?.subtitle ?? '',
+  identity: lensStageIdentity(stage, stageNumber),
+});
 
 /** The Map scroller and a focused stage, as ``focusScrollOffset`` reads them. */
 export interface FocusScrollInput {
