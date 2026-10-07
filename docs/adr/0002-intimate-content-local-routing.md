@@ -206,12 +206,13 @@ changes.
   under today's server-held keys and is operator-readable.**
 - **Decision 3, routing.** BYOK is no longer a supplement to an app-paid
   cloud path. It is the **only** way any of a person's content reaches a
-  cloud model. Without their own key, none of their data reaches one. A
+  cloud model. Under the decision, without their own key none of their data
+  will reach one. A
   BYOK call is decided to go **from the person's device straight to the
   vendor**, so neither the key nor the content passes through Adepthood's
   server. Today the call is relayed through the server (the `X-LLM-API-Key`
   header), which is a known gap until ADR 0009 phase (a). Within
-  BYOK, the tier rule is unchanged: INTIMATE never reaches the cloud, and
+  BYOK, the decided tier rule is unchanged: INTIMATE never reaches the cloud, and
   Creek's `ModelRouter` stays the single chokepoint for vault-side routing.
   BotMason credits fund only non-cloud inference.
 - **Decision 4, recovery.** "No operator escrow and no operator-assisted

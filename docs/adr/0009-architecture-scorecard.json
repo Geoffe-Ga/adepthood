@@ -221,13 +221,13 @@
         "owner_input_required": true
       },
       "reopen_triggers": {
-        "value": "Rejected by the owner on 2026-10-07: it contradicts the premise that the operator cannot read journal entries.",
+        "value": "Rejected by the owner on 2026-10-07: it contradicts the decided premise that the operator cannot read journal entries.",
         "source": "owner:2026-10-07#B12-premise"
       }
     },
     "B": {
       "boundary": {
-        "value": "Stored prose is ciphertext the server cannot decrypt; the person's devices hold plaintext.",
+        "value": "Stored prose would be ciphertext the server cannot decrypt; the person's devices hold plaintext.",
         "source": "issue:#3067"
       },
       "key_custody": {
@@ -427,7 +427,7 @@
     },
     "BD": {
       "boundary": {
-        "value": "Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server.",
+        "value": "Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server.",
         "source": "owner:2026-10-07#B12-premise"
       },
       "key_custody": {

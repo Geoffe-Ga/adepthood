@@ -95,7 +95,7 @@ vault-local inference (D), with BYOK cloud as an explicit opt-in.
 Items 1-5 are the owner's 2026-10-07 decision. Items 6-14 are the owner's
 answers to this record's follow-up questions, given the same evening.
 
-1. **The operator cannot read people's journal entries.**
+1. **Decided premise: the operator cannot read people's journal entries.**
    (`owner:2026-10-07#B12-premise`) This premise governs **stored** journal
    content and every prose derivative of it, and the BYOK and device paths
    of inference. It does **not** cover credit-funded processing in a managed
@@ -257,13 +257,13 @@ history and future content stand or fall together.
 - **Threat actors:** DB thief and backup holder only; privileged operator, host and subpoena all succeed. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
-- **Reopen triggers:** Rejected by the owner on 2026-10-07: it contradicts the premise that the operator cannot read journal entries. (`owner:2026-10-07#B12-premise`)
+- **Reopen triggers:** Rejected by the owner on 2026-10-07: it contradicts the decided premise that the operator cannot read journal entries. (`owner:2026-10-07#B12-premise`)
 
 ### Option B
 
 *User-held keys with client-side encryption.*
 
-- **Boundary:** Stored prose is ciphertext the server cannot decrypt; the person's devices hold plaintext. (`issue:#3067`)
+- **Boundary:** Stored prose would be ciphertext the server cannot decrypt; the person's devices hold plaintext. (`issue:#3067`)
 - **Key custody:** Keys generated on the person's device; no operator escrow; AEAD bound to owner, object and version. (`issue:#3067`)
 - **Recovery:** **unknown; owner input required.** See D03 below.
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels and network metadata remain visible. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
@@ -331,7 +331,7 @@ history and future content stand or fall together.
 
 *Selected: user-held keys plus device-side and vault-local inference, BYOK cloud as explicit opt-in.*
 
-- **Boundary:** Stored journal content and its prose derivatives are ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server. (`owner:2026-10-07#B12-premise`)
+- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Plaintext exists on the person's devices, in a vault they choose for inference, and at a cloud vendor only under their own key, sent from the device and never relayed by our server. (`owner:2026-10-07#B12-premise`)
 - **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07#B12-premise`)
 - **Recovery:** A recovery phrase the person writes down plus their passphrase; either unlocks the data key. Losing both means the data is gone, agreed up front at enrolment. Pairing, revocation and the rest of D03 stay open. (`owner:2026-10-07#followup-recovery`)
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
