@@ -149,7 +149,12 @@ def _instant_field(item: Mapping[str, object], key: str) -> datetime:
     except ValueError as exc:
         msg = f"{key} is not an ISO-8601 instant"
         raise MalformedTombstoneError(msg) from exc
-    return _aware(parsed)
+    # Without an offset the value names no moment; this module always writes
+    # one, so a missing offset means the file did not come from here.
+    if parsed.tzinfo is None:
+        msg = f"{key} carries no UTC offset"
+        raise MalformedTombstoneError(msg)
+    return parsed
 
 
 def _items(

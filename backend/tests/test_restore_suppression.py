@@ -49,6 +49,7 @@ from services.journal_retention import PURGE_MIN_RETENTION_DAYS, purge_soft_dele
 from services.restore_suppression import (
     RESTORE_ID_ENV_VAR,
     RESTORE_SUPPRESSION_REQUIRED_ENV_VAR,
+    TOMBSTONE_FORMAT_VERSION,
     AccountTombstone,
     EntryTombstone,
     RestoreAlreadyCompleteError,
@@ -501,6 +502,13 @@ def test_tombstone_file_round_trips_and_rejects_junk() -> None:
         ),
     )
     assert TombstoneSet.from_json(json.loads(json.dumps(original.to_json()))) == original
+    current = TOMBSTONE_FORMAT_VERSION
+    good_entry = {
+        "entry_id": 1,
+        "user_id": 1,
+        "timestamp": "2025-12-01T09:30:00.123456+00:00",
+        "deleted_at": "2026-01-01T00:00:00+00:00",
+    }
     junk_documents: tuple[object, ...] = (
         [],
         {"version": 99, "accounts": [], "entries": []},
@@ -511,14 +519,48 @@ def test_tombstone_file_round_trips_and_rejects_junk() -> None:
             "entries": [{"entry_id": 1, "user_id": 1, "deleted_at": "2026-01-01T00:00:00+00:00"}],
         },
         {
-            "version": 1,
+            "version": current,
             "accounts": [{"user_id": "x", "deleted_at": "2026-01-01T00:00:00+00:00"}],
             "entries": [],
         },
-        {"version": 1, "accounts": [], "entries": [{"entry_id": 1, "user_id": 1}]},
-        {"version": 1, "accounts": [{"user_id": 1, "deleted_at": "not a date"}], "entries": []},
-        {"version": 1, "accounts": [], "entries": [], "email": "x@example.com"},
+        {
+            "version": current,
+            "accounts": [{"user_id": 1, "deleted_at": "not a date"}],
+            "entries": [],
+        },
+        {"version": current, "accounts": [], "entries": [], "email": "x@example.com"},
+        # Entry stamps, field by field, in the current format.
+        {"version": current, "accounts": [], "entries": [{"entry_id": 1, "user_id": 1}]},
+        {
+            "version": current,
+            "accounts": [],
+            "entries": [{k: v for k, v in good_entry.items() if k != "timestamp"}],
+        },
+        {"version": current, "accounts": [], "entries": [{**good_entry, "timestamp": 123}]},
+        {
+            "version": current,
+            "accounts": [],
+            "entries": [{**good_entry, "timestamp": "not a date"}],
+        },
+        # Without an offset an instant names no moment: refused, never assumed UTC.
+        {
+            "version": current,
+            "accounts": [],
+            "entries": [{**good_entry, "timestamp": "2025-12-01T09:30:00.123456"}],
+        },
+        {
+            "version": current,
+            "accounts": [],
+            "entries": [{**good_entry, "timestamp": "2025-12-01"}],
+        },
+        {
+            "version": current,
+            "accounts": [{"user_id": 1, "deleted_at": "2026-01-01T00:00:00"}],
+            "entries": [],
+        },
     )
+    good = {"version": current, "accounts": [], "entries": [good_entry]}
+    assert len(TombstoneSet.from_json(good).entries) == 1  # the junk differs from this only
     for junk in junk_documents:
         with pytest.raises(restore_suppression.MalformedTombstoneError):
             TombstoneSet.from_json(junk)
