@@ -19,7 +19,7 @@ from typing import Literal
 
 from models.marginalia import RECEIPT_VERSION, Marginalia, MarginaliaSource
 from schemas.marginalia import OperationSource, PassProvenance, ProvenanceReceipt
-from services.marginalia import InferenceReceipt
+from services.marginalia import InferenceReceipt, attempted_receipt
 
 PaidBy = Literal["own_key", "wallet", "free"]
 
@@ -49,11 +49,31 @@ def stamp_note(row: Marginalia, receipt: InferenceReceipt | None) -> None:
 
 
 def stamp_letter(row: Marginalia, receipt: InferenceReceipt | None) -> None:
-    """Record on ``row`` which side answered its letter, beside the note's own source."""
+    """Record on ``row`` which side answered its letter, beside the note's own source.
+
+    ``receipt_version`` is left alone on a note whose own source was never
+    recorded: a non-null version means the note's receipt exists, and a letter
+    written later cannot supply it.
+    """
     if receipt is None:
         return
     row.essay_source = receipt.source.value
-    row.receipt_version = RECEIPT_VERSION
+    if row.source is not None:
+        row.receipt_version = RECEIPT_VERSION
+
+
+def detection_receipt(
+    answered: InferenceReceipt | None, *, dialled: bool, api_key: str | None
+) -> InferenceReceipt | None:
+    """Return detection's receipt: what answered, else what was sent to, else ``None``.
+
+    ``None`` -- rendered ``none`` -- is reserved for a check that never sent
+    anything (no candidates, or a vault-bound caller). A call that went out and
+    failed is the app provider's, with ``detection_checked`` false beside it.
+    """
+    if answered is not None:
+        return answered
+    return attempted_receipt(api_key) if dialled else None
 
 
 def operation_receipt(receipt: InferenceReceipt | None) -> ProvenanceReceipt:
@@ -77,16 +97,26 @@ class PassReceipts:
     detection_checked: bool
 
 
-def paid_by(notes: InferenceReceipt | None, *, byok: bool, charge_kept: bool) -> PaidBy:
+def _app_provider_answered(receipts: PassReceipts) -> bool:
+    """Whether any operation of the pass went to the app provider."""
+    return any(
+        receipt is not None and receipt.source is MarginaliaSource.APP_PROVIDER
+        for receipt in (receipts.notes, receipts.detection)
+    )
+
+
+def paid_by(receipts: PassReceipts, *, byok: bool, charge_kept: bool) -> PaidBy:
     """Return who paid for a settled pass.
 
-    A demo costs nobody anything, whatever key the request carried -- the stub
-    answers regardless of it. Otherwise the caller's own key, or the wallet when
-    its deduction stood, or nobody when it was handed back.
+    A demo costs nobody anything. The caller's own key paid only when an
+    app-provider operation actually used it -- the client attaches its key to
+    every request, and a vault-bound pass never sends it anywhere. Otherwise
+    the wallet when its deduction stood, or nobody when it was handed back or
+    never taken.
     """
-    if is_demo(notes):
+    if is_demo(receipts.notes):
         return "free"
-    if byok:
+    if byok and _app_provider_answered(receipts):
         return "own_key"
     return "wallet" if charge_kept else "free"
 
@@ -97,5 +127,5 @@ def pass_provenance(receipts: PassReceipts, *, byok: bool, charge_kept: bool) ->
         notes=operation_receipt(receipts.notes),
         detection=operation_receipt(receipts.detection),
         detection_checked=receipts.detection_checked,
-        paid_by=paid_by(receipts.notes, byok=byok, charge_kept=charge_kept),
+        paid_by=paid_by(receipts, byok=byok, charge_kept=charge_kept),
     )

@@ -45,11 +45,12 @@ from models.user import User
 from models.wallet_audit import (
     GENERATION_REFUND_REASONS,
     REASON_REFUND_DEMO,
+    REASON_REFUND_NO_NOTES,
     REASON_SPEND_MONTHLY,
     WalletAudit,
 )
 from services import marginalia as marginalia_service
-from services.botmason import LLMResponse
+from services.botmason import LLMCreditExhaustedError, LLMProviderError, LLMResponse
 from services.llm_usage import OUTCOME_FOR_REFUND_REASON, GenerationOutcome
 from services.marginalia import receipt_for
 from services.reflection_boundary import ReflectionBoundary
@@ -65,7 +66,8 @@ _VAULT_NOTE = "The vault reads this passage back."
 _LETTER = "Sentinel-letter: a warm letter about bending."
 _PRICED = {"price_acknowledged": True}
 _REAL_MODEL = "claude-test"
-_INFERENCE_SOURCES = {"creek_vault", "app_provider", "demo", "none", None}
+_BYOK = {"X-LLM-API-Key": "sk-ant-test-key-for-provenance"}
+_UNQUOTABLE = "the willow bending all night without once breaking and me awake under it"
 
 
 async def _signup(client: AsyncClient, username: str) -> dict[str, str]:
@@ -252,7 +254,7 @@ async def test_byok_pass_is_paid_by_own_key(
 
     resp = await async_client.post(
         f"/journal/{entry_id}/resonance",
-        headers={**headers, "X-LLM-API-Key": "sk-ant-test-key-for-provenance"},
+        headers={**headers, **_BYOK},
     )
 
     assert resp.status_code == HTTPStatus.OK
@@ -499,7 +501,8 @@ async def test_demo_pass_settlement_and_logs_are_closed_vocabulary(
     assert [r.__dict__["outcome"] for r in settled] == ["refunded_demo"]
     (outcome,) = [r for r in caplog.records if r.getMessage() == "journal_resonance_generated"]
     assert outcome.__dict__["notes_source"] == "demo"
-    assert outcome.__dict__["detection_source"] in _INFERENCE_SOURCES
+    # No candidates were seeded, so detection never ran.
+    assert outcome.__dict__["detection_source"] == "none"
     for record in caplog.records:
         rendered = f"{record.getMessage()} {record.__dict__}"
         assert _BODY not in rendered
@@ -519,6 +522,8 @@ def test_demo_refund_is_a_generation_refund_with_its_own_outcome() -> None:
         ("anthropic", "m", (MarginaliaSource.APP_PROVIDER, InferenceProvider.ANTHROPIC, "m")),
         ("openai", "", (MarginaliaSource.APP_PROVIDER, InferenceProvider.OPENAI, None)),
         ("mystery", "x" * 200, (MarginaliaSource.APP_PROVIDER, None, "x" * 64)),
+        # An app-provider answer claiming the vault's name is not the vault.
+        ("creek", "m", (MarginaliaSource.APP_PROVIDER, None, "m")),
     ],
 )
 def test_receipt_for_maps_a_response_into_the_closed_vocabulary(
@@ -528,3 +533,138 @@ def test_receipt_for_maps_a_response_into_the_closed_vocabulary(
     receipt = receipt_for(real_provider_response("x", provider=provider, model=model))
 
     assert (receipt.source, receipt.provider, receipt.model) == expected
+
+
+# --------------------------------------------------------------------------- review follow-ups
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vault_has_notes", [True, False])
+async def test_vault_bound_pass_with_a_byok_header_is_not_paid_by_own_key(
+    async_client: AsyncClient, *, vault_has_notes: bool
+) -> None:
+    """The client sends its key on every request; a vault-bound pass never uses it."""
+    _bind_to_vault(_vault_with_note() if vault_has_notes else ReflectingVaultClient())
+    headers = await _signup(async_client, f"prov_vault_byok_{vault_has_notes}")
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers={**headers, **_BYOK})
+
+    assert resp.status_code == HTTPStatus.OK
+    provenance = resp.json()["provenance"]
+    assert provenance["notes"]["source"] == "creek_vault"
+    assert provenance["paid_by"] == "free"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [LLMProviderError("detector down"), LLMCreditExhaustedError("spent", provider="openai")],
+)
+async def test_a_detection_call_that_failed_is_not_reported_as_never_run(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    error: LLMProviderError,
+) -> None:
+    """The entry went to the app provider even though detection failed: say so."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+    monkeypatch.setenv("LLM_API_KEY", "sk-test-server-key-for-provenance")
+
+    async def _complete(
+        prompt: str, history: object, *, system_prompt: str | None, api_key: object
+    ) -> LLMResponse:
+        del history, api_key
+        task = f"{system_prompt or ''}\n{prompt}"
+        if '"hits"' in task or "COMPLETED" in task:
+            raise error
+        text = json.dumps({"notes": [{"kind": "theme", "quote": _QUOTE, "note": _NOTE_TEXT}]})
+        return LLMResponse(
+            text=text, provider="openai", model="gpt-4o-mini", prompt_tokens=0, completion_tokens=0
+        )
+
+    monkeypatch.setattr(marginalia_service, "generate_response", _complete)
+    username = f"prov_detect_fail_{type(error).__name__.lower()}"
+    headers = await _signup(async_client, username)
+    await _seed_habit(db_session, username)
+    entry_id = await _create_entry(async_client, headers)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    provenance = resp.json()["provenance"]
+    assert provenance["detection_checked"] is False
+    assert provenance["detection"]["source"] == "app_provider"
+    assert provenance["detection"]["provider"] == "openai"
+    # Never the vault-bound shape, where nothing was sent at all.
+    assert provenance["detection"]["source"] != "none"
+
+
+@pytest.mark.asyncio
+async def test_an_empty_stub_pass_is_refunded_once_as_empty_never_as_a_demo(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Empty wins over demo: one refund, under the reason the writer is told."""
+    headers = await _signup(async_client, "prov_demo_empty")
+    user = await _user(db_session, "prov_demo_empty")
+    # Earlier usage, so a second reversal would show rather than clamp at zero.
+    user.monthly_messages_used = 2
+    db_session.add(user)
+    await db_session.commit()
+    resp_entry = await async_client.post(
+        "/journal/", json={"message": _UNQUOTABLE}, headers=headers
+    )
+    assert resp_entry.status_code == HTTPStatus.CREATED
+    entry_id = int(resp_entry.json()["id"])
+    caplog.set_level(logging.INFO)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["marginalia"] == []
+    assert body["no_notes_message"]
+    assert body["provenance"]["notes"]["source"] == "demo"
+    assert body["provenance"]["paid_by"] == "free"
+    assert await _audit_reasons(db_session, "prov_demo_empty") == [
+        REASON_SPEND_MONTHLY,
+        REASON_REFUND_NO_NOTES,
+    ]
+    assert (await _user(db_session, "prov_demo_empty")).monthly_messages_used == 2
+    settled = [r for r in caplog.records if r.getMessage().startswith("llm_generation_settled")]
+    assert [r.__dict__["outcome"] for r in settled] == ["refunded_empty"]
+
+
+@pytest.mark.asyncio
+async def test_a_letter_on_a_legacy_note_does_not_claim_a_recorded_note_source(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The letter's source is recorded; the note's stays unrecorded, receipt_version too."""
+    _answer_as(monkeypatch, provider="anthropic", model=_REAL_MODEL)
+    headers = await _signup(async_client, "prov_legacy_letter")
+    entry_id = await _create_entry(async_client, headers)
+    user = await _user(db_session, "prov_legacy_letter")
+    legacy = Marginalia(
+        journal_entry_id=entry_id,
+        user_id=user.id,
+        kind=MarginaliaKind.THEME,
+        anchor_start=0,
+        anchor_end=11,
+        anchor_text="I meditated",
+        note="An older note.",
+    )
+    db_session.add(legacy)
+    await db_session.commit()
+    await db_session.refresh(legacy)
+
+    resp = await async_client.post(
+        f"/journal/marginalia/{legacy.id}/essay", headers=headers, json=_PRICED
+    )
+
+    assert resp.status_code == HTTPStatus.OK
+    body = resp.json()
+    assert body["essay_source"] == "app_provider"
+    assert body["source"] is None
+    assert body["receipt_version"] is None

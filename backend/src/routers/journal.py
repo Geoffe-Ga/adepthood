@@ -161,6 +161,7 @@ from services.generation_guardrails import (
 from services.higher_self_grounding import Grounding, gather_grounding
 from services.inference_provenance import (
     PassReceipts,
+    detection_receipt,
     is_demo,
     pass_provenance,
     source_value,
@@ -1245,8 +1246,11 @@ def _suggestion_from_hit(
 
 @dataclass(frozen=True, slots=True)
 class _DetectionAttempt:
+    """What detection found, whether it returned, and whether it sent anything at all."""
+
     hits: list[CompletionDetected]
     checked: bool
+    dialled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1328,12 +1332,12 @@ async def _detect_hits_with_status(
             "journal_detection_failed",
             extra={"user_id": user_id, "entry_id": entry_id, "provider": exc.provider},
         )
-        return _DetectionAttempt(hits=[], checked=False)
+        return _DetectionAttempt(hits=[], checked=False, dialled=True)
     except LLMProviderError:
         logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
-        return _DetectionAttempt(hits=[], checked=False)
+        return _DetectionAttempt(hits=[], checked=False, dialled=True)
     _log_detection_checked(hits, user_id=user_id, entry_id=entry_id)
-    return _DetectionAttempt(hits=hits, checked=True)
+    return _DetectionAttempt(hits=hits, checked=True, dialled=True)
 
 
 def _stage_suggestions(
@@ -2309,6 +2313,32 @@ async def run_resonance(
         return await _run_admitted_resonance(session, current_user, entry, clients)
 
 
+def _pass_receipts(
+    notes: InferenceReceipt | None,
+    detection_usage: Sequence[LLMResponse],
+    attempt: _DetectionAttempt,
+    *,
+    api_key: str | None,
+) -> PassReceipts:
+    """Gather one pass's receipts: the reflection's, and detection's own (#3062).
+
+    ``detection_usage`` is only the responses metered after the reflection, so
+    the reflection's answer can never be read as detection's.
+    """
+    return PassReceipts(
+        notes=notes,
+        detection=detection_receipt(
+            receipt_since(detection_usage), dialled=attempt.dialled, api_key=api_key
+        ),
+        detection_checked=attempt.checked,
+    )
+
+
+def _charge_kept(spent: SpendResult | None, settled: _SettledPass) -> bool:
+    """Whether the pass's wallet deduction was taken and still stands after settlement."""
+    return spent is not None and settled.outcome is GenerationOutcome.KEPT
+
+
 async def _run_admitted_resonance(
     session: AsyncSession,
     current_user: int,
@@ -2392,11 +2422,7 @@ async def _run_admitted_resonance(
         attempt = await _detect_hits_with_status(
             message, inputs=detection, llm=app_llm, user_id=current_user, entry_id=entry_id
         )
-        receipts = PassReceipts(
-            notes=notes_receipt,
-            detection=receipt_since(usage, detection_mark),
-            detection_checked=attempt.checked,
-        )
+        receipts = _pass_receipts(notes_receipt, usage[detection_mark:], attempt, api_key=byok_key)
         settled = await _persist_settle_commit(
             session,
             _PassSettlementInput(
@@ -2421,9 +2447,7 @@ async def _run_admitted_resonance(
         no_notes_message=settled.no_notes_message,
         related=related_surfaces(reflection_llm),
         provenance=pass_provenance(
-            receipts,
-            byok=byok_key is not None,
-            charge_kept=settled.outcome is GenerationOutcome.KEPT,
+            receipts, byok=byok_key is not None, charge_kept=_charge_kept(spent, settled)
         ),
     )
     return _resonance_response(

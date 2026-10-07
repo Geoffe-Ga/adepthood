@@ -35,7 +35,13 @@ from models.marginalia import (
     MarginaliaStatus,
 )
 from models.promoted_quote import PromotedQuote
-from services.botmason import STUB_PROVIDER_NAME, LLMResponse, generate_response
+from services.botmason import (
+    STUB_PROVIDER_NAME,
+    LLMResponse,
+    generate_response,
+    get_provider,
+    provider_for_api_key,
+)
 
 # The system role every resonance-family call ships: margin notes, essay
 # expansion, and completion detection.  It exists because ``generate_response``
@@ -128,6 +134,16 @@ def _known_provider(name: str) -> InferenceProvider | None:
     return None if provider is InferenceProvider.CREEK else provider
 
 
+def _receipt_named(provider: str, model: str | None) -> InferenceReceipt:
+    """Map a provider name (and optional reported model) into a receipt."""
+    is_stub = provider == STUB_PROVIDER_NAME
+    return InferenceReceipt(
+        source=MarginaliaSource.DEMO if is_stub else MarginaliaSource.APP_PROVIDER,
+        provider=InferenceProvider.STUB if is_stub else _known_provider(provider),
+        model=(model or "")[:SOURCE_MODEL_MAX] or None,
+    )
+
+
 def receipt_for(response: LLMResponse) -> InferenceReceipt:
     """Return the receipt for one app-provider response.
 
@@ -136,12 +152,20 @@ def receipt_for(response: LLMResponse) -> InferenceReceipt:
     into a vault or a demo. The model is capped at :data:`SOURCE_MODEL_MAX` and
     an empty one is recorded as unreported.
     """
-    is_stub = response.provider == STUB_PROVIDER_NAME
-    return InferenceReceipt(
-        source=MarginaliaSource.DEMO if is_stub else MarginaliaSource.APP_PROVIDER,
-        provider=InferenceProvider.STUB if is_stub else _known_provider(response.provider),
-        model=response.model[:SOURCE_MODEL_MAX] or None,
-    )
+    return _receipt_named(response.provider, response.model)
+
+
+def attempted_receipt(api_key: str | None) -> InferenceReceipt:
+    """Return the receipt for an app-provider call that was sent but returned no answer.
+
+    A call that failed after the request went out still carried the writing to
+    the provider, so it is recorded as that provider's -- never as an operation
+    that did not run. The provider is the one the call was routed to (a BYOK
+    key selects its own, otherwise the server's configured one); no model is
+    claimed, because none was reported.
+    """
+    named = provider_for_api_key(api_key) if api_key else None
+    return _receipt_named(named or get_provider(), None)
 
 
 def receipt_since(usage: Sequence[LLMResponse], mark: int = 0) -> InferenceReceipt | None:
