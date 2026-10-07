@@ -270,6 +270,10 @@ _CONTENT_AND_KEY: Final = frozenset({DataClass.CONTENT, DataClass.METADATA, Data
 _METADATA: Final = frozenset({DataClass.METADATA})
 _NOTHING: Final = frozenset({DataClass.NONE})
 
+#: Lead-ins one privacy-policy paragraph shares between several rows.
+_EMAIL_RELAY_LEAD_IN: Final = "An email relay (Resend, or the deployment's own mail server)"
+_IDENTITY_LEAD_IN: Final = "Google and Apple"
+
 
 def _llm_provider(
     rid: RecipientId, legal_name: str, provider: str, site: DialSite, models: frozenset[str]
@@ -414,6 +418,7 @@ _ROWS: Final[tuple[Recipient, ...]] = (
         legal_name="The Creek Vault's own model provider",
         short_name="Creek Vault's model provider",
         role=Role.SUB_PROCESSOR,
+        policy_lead_in="Your Creek Vault's model provider",
         scopes=(
             Scope(
                 ScopeKind.DEPLOYMENT_CONFIGURED,
@@ -457,6 +462,7 @@ _ROWS: Final[tuple[Recipient, ...]] = (
         dial_sites=frozenset(
             {DialSite("services.email", "ResendEmailSender.send", "httpx.AsyncClient")}
         ),
+        policy_lead_in=_EMAIL_RELAY_LEAD_IN,
         scopes=(
             Scope(
                 ScopeKind.OPERATOR_ACCOUNT,
@@ -475,7 +481,7 @@ _ROWS: Final[tuple[Recipient, ...]] = (
         dial_sites=frozenset(
             {DialSite("services.email", "SmtpEmailSender._connect", "smtplib.SMTP")}
         ),
-        policy_lead_in="An email relay",
+        policy_lead_in=_EMAIL_RELAY_LEAD_IN,
         scopes=(
             Scope(
                 ScopeKind.DEPLOYMENT_CONFIGURED,
@@ -514,6 +520,7 @@ _ROWS: Final[tuple[Recipient, ...]] = (
         role=Role.INDEPENDENT_CONTROLLER,
         hosts=frozenset({"www.googleapis.com", "accounts.google.com"}),
         dial_sites=frozenset({_JWKS_SITE}),
+        policy_lead_in=_IDENTITY_LEAD_IN,
         scopes=(
             Scope(
                 ScopeKind.OPERATOR_ACCOUNT,
@@ -529,6 +536,7 @@ _ROWS: Final[tuple[Recipient, ...]] = (
         role=Role.INDEPENDENT_CONTROLLER,
         hosts=frozenset({"appleid.apple.com"}),
         dial_sites=frozenset({_JWKS_SITE}),
+        policy_lead_in=_IDENTITY_LEAD_IN,
         scopes=(
             Scope(
                 ScopeKind.OPERATOR_ACCOUNT,
@@ -542,6 +550,7 @@ _ROWS: Final[tuple[Recipient, ...]] = (
         legal_name="Railway",
         short_name="Railway",
         role=Role.INFRASTRUCTURE,
+        policy_lead_in="Railway",
         scopes=(
             Scope(
                 ScopeKind.OPERATOR_ACCOUNT,
@@ -555,6 +564,7 @@ _ROWS: Final[tuple[Recipient, ...]] = (
         legal_name="Fly.io",
         short_name="Fly",
         role=Role.INFRASTRUCTURE,
+        policy_lead_in="Fly.io",
         scopes=(
             Scope(
                 ScopeKind.DEPLOYMENT_CONFIGURED,

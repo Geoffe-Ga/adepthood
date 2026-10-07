@@ -213,7 +213,7 @@ says; the tier section above is where that promise is written out in full.
 
 ## Who else receives your data
 
-Five parties, and nothing else. There is no advertising, no analytics
+The parties below, and nothing else. There is no advertising, no analytics
 service, no tracking SDK, and no data broker anywhere in this app.
 
 **The language-model provider** (Anthropic or OpenAI, depending on how the
@@ -260,24 +260,52 @@ managed vault Adepthood created for you; a vault you connected yourself still
 requires its owner to perform any account-wide purge.
 [Your data](../your-data.md) explains both cases.
 
+**Your Creek Vault's model provider**, only if the vault's own deployment
+allows it to use a cloud model (its `CREEK_CLOUD_CONSENT` setting). A vault
+sorts and reflects on what it is sent. When it is allowed a cloud model for
+that work, what it holds of yours — non-Intimate entries and documents — goes
+to that model's provider under the vault's configuration, not Adepthood's.
+Which provider that is depends on how the vault is set up.
+
+**Railway**, the platform the server and its database run on. Everything the
+database holds is on Railway's machines, and so is the key the server
+decrypts your writing with, so the encryption described above does not keep
+your writing from the host any more than it does from the operator. Any
+platform backups of the database are held by Railway too ("Deleting your
+account" below says how long they are kept).
+
+**Fly.io**, only if Adepthood activated a managed vault for you. Fly hosts
+that vault, and as the vault paragraph above says, Fly and privileged
+Adepthood or Creek operators can access what it stores.
+
 **Gumroad**, for purchases. It receives what you type into its own
 checkout, which Adepthood never sees; Adepthood sends it a licence key to
 verify and receives back the sale record it keeps.
 
 **Sentry**, if — and only if — the deployment configures it. It is how a
-crash becomes visible to the operator instead of vanishing. What it
-receives is the exception, its type and message and stack, plus a request
-id, path and method. What it does not receive is the rest of the request:
-the body, the headers, log breadcrumbs, and the local variables of every
-stack frame are stripped from each event before it is sent, credential-
-shaped text is redacted, and an over-long exception message is truncated.
-Those are the four channels through which a journal entry could otherwise
-reach a monitoring vendor, and each is closed twice — once by turning the
-capture off, once by deleting it on the way out. A deployment that sets no
-Sentry credentials sends nothing anywhere and logs the same crash locally.
+crash becomes visible to the operator instead of vanishing. Nothing is
+captured automatically: a report is made only when the server meets an error
+it did not handle, and each one is rebuilt from a short list of fields before
+it is sent. It names the release and environment that failed, a request id,
+the request's method and route — the route's pattern, such as
+`/journal/{entry_id}`, not the address you visited — and, for each exception,
+its type, a fixed error code, and the file, function and line of each stack
+frame. The exception's message is never sent: the fixed error code stands in
+for it, and that code is written into the program, never taken from anything
+you typed. Nor is anything else sent — not the body or headers of the
+request, not log records, not the source lines or local variables of any
+frame. Credential-shaped text in what is left is redacted as a second,
+separate lock. A deployment that sets no Sentry credentials sends nothing
+anywhere and logs the same crash locally.
 
-**An email relay**, when the deployment is configured to send mail. It
-carries password-reset messages to your address and nothing else.
+**An email relay (Resend, or the deployment's own mail server)**, when the
+deployment is configured to send mail. It carries password-reset messages to
+your address and nothing else.
+
+**Google and Apple**, if you sign in with one of them. Signing in happens
+between you and that company, under its own terms, and Adepthood receives the
+signed token it issues. To check that token, the server fetches the
+company's published keys; that request carries nothing about you.
 
 One more, on the device rather than the server: turning on habit reminders
 asks the operating system's push service for a token, which is kept on your

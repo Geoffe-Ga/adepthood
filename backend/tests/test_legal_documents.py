@@ -515,6 +515,86 @@ def test_the_policy_says_monitoring_is_deployment_configured() -> None:
     assert "sentry" in _read(_PRIVACY_POLICY)
 
 
+# The policy paragraph describing the error monitor, from its lead-in to the
+# next party's.
+_SENTRY_PARAGRAPH_OPENING: Final[str] = "**sentry**, if"
+_SENTRY_PARAGRAPH_CLOSING: Final[str] = "**an email relay"
+
+# What the paragraph said while the scrubber subtracted fields from the vendor's
+# event and truncated the message (#3079 replaced that with a rebuild from an
+# allowlist that never copies the message). Any of these back would describe a
+# report the code no longer sends.
+_RETIRED_SENTRY_CLAIMS: Final[tuple[str, ...]] = (
+    "type and message and stack",
+    "over-long exception message is truncated",
+    "each is closed twice",
+)
+
+# The location fields a reported frame keeps, and the policy's words for them.
+_FRAME_FIELD_WORDS: Final[Mapping[str, str]] = MappingProxyType(
+    {"filename": "file", "function": "function", "lineno": "line"}
+)
+
+
+def _field(node: object, name: str) -> object:
+    """Return ``node[name]``, asserting ``node`` is a mapping that has it."""
+    assert isinstance(node, dict), node
+    return node[name]
+
+
+def _only_item(node: object) -> dict[str, object]:
+    """Return the single mapping in a one-element list."""
+    assert isinstance(node, list), node
+    assert len(node) == 1, node
+    item = node[0]
+    assert isinstance(item, dict), item
+    return item
+
+
+def test_the_policy_describes_the_error_report_the_scrubber_builds() -> None:
+    """The Sentry paragraph describes the rebuilt event: no message, location-only frames.
+
+    Re-derived by running ``scrub_event`` over an event carrying a message,
+    frame source and frame locals: the message is replaced and each frame keeps
+    only its location, which is what the paragraph now tells a reader.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+    start = policy.index(_SENTRY_PARAGRAPH_OPENING)
+    paragraph = policy[start : policy.index(_SENTRY_PARAGRAPH_CLOSING, start)]
+    event: dict[str, object] = {
+        "exception": {
+            "values": [
+                {
+                    "type": "RuntimeError",
+                    "value": _SENTINEL_BODY,
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "filename": "routers/journal.py",
+                                "function": "create_entry",
+                                "lineno": 1,
+                                "context_line": _SENTINEL_BODY,
+                                "vars": {"body": _SENTINEL_BODY},
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+
+    entry = _only_item(_field(_field(scrub_event(event, {}), "exception"), "values"))
+    frame = _only_item(_field(_field(entry, "stacktrace"), "frames"))
+
+    assert entry["value"] != _SENTINEL_BODY
+    assert set(frame) == set(_FRAME_FIELD_WORDS)
+    assert "message is never sent" in paragraph
+    for word in _FRAME_FIELD_WORDS.values():
+        assert word in paragraph, f"the Sentry paragraph no longer names a frame's {word}"
+    restated = [claim for claim in _RETIRED_SENTRY_CLAIMS if claim in paragraph]
+    assert not restated, f"the Sentry paragraph still describes the retired scrubber: {restated}"
+
+
 @pytest.mark.asyncio
 async def test_an_intimate_entry_never_reaches_a_vault() -> None:
     """An intimate entry short-circuits before any vault call is made.

@@ -61,6 +61,14 @@ The export covers your Adepthood data. Your vault holds its own copy and
 exports from its own side; nothing here reaches into it. An ordinary managed
 Fly vault is provider-managed and operator-readable, not confidential compute:
 Fly and privileged Adepthood or Creek operators can access its stored bytes.
+If the vault's own deployment allows it a cloud model (its
+`CREEK_CLOUD_CONSENT` setting), what it holds of yours also goes to that
+model's provider, under the vault's configuration rather than Adepthood's.
+The [privacy policy](legal/privacy-policy.md) names every party that receives
+anything of yours: Railway, which hosts Adepthood's server and database; the
+language-model provider; your vault, Fly for a managed one, and the vault's
+model provider; Gumroad; Sentry; the email relay (Resend, or the deployment's
+own mail server); and Google or Apple if you sign in with one.
 
 A vault and what your reflections draw on are two separate choices. Each
 reflection reads a few passages of your own writing: from your writing sorted

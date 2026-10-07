@@ -1,17 +1,17 @@
 """The privacy policy's recipient list, reconciled against the recipient register (#3065).
 
-``docs/legal/privacy-policy.md`` opens its recipients section with "Five parties,
-and nothing else", then introduces each party with a bold lead-in at the start
-of a paragraph. The register knows of more parties than that. This module does
-not edit the policy -- the wording is the owner's (B01) -- it pins the gap:
+``docs/legal/privacy-policy.md`` introduces each party that receives a user's
+data with a bold lead-in at the start of a paragraph of its recipients section.
+The register (:mod:`privacy.recipients`) is the code's list of those parties.
+The two are held to each other here:
 
-* the five lead-ins are exactly the five the copy has today, read from
-  paragraph starts only (a bold phrase mid-paragraph is emphasis, not a party);
-* every register row either names the lead-in that discloses it, or is in
-  :data:`KNOWN_UNDISCLOSED`;
-* each known-undisclosed row is a strict ``xfail``: the day the copy gives it a
-  lead-in of its own, the test XPASSes, the run goes red, and whoever corrected
-  the copy strikes the row from the set and records the lead-in in the register.
+* the lead-ins are exactly :data:`EXPECTED_LEAD_INS`, read from paragraph
+  starts only (a bold phrase mid-paragraph is emphasis, not a party);
+* every register row names the lead-in that discloses it, and every lead-in
+  discloses at least one row -- so a party the code gains without the policy
+  naming it fails here;
+* the parties the policy once left out (B01, #3057) are each named, by the
+  register's own short name, inside a lead-in of their own.
 """
 
 from __future__ import annotations
@@ -30,15 +30,20 @@ EXPECTED_LEAD_INS = frozenset(
     {
         "The language-model provider",
         "Your Creek Vault",
+        "Your Creek Vault's model provider",
+        "Railway",
+        "Fly.io",
         "Gumroad",
         "Sentry",
-        "An email relay",
+        "An email relay (Resend, or the deployment's own mail server)",
+        "Google and Apple",
     }
 )
 
-# Parties the register knows of and the policy does not name by a lead-in of
-# their own. Each is a B01 copy correction, not a code change.
-KNOWN_UNDISCLOSED = frozenset(
+# Parties the policy did not name until B01 (#3057) gave each a lead-in of its
+# own. Each must stay named by the register's short name, so a later edit that
+# folds one back into another party's paragraph fails here.
+NAMED_SINCE_B01 = frozenset(
     {
         RecipientId.HOSTING_PLATFORM,
         RecipientId.FLY,
@@ -72,8 +77,8 @@ def policy_lead_ins() -> frozenset[str]:
     return lead_ins(POLICY_PATH.read_text(encoding="utf-8"))
 
 
-def test_policy_lead_ins_are_exactly_the_known_five(policy_lead_ins: frozenset[str]) -> None:
-    """Five parties today; the mid-paragraph emphasis about Fly is not a sixth."""
+def test_policy_lead_ins_are_exactly_the_expected_set(policy_lead_ins: frozenset[str]) -> None:
+    """Every party has its paragraph; mid-paragraph emphasis adds none."""
     assert policy_lead_ins == EXPECTED_LEAD_INS
 
 
@@ -91,19 +96,21 @@ def test_every_lead_in_maps_to_a_row_and_back(policy_lead_ins: frozenset[str]) -
     assert claimed == policy_lead_ins
 
 
-def test_known_undisclosed_is_exactly_rows_without_a_lead_in() -> None:
-    """The gap list is derived from the register, so it cannot drift from it."""
-    undisclosed = {r.id for r in RECIPIENTS.values() if r.policy_lead_in is None}
+def test_no_register_row_is_left_without_a_lead_in() -> None:
+    """Every party the code can reach is disclosed by some paragraph of the policy."""
+    undisclosed = sorted(r.id for r in RECIPIENTS.values() if r.policy_lead_in is None)
 
-    assert undisclosed == KNOWN_UNDISCLOSED
+    assert undisclosed == []
 
 
-@pytest.mark.xfail(strict=True, reason="B01 copy correction: the policy does not name it yet")
-@pytest.mark.parametrize("recipient", sorted(KNOWN_UNDISCLOSED), ids=str)
-def test_known_undisclosed_recipient_has_its_own_lead_in(
+@pytest.mark.parametrize("recipient", sorted(NAMED_SINCE_B01), ids=str)
+def test_once_undisclosed_recipient_is_named_in_its_own_lead_in(
     recipient: RecipientId, policy_lead_ins: frozenset[str]
 ) -> None:
-    """Fails today for each gap; XPASSes -- and turns the run red -- once the copy names it."""
-    name = RECIPIENTS[recipient].short_name.casefold()
+    """Each party the policy once omitted is named, by its short name, in its lead-in."""
+    row = RECIPIENTS[recipient]
+    name = row.short_name.casefold()
 
-    assert any(name in lead_in.casefold() for lead_in in policy_lead_ins)
+    assert row.policy_lead_in is not None
+    assert row.policy_lead_in in policy_lead_ins
+    assert name in row.policy_lead_in.casefold()
