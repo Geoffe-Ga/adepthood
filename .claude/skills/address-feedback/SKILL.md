@@ -8,21 +8,24 @@ description: >-
   ending in a `Verdict:` line (LGTM / CHANGES_REQUESTED / COMMENTS) — it is
   NOT a formal GitHub approval. This skill locates the most recent such
   comment via GitHub MCP, parses the verdict, triages blockers/problems/nits
-  into a TDD-driven local fix loop, replies and resolves threads, and merges
-  only when the latest verdict is `LGTM`, the comment was posted after the
-  current HEAD's push, and all required checks are green.
+  into a TDD-driven local fix loop, replies and resolves threads. On
+  `CHANGES_REQUESTED` it loops until LGTM; on `COMMENTS` it never iterates —
+  it files each actionable item as a follow-up issue with a P0–P3 label
+  matched to its severity (or defers loop-tooling rows per the backlog
+  inflow moratorium) and then merges; on `LGTM` it merges. Merging always
+  requires the verdict to postdate the current HEAD and green checks.
   Do NOT use for giving a review (use comprehensive-pr-review), debugging CI
   failures themselves (use ci-debugging), general TDD work outside review
   context (use stay-green), bug RCA (use bug-squashing-methodology), or
   issue/branch/PR creation (use git-workflow).
 metadata:
   author: Geoff
-  version: 1.1.0
+  version: 1.2.0
 ---
 
 # Address Feedback
 
-Close the loop on a Claude PR review: find the latest verdict comment, iterate locally with TDD, push once, and merge only when the verdict is `LGTM` for the current HEAD and CI is green.
+Close the loop on a Claude PR review: find the latest verdict comment, iterate locally with TDD on `CHANGES_REQUESTED`, push once, and merge when the verdict for the current HEAD is `LGTM` (merge directly) or `COMMENTS` (file a prioritized follow-up issue for each actionable item instead of iterating, then merge) with green CI.
 
 ## How the Claude Review Surfaces
 
@@ -71,9 +74,35 @@ Use the GitHub MCP tools — never `gh` CLI. The goal is to determine whether a 
 6. Classify and route:
    - `LGTM` → skip to Step 6 (merge gate).
    - `CHANGES_REQUESTED` → required fixes; continue to Step 2 with the **Security Concerns**, **Problems**, and any blocking items from the comment body.
-   - `COMMENTS` → optional improvements; user decides whether to address; if skipping, jump to Step 6.
+   - `COMMENTS` → reviewer has signed off but raised non-blocking findings; run Step 1A (file each actionable item as a follow-up issue with a severity-matched P-label, or moratorium-defer it), then jump to Step 6. **Do not enter the TDD loop, push, or re-request review.**
    - **No qualifying comment** (none after the latest push) → wait for the next review run; do not merge. Optionally post `@claude please review` via `mcp__github__add_issue_comment` if the action did not run.
    - **Comment exists but no parseable Verdict line** → treat as malformed; ask the user before merging. Do not infer a verdict from prose.
+
+### Step 1A: COMMENTS Verdict — File Prioritized Issues, Then Merge (Never Iterate)
+
+Reached only when the current verdict is `COMMENTS`. **A `COMMENTS` verdict never starts another iteration**: no TDD loop, no code push, no `@claude please re-review`. The reviewer has signed off on what is in the PR; its non-blocking findings become tracked backlog work, prioritized by severity, and the PR proceeds to the merge gate. `iteration-trigger.yml`'s summary comment and `scripts/ralph/pr-ready.sh` (token `ready-comments`) both route `COMMENTS` here.
+
+1. Build the same triage table as Step 2 from the comment body (Strengths / Security Concerns / Problems / Code Quality / Requests sections) **and** any unresolved line-level threads via `mcp__github__pull_request_read` with `method: "get_review_comments"`.
+2. Drop rows that are factually wrong or already addressed — reply on the relevant thread/comment with a short justification instead of opening an issue.
+   Also drop rows covered by the **backlog inflow moratorium** (2026-09-01, `CLAUDE.md`): rows about the development loop itself — `scripts/ralph/**`, `.github/workflows/**`, scan/lint/pre-commit tooling, dependency hygiene — are deferred, not filed, unless they break a required check on `main` or block a merge. Reply on the row's thread that it is deferred under the moratorium — the resolved thread is the durable record — and resolve it.
+3. Assign each remaining row a priority from its severity (the same P-tiers `flare` and Ralph's picker use):
+
+   | Priority | The finding is… |
+   |---|---|
+   | `P0` | a security hole, data loss or corruption, a crash, broken auth, or a privacy leak |
+   | `P1` | a correctness bug on a reachable path (wrong result, unhandled error), or a core flow broken with no workaround |
+   | `P2` | degraded behavior with a workaround, a missing test on a real path, a maintainability or performance cost with a concrete consequence, or a `Requests` item |
+   | `P3` | a nit, naming, style, docs polish, or an optional refactor |
+
+   Use the reviewer's own severity words when they give one (`blocker`/`high`/`major` → at least `P1`; `nit`/`minor`/`optional` → `P3`). When a row sits between two tiers, take the higher. A `P0` row is filed like any other — it does not reopen the loop — but name it to the user in your report so a human sees it before Ralph picks it up.
+4. Dedupe before filing: `mcp__github__search_issues` for the cited `file:line` and the title's key nouns. If an open issue already covers the row, reply on the thread linking it (and raise its P-label if this row is more severe) instead of filing a duplicate.
+5. For every remaining row, file a follow-up issue via `mcp__github__issue_write` with `method: "create"`:
+   - **Title** — imperative summary derived from the reviewer's quote (e.g. "Extract magic numbers in `parser.py`").
+   - **Body** — the 6-component structure the rest of the backlog uses (see `flare`): the reviewer's verbatim quote, the `file:line` citation, the requested change, the test idea from the triage table, acceptance criteria, and a back-link to the source PR (`Follow-up from #<N> — <comment URL>`).
+   - **Labels** — the P-label from item 3, the type (`bug` or `enhancement`/`tech-debt`), the area label, and `agent-ready` when every body section is filled with real content.
+6. For each line-level thread that produced an issue, post a reply via `mcp__github__add_reply_to_pull_request_comment` linking the new issue number, then `mcp__github__resolve_review_thread`.
+7. Post a single summary reply on the top-level Claude comment via `mcp__github__add_issue_comment` listing every follow-up filed with its priority (e.g. `Follow-ups filed: #142 (P2), #143 (P3), #144 (P3)`).
+8. Continue to Step 6. The merge gate accepts `COMMENTS` once every actionable item has a tracking issue, a duplicate link, or a moratorium-deferral reply.
 
 ### Step 2: Triage the Comment Body into a Fix Plan
 
@@ -120,7 +149,7 @@ When the helper wakes the session:
 
 - Verdict `LGTM` for the current HEAD → continue to Step 6.
 - Verdict `CHANGES_REQUESTED` → loop back to Step 2 with the new comment body.
-- Verdict `COMMENTS` → user decides; if skipping, Step 6.
+- Verdict `COMMENTS` → run Step 1A (file or moratorium-defer a prioritized follow-up for every actionable item), then Step 6. Never loop back to Step 2.
 - CI failure event for the current HEAD → if the failing job is the reviewer action, the helper retriggers it and stays subscribed; if it's other CI, hand off to `ci-debugging` and keep the subscription open. Either way, do not advance to merge.
 
 Note: wake delivery is best-effort. If the session sits for longer than the reviewer Action's typical runtime (~5 min) without waking, re-engage manually and run `await-claude-review` Step 4 directly — re-subscribing will not backfill a missed event. Once the PR is merged or closed (or the verdict gate is no longer needed), call `mcp__github__unsubscribe_pr_activity` to clean up.
@@ -129,13 +158,14 @@ Note: wake delivery is best-effort. If the session sits for longer than the revi
 
 Merge only when **every** condition is true. If any fails, stop and explain which one.
 
-- Latest qualifying Claude review comment has `Verdict: LGTM`.
+- Latest qualifying Claude review comment has `Verdict: LGTM`, **or** `Verdict: COMMENTS` with every actionable item filed, duplicate-linked, or moratorium-deferred per Step 1A.
 - That comment's `created_at >= head commit's committer.date` (verdict is for the current HEAD, not a pre-push state).
 - All required check runs are `success`:
   - `mcp__github__pull_request_read` with `method: "get_status"` (combined commit status), and
   - `mcp__github__pull_request_read` with `method: "get_check_runs"` (per-job detail).
-- No unresolved line-level review threads (`mcp__github__pull_request_read` with `method: "get_review_comments"` — each thread has `isResolved`).
+- No unresolved line-level review threads (`mcp__github__pull_request_read` with `method: "get_review_comments"` — each thread has `isResolved`). For a `COMMENTS` verdict, threads are resolved by linking the follow-up issue or by the moratorium-deferral reply (Step 1A), not by code change.
 - The PR is `mergeable` and not `draft` (from the `get` response).
+- For a `COMMENTS` verdict: the PR carries no `do-not-auto-merge` label, and the compare API reports `behind_by == 0` against its base. If it is behind, sync it and wait for the fresh review on the new HEAD instead of merging.
 
 Then:
 
@@ -170,6 +200,17 @@ Confirm the merge succeeded; do not delete the remote branch unless the user ask
 3. For the two blockers: Red-Green-Refactor locally, then `pre-commit run --all-files` + full test suite + typecheck. All green.
 4. Single `git push`. Post a summary reply via `add_issue_comment` listing the addressed items and the SHA. Then post `@claude please re-review`.
 5. New Claude comment arrives with `Verdict: LGTM` after the new push timestamp → re-enter Step 6.
+
+### Example 4: `Verdict: COMMENTS` — File Prioritized Follow-ups and Merge
+
+1. `pull_request_read get` → `head.sha = def456`. `get_commit def456` → `committer.date = 2026-05-24T09:00:00Z`.
+2. Latest reviewer comment at `2026-05-24T09:06:12Z` ends with `## Verdict: COMMENTS`. Body has one Problem (an unhandled `None` on a reachable path, `habits.py:88`) and two Code Quality nits (`habits.py:142`, `tests/test_habits.py:30`).
+3. Step 1A — no TDD loop, no push. Triage, dedupe with `search_issues`, then file:
+   - `#142 Handle missing streak in habits.py` — `P1`, `bug`, `agent-ready`.
+   - `#143 Rename ambiguous variable in habits.py:142` — `P3`, `tech-debt`, `agent-ready`.
+   - `#144 Add boundary test for empty habit list` — `P2`, `tech-debt`, `agent-ready`.
+4. Resolve the line-level threads with replies linking each issue. Post `Follow-ups filed: #142 (P1), #143 (P3), #144 (P2)` on the Claude comment.
+5. Step 6 gate: `09:06:12Z >= 09:00:00Z` ✓, all checks `success` ✓, no unresolved threads ✓, `mergeable: true`, `draft: false`. Squash-merge.
 
 ## Troubleshooting
 
