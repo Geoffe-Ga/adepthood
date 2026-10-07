@@ -363,4 +363,20 @@ describe('createExpoAudioAdapter', () => {
     // Subsequent plays are silenced — total warn count unchanged.
     expect(warnSpy).toHaveBeenCalledTimes(2);
   });
+
+  it('reports a play that throws to onUnavailable exactly once', async () => {
+    // A native player can reject its seek or throw from play(); that failure
+    // lands in playCue's catch and must reach the session's notice.
+    const onUnavailable = jest.fn<() => void>();
+    seekMock.mockRejectedValue(new Error('decoder gone'));
+    const adapter = createExpoAudioAdapter(onUnavailable);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(onUnavailable).not.toHaveBeenCalled();
+
+    await adapter.play('start_bell');
+    await adapter.play('halfway_bell');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(onUnavailable).toHaveBeenCalledTimes(1);
+  });
 });
