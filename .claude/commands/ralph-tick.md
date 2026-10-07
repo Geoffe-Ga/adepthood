@@ -51,7 +51,7 @@ one.
 | 1 | **TDD** (Red→Green→Refactor, `stay-green`) | → Gate 2 | — |
 | 2 | **`./scripts/<side>/check-all.sh`** (backend and/or frontend) | → push → Gate 3 | **drop to Gate 1** |
 | 3 | **CI** all green | → Gate 4 | **drop to Gate 1** (via `ci-debugging`) |
-| 4 | **Claude review `Verdict:`** | `LGTM` + green + up-to-date → **merge + mark issue done + refill** | **drop to Gate 1** (via `address-feedback`) |
+| 4 | **Claude review `Verdict:`** | `LGTM` + green + up-to-date → **merge + mark issue done + refill**. `COMMENTS` + green + up-to-date → **file `P0`–`P3` follow-up issues, then merge** — never iterate (Step 2) | `CHANGES_REQUESTED` → **drop to Gate 1** (via `address-feedback`) |
 
 "Drop to Gate 1" means: fix the root cause with a failing-test-first cycle, re-clear Gate 2 locally, push, and climb again. Never weaken a gate to pass it.
 
@@ -213,8 +213,10 @@ Then act on `$STATUS`:
   it re-merges on a later wake once green. `SYNC-CONFLICT` → that lane drops to
   Gate 1 (worker resolves the conflict as a root-cause change, re-greens, pushes).
 - **`changes-requested`** — a fresh verdict (posted after this HEAD) that is
-  not `LGTM`: `CHANGES_REQUESTED` or `COMMENTS`. **Gate 4 failed** — advance it
-  via Step 2 (`address-feedback`). Never leave this lane to wait: the verdict
+  not `LGTM`: `CHANGES_REQUESTED` or `COMMENTS`. On `CHANGES_REQUESTED`
+  **Gate 4 failed** — advance it via Step 2 (`address-feedback`). On `COMMENTS`
+  the reviewer signed off: file prioritized follow-ups and merge per Step 2's
+  `COMMENTS` bullet — never a fix worker. Never leave this lane to wait: the verdict
   already arrived, and this token exists precisely so the watcher wakes on it
   instead of sleeping out its timeout (a fresh non-LGTM used to read as
   `awaiting-review`, which the watcher counts as in-flight).
@@ -294,8 +296,26 @@ into that PR's worktree only if it needs a fix (re-attach a worktree with
 `scripts/ralph/fleet.sh assign "$N" "<slug>"` if reconcile removed it — `assign`
 reuses the existing branch):
 
-- **Gate 4 failed** (`pr-ready.sh` printed `changes-requested`: the fresh
-  verdict is `CHANGES_REQUESTED`/`COMMENTS`): worker runs the
+- **`COMMENTS` verdict** (`pr-ready.sh` printed `changes-requested` and the
+  fresh verdict line reads `COMMENTS`): **never iterate — dispatch no worker,
+  push nothing, request no re-review.** The orchestrator runs
+  `address-feedback` Step 1A itself: file each actionable item as a follow-up
+  issue labelled `P0`–`P3` by severity (plus `agent-ready`), link duplicates,
+  moratorium-defer loop-tooling rows, reply on and resolve every thread, and
+  post the `Follow-ups filed: …` summary. Then merge the lane on the same
+  evidence `ready` requires, with the filed follow-ups standing in for `LGTM`:
+  ```bash
+  gh pr checks "$PR_NUM" >/dev/null && echo CI-GREEN          # exit 0 only
+  HEAD_SHA=$(gh pr view "$PR_NUM" --json headRefOid -q .headRefOid)
+  gh api "repos/{owner}/{repo}/compare/main...$HEAD_SHA" --jq .behind_by   # must print 0
+  gh pr view "$PR_NUM" --json labels -q '[.labels[].name] | index("do-not-auto-merge")'  # must print null
+  ```
+  All three hold → run Step 1's `ready` merge block verbatim (merge, close,
+  `release`, state bump). Behind → `fleet.sh sync` and let the fresh verdict on
+  the new HEAD decide; the follow-up issues already filed stand. Any other
+  answer → leave the lane for a later wake.
+- **Gate 4 failed** (`pr-ready.sh` printed `changes-requested` and the fresh
+  verdict is `CHANGES_REQUESTED`): worker runs the
   **`address-feedback`** flow in the worktree — triage, TDD fix loop dispatching
   the specialist that owns each comment, re-clear Gate 2 + Gate 2.5, push, reply,
   resolve threads.
@@ -506,7 +526,9 @@ still worktree-isolated, same gates, same drop-backs.
 ## Hard rules (do not deviate)
 - **Merges to `main` are serialized and always up-to-date.** Merge a lane only
   when `pr-ready.sh` prints `ready` — or `ready-unreviewed` on a `dependencies`
-  lane, per the rule below. Every other token syncs, waits, or is fixed first, and
+  lane, per the rule below, or `changes-requested` on a fresh `COMMENTS`
+  verdict once Step 2's `COMMENTS` bullet has filed its follow-ups and proved
+  green CI, `behind_by == 0`, and no hold. Every other token syncs, waits, or is fixed first, and
   no other evidence merges a lane.
 - **"Up to date" means `behind_by == 0`, never `mergeStateStatus`.** `CLEAN` is
   not a freshness signal in a repo without strict status checks.
@@ -519,7 +541,10 @@ still worktree-isolated, same gates, same drop-backs.
   that lane merges on verified-current green CI alone — where "green" means the
   helper also proved at least one real check passed, since a workflow-only bump
   can match every `paths:` filter's complement and land zero checks. No other PR
-  class may ever merge without `LGTM`.
+  class may ever merge without `LGTM`, except a fresh `COMMENTS` verdict
+  whose findings are all filed as prioritized follow-up issues (Step 2).
+- **A `COMMENTS` verdict never iterates.** No worker, no push, no re-review:
+  its findings become `P0`–`P3` follow-up issues and the lane merges.
 - **Never make a fast lane wait on a slow one.** No per-tick barrier, no
   all-lanes Monitor. Act on whichever lane a wake is about; refill freed slots
   immediately.
