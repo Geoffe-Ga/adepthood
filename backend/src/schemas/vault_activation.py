@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -68,10 +69,16 @@ class CreekConnectionHandoff(BaseModel):
 
 
 class VaultTeardownStatus(BaseModel):
-    """Content-free reconciliation state visible only to operations."""
+    """Content-free reconciliation state visible only to operations.
+
+    ``pending_since`` is when the teardown was *requested*, not when it was last
+    retried: a stuck deletion keeps its true age across every retry, which is
+    the one number an operator triaging it needs (#3075).
+    """
 
     creek_job_id: str
     state: Literal["deleting", "deleted", "failed"]
     attempts: int
     retryable: bool
     failure_reason: VaultFailureReason | None
+    pending_since: datetime

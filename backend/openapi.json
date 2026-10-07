@@ -5779,6 +5779,26 @@
         "title": "PracticeTagUpdate",
         "type": "object"
       },
+      "PrivacySuspensionStatus": {
+        "additionalProperties": false,
+        "description": "Which operator suspension switches are on: two booleans and nothing else.\n\nThe \"time to safe state\" probe an operator reads after flipping a switch and\nrestarting. Flat and closed (``extra=\"forbid\"``) so no account, content or\nraw environment value can ever be added to it by accident.",
+        "properties": {
+          "external_ai_suspended": {
+            "title": "External Ai Suspended",
+            "type": "boolean"
+          },
+          "vault_send_suspended": {
+            "title": "Vault Send Suspended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "external_ai_suspended",
+          "vault_send_suspended"
+        ],
+        "title": "PrivacySuspensionStatus",
+        "type": "object"
+      },
       "ProgramCalendarResponse": {
         "description": "The server's date-derived program calendar.\n\nExposes the anchor and both answers so the frontend can drop its\nclient-only fallback if desired: ``calendar_stage``/``calendar_week``\nare derived from ``program_started_at`` against the shared\n``STAGE_DURATIONS_DAYS`` schedule and pace what the program *offers*;\n``current_stage`` is the record of what the user has *entered*, which\nthe endpoint brings up to the calendar before answering. Effective\nunlock is ``domain.stage_authority.open_through`` — the union of the\ntwo, never the record alone. ``cycle_number`` is exposed so the\nfrontend can seed its \"Cycle N\" indicator on cold start.",
         "properties": {
@@ -9029,7 +9049,7 @@
         "type": "string"
       },
       "VaultTeardownStatus": {
-        "description": "Content-free reconciliation state visible only to operations.",
+        "description": "Content-free reconciliation state visible only to operations.\n\n``pending_since`` is when the teardown was *requested*, not when it was last\nretried: a stuck deletion keeps its true age across every retry, which is\nthe one number an operator triaging it needs (#3075).",
         "properties": {
           "attempts": {
             "title": "Attempts",
@@ -9057,6 +9077,11 @@
             ],
             "title": "Failure Reason"
           },
+          "pending_since": {
+            "format": "date-time",
+            "title": "Pending Since",
+            "type": "string"
+          },
           "retryable": {
             "title": "Retryable",
             "type": "boolean"
@@ -9076,7 +9101,8 @@
           "state",
           "attempts",
           "retryable",
-          "failure_reason"
+          "failure_reason",
+          "pending_since"
         ],
         "title": "VaultTeardownStatus",
         "type": "object"
@@ -10486,6 +10512,106 @@
           }
         },
         "summary": "Purge Journal Entries",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/privacy-suspensions": {
+      "get": {
+        "description": "Report which operator privacy suspension switches are on (#3075).\n\nContent-free and database-free: it reads the same environment the guards\nread, at call time, so it is the probe that confirms a flipped switch has\ntaken effect on the serving process.",
+        "operationId": "get_privacy_suspensions_admin_privacy_suspensions_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacySuspensionStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Privacy Suspensions",
         "tags": [
           "admin"
         ]
@@ -17908,7 +18034,7 @@
     },
     "/journal/transcribe-page": {
       "post": {
-        "description": "Transcribe one image of text, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — the image is validated first (422\nwithout any charge), then the caller key and vision capability are resolved.\nA production stub is refused before the wallet is touched. A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills, and so does a reply that is no text or a refusal\n(422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one\nrow per real, non-stub call) and committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
+        "description": "Transcribe one image of text, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — an operator's external-AI\nsuspension answers 503 ``ai_suspended`` before anything else (#3075), then\nthe image is validated (422 without any charge), then the caller key and\nvision capability are resolved.\nA production stub is refused before the wallet is touched. A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills, and so does a reply that is no text or a refusal\n(422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one\nrow per real, non-stub call) and committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
         "operationId": "transcribe_page_journal_transcribe_page_post",
         "parameters": [
           {

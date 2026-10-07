@@ -58,11 +58,13 @@ from schemas.admin import (
     WalletAuditEntry,
 )
 from schemas.pagination import count_query_total, page_has_more, paginate_query
+from schemas.privacy_suspension import PrivacySuspensionStatus
 from schemas.vault_activation import VaultTeardownStatus
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 from services.feedback import delete_expired_feedback_reports
 from services.journal_retention import PURGE_MIN_RETENTION_DAYS, purge_soft_deleted_entries
 from services.llm_cost_alerts import charged_generation_cost_report
+from services.privacy_suspension import suspension_state
 from services.serving_receipt import build_serving_receipt
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
@@ -130,6 +132,7 @@ async def get_stuck_vault_teardowns(
             attempts=row.attempts,
             retryable=row.retryable,
             failure_reason=row.failure_reason,
+            pending_since=row.requested_at,
         )
         for row in result.scalars()
     ]
@@ -731,3 +734,16 @@ async def get_user_summary(
             GumroadSaleSummary.model_validate(row, from_attributes=True) for row in sale_rows
         ],
     )
+
+
+@router.get("/privacy-suspensions", response_model=PrivacySuspensionStatus)
+async def get_privacy_suspensions(
+    _admin: Annotated[User, Depends(require_admin)],
+) -> PrivacySuspensionStatus:
+    """Report which operator privacy suspension switches are on (#3075).
+
+    Content-free and database-free: it reads the same environment the guards
+    read, at call time, so it is the probe that confirms a flipped switch has
+    taken effect on the serving process.
+    """
+    return PrivacySuspensionStatus.model_validate(suspension_state())
