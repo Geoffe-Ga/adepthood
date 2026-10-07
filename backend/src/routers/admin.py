@@ -47,6 +47,7 @@ from schemas.admin import (
     GumroadSaleSummary,
     LicenseBindingSummary,
     ModelUsageBreakdown,
+    ServingReceipt,
     StageProgressGap,
     StageProgressGapsPage,
     StageProgressGapsResponse,
@@ -60,6 +61,7 @@ from schemas.vault_activation import VaultTeardownStatus
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 from services.feedback import delete_expired_feedback_reports
 from services.llm_cost_alerts import charged_generation_cost_report
+from services.serving_receipt import build_serving_receipt
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
 # ``float``) on SQLite for an empty group.  Coerce defensively to keep
@@ -129,6 +131,21 @@ async def get_stuck_vault_teardowns(
         )
         for row in result.scalars()
     ]
+
+
+@router.get("/serving-receipt", response_model=ServingReceipt)
+async def get_serving_receipt(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> ServingReceipt:
+    """Report which build is serving, for the pilot evidence ``serving_receipts`` check.
+
+    Operator-only and content-free: a closed field set naming the exact
+    platform SHA (or ``unknown``), content pin, barrier and rollout states,
+    pinned Creek contract and custody vocabulary -- never a pilot id, URL,
+    bearer path, or configured secret (issue #2871).
+    """
+    return build_serving_receipt(session)
 
 
 async def _fetch_per_user(

@@ -1325,6 +1325,16 @@
         "title": "DocumentImportResponse",
         "type": "object"
       },
+      "EgressBarrierState": {
+        "description": "Operator-visible state of the barrier's cross-worker half.",
+        "enum": [
+          "disabled",
+          "incomplete",
+          "ready"
+        ],
+        "title": "EgressBarrierState",
+        "type": "string"
+      },
       "EnergyPlan": {
         "properties": {
           "items": {
@@ -4189,6 +4199,16 @@
         "title": "LinkDuplicateCommand",
         "type": "object"
       },
+      "ManagedVaultRolloutState": {
+        "description": "Operator-visible state; callers expose only one unavailable answer.",
+        "enum": [
+          "disabled",
+          "incomplete",
+          "ready"
+        ],
+        "title": "ManagedVaultRolloutState",
+        "type": "string"
+      },
       "MarginaliaKind": {
         "description": "What a margin note surfaces about the anchored span.",
         "enum": [
@@ -7021,6 +7041,65 @@
         "title": "SensePrompt",
         "type": "object"
       },
+      "ServingReceipt": {
+        "additionalProperties": false,
+        "description": "Operator-only, content-free description of the build that is serving.\n\nThe field set is closed (``extra=\"forbid\"``) so no later edit can widen it\ninto an environment dump, and the two capability fields are pinned to the\nonly values the code can back today: no attestation exists for an ordinary\nFly allocation, and no model digest or inference probe exists for a local\nmodel (issue #2871; B05/B07 own the positive path).",
+        "properties": {
+          "attested_confidential": {
+            "const": false,
+            "title": "Attested Confidential",
+            "type": "boolean"
+          },
+          "content_version": {
+            "title": "Content Version",
+            "type": "string"
+          },
+          "creek_contract_version": {
+            "title": "Creek Contract Version",
+            "type": "string"
+          },
+          "custody_modes_supported": {
+            "items": {
+              "$ref": "#/components/schemas/VaultCustodyMode"
+            },
+            "title": "Custody Modes Supported",
+            "type": "array"
+          },
+          "egress_barrier": {
+            "$ref": "#/components/schemas/EgressBarrierState"
+          },
+          "local_model": {
+            "const": "unknown",
+            "title": "Local Model",
+            "type": "string"
+          },
+          "managed_vault_rollout": {
+            "$ref": "#/components/schemas/ManagedVaultRolloutState"
+          },
+          "receipt_schema": {
+            "const": 1,
+            "title": "Receipt Schema",
+            "type": "integer"
+          },
+          "release": {
+            "title": "Release",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_schema",
+          "release",
+          "content_version",
+          "egress_barrier",
+          "managed_vault_rollout",
+          "creek_contract_version",
+          "custody_modes_supported",
+          "attested_confidential",
+          "local_model"
+        ],
+        "title": "ServingReceipt",
+        "type": "object"
+      },
       "ShareLinkCreateRequest": {
         "description": "Owner-supplied knobs for a new share link.\n\nBoth fields are optional: omitting ``expires_in_days`` mints a\nnever-expiring link and omitting ``max_uses`` mints an unlimited\none.  The router resolves ``expires_in_days`` into a concrete\n``expires_at`` against ``datetime.now(UTC)`` at mint time so the\npersisted row is timezone-aware and not vulnerable to clock drift\non the client.",
         "properties": {
@@ -8869,6 +8948,15 @@
         "title": "VaultConnectionResponse",
         "type": "object"
       },
+      "VaultCustodyMode": {
+        "description": "Closed custody vocabulary negotiated with Creek provisioning v2.",
+        "enum": [
+          "provider_managed",
+          "wrapped_artifact_only"
+        ],
+        "title": "VaultCustodyMode",
+        "type": "string"
+      },
       "VaultDisposition": {
         "description": "What the deletion did — and did not do — outside adepthood.",
         "properties": {
@@ -10263,6 +10351,106 @@
           }
         },
         "summary": "Cleanup Feedback Reports",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/serving-receipt": {
+      "get": {
+        "description": "Report which build is serving, for the pilot evidence ``serving_receipts`` check.\n\nOperator-only and content-free: a closed field set naming the exact\nplatform SHA (or ``unknown``), content pin, barrier and rollout states,\npinned Creek contract and custody vocabulary -- never a pilot id, URL,\nbearer path, or configured secret (issue #2871).",
+        "operationId": "get_serving_receipt_admin_serving_receipt_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServingReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Serving Receipt",
         "tags": [
           "admin"
         ]
