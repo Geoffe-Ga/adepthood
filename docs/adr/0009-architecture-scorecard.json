@@ -111,6 +111,10 @@
       "question": "Proposal only: whether BYOK consent is granted once per key, per feature, or per call."
     },
     {
+      "id": "INTIMATE-DEVICE",
+      "question": "Whether device-side inference (never remote) may ever process INTIMATE; ADR 0002 Decision 1 is unchanged until then."
+    },
+    {
       "id": "BUDGET",
       "question": "Budget per active account-month and staffing per phase."
     },

@@ -606,6 +606,9 @@ Mirrored in the scorecard's `open_owner_questions`. None is decided here.
 - **BYOK-WEB:** whether web may keep a person's provider key in localStorage.
 - **BYOK-CONSENT:** a proposal only. Is BYOK consent granted once per key,
   per feature, or per call?
+- **INTIMATE-DEVICE:** may device-side inference, which is never remote,
+  ever process INTIMATE? ADR 0002 Decision 1 and the skip-only interim stay
+  unchanged until the owner decides.
 - **BUDGET:** budget per active account-month and staffing per phase.
 - **REVIEWERS:** who the four owed reviewers are.
 

@@ -729,3 +729,18 @@ def test_the_custody_claim_scan_bites() -> None:
     assert _unscoped_custody_claims("Journal content is already user-held.") != []
     assert _unscoped_custody_claims("Ordinary Fly is not operator-blind.") == []
     assert _unscoped_custody_claims("It is operator-blind once phase (c) lands.") == []
+
+
+def test_adr_0007_amendment_adds_no_condition_for_lifting_intimate_skip_only() -> None:
+    """ADR 0002 Decision 1 is unchanged, so the 0007 amendment may not reopen INTIMATE.
+
+    Whether device-side inference may ever touch INTIMATE is an open owner
+    question in ADR 0009, not a decided path.
+    """
+    text = (_ADR_DIR / "0007-demand-provisioned-confidential-vaults.md").read_text(encoding="utf-8")
+    amendment = _flat(text[text.index(_AMENDMENT_HEADING) :])
+    questions = {_as_dict(entry).get("id") for entry in _as_list(_card()["open_owner_questions"])}
+
+    assert "skip-only for inference until" not in amendment
+    assert "adds no condition for lifting it" in amendment
+    assert "INTIMATE-DEVICE" in questions

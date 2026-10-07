@@ -230,9 +230,14 @@ the launch service. This section states exactly what changes.
   requirements for all journal content**, not only INTIMATE. Neither is
   implemented yet. Items 3-5 (attestation, key
   release into an enclave, and confidential inference) are **not selected**.
-  They return only through ADR 0009's reopen triggers. INTIMATE stays
-  skip-only for inference until ADR 0009's phase (d) moves a feature onto the
-  device or into a vault the owner has approved under RUNTIME.
+  They return only through ADR 0009's reopen triggers.
+- **INTIMATE is unchanged.** It stays skip-only for any remote inference,
+  exactly as [ADR 0002](0002-intimate-content-local-routing.md) Decision 1 and
+  this record's Decision 6 say. This amendment adds no condition for lifting
+  it. Whether device-side inference, which is never remote, may ever process
+  INTIMATE is open owner question INTIMATE-DEVICE in ADR 0009, not a decided
+  path. Tier inheritance is not changed here either: the owner's D01 decision
+  (a review carries its own tier) belongs to B03.
 - **Decisions 1-3, 5, 7 and 8** (on-demand activation, the control plane,
   scale-to-zero, the cost floor, the hosting revisit and server gating) are
   unchanged.

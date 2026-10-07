@@ -133,6 +133,9 @@ PR, and update ADR 0009's Context section there too.
 - **BYOK-WEB:** whether a provider key may sit in localStorage on web.
 - **BYOK-CONSENT:** a proposal only. Is BYOK consent granted per key, per
   feature, or per call?
+- **INTIMATE-DEVICE:** whether device-side inference may ever process
+  INTIMATE. ADR 0002 Decision 1 is unchanged; INTIMATE stays skip-only for
+  remote inference.
 - **BUDGET:** USD per active account-month and staffing per phase. Unknown.
 - **REVIEWERS:** who the four owed reviewers are.
 
