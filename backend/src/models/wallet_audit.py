@@ -96,6 +96,13 @@ REASON_REFUND_FAILED_ESSAY = "refund_failed_essay"
 # was cached and the writer received nothing.  The provider call is still
 # metered; only the charge comes back.
 REASON_REFUND_NO_ESSAY = "refund_no_essay"
+# ``refund_demo`` — the reversal of a spend whose generation was answered by
+# the stub provider (#3062).  The stub's canned note or letter is a demo, not a
+# reflection, and billing a demo as real inference would be the one thing the
+# provenance label exists to rule out.  Taken and handed back rather than never
+# taken because the provider is only known once it has answered; the distinct
+# token keeps demo reversals countable apart from quality and failure ones.
+REASON_REFUND_DEMO = "refund_demo"
 
 # The reasons the daily generation ceiling (#623) counts. The owner ratified a
 # "configurable launch ceiling of 100 charged generations/day/user"
@@ -112,6 +119,7 @@ GENERATION_REFUND_REASONS: frozenset[str] = frozenset(
         REASON_REFUND_FAILED_RESONANCE,
         REASON_REFUND_FAILED_ESSAY,
         REASON_REFUND_NO_ESSAY,
+        REASON_REFUND_DEMO,
     }
 )
 

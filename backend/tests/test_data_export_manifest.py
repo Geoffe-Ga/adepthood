@@ -228,3 +228,19 @@ def test_every_omission_reason_written_into_the_archive_uses_the_house_dash() ->
     )
     assert offenders == []
     assert "beta report \u2014 status changes" in reasons["feedbacktriageevent"]
+
+
+def test_the_margin_notes_are_described_as_ai_notes() -> None:
+    """The archive says who wrote a margin note: a model, not the account (#3062).
+
+    The notes are model-written (or a demo's canned text), so describing them
+    as the account's own writing is a provenance misstatement inside the
+    account's own copy.
+    """
+    rule = MANIFEST["marginalia"]
+
+    assert isinstance(rule, Included)
+    assert rule.rationale == (
+        "AI margin notes on the account's entries, and the passages they anchor to."
+    )
+    assert "the account wrote" not in rule.rationale

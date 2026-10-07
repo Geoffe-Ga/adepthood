@@ -27,7 +27,9 @@ import openai
 
 from domain.care import MEDICATION_GUARDRAIL
 from errors import bad_request, payment_required, service_unavailable
+from privacy.recipients import REGISTERED_PROVIDER_BASE_URLS
 from security import sanitize_user_text
+from services.journal_encryption import production_in_force
 from services.provider_probe import probed_provider
 from services.stub_completions import canned_completion
 
@@ -1280,6 +1282,20 @@ def extract_token_count(source: object, *attrs: str) -> int:
     return 0
 
 
+def sdk_base_url(provider: str) -> str | None:
+    """The base URL to hand the provider SDK: the registered one in production.
+
+    ``None`` lets the SDK fall back to its own ``*_BASE_URL`` variable, which is
+    how the end-to-end lane reaches its loopback fake. In production that
+    fallback is a redirect nobody reviewed, so the dial passes the recipient
+    register's URL explicitly and the variable is never read -- whatever was
+    set after the boot check in ``main.validate_llm_base_url_config`` ran.
+    """
+    if not production_in_force():
+        return None
+    return REGISTERED_PROVIDER_BASE_URLS[provider]
+
+
 async def _call_openai(
     user_message: str,
     conversation_history: list[dict[str, str]],
@@ -1293,7 +1309,10 @@ async def _call_openai(
     model = _get_model(OPENAI_PROVIDER_NAME)
     key = _resolve_api_key(api_key)
     client = openai.AsyncOpenAI(
-        api_key=key, timeout=_LLM_TIMEOUT_SECONDS, max_retries=_PROVIDER_SDK_MAX_RETRIES
+        api_key=key,
+        base_url=sdk_base_url(OPENAI_PROVIDER_NAME),
+        timeout=_LLM_TIMEOUT_SECONDS,
+        max_retries=_PROVIDER_SDK_MAX_RETRIES,
     )
     messages = _build_messages(user_message, conversation_history, system_prompt, images)
     max_tokens = _dynamic_max_tokens(conversation_history)
@@ -1328,7 +1347,10 @@ async def _call_anthropic(
     model = _get_model(ANTHROPIC_PROVIDER_NAME)
     key = _resolve_api_key(api_key)
     client = anthropic.AsyncAnthropic(
-        api_key=key, timeout=_LLM_TIMEOUT_SECONDS, max_retries=_PROVIDER_SDK_MAX_RETRIES
+        api_key=key,
+        base_url=sdk_base_url(ANTHROPIC_PROVIDER_NAME),
+        timeout=_LLM_TIMEOUT_SECONDS,
+        max_retries=_PROVIDER_SDK_MAX_RETRIES,
     )
     # Anthropic's API takes ``system`` as a separate kwarg from ``messages``,
     # so the builder returns a tuple — (wrapped messages, augmented system

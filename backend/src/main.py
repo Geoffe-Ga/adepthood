@@ -41,6 +41,11 @@ from middleware import (
     UnhandledExceptionMiddleware,
 )
 from observability import configure_logging
+from privacy.recipients import (
+    PROVIDER_BASE_URL_ENV_VARS,
+    REGISTERED_PROVIDER_BASE_URLS,
+    base_url_override_violations,
+)
 from rate_limit import declared_limit_retry_after, limiter, rate_limit_exceeded_response
 from request_host import ALLOWED_HOSTS_ENV_VAR, allowed_hosts, unusable_host_entries
 from routers.admin import router as admin_router
@@ -656,6 +661,48 @@ def validate_provider_probe_config() -> None:
     raise RuntimeError(msg)
 
 
+def validate_llm_base_url_config() -> None:
+    """Refuse a production boot whose provider base URL leaves the recipient register.
+
+    Both provider SDKs read their own variable -- ``OPENAI_BASE_URL`` and
+    ``ANTHROPIC_BASE_URL`` -- whenever a client is built without an explicit
+    ``base_url``, and nothing else in this app mentions either one. So one
+    deployment setting could redirect every journal body, prior letter and
+    transcription photograph to whatever host it named, with no code change and
+    nothing in the running system saying so. The register
+    (:mod:`privacy.recipients`) names the one host each provider may be; this
+    is the boot half of holding the deployment to it, and the dial in
+    :mod:`services.botmason` pins the same URL so a value set after boot is
+    never read either.
+
+    The production predicate is ``journal_encryption.production_in_force``, the
+    one the encryption refusal uses, so a platform deploy with ``ENV`` unset is
+    held to it. Outside production the variables are the end-to-end lane's way
+    of pointing the real SDK clients at a loopback fake, and are left alone.
+
+    The refusal names the variable and the registered host and never renders
+    the value: a URL can carry a credential in its userinfo.
+    """
+    if not journal_encryption.production_in_force():
+        return
+    violations = base_url_override_violations(os.environ)
+    if not violations:
+        return
+    registered = ", ".join(
+        f"{PROVIDER_BASE_URL_ENV_VARS[p]} -> {url}"
+        for p, url in REGISTERED_PROVIDER_BASE_URLS.items()
+    )
+    msg = (
+        f"{', '.join(violations)} points a language-model SDK at a host the recipient "
+        "register does not list. The SDK reads that variable implicitly, so every "
+        "journal body, prior letter and photograph sent for a reflection would leave "
+        f"for that host instead. The registered endpoints are: {registered}. Unset "
+        "the variable to boot; a gateway is a new recipient and is added to "
+        "backend/src/privacy/recipients.py only after owner review (#3065)."
+    )
+    raise RuntimeError(msg)
+
+
 def validate_trusted_proxy_config() -> None:
     """Announce a production boot that trusts no reverse proxy.
 
@@ -1029,6 +1076,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # end-to-end lane. It is fine on a laptop and indefensible in front of real
     # users, so an armed production deploy never goes live.
     validate_provider_probe_config()
+
+    # The same shape for the SDKs' own redirect: a provider base URL off the
+    # recipient register would send every reflection's journal content to an
+    # unlisted host, so a production deploy carrying one never goes live.
+    validate_llm_base_url_config()
 
     # A production boot with no proxy allowlist still serves traffic, but every
     # client behind the ingress shares one throttle bucket and one audit IP --

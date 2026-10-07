@@ -1,0 +1,150 @@
+{
+  "description": "Shared client/server streak parity fixture (#2819). backend/tests/domain/test_period_streaks.py and frontend/src/features/Habits/__tests__/periodStreaks.test.ts both evaluate every case and must report the same current/longest streak. 'today' is the user's local calendar day; 2026-03-08 is the US spring-forward Sunday, so the second ISO week straddles a DST shoulder.",
+  "cases": [
+    {
+      "name": "weekly additive: two met closed weeks, open week is grace",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-02-01",
+      "is_additive": true,
+      "frequency": 3,
+      "frequency_unit": "per_week",
+      "targets": { "low": 1, "clear": 1, "stretch": 2 },
+      "completions": [
+        ["2026-02-23", 1],
+        ["2026-02-25", 1],
+        ["2026-02-27", 1],
+        ["2026-03-02", 1],
+        ["2026-03-04", 1],
+        ["2026-03-08", 1],
+        ["2026-03-09", 1]
+      ],
+      "expected": { "current": 2, "longest": 2 }
+    },
+    {
+      "name": "weekly additive: an unmet last closed week breaks the chain",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-02-01",
+      "is_additive": true,
+      "frequency": 3,
+      "frequency_unit": "per_week",
+      "targets": { "low": 1, "clear": 1, "stretch": 2 },
+      "completions": [
+        ["2026-02-23", 1],
+        ["2026-02-25", 1],
+        ["2026-02-27", 1],
+        ["2026-03-02", 1],
+        ["2026-03-04", 1],
+        ["2026-03-09", 1]
+      ],
+      "expected": { "current": 0, "longest": 1 }
+    },
+    {
+      "name": "weekly additive: an already-met open week counts",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-02-01",
+      "is_additive": true,
+      "frequency": 3,
+      "frequency_unit": "per_week",
+      "targets": { "low": 1, "clear": 1, "stretch": 2 },
+      "completions": [
+        ["2026-03-02", 1],
+        ["2026-03-05", 1],
+        ["2026-03-08", 1],
+        ["2026-03-09", 1],
+        ["2026-03-10", 1],
+        ["2026-03-11", 1]
+      ],
+      "expected": { "current": 2, "longest": 2 }
+    },
+    {
+      "name": "monthly additive across a year and month rollover",
+      "timezone": "UTC",
+      "today": "2026-03-11",
+      "start_date": "2025-11-15",
+      "is_additive": true,
+      "frequency": 2,
+      "frequency_unit": "per_month",
+      "targets": { "low": 1, "clear": 2, "stretch": 3 },
+      "completions": [
+        ["2025-12-31", 1],
+        ["2026-01-31", 4],
+        ["2026-02-01", 2],
+        ["2026-02-28", 2],
+        ["2026-03-01", 1]
+      ],
+      "expected": { "current": 2, "longest": 2 }
+    },
+    {
+      "name": "weekly subtractive: abstention weeks count, an over-limit week breaks",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-02-16",
+      "is_additive": false,
+      "frequency": 1,
+      "frequency_unit": "per_week",
+      "targets": { "low": 4, "clear": 2, "stretch": 0 },
+      "completions": [
+        ["2026-02-17", 3],
+        ["2026-02-24", 1],
+        ["2026-03-10", 1]
+      ],
+      "expected": { "current": 3, "longest": 3 }
+    },
+    {
+      "name": "weekly subtractive: an over-limit open week is grace",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-02-23",
+      "is_additive": false,
+      "frequency": 1,
+      "frequency_unit": "per_week",
+      "targets": { "low": 4, "clear": 2, "stretch": 0 },
+      "completions": [["2026-03-10", 5]],
+      "expected": { "current": 2, "longest": 2 }
+    },
+    {
+      "name": "weekly subtractive begun mid-week: the start week counts, no earlier week does",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-02-25",
+      "is_additive": false,
+      "frequency": 1,
+      "frequency_unit": "per_week",
+      "targets": { "low": 4, "clear": 2, "stretch": 0 },
+      "completions": [],
+      "expected": { "current": 3, "longest": 3 }
+    },
+    {
+      "name": "daily additive keeps the consecutive-day streak",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-02-01",
+      "is_additive": true,
+      "frequency": 1,
+      "frequency_unit": "per_day",
+      "targets": { "low": 1, "clear": 2, "stretch": 3 },
+      "completions": [
+        ["2026-03-01", 1],
+        ["2026-03-09", 1],
+        ["2026-03-10", 2],
+        ["2026-03-11", 1]
+      ],
+      "expected": { "current": 3, "longest": 3 }
+    },
+    {
+      "name": "daily subtractive keeps the consecutive abstention-day streak",
+      "timezone": "America/Los_Angeles",
+      "today": "2026-03-11",
+      "start_date": "2026-03-05",
+      "is_additive": false,
+      "frequency": 1,
+      "frequency_unit": "per_day",
+      "targets": { "low": 3, "clear": 1, "stretch": 0 },
+      "completions": [["2026-03-07", 2]],
+      "expected": { "current": 4, "longest": 4 }
+    }
+  ]
+}

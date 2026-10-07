@@ -10,6 +10,7 @@ import {
 } from '../../../storage/notificationStorage';
 import { DAYS_OF_WEEK } from '../constants';
 import type { Habit } from '../Habits.types';
+import { formatStreakAdjective, streakPeriodKind } from '../HabitUtils';
 
 const MAX_REGISTRATION_RETRIES = 3;
 const REGISTRATION_RETRY_DELAY_MS = 30_000;
@@ -103,7 +104,7 @@ const scheduleOne = async (
   Notifications.scheduleNotificationAsync({
     content: {
       title: `Time for: ${habit.name}`,
-      body: `Continue your ${habit.streak}-day streak! 💪`,
+      body: `Continue your ${formatStreakAdjective(habit.streak, streakPeriodKind(habit))} streak! 💪`,
       data: { habitId: habit.id },
     },
     trigger,

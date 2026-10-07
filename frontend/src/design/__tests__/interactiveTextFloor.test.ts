@@ -145,6 +145,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/JournalShelf.styles.ts::promptSectionNote',
   'features/Journal/JournalShelf.styles.ts::sectionHeading',
   'features/Journal/MarginNote.tsx::kind',
+  // Audited (#3062): the note's recorded-source line is metadata inside the
+  // card; the tap target is the whole card, as with the stale caption.
+  'features/Journal/MarginNote.tsx::sourceCaption',
   'features/Journal/MarginNote.tsx::staleCaption',
   // The stale-quote row's caption is metadata beside the snapshot text; the
   // tap target is the whole row (touchTarget.minimum), as with MarginNote.
@@ -180,6 +183,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Journal/ReflectionSourcesPanel.tsx::rowDate',
   'features/Journal/ReflectionSourcesPanel.tsx::rowExcerpt',
   'features/Journal/ResonanceEssayModal.tsx::kind',
+  // Audited (#3062): the letter's recorded-source line under the letter text.
+  // Static metadata, never pressed.
+  'features/Journal/ResonanceEssayModal.tsx::source',
   // Audited: the one line under "Which habit?" (#2861) saying what choosing a
   // habit does. Static text above the rows, never pressed — every row in the
   // picker is an OfferAction, which takes editorialType.action.

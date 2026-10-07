@@ -128,12 +128,18 @@ def _url(config: Config) -> str:
 
 
 def test_retraction_migration_chains_from_its_authored_head(migration_config: Config) -> None:
-    """The revision extends the exact head it was authored against, and is the only head."""
+    """The revision extends the exact head it was authored against, on the one linear chain.
+
+    A later revision may sit on top of it (the #3062 provenance migration does),
+    so the claim is that the single head descends from it, not that it is the head.
+    """
     script = ScriptDirectory.from_config(migration_config)
     revision = script.get_revision(_REVISION)
     assert revision is not None
     assert revision.down_revision == _BASE_REVISION
-    assert script.get_heads() == [_REVISION]
+    heads = script.get_heads()
+    assert len(heads) == 1
+    assert _REVISION in {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
 
 
 def test_backfill_treats_every_existing_essay_as_possibly_mirrored(

@@ -35,6 +35,7 @@ import {
   ESSAY_ASK_WHAT,
   ESSAY_NOUN,
 } from './resonanceExplainerCopy';
+import { sourceLabel } from './sourceLabel';
 
 import { resonance } from '@/api';
 import type { Marginalia } from '@/api';
@@ -65,6 +66,8 @@ interface EssayState {
   retryable?: boolean;
   /** The note has no letter yet: show its price and wait for the writer to ask. */
   offer: boolean;
+  /** Which side wrote the letter, as the server recorded it (#3062). */
+  essaySource?: unknown;
 }
 
 const OFFER_STATE: EssayState = { essay: null, loading: false, error: null, offer: true };
@@ -93,7 +96,15 @@ interface Unanswered {
  * missing, so an empty body is never rendered.
  */
 function initialState(note: Marginalia, unanswered: UnansweredNotes): EssayState {
-  if (note.essay) return { essay: note.essay, loading: false, error: null, offer: false };
+  if (note.essay) {
+    return {
+      essay: note.essay,
+      loading: false,
+      error: null,
+      offer: false,
+      essaySource: note.essay_source,
+    };
+  }
   const remembered = unanswered.get(note.id);
   if (remembered !== undefined) {
     return {
@@ -234,7 +245,13 @@ function useEssay(
       onLetter: (updated) => {
         if (!isCurrent()) return;
         // The note carries the letter from here on, via ``onEssayLoaded``.
-        setState({ essay: updated.essay, loading: false, error: null, offer: false });
+        setState({
+          essay: updated.essay,
+          loading: false,
+          error: null,
+          offer: false,
+          essaySource: updated.essay_source,
+        });
         callbacksRef.current.onEssayLoaded?.(updated);
       },
       // Remembered even if the modal has since closed: the ask did happen and
@@ -312,6 +329,7 @@ function EssayBody({
   error,
   retryable = true,
   retry,
+  essaySource,
 }: Omit<EssayState, 'offer'> & { retry: () => void }) {
   if (loading) {
     return <ActivityIndicator testID="essay-loading" color={colors.paper.ink} />;
@@ -338,9 +356,14 @@ function EssayBody({
     );
   }
   return (
-    <Text style={styles.essay} testID="essay-text">
-      {essay}
-    </Text>
+    <View>
+      <Text style={styles.essay} testID="essay-text">
+        {essay}
+      </Text>
+      <Text style={styles.source} testID="essay-source">
+        {sourceLabel(essaySource)}
+      </Text>
+    </View>
   );
 }
 
@@ -351,7 +374,7 @@ function ResonanceEssayModal({
   hasOwnKey = false,
   onFundingRequired,
 }: ResonanceEssayModalProps): React.JSX.Element {
-  const { essay, loading, error, retryable, offer, ask, retry } = useEssay(note, {
+  const { essay, loading, error, retryable, offer, essaySource, ask, retry } = useEssay(note, {
     onEssayLoaded,
     onFundingRequired,
   });
@@ -386,7 +409,7 @@ function ResonanceEssayModal({
         {offer ? (
           <EssayOffer cost={cost} onAsk={ask} onDecline={onClose} />
         ) : (
-          <EssayBody {...{ essay, loading, error, retryable, retry }} />
+          <EssayBody {...{ essay, loading, error, retryable, retry, essaySource }} />
         )}
       </ScrollView>
     </JournalModalShell>
@@ -425,6 +448,11 @@ const styles = StyleSheet.create({
   essay: {
     ...editorialType.body,
     color: colors.paper.ink,
+  },
+  source: {
+    ...editorialType.caption,
+    color: colors.paper.inkSoft,
+    paddingTop: spacing(1),
   },
   error: {
     ...editorialType.body,

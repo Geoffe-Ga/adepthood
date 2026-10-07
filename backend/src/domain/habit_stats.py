@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING
 
 from domain.dates import today_in_tz
 from domain.streaks import (
+    PeriodCadence,
     SubtractiveContext,
     current_consecutive_streak,
+    period_current_streak,
+    period_longest_streak,
     subtractive_current_streak,
     subtractive_longest_streak,
     sum_units_by_user_day,
@@ -136,10 +139,32 @@ def _additive_stats(completions: list[GoalCompletion], user_timezone: str) -> Ha
     )
 
 
+def _with_period_streaks(
+    stats: HabitStats,
+    completions: list[GoalCompletion],
+    user_timezone: str,
+    cadence: PeriodCadence,
+) -> HabitStats:
+    """Replace the two streak fields with their period-counted values.
+
+    Only the streaks change for a weekly / monthly cadence (#2819); the
+    day-of-week buckets, rate and totals still describe what was logged.
+    """
+    day_totals = sum_units_by_user_day(completions)
+    today = today_in_tz(user_timezone)
+    return stats.model_copy(
+        update={
+            "current_streak": period_current_streak(day_totals, today, cadence),
+            "longest_streak": period_longest_streak(day_totals, today, cadence),
+        }
+    )
+
+
 def compute_habit_stats(
     completions: list[GoalCompletion],
     user_timezone: str = "UTC",
     subtractive: SubtractiveContext | None = None,
+    cadence: PeriodCadence | None = None,
 ) -> HabitStats:
     """Aggregate completions into stats using the user's local calendar.
 
@@ -149,7 +174,14 @@ def compute_habit_stats(
     days as abstention wins rather than data gaps.  Without it the
     additive path runs, preserving the legacy behavior for every
     existing caller.
+
+    Pass ``cadence`` for a weekly / monthly habit: both streak fields are
+    then counted in met periods via the same owner ``GET /habits`` uses.
     """
     if subtractive is not None:
-        return _subtractive_stats(completions, user_timezone, subtractive)
-    return _additive_stats(completions, user_timezone)
+        stats = _subtractive_stats(completions, user_timezone, subtractive)
+    else:
+        stats = _additive_stats(completions, user_timezone)
+    if cadence is None:
+        return stats
+    return _with_period_streaks(stats, completions, user_timezone, cadence)

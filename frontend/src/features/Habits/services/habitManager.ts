@@ -59,13 +59,13 @@ import {
   getGoalTier,
   getGoalTarget,
   calculateHabitStartDate,
-  calculateTodaysProgress,
   completionDayKey,
   carryoverSlot,
   countCarryover,
   isNotCarryoverHabit,
   logHabitUnits,
   stageAtIndex,
+  unitsInCurrentPeriod,
 } from '../HabitUtils';
 import { updateHabitNotifications, cancelForHabit } from '../hooks/useHabitNotifications';
 
@@ -513,20 +513,26 @@ const commitHabitMerge = async (ops: HabitMergeOps, tz: string): Promise<Habit[]
   return stillHere;
 };
 
+/** Cadence for a habit with no goals yet: score by the day, as before. */
+const DAILY_CADENCE: Pick<Goal, 'frequency_unit'> = { frequency_unit: 'per_day' };
+
 const applyLogUnit = (
   habit: Habit,
   amount: number,
   tz: string,
   date?: Date,
 ): { updatedHabit: Habit; oldProgress: number; newProgress: number } => {
-  // Today-only progress so milestone toasts fire when the user crosses a
-  // tier *today*, not based on yesterday's all-time total. The caller
-  // forwards the user's IANA zone so the bucket boundary matches the tile.
-  // ``date`` backfills a missed day; a past-day log leaves today's
+  // Current-period progress -- the same total ``getGoalTarget`` scores --
+  // so a milestone toast fires when this log crosses a tier *in the goal's
+  // own period*: today for a daily goal, this ISO week / calendar month for a
+  // weekly / monthly one (every tier shares one cadence). The caller forwards
+  // the user's IANA zone so the bucket boundary matches the tile. ``date``
+  // backfills a missed day; a log outside the current period leaves its
   // progress untouched so no milestone celebration fires for it.
-  const oldProgress = calculateTodaysProgress(habit, tz);
+  const cadence = habit.goals[0] ?? DAILY_CADENCE;
+  const oldProgress = unitsInCurrentPeriod(habit, cadence, tz);
   const updatedHabit = logHabitUnits(habit, amount, date, tz);
-  const newProgress = calculateTodaysProgress(updatedHabit, tz);
+  const newProgress = unitsInCurrentPeriod(updatedHabit, cadence, tz);
   return { updatedHabit, oldProgress, newProgress };
 };
 

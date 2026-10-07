@@ -80,6 +80,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-live-markdown.browser.e2e.test.ts',
   'journal-lost-answer.browser.e2e.test.ts',
   'journal-margin-alignment.browser.e2e.test.ts',
+  'journal-margin-note-source.browser.e2e.test.ts',
   'journal-markdown.browser.e2e.test.ts',
   'journal-past-cycle-review-sources.browser.e2e.test.ts',
   'journal-morning-page-title.browser.e2e.test.ts',

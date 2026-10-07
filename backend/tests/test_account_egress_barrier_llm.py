@@ -51,6 +51,7 @@ from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
 from services.reflection_boundary import ReflectionBoundary
 from tests.helpers.log_lines import records_for
+from tests.support.fake_llm import real_provider_response
 from tests.test_account_egress_barrier import (
     DELETION_BEGIN,
     DELETION_RESPONSE,
@@ -479,13 +480,8 @@ class SlowNumberedProvider:
         self.calls += 1
         number = self.calls
         await asyncio.sleep(_SLOW_DIAL_SECONDS)
-        return LLMResponse(
-            text=f"Dear friend, this is letter number {number}.",
-            provider="stub",
-            model=STUB_MODEL_NAME,
-            prompt_tokens=0,
-            completion_tokens=0,
-        )
+        # A real provider's letter: a stub letter is a refunded demo (#3062).
+        return real_provider_response(f"Dear friend, this is letter number {number}.")
 
 
 @pytest.mark.asyncio

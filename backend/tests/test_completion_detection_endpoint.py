@@ -103,7 +103,11 @@ def _fake(
     detection_error: LLMProviderError | None = None,
     provider: str = "stub",
 ) -> None:
-    """Patch the shared LLM seam: marginalia JSON for the literary prompt, hits for detection."""
+    """Patch the shared LLM seam: marginalia JSON for the literary prompt, hits for detection.
+
+    ``provider="stub"`` answers as the demo provider, whose pass is refunded
+    (#3062); a test about a charge that stands names a real provider.
+    """
     notes_payload = json.dumps({"notes": [_NOTE]})
     hits_payload = json.dumps({"hits": hits})
 
@@ -140,7 +144,7 @@ def _fake(
 async def test_one_press_returns_marginalia_and_suggestions_on_one_charge(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}])
+    _fake(monkeypatch, hits=[{"index": 0, "quote": "I meditated"}], provider="openai")
     headers = await _signup(async_client)
     await _seed_habit(db_session, await _user_id(db_session))
     entry_id = await _create_entry(async_client, headers)
@@ -378,7 +382,9 @@ async def test_detection_failure_is_best_effort(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _fake(monkeypatch, hits=[], detection_error=LLMProviderError("detector down"))
+    _fake(
+        monkeypatch, hits=[], detection_error=LLMProviderError("detector down"), provider="openai"
+    )
     headers = await _signup(async_client, "detfail")
     await _seed_habit(db_session, await _user_id(db_session, "detfail"))
     entry_id = await _create_entry(async_client, headers)
@@ -411,6 +417,7 @@ async def test_detection_credit_exhaustion_names_the_provider(
         monkeypatch,
         hits=[],
         detection_error=LLMCreditExhaustedError("no credit", provider="anthropic"),
+        provider="openai",
     )
     headers = await _signup(async_client, "detcredit")
     await _seed_habit(db_session, await _user_id(db_session, "detcredit"))
