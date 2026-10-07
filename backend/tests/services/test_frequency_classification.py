@@ -119,21 +119,30 @@ def test_the_prompt_is_generated_from_the_vocabulary() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "classification",
+    [JournalClassification.INTIMATE, "intimate", "INTIMATE", "bogus", ""],
+)
 async def test_intimate_content_never_reaches_a_provider(
     monkeypatch: pytest.MonkeyPatch,
+    classification: str,
 ) -> None:
     """The refusal precedes the call, not merely the network.
 
     The fake raises on any invocation, so this fails if the guard is ever moved
     below request construction -- the failure mode where the content has
     already been assembled into a payload and only the send is skipped.
+
+    The plain-``str`` and unknown spellings pin the fail-closed allowlist
+    (#3059): an identity check against the enum member let a ``str``
+    ``"intimate"`` through, and a deny-list let an unknown tier through.
     """
     _forbid_provider(monkeypatch)
 
     with pytest.raises(fc.IntimateContentRefusedError):
         await fc.classify_frequencies(
             "Something I would only write to myself.",
-            classification=JournalClassification.INTIMATE,
+            classification=classification,
         )
 
 
