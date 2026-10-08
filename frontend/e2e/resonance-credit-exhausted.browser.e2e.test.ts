@@ -327,7 +327,7 @@ test("the server's own key is never spent on a writer's page, even with the reti
 test('an intimate page never reaches the provider, even with one armed and the page marked for it', async ({
   page,
 }) => {
-  const { providerProbeToken } = lane();
+  const { providerProbeToken, throttledOpenaiKey } = lane();
   const before = await readAttempts(page.request);
 
   const email = await signUp(page, 'intimate-privacy-floor');
@@ -353,9 +353,12 @@ test('an intimate page never reaches the provider, even with one armed and the p
 
   // The server's half, asked directly, because a disabled button proves only
   // that this client did not send the request. The floor that matters is the one
-  // the route keeps for every client.
+  // the route keeps for every client. The request carries the writer's own key
+  // -- since ADR 0009 phase (a) the only thing that can reach a provider -- so
+  // the intimate floor is the one thing standing between this page and a live
+  // dial, and the attempt counters below mean something.
   const response = await page.request.post(`${backendUrl()}/journal/${String(entryId)}/resonance`, {
-    headers: bearer(token),
+    headers: { ...bearer(token), 'X-LLM-API-Key': throttledOpenaiKey },
   });
   expect(response.status()).toBe(HTTP_OK);
   expect((await response.json()) as { private: boolean }).toMatchObject({ private: true });

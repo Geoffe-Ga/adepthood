@@ -4,7 +4,7 @@ import * as path from 'path';
 
 import { NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY } from '../byokOnlyCopy';
 
-import { LLM_KEY_REQUIRED_COPY } from '@/api/errorMessages';
+import { INSUFFICIENT_OFFERINGS_COPY, LLM_KEY_REQUIRED_COPY } from '@/api/errorMessages';
 import { REPO_ROOT, readBackendSource } from '@/testing/backendSource';
 
 /**
@@ -42,6 +42,30 @@ describe('without a key of your own, Settings says what you lose', () => {
       expect(copy).toMatch(/completion checks/i);
       expect(copy).toMatch(/page reading/i);
     }
+  });
+
+  test('the vault exception covers resonance notes only, and is not called private', () => {
+    // Letters, completion checks and page reading are never vault-answered: the
+    // essay and transcription routes are app-provider only, and a vault-bound
+    // completion check answers `checked: false`.
+    for (const copy of [NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY]) {
+      const vaultSentences = copy.split(/(?<=[.;])\s+/).filter((s) => /vault/i.test(s));
+      expect(vaultSentences.length).toBeGreaterThan(0);
+      for (const sentence of vaultSentences) {
+        expect(sentence).toMatch(/resonance notes/i);
+        expect(sentence).not.toMatch(/letters|completion checks|page reading/i);
+      }
+      expect(copy).not.toMatch(/private/i);
+    }
+  });
+
+  test('the out-of-credits copy says credits pay only for vault-answered readings', () => {
+    expect(INSUFFICIENT_OFFERINGS_COPY).not.toMatch(
+      /letters and page reading all draw from the same pool/i,
+    );
+    expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/vault/i);
+    expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/letters and page reading need your own/i);
+    expect(INSUFFICIENT_OFFERINGS_COPY).not.toMatch(/private/i);
   });
 
   test('credits are said not to pay for cloud AI', () => {
