@@ -141,6 +141,7 @@ from services.account_egress_barrier import ensure_account_live, hold_account
 from services.botmason import LLMCreditExhaustedError
 from services.corpus_consent import ConsentChange, load_consent
 from services.corpus_ingest import INGEST_SOURCE, ingest_journal_entry
+from services.journal_withdrawal_obligation import deletion_in_progress_clause
 from services.privacy_suspension import external_ai_suspended
 
 logger = logging.getLogger(__name__)
@@ -255,6 +256,8 @@ def _pending_conditions(user_id: int) -> list[ColumnElement[bool]]:
     return [
         col(JournalEntry.user_id) == user_id,
         col(JournalEntry.deleted_at).is_(None),
+        # A page whose deletion is in progress is going, not live (#3098).
+        ~deletion_in_progress_clause(col(JournalEntry.id)),
         col(JournalEntry.sender) == _HUMAN_SENDER,
         col(JournalEntry.classification).in_(_RETRIEVABLE_TIER_VALUES),
         ~already_ontologized,

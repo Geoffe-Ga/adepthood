@@ -18,7 +18,9 @@ import logging
 from datetime import UTC, datetime
 from typing import Final
 
+from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 from sqlmodel import col, select
 
 from errors import conflict
@@ -309,3 +311,24 @@ async def refuse_if_deletion_pending(session: AsyncSession, entry: JournalEntry)
     row = await open_obligation(session, user_id=entry.user_id, entry_id=_entry_id(entry))
     if row is not None and row.state == JournalWithdrawalState.PENDING_DELETE.value:
         raise conflict(DELETION_PENDING_DETAIL)
+
+
+def deletion_in_progress_clause(
+    entry_id: Mapped[int | None] | ColumnElement[int],
+) -> ColumnElement[bool]:
+    """SQL: the entry ``entry_id`` names has an open ``pending_delete`` obligation.
+
+    For every server-side reader that would load a page body to send it to a
+    provider or write it into the corpus: a page whose deletion is in progress
+    must be skipped exactly like a soft-deleted one, or the copy written now
+    outlives the deletion the background sweep is about to finish (#3098).
+    Negate it (``~``) in a ``WHERE`` alongside ``deleted_at IS NULL``.
+    """
+    return (
+        select(JournalWithdrawalObligation.id)
+        .where(
+            col(JournalWithdrawalObligation.journal_entry_id) == entry_id,
+            col(JournalWithdrawalObligation.state) == JournalWithdrawalState.PENDING_DELETE.value,
+        )
+        .exists()
+    )
