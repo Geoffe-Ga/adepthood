@@ -73,6 +73,8 @@ export interface WritingSessionSurfaceProps {
    * way to close it.
    */
   renderOffer?: (_result: WritingSessionResult) => React.ReactNode;
+  /** Reports whether the timer overlaps its page rather than sitting below it. */
+  onFloatingChange?: (_floating: boolean) => void;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
@@ -96,6 +98,7 @@ function WritingSessionSurface({
   autoStart,
   renderOffer,
   onSession,
+  onFloatingChange,
   deps,
 }: WritingSessionSurfaceProps): React.JSX.Element {
   const [note, setNote] = useState<StandingNote | null>(null);
@@ -107,6 +110,12 @@ function WritingSessionSurface({
   // times a second.
   const onSessionRef = useRef(onSession);
   onSessionRef.current = onSession;
+  const onFloatingChangeRef = useRef(onFloatingChange);
+  onFloatingChangeRef.current = onFloatingChange;
+  const reportFloating = useCallback((floating: boolean) => {
+    setTimerFloating(floating);
+    onFloatingChangeRef.current?.(floating);
+  }, []);
   const record = useCallback((result: WritingSessionResult) => {
     onSessionRef.current?.(result);
     if (!result.reachedFullDuration) return;
@@ -129,7 +138,7 @@ function WritingSessionSurface({
         initialMinutes={initialMinutes}
         autoStart={autoStart}
         onComplete={record}
-        onFloatingChange={setTimerFloating}
+        onFloatingChange={reportFloating}
         deps={deps}
       />
     </>

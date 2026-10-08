@@ -270,6 +270,29 @@ describe('HabitUtils', () => {
     });
   });
 
+  test('keeps additive tier controls separated when progress dwarfs every target', () => {
+    const low: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 1,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    const clear: Goal = { ...low, id: 2, tier: 'clear', title: 'clear', target: 2 };
+    const stretch: Goal = { ...low, id: 3, tier: 'stretch', title: 'stretch', target: 4 };
+
+    const positions = getMarkerPositions(low, clear, stretch, 100);
+
+    expect(positions).toEqual({ low: 10, clear: 20, stretch: 40 });
+    expect(positions.clear - positions.low).toBeGreaterThanOrEqual(10);
+    expect(positions.stretch - positions.clear).toBeGreaterThanOrEqual(10);
+    expect(targetForMarkerPercent(positions.low, 'low', low, clear, stretch, 100)).toBe(1);
+    expect(targetForMarkerPercent(positions.clear, 'clear', low, clear, stretch, 100)).toBe(2);
+  });
+
   test('getMarkerPositions subtractive places all three on a low-anchored scale', () => {
     const low: Goal = {
       id: 1,

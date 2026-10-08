@@ -499,14 +499,21 @@ describe('JournalEntryScreen', () => {
     expect(getByTestId('journal-margin-column')).toBeTruthy();
   });
 
-  it('reserves bottom clearance in edit mode for the floating writing timer', () => {
+  it('reserves bottom clearance only while the writing timer floats', async () => {
     const { getByTestId } = renderScreen();
-    const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
+    const idlePage = StyleSheet.flatten(getByTestId('journal-page').props.style);
+    expect(idlePage.paddingBottom).toBeUndefined();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+
+    await waitFor(() => {
+      const page = StyleSheet.flatten(getByTestId('journal-page').props.style);
+      expect(page.paddingBottom).toBe(WRITING_TIMER_CLEARANCE);
+    });
     // Sized to the topmost floating affordance, the writing timer, which is
     // stacked a full touch target above the resonance button's own band. One
     // inset covering both rather than a second added beside the first.
-    expect(page.paddingBottom).toBe(WRITING_TIMER_CLEARANCE);
-    expect(page.paddingBottom).toBeGreaterThan(RESONANCE_BUTTON_CLEARANCE);
+    expect(WRITING_TIMER_CLEARANCE).toBeGreaterThan(RESONANCE_BUTTON_CLEARANCE);
   });
 
   it.each([
