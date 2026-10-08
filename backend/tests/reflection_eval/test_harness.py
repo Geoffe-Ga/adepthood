@@ -39,7 +39,8 @@ from tests.reflection_eval.harness import (
     write_review_files,
 )
 from tests.reflection_eval.rubric import (
-    ExcludedDemo,
+    Excluded,
+    ExclusionReason,
     ReflectionScore,
     RuleId,
     Violation,
@@ -235,7 +236,7 @@ async def test_stub_cannot_change_any_score() -> None:
     assert aggregate(scores_for(mixed, "good")) == aggregate(scores_for(alone, "good"))
     demo_runs = [run for run in mixed.runs if run.label == "demo"]
     assert len(demo_runs) == len(CASES)
-    assert all(isinstance(run.result, ExcludedDemo) for run in demo_runs)
+    assert all(run.result == Excluded(run.case_id, ExclusionReason.DEMO) for run in demo_runs)
     assert all(run.observed_sources == {MarginaliaSource.DEMO} for run in demo_runs)
     demo = aggregate(scores_for(mixed, "demo"))
     assert demo.scored == 0
@@ -243,7 +244,32 @@ async def test_stub_cannot_change_any_score() -> None:
 
     summary = json.loads(to_content_free_json(mixed))["models"]["demo"]
     assert summary["excluded_demo"] == len(CASES)
+    assert summary["excluded_unobserved"] == 0
     assert summary["scored"] == 0
+
+
+class _UnmeteredLLM(ScriptedResonanceLLM):
+    """A double whose sources were never observed -- as if metering silently broke."""
+
+    @property
+    def sources(self) -> frozenset[MarginaliaSource | None]:
+        """Nothing was metered."""
+        return frozenset()
+
+
+@pytest.mark.asyncio
+async def test_unobserved_run_is_excluded_not_scored() -> None:
+    """A run nobody can say who answered is excluded and counted apart (fail closed)."""
+    case = _case("plain")
+    letter = "As an AI, I will always be here for you."
+    llm = _UnmeteredLLM(drafts=_scripted(case, letter).drafts, letter=letter)
+    report = await run_corpus({"blind": lambda _case: llm}, (case,))
+    assert _only_run(report).result == Excluded(case.case_id, ExclusionReason.UNOBSERVED)
+    summary = json.loads(to_content_free_json(report))["models"]["blind"]
+    assert summary["excluded_unobserved"] == 1
+    assert summary["excluded_demo"] == 0
+    assert summary["scored"] == 0
+    assert summary["cases"][0]["excluded"] == "unobserved"
 
 
 # --- content-free report and blinding --------------------------------------

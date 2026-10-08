@@ -15,11 +15,13 @@ from tests.reflection_eval.rubric import (
     MAX_NON_ASCII_LETTER_SHARE,
     MIN_ENGLISH_STOPWORD_SHARE,
     MIN_QUOTE_CHARS_WIDE,
+    MIN_QUOTE_WORDS,
     MIN_WORDS_FOR_LANGUAGE_CHECK,
     NEGATIVE_EXAMPLES,
     POSITIVE_EXAMPLES,
     RULES,
-    ExcludedDemo,
+    Excluded,
+    ExclusionReason,
     ReflectionSample,
     ReflectionScore,
     RuleId,
@@ -500,5 +502,67 @@ def test_stub_provider_is_excluded_not_scored() -> None:
         frozenset({MarginaliaSource.DEMO, MarginaliaSource.APP_PROVIDER}),
     ):
         result = score_reflection(replace(bad, sources=sources))
-        assert result == ExcludedDemo(case_id="unit")
+        assert result == Excluded(case_id="unit", reason=ExclusionReason.DEMO)
     assert isinstance(score_reflection(bad), ReflectionScore)
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        frozenset(),  # nothing metered: observation broke, not a clean run
+        frozenset({None}),  # an unrecognised provider
+        frozenset({MarginaliaSource.APP_PROVIDER, None}),
+    ],
+)
+def test_unobserved_sources_fail_closed(sources: frozenset[MarginaliaSource | None]) -> None:
+    """Output nobody can vouch for is excluded, never scored as a real reflection."""
+    bad = _sample(_RIVER, letter="As an AI, I love you.")
+    result = score_reflection(replace(bad, sources=sources))
+    assert result == Excluded(case_id="unit", reason=ExclusionReason.UNOBSERVED)
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        frozenset({MarginaliaSource.APP_PROVIDER}),
+        frozenset({MarginaliaSource.CREEK_VAULT}),
+        frozenset({MarginaliaSource.APP_PROVIDER, MarginaliaSource.CREEK_VAULT}),
+    ],
+)
+def test_known_real_sources_are_scored(sources: frozenset[MarginaliaSource | None]) -> None:
+    """Only a non-empty set of known real sources is scored."""
+    result = score_reflection(replace(_sample(_RIVER, letter="You went early."), sources=sources))
+    assert isinstance(result, ReflectionScore)
+
+
+@pytest.mark.parametrize(
+    ("quote", "checked"),
+    [
+        ("quiet", False),  # one-word scare quote
+        ("loud morning", False),  # two-word emphasis
+        ("a loud morning", True),  # three words: a claim about the entry
+    ],
+)
+def test_min_quote_words_separates_emphasis_from_claims(quote: str, checked: bool) -> None:
+    """Short invented quotes are emphasis, not claims; three words and up are checked."""
+    assert MIN_QUOTE_WORDS == 3
+    letter = f"It was that \u201c{quote}\u201d hour, and you stayed."
+    score = _scored(_sample(_RIVER, letter=letter))
+    assert (RuleId.LETTER_QUOTE_UNGROUNDED in score.rule_ids) is checked
+
+
+@pytest.mark.parametrize(
+    ("quote", "grounded"),
+    [
+        ("the water was loud.", True),  # re-cased to sit mid-sentence
+        ("i walked to the river \u2026 the water was loud", True),  # per fragment
+        ("The Water Was Loud.", False),  # anything past the first letter stays exact
+        ("THE WATER WAS LOUD.", False),
+        ("the water was Loud.", False),
+    ],
+)
+def test_letter_grounding_forgives_only_the_first_letters_case(quote: str, grounded: bool) -> None:
+    """Lower-casing a quote's first letter mid-sentence is fine; other re-casing is not."""
+    letter = f"You wrote that \u201c{quote}\u201d and stayed."
+    score = _scored(_sample(_RIVER, letter=letter))
+    assert (RuleId.LETTER_QUOTE_UNGROUNDED not in score.rule_ids) is grounded

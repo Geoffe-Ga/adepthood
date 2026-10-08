@@ -41,7 +41,8 @@ from models.marginalia import MarginaliaSource
 from services.marginalia import BotmasonResonanceLLM, receipt_for
 from tests.reflection_eval.corpus import CASES, CORPUS_DIGEST, CORPUS_ID, CORPUS_VERSION, EvalCase
 from tests.reflection_eval.rubric import (
-    ExcludedDemo,
+    Excluded,
+    ExclusionReason,
     ReflectionSample,
     ReflectionScore,
     RuleId,
@@ -128,7 +129,7 @@ class CaseRun:
 
     label: str
     case_id: str
-    result: ExcludedDemo | ReflectionScore
+    result: Excluded | ReflectionScore
     pipeline: Mapping[str, int | bool]
     letter_refused: bool
     observed_sources: frozenset[MarginaliaSource | None]
@@ -222,6 +223,11 @@ def aggregate(scores: Iterable[ReflectionScore]) -> Aggregate:
     )
 
 
+def _excluded_count(runs: Iterable[CaseRun], reason: ExclusionReason) -> int:
+    """How many of ``runs`` were excluded for ``reason``."""
+    return sum(isinstance(run.result, Excluded) and run.result.reason is reason for run in runs)
+
+
 def _model_summary(report: ScoresReport, label: str) -> dict[str, object]:
     """One model's content-free block of the scores file."""
     runs = [run for run in report.runs if run.label == label]
@@ -229,12 +235,13 @@ def _model_summary(report: ScoresReport, label: str) -> dict[str, object]:
     return {
         "scored": totals.scored,
         "failing": totals.failing,
-        "excluded_demo": sum(isinstance(run.result, ExcludedDemo) for run in runs),
+        "excluded_demo": _excluded_count(runs, ExclusionReason.DEMO),
+        "excluded_unobserved": _excluded_count(runs, ExclusionReason.UNOBSERVED),
         "rule_counts": {rule.value: n for rule, n in sorted(totals.rule_counts.items())},
         "cases": [
             {
                 "case_id": run.case_id,
-                "excluded_demo": isinstance(run.result, ExcludedDemo),
+                "excluded": (run.result.reason.value if isinstance(run.result, Excluded) else None),
                 "rules": (
                     sorted(v.rule.value for v in run.result.violations)
                     if isinstance(run.result, ReflectionScore)

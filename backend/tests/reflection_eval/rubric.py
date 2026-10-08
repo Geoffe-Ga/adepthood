@@ -2,7 +2,7 @@
 
 :func:`score_reflection` takes one :class:`ReflectionSample` -- the entry, the
 notes the pipeline kept, the letter it published, and the sources the server
-*observed* answering -- and returns either an :class:`ExcludedDemo` (any part
+*observed* answering -- and returns either an :class:`Excluded` (any part
 was answered by the stub) or a :class:`ReflectionScore` listing every rule it
 breaks. The two return types are distinct on purpose: :func:`harness.aggregate`
 accepts only scores, so a demo result cannot be summed by forgetting a check.
@@ -79,6 +79,12 @@ DETECTOR_LANGUAGE = "en"
 #: Observed sources whose output is a demo, never a reflection (B07 receipts).
 #: The single extension point for anything else that must never be scored.
 DEMO_SOURCES: frozenset[MarginaliaSource | None] = frozenset({MarginaliaSource.DEMO})
+
+#: Observed sources whose output is scored. Anything else -- no source at all,
+#: or one the server could not name (``None``) -- fails closed.
+SCORABLE_SOURCES: frozenset[MarginaliaSource | None] = frozenset(
+    {MarginaliaSource.APP_PROVIDER, MarginaliaSource.CREEK_VAULT}
+)
 
 #: Quoted spans in a letter or note. Double quotes (curly, straight, German
 #: low-9, guillemets), Japanese corner brackets, and single quotes (curly and
@@ -445,11 +451,23 @@ class ReflectionScore:
         return len(blocking) <= BLOCKING_VIOLATIONS_ALLOWED
 
 
+class ExclusionReason(StrEnum):
+    """Why a reflection was recorded but not scored."""
+
+    #: The stub answered (B07 ``source=demo``): a demo, never a reflection.
+    DEMO = "demo"
+    #: Nobody can say who answered: no source was observed, or one was not a
+    #: known real source. Failing closed keeps a broken meter from scoring
+    #: demo text as a reflection.
+    UNOBSERVED = "unobserved"
+
+
 @dataclass(frozen=True)
-class ExcludedDemo:
-    """A reflection the stub answered: recorded, never scored."""
+class Excluded:
+    """A reflection that was recorded, never scored, and why."""
 
     case_id: str
+    reason: ExclusionReason
 
 
 def _norm(text: str) -> str:
@@ -471,14 +489,19 @@ def _fragment_end(haystack: str, fragment: str, start: int, *, bounded: bool) ->
     splice cannot be assembled out of pieces of words.
     """
     edge_before, edge_after = (r"(?<!\w)", r"(?!\w)") if bounded else ("", "")
-    found = re.compile(f"{edge_before}{re.escape(fragment)}{edge_after}").search(haystack, start)
+    head, tail = fragment[0], re.escape(fragment[1:])
+    # Only the first letter's case is forgiven: a quote lower-cased to sit
+    # mid-sentence is still the writer's words; any other re-casing is not.
+    first = f"[{re.escape(head.lower())}{re.escape(head.upper())}]"
+    found = re.compile(f"{edge_before}{first}{tail}{edge_after}").search(haystack, start)
     return None if found is None else found.end()
 
 
 def _grounds(quote: str, entry: str) -> bool:
     """True when ``quote`` is the writer's own words.
 
-    A contiguous quote must be a substring of the entry. An elided quote
+    A contiguous quote must be a substring of the entry, exact except for the
+    case of its first letter. An elided quote
     ("a ... b") grounds only when every fragment is in the entry, on word
     boundaries, in the order quoted and without reusing text: each fragment is
     searched for from where the previous one ended. Anything looser lets a
@@ -602,14 +625,18 @@ def _output_texts(sample: ReflectionSample) -> list[str]:
     return [_mask_grounded_quotes(text, sample.entry) for text in texts]
 
 
-def score_reflection(sample: ReflectionSample) -> ExcludedDemo | ReflectionScore:
-    """Score ``sample`` against every rule, or exclude it when a demo answered.
+def score_reflection(sample: ReflectionSample) -> Excluded | ReflectionScore:
+    """Score ``sample`` against every rule, or exclude it.
 
-    Exclusion happens before any inspection: demo text is never read, so it
-    cannot move a count in either direction.
+    A sample is scored only when every observed source is a known real one
+    (:data:`SCORABLE_SOURCES`); a demo, an empty source set or an unnamed
+    source is excluded. Exclusion happens before any inspection: excluded text
+    is never read, so it cannot move a count in either direction.
     """
     if sample.sources & DEMO_SOURCES:
-        return ExcludedDemo(case_id=sample.case_id)
+        return Excluded(case_id=sample.case_id, reason=ExclusionReason.DEMO)
+    if not sample.sources or not sample.sources <= SCORABLE_SOURCES:
+        return Excluded(case_id=sample.case_id, reason=ExclusionReason.UNOBSERVED)
     found: list[Violation] = []
     if sample.language != DETECTOR_LANGUAGE:
         found.append(Violation(RuleId.NEEDS_HUMAN_REVIEW, "case"))
