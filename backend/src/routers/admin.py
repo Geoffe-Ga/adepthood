@@ -45,8 +45,10 @@ from schemas.admin import (
     EntitlementSummary,
     FeedbackCleanupResult,
     GumroadSaleSummary,
+    JournalEntryPurgeResult,
     LicenseBindingSummary,
     ModelUsageBreakdown,
+    ServingReceipt,
     StageProgressGap,
     StageProgressGapsPage,
     StageProgressGapsResponse,
@@ -56,10 +58,14 @@ from schemas.admin import (
     WalletAuditEntry,
 )
 from schemas.pagination import count_query_total, page_has_more, paginate_query
+from schemas.privacy_suspension import PrivacySuspensionStatus
 from schemas.vault_activation import VaultTeardownStatus
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 from services.feedback import delete_expired_feedback_reports
+from services.journal_retention import PURGE_MIN_RETENTION_DAYS, purge_soft_deleted_entries
 from services.llm_cost_alerts import charged_generation_cost_report
+from services.privacy_suspension import suspension_state
+from services.serving_receipt import build_serving_receipt
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
 # ``float``) on SQLite for an empty group.  Coerce defensively to keep
@@ -126,9 +132,25 @@ async def get_stuck_vault_teardowns(
             attempts=row.attempts,
             retryable=row.retryable,
             failure_reason=row.failure_reason,
+            pending_since=row.requested_at,
         )
         for row in result.scalars()
     ]
+
+
+@router.get("/serving-receipt", response_model=ServingReceipt)
+async def get_serving_receipt(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(require_admin)],
+) -> ServingReceipt:
+    """Report which build is serving, for the pilot evidence ``serving_receipts`` check.
+
+    Operator-only and content-free: a closed field set naming the exact
+    platform SHA (or ``unknown``), content pin, barrier and rollout states,
+    pinned Creek contract and custody vocabulary -- never a pilot id, URL,
+    bearer path, or configured secret (issue #2871).
+    """
+    return build_serving_receipt(session)
 
 
 async def _fetch_per_user(
@@ -453,6 +475,44 @@ async def cleanup_feedback_reports(
     return FeedbackCleanupResult(deleted=deleted, older_than_days=older_than_days)
 
 
+@router.post("/maintenance/journal-entries", response_model=JournalEntryPurgeResult)
+async def purge_journal_entries(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    admin: Annotated[User, Depends(require_admin)],
+    older_than_days: Annotated[int, Query(ge=PURGE_MIN_RETENTION_DAYS, le=_MAX_RETENTION_DAYS)],
+) -> JournalEntryPurgeResult:
+    """Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.
+
+    Removes their margin notes, promoted passages, completion suggestions and
+    corpus fragments, and clears the metering link, as ``domain.retention``
+    derives from the schema. Entries still owing a remote withdrawal are kept
+    and counted as ``blocked``. The window is at least the age of the oldest
+    live backup copy (retention plus one backup interval), so -- provided
+    backups are expired as DEPLOYMENT.md says -- no live backup holds a purged
+    entry undeleted. It is required -- there is no default,
+    because how long a deleted page is kept is the owner's promise to make
+    (#3063) -- and nothing schedules this route.
+    """
+    try:
+        result = await purge_soft_deleted_entries(session, older_than_days=older_than_days)
+    except ValueError as exc:
+        raise bad_request(str(exc)) from exc
+    logger.info(
+        "journalentry_purge",
+        extra={
+            "admin_id": admin.id,
+            "deleted": result.deleted,
+            "blocked": result.blocked,
+            "older_than_days": older_than_days,
+        },
+    )
+    return JournalEntryPurgeResult(
+        deleted=result.deleted,
+        blocked=result.blocked,
+        older_than_days=older_than_days,
+    )
+
+
 async def _require_user(session: AsyncSession, user_id: int) -> User:
     """Load a target user or 404.
 
@@ -674,3 +734,16 @@ async def get_user_summary(
             GumroadSaleSummary.model_validate(row, from_attributes=True) for row in sale_rows
         ],
     )
+
+
+@router.get("/privacy-suspensions", response_model=PrivacySuspensionStatus)
+async def get_privacy_suspensions(
+    _admin: Annotated[User, Depends(require_admin)],
+) -> PrivacySuspensionStatus:
+    """Report which operator privacy suspension switches are on (#3075).
+
+    Content-free and database-free: it reads the same environment the guards
+    read, at call time, so it is the probe that confirms a flipped switch has
+    taken effect on the serving process.
+    """
+    return PrivacySuspensionStatus.model_validate(suspension_state())

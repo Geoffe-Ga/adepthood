@@ -1325,6 +1325,16 @@
         "title": "DocumentImportResponse",
         "type": "object"
       },
+      "EgressBarrierState": {
+        "description": "Operator-visible state of the barrier's cross-worker half.",
+        "enum": [
+          "disabled",
+          "incomplete",
+          "ready"
+        ],
+        "title": "EgressBarrierState",
+        "type": "string"
+      },
       "EnergyPlan": {
         "properties": {
           "items": {
@@ -3746,6 +3756,30 @@
         "title": "JournalClassification",
         "type": "string"
       },
+      "JournalEntryPurgeResult": {
+        "description": "Outcome of the soft-deleted journal-entry purge: counts and the window used.\n\n``blocked`` counts expired entries kept back because a remote withdrawal\nthey owe is not yet confirmed. Counts only -- never an id or a word.",
+        "properties": {
+          "blocked": {
+            "title": "Blocked",
+            "type": "integer"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "older_than_days": {
+            "title": "Older Than Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted",
+          "blocked",
+          "older_than_days"
+        ],
+        "title": "JournalEntryPurgeResult",
+        "type": "object"
+      },
       "JournalEntryUpdate": {
         "description": "Partial update for a journal entry (PATCH).\n\nEvery field is optional; an empty payload is rejected (422) so a no-op PATCH\ncan't silently bump ``updated_at``. ``message`` is re-sanitized server-side.",
         "properties": {
@@ -4188,6 +4222,16 @@
         ],
         "title": "LinkDuplicateCommand",
         "type": "object"
+      },
+      "ManagedVaultRolloutState": {
+        "description": "Operator-visible state; callers expose only one unavailable answer.",
+        "enum": [
+          "disabled",
+          "incomplete",
+          "ready"
+        ],
+        "title": "ManagedVaultRolloutState",
+        "type": "string"
       },
       "MarginaliaKind": {
         "description": "What a margin note surfaces about the anchored span.",
@@ -5735,6 +5779,26 @@
         "title": "PracticeTagUpdate",
         "type": "object"
       },
+      "PrivacySuspensionStatus": {
+        "additionalProperties": false,
+        "description": "Which operator suspension switches are on: two booleans and nothing else.\n\nThe \"time to safe state\" probe an operator reads after flipping a switch and\nrestarting. Flat and closed (``extra=\"forbid\"``) so no account, content or\nraw environment value can ever be added to it by accident.",
+        "properties": {
+          "external_ai_suspended": {
+            "title": "External Ai Suspended",
+            "type": "boolean"
+          },
+          "vault_send_suspended": {
+            "title": "Vault Send Suspended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "external_ai_suspended",
+          "vault_send_suspended"
+        ],
+        "title": "PrivacySuspensionStatus",
+        "type": "object"
+      },
       "ProgramCalendarResponse": {
         "description": "The server's date-derived program calendar.\n\nExposes the anchor and both answers so the frontend can drop its\nclient-only fallback if desired: ``calendar_stage``/``calendar_week``\nare derived from ``program_started_at`` against the shared\n``STAGE_DURATIONS_DAYS`` schedule and pace what the program *offers*;\n``current_stage`` is the record of what the user has *entered*, which\nthe endpoint brings up to the calendar before answering. Effective\nunlock is ``domain.stage_authority.open_through`` — the union of the\ntwo, never the record alone. ``cycle_number`` is exposed so the\nfrontend can seed its \"Cycle N\" indicator on cold start.",
         "properties": {
@@ -7019,6 +7083,65 @@
           "label"
         ],
         "title": "SensePrompt",
+        "type": "object"
+      },
+      "ServingReceipt": {
+        "additionalProperties": false,
+        "description": "Operator-only, content-free description of the build that is serving.\n\nThe field set is closed (``extra=\"forbid\"``) so no later edit can widen it\ninto an environment dump, and the two capability fields are pinned to the\nonly values the code can back today: no attestation exists for an ordinary\nFly allocation, and no model digest or inference probe exists for a local\nmodel (issue #2871; B05/B07 own the positive path).",
+        "properties": {
+          "attested_confidential": {
+            "const": false,
+            "title": "Attested Confidential",
+            "type": "boolean"
+          },
+          "content_version": {
+            "title": "Content Version",
+            "type": "string"
+          },
+          "creek_contract_version": {
+            "title": "Creek Contract Version",
+            "type": "string"
+          },
+          "custody_modes_supported": {
+            "items": {
+              "$ref": "#/components/schemas/VaultCustodyMode"
+            },
+            "title": "Custody Modes Supported",
+            "type": "array"
+          },
+          "egress_barrier": {
+            "$ref": "#/components/schemas/EgressBarrierState"
+          },
+          "local_model": {
+            "const": "unknown",
+            "title": "Local Model",
+            "type": "string"
+          },
+          "managed_vault_rollout": {
+            "$ref": "#/components/schemas/ManagedVaultRolloutState"
+          },
+          "receipt_schema": {
+            "const": 1,
+            "title": "Receipt Schema",
+            "type": "integer"
+          },
+          "release": {
+            "title": "Release",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_schema",
+          "release",
+          "content_version",
+          "egress_barrier",
+          "managed_vault_rollout",
+          "creek_contract_version",
+          "custody_modes_supported",
+          "attested_confidential",
+          "local_model"
+        ],
+        "title": "ServingReceipt",
         "type": "object"
       },
       "ShareLinkCreateRequest": {
@@ -8869,6 +8992,15 @@
         "title": "VaultConnectionResponse",
         "type": "object"
       },
+      "VaultCustodyMode": {
+        "description": "Closed custody vocabulary negotiated with Creek provisioning v2.",
+        "enum": [
+          "provider_managed",
+          "wrapped_artifact_only"
+        ],
+        "title": "VaultCustodyMode",
+        "type": "string"
+      },
       "VaultDisposition": {
         "description": "What the deletion did — and did not do — outside adepthood.",
         "properties": {
@@ -8917,7 +9049,7 @@
         "type": "string"
       },
       "VaultTeardownStatus": {
-        "description": "Content-free reconciliation state visible only to operations.",
+        "description": "Content-free reconciliation state visible only to operations.\n\n``pending_since`` is when the teardown was *requested*, not when it was last\nretried: a stuck deletion keeps its true age across every retry, which is\nthe one number an operator triaging it needs (#3075).",
         "properties": {
           "attempts": {
             "title": "Attempts",
@@ -8945,6 +9077,11 @@
             ],
             "title": "Failure Reason"
           },
+          "pending_since": {
+            "format": "date-time",
+            "title": "Pending Since",
+            "type": "string"
+          },
           "retryable": {
             "title": "Retryable",
             "type": "boolean"
@@ -8964,7 +9101,8 @@
           "state",
           "attempts",
           "retryable",
-          "failure_reason"
+          "failure_reason",
+          "pending_since"
         ],
         "title": "VaultTeardownStatus",
         "type": "object"
@@ -10263,6 +10401,317 @@
           }
         },
         "summary": "Cleanup Feedback Reports",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/maintenance/journal-entries": {
+      "post": {
+        "description": "Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.\n\nRemoves their margin notes, promoted passages, completion suggestions and\ncorpus fragments, and clears the metering link, as ``domain.retention``\nderives from the schema. Entries still owing a remote withdrawal are kept\nand counted as ``blocked``. The window is at least the age of the oldest\nlive backup copy (retention plus one backup interval), so -- provided\nbackups are expired as DEPLOYMENT.md says -- no live backup holds a purged\nentry undeleted. It is required -- there is no default,\nbecause how long a deleted page is kept is the owner's promise to make\n(#3063) -- and nothing schedules this route.",
+        "operationId": "purge_journal_entries_admin_maintenance_journal_entries_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "older_than_days",
+            "required": true,
+            "schema": {
+              "maximum": 36500,
+              "minimum": 97,
+              "title": "Older Than Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEntryPurgeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Purge Journal Entries",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/privacy-suspensions": {
+      "get": {
+        "description": "Report which operator privacy suspension switches are on (#3075).\n\nContent-free and database-free: it reads the same environment the guards\nread, at call time, so it is the probe that confirms a flipped switch has\ntaken effect on the serving process.",
+        "operationId": "get_privacy_suspensions_admin_privacy_suspensions_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacySuspensionStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Privacy Suspensions",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/serving-receipt": {
+      "get": {
+        "description": "Report which build is serving, for the pilot evidence ``serving_receipts`` check.\n\nOperator-only and content-free: a closed field set naming the exact\nplatform SHA (or ``unknown``), content pin, barrier and rollout states,\npinned Creek contract and custody vocabulary -- never a pilot id, URL,\nbearer path, or configured secret (issue #2871).",
+        "operationId": "get_serving_receipt_admin_serving_receipt_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServingReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Serving Receipt",
         "tags": [
           "admin"
         ]
@@ -17585,7 +18034,7 @@
     },
     "/journal/transcribe-page": {
       "post": {
-        "description": "Transcribe one image of text, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — the image is validated first (422\nwithout any charge), then the caller key and vision capability are resolved.\nA production stub is refused before the wallet is touched. A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills, and so does a reply that is no text or a refusal\n(422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one\nrow per real, non-stub call) and committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
+        "description": "Transcribe one image of text, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — an operator's external-AI\nsuspension answers 503 ``ai_suspended`` before anything else (#3075), then\nthe image is validated (422 without any charge), then the caller key and\nvision capability are resolved.\nA production stub is refused before the wallet is touched. A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills, and so does a reply that is no text or a refusal\n(422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one\nrow per real, non-stub call) and committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
         "operationId": "transcribe_page_journal_transcribe_page_post",
         "parameters": [
           {
@@ -17906,7 +18355,7 @@
     },
     "/journal/{entry_id}": {
       "delete": {
-        "description": "Soft-delete a journal entry (BUG-JOURNAL-007).\n\nStamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.\nThis preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the\nusage audit trail is never orphaned, and allows recovery within the\nconfigurable retention window.  Soft-deleted rows are invisible to all\nread paths (list, get, ``load_recent_conversation``) which filter\n``deleted_at IS NULL``.",
+        "description": "Soft-delete a journal entry (BUG-JOURNAL-007).\n\nStamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.\nThis preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the\nusage audit trail is never orphaned.  Soft-deleted rows are invisible to\nall read paths (list, get, ``load_recent_conversation``) which filter\n``deleted_at IS NULL``, and no recovery path is exposed.  There is no\nautomatic retention window: the row and its derivatives (margin notes,\npromoted quotes, completion suggestions) persist until account deletion\nor an operator purge (#3063; see ``domain.retention``).",
         "operationId": "delete_journal_entry_journal__entry_id__delete",
         "parameters": [
           {

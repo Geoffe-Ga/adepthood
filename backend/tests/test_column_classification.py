@@ -68,6 +68,9 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "practicesessionspend.idem_key",
             "practicesharelink.token",
             "promptresponse.idem_key",
+            # An operator-chosen restore label and the deploy's build version.
+            "restoremarker.build_version",
+            "restoremarker.restore_id",
             "revokedtoken.jti",
             "user.password_hash",
             "vaultactivation.activation_id",
@@ -129,6 +132,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultpipelinerun.outcome",
             "vaultpipelinerun.stage",
             "vaultpipelinerun.trigger",
+            "restoremarker.state",
             "vaultteardownreceipt.state",
             "voicedraftretraction.state",
             "walletaudit.bucket",

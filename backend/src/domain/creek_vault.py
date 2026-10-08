@@ -248,6 +248,10 @@ class VaultErrorCode(enum.StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+#: The static message a suspended vault send carries: content-free by design.
+VAULT_SEND_SUSPENDED_MESSAGE = "creek vault content sends are suspended by the operator"
+
+
 class CreekVaultError(RuntimeError):
     """Base type for every Creek Vault failure callers should degrade on.
 
@@ -277,6 +281,30 @@ class CreekVaultUnavailableError(CreekVaultError):
         """Store the static message and, when the vault named one we know, its code."""
         super().__init__(message)
         self.code = code
+
+
+class VaultSendSuspendedError(CreekVaultUnavailableError):
+    """The operator has suspended content-bearing vault requests (#3075).
+
+    Raised by the vault adapter's single request site, before anything is put
+    on the wire, for every request that carries content while
+    ``PRIVACY_SUSPEND_VAULT_SEND`` is on. Content-free withdrawals and deletions
+    are not refused.
+
+    It subclasses :class:`CreekVaultUnavailableError` for the callers that
+    degrade: the journal write is saved without a vault copy, and a reflection
+    or upload degrades as if the vault were absent. The vault pipeline is the
+    exception. Its ladders list this subclass *ahead* of its transient parent,
+    so a stage ends, without further retries, on the first attempt the switch
+    refuses -- fresh, retried or resumed. The refusal proves only that its own
+    attempt never left the process: the run is recorded FAILED when no attempt
+    could have reached the vault, and AMBIGUOUS when an earlier, unanswered
+    attempt may have.
+    """
+
+    def __init__(self) -> None:
+        """Carry the one static, content-free message."""
+        super().__init__(VAULT_SEND_SUSPENDED_MESSAGE)
 
 
 class CreekVaultContractError(CreekVaultError):

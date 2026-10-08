@@ -39,6 +39,7 @@ from .practice_tag import PracticeTag
 from .promoted_quote import PromotedQuote
 from .prompt_dismissal import PromptDismissal
 from .prompt_response import PromptResponse
+from .restore_marker import RestoreMarker
 from .revoked_token import RevokedToken
 from .stage_content import StageContent
 from .stage_progress import StageProgress
@@ -100,6 +101,7 @@ __all__ = [
     "PromotedQuote",
     "PromptDismissal",
     "PromptResponse",
+    "RestoreMarker",
     "RevokedToken",
     "StageContent",
     "StageProgress",

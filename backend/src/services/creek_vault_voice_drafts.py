@@ -45,7 +45,8 @@ from domain.creek_vault import (
     VaultVoiceDraftRequest,
     tier_ceiling_for,
 )
-from models.journal_entry import JournalClassification, JournalEntry
+from domain.privacy_tier import egress_denied_clause
+from models.journal_entry import JournalEntry
 from models.voice_draft_retraction import (
     RetractionFailureCode,
     VoiceDraftRetraction,
@@ -668,7 +669,7 @@ async def _due_entries(session: AsyncSession, sweep: _SweepPass) -> tuple[tuple[
     journals = await session.execute(
         select(JournalEntry.user_id, JournalEntry.id)
         .where(
-            JournalEntry.classification == JournalClassification.INTIMATE,
+            egress_denied_clause(col(JournalEntry.classification)),
             col(JournalEntry.deleted_at).is_(None),
             _journal_marker_present(),
             col(JournalEntry.id).not_in(sweep.journal_retries.backed_off(sweep.moment)),
@@ -715,7 +716,7 @@ async def _retry_journal_copy(
     result = await session.execute(
         select(JournalEntry).where(
             JournalEntry.id == entry_id,
-            JournalEntry.classification == JournalClassification.INTIMATE,
+            egress_denied_clause(col(JournalEntry.classification)),
             col(JournalEntry.deleted_at).is_(None),
             _journal_marker_present(),
         )

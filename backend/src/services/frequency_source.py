@@ -74,7 +74,7 @@ from domain.creek_vault import (
     tier_ceiling_for,
 )
 from domain.frequencies import FREQUENCY_CODES, Frequency
-from models.journal_entry import JournalClassification
+from domain.privacy_tier import admits_egress
 from services.creek_vault_read import log_read_degraded
 from services.frequency_classification import (
     ClassificationSource,
@@ -165,7 +165,7 @@ async def _read_classification(
 
 
 async def fetch_vault_classification(
-    client: CreekVaultClient, content: str, *, classification: JournalClassification
+    client: CreekVaultClient, content: str, *, classification: str
 ) -> FrequencyClassification | None:
     """Return the vault's reading of ``content``, or ``None`` to fall back.
 
@@ -182,19 +182,24 @@ async def fetch_vault_classification(
     The tier ceiling is the fragment's own, resolved through
     :func:`~domain.creek_vault.tier_ceiling_for`, so a public entry travels at
     ``OPEN`` and a personal one at ``PERSONAL`` rather than everything sharing
-    one fixed ceiling. INTIMATE never reaches here at all.
+    one fixed ceiling. A tier that may not egress (intimate, unknown) raises
+    :class:`~services.frequency_classification.IntimateContentRefusedError`
+    before the handshake, so this entry point fails closed on its own rather
+    than trusting its caller (#3059).
     """
+    if not admits_egress(classification):
+        raise IntimateContentRefusedError
     await client.handshake()
     if not (client.is_available() and client.supports(CreekCapability.CLASSIFY)):
         return None
-    return await _read_classification(client, content, tier_ceiling_for(classification.value))
+    return await _read_classification(client, content, tier_ceiling_for(classification))
 
 
 async def select_frequency_classification(
     client: CreekVaultClient,
     content: str,
     *,
-    classification: JournalClassification,
+    classification: str,
     boundary: ReflectionBoundary,
     api_key: str | None = None,
 ) -> FrequencyClassification:
@@ -212,7 +217,9 @@ async def select_frequency_classification(
     always has.
 
     Raises :class:`~services.frequency_classification.IntimateContentRefusedError`
-    for INTIMATE content, before the handshake and before the operator-side call
+    for any tier that may not egress (intimate, unknown, empty -- see
+    :func:`domain.privacy_tier.admits_egress`), before the handshake and before
+    the operator-side call
     -- the refusal precedes both paths rather than sitting inside one of them.
 
     A spent balance on the operator-side call propagates as
@@ -229,7 +236,7 @@ async def select_frequency_classification(
     operator-side classifier only; a vault is reached with the deployment's own
     vault credential and has no use for it.
     """
-    if classification is JournalClassification.INTIMATE:
+    if not admits_egress(classification):
         raise IntimateContentRefusedError
     from_vault = await fetch_vault_classification(client, content, classification=classification)
     if from_vault is not None:

@@ -145,9 +145,11 @@ class JournalEntry(SQLModel, table=True):
     habit-related thoughts.
 
     BUG-JOURNAL-007: hard delete is replaced with a soft-delete ``deleted_at``
-    column so deleted rows can be recovered within the retention window and the
-    ``LLMUsageLog.journal_entry_id`` FK is never orphaned.  All read endpoints
-    filter ``deleted_at IS NULL``; soft-deleted rows are retained indefinitely.
+    column so the ``LLMUsageLog.journal_entry_id`` FK is never orphaned.  All
+    read endpoints filter ``deleted_at IS NULL`` and no recovery path is
+    exposed.  There is no automatic retention window: a soft-deleted row and
+    its derivatives persist until account deletion or an operator purge
+    (#3063; the lifetime is declared in ``domain.retention``).
     """
 
     # ``ix_journalentry_deleted_at`` is created by migration ``a0b1c2d3e4f5``

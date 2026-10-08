@@ -316,13 +316,20 @@ async def test_the_public_tier_reaches_the_vault_at_the_open_ceiling(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "classification",
+    [JournalClassification.INTIMATE, "intimate", "INTIMATE", "bogus", ""],
+)
 async def test_intimate_refuses_before_either_path_is_entered(
     monkeypatch: pytest.MonkeyPatch,
+    classification: str,
 ) -> None:
     """Not a degradation, and not even a handshake.
 
     The operator classifier raises on any call and the vault records every one,
-    so this fails if the refusal is moved below either entry point.
+    so this fails if the refusal is moved below either entry point. Plain-``str``
+    and unknown tiers are refused the same way (#3059): the allowlist, not an
+    identity check against one enum member, decides.
     """
     _forbid_operator(monkeypatch)
     client = _vault(("F3",))
@@ -331,12 +338,47 @@ async def test_intimate_refuses_before_either_path_is_entered(
         await fs.select_frequency_classification(
             client,
             _BODY,
-            classification=JournalClassification.INTIMATE,
+            classification=classification,
             boundary=ReflectionBoundary.VAULT_BOUND,
         )
 
     assert client.handshake_calls == 0
     assert client.classify_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("classification", [JournalClassification.INTIMATE, "intimate", "bogus"])
+async def test_the_vault_entry_point_refuses_on_its_own(classification: str) -> None:
+    """Reached directly, the vault read refuses a non-eligible tier before its handshake.
+
+    ``tier_ceiling_for("intimate")`` resolves to a real ceiling, so without its
+    own gate this entry point would dial at the intimate ceiling (#3059).
+    """
+    client = _vault(("F3",))
+
+    with pytest.raises(fc.IntimateContentRefusedError):
+        await fs.fetch_vault_classification(client, _BODY, classification=classification)
+
+    assert client.handshake_calls == 0
+    assert client.classify_calls == []
+
+
+@pytest.mark.asyncio
+async def test_plain_str_public_reaches_the_vault_at_the_open_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stored tier arrives as a ``str``; it resolves its ceiling without an enum's ``.value``."""
+    _forbid_operator(monkeypatch)
+    client = _vault(("F3",))
+
+    await fs.select_frequency_classification(
+        client,
+        _BODY,
+        classification="public",
+        boundary=ReflectionBoundary.VAULT_BOUND,
+    )
+
+    assert client.classify_calls == [(_BODY, VaultTierCeiling.OPEN)]
 
 
 # --- with no vault bound, every vault failure degrades to the operator ------

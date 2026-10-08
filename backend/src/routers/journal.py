@@ -48,6 +48,7 @@ from domain.depth_preferences import DepthRing, load_enabled_rings
 from domain.detection import CompletionDetected, DetectionCandidate, detect_completions
 from domain.detection_facts import DetectionClock
 from domain.practice_resolution import effective_config
+from domain.privacy_tier import admits_egress, egress_eligible_clause
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import (
     PRIOR_DRAFT_CHARS,
@@ -77,7 +78,7 @@ from models.completion_suggestion import (
 )
 from models.goal import Goal
 from models.habit import Habit
-from models.journal_entry import JournalClassification, JournalEntry, JournalTag
+from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -203,6 +204,8 @@ from services.marginalia import (
     receipt_since,
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
+from services.privacy_lineage import LineageOperation, observe_entry_lineage
+from services.privacy_suspension import require_external_ai_available
 from services.reflection_boundary import (
     REFLECTION_SOURCE_UNAVAILABLE,
     ReflectionBoundary,
@@ -421,6 +424,26 @@ async def _record_vault_outcome(
         session.add(entry)
         await session.commit()
         await session.refresh(entry)
+    await _after_vault_write(session, entry, vault_client, outcome)
+
+
+async def _after_vault_write(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultClient,
+    outcome: VaultWriteOutcome,
+) -> None:
+    """Shadow-count a write that dialled, then drive the pipeline after one that stored.
+
+    The shadow (#3059) fires whenever the ingest was dialled: a DEGRADED write
+    -- a lost acknowledgement, or ``stored=False`` -- has still handed the body
+    to the vault. ``_NOTHING_SENT`` is the same predicate that decides whether
+    the staged destination is kept. It commits straight away so nothing is held
+    across what follows; the pipeline runs only on a durable INGESTED write.
+    """
+    if outcome.status not in _NOTHING_SENT:
+        await observe_entry_lineage(session, LineageOperation.VAULT_WRITE, entry)
+        await session.commit()
     if outcome.status is VaultWriteStatus.INGESTED:
         await drive_vault_pipeline(
             session,
@@ -920,7 +943,7 @@ def _prior_letters_query(user_id: int, exclude_entry_id: int) -> Select[tuple[Ma
     return (
         _expanded_drafts_query(user_id)
         .where(
-            col(JournalEntry.classification) != JournalClassification.INTIMATE,
+            egress_eligible_clause(col(JournalEntry.classification)),
             col(JournalEntry.id) != exclude_entry_id,
         )
         .order_by(col(Marginalia.essay_generated_at).desc(), col(Marginalia.id).desc())
@@ -1128,7 +1151,7 @@ async def update_journal_entry(
                 current_user,
                 session,
             )
-            if entry.classification == JournalClassification.INTIMATE:
+            if not admits_egress(entry.classification):
                 await _apply_intimate_update(
                     session,
                     entry,
@@ -1713,7 +1736,7 @@ async def _withdrawn_under_hold(
     if entry.deleted_at is not None:
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         raise not_found("journal_entry")
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         return True
     return False
@@ -1754,7 +1777,7 @@ async def _body_under_hold(
 
 
 async def _pass_context_under_hold(
-    session: AsyncSession, user_id: int, entry_id: int
+    session: AsyncSession, entry: JournalEntry
 ) -> tuple[Grounding, list[str]]:
     """Gather the other writing a pass carries, under its hold, then release the connection.
 
@@ -1777,11 +1800,16 @@ async def _pass_context_under_hold(
     upload or an import has no entry to re-check at all; the corpus copy the
     mutation withdrew is simply no longer there to retrieve.
 
+    The entry's own folded-quote lineage is observed here too (#3059, shadow
+    only): this is the read of the state that actually egresses.
+
     The commit releases the pooled connection these reads opened, so none is
     held across the dials that follow.
     """
+    user_id, entry_id = entry.user_id, cast("int", entry.id)
     grounding = await _grounding_for(session, user_id, entry_id)
     prior_letters = await _prior_letter_essays(session, user_id=user_id, exclude_entry_id=entry_id)
+    await observe_entry_lineage(session, LineageOperation.RESONANCE, entry)
     await session.commit()
     return grounding, prior_letters
 
@@ -2376,11 +2404,12 @@ async def run_resonance(
     # suppresses crisis support (NORTH-STAR §10). An admitted pass re-derives
     # both the body and this screen from the row it re-reads under the hold
     # (#3008); this reading serves only the 422 and intimate fast paths.
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         return await _private_response(session, current_user, _care_response(_care_for(message)))
     # A generation is about to happen: the per-user guardrails (#623) admit it
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
+    require_external_ai_available()
     require_generation_minute_available(current_user)
     async with generation_slot(session, current_user):
         return await _run_admitted_resonance(session, current_user, entry, clients)
@@ -2467,7 +2496,7 @@ async def _run_admitted_resonance(
             # vault and no model is asked, and the committed charge is refunded.
             await _refund_failed_pass(session, current_user, spent, trace=trace)
             return await _care_only_response(session, current_user, care)
-        grounding, prior_letters = await _pass_context_under_hold(session, current_user, entry_id)
+        grounding, prior_letters = await _pass_context_under_hold(session, entry)
         reflected = await _reflect_or_answer(
             _ReflectionRequest(
                 entry_id=entry_id,
@@ -2746,6 +2775,10 @@ async def _detect_fresh_suggestions(
         await ensure_account_live(session, entry.user_id)
         if await _withdrawn_under_hold(session, entry, spent=None, trace=None):
             return CompletionDetectionResponse(items=[], checked=False)
+        # Shadow only (#3059): the pass will dial. Committed straight away so
+        # the read holds no connection across that dial.
+        await observe_entry_lineage(session, LineageOperation.DETECT, entry)
+        await session.commit()
         return await _detect_and_persist(
             session,
             entry=entry,
@@ -2840,7 +2873,7 @@ async def detect_entry_suggestions(
     # before any candidate or provider work. The body actually dialled is
     # re-derived from the row re-read under the hold.
     _sanitize_message(entry.message)
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         return CompletionDetectionResponse(items=[], checked=False)
     if caller.boundary is ReflectionBoundary.VAULT_BOUND:
         await session.commit()
@@ -2853,6 +2886,7 @@ async def detect_entry_suggestions(
         # empty candidate set is a completed check, not a provider failure.
         await session.commit()
         return CompletionDetectionResponse(items=[], checked=True)
+    require_external_ai_available()
     return await _detect_fresh_suggestions(
         session,
         entry=entry,
@@ -3320,8 +3354,9 @@ async def _expand_essay(
     # Decided from the *persisted* classification, before the LLM is constructed.
     # Read again inside the barrier below, because this reading can go stale
     # while the request waits for it — see ``_cache_and_mirror_essay``.
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         return note
+    require_external_ai_available()
     _require_price_acknowledged(clients)
     # A first letter is about to be asked for: the per-user guardrails (#623)
     # admit it only now, after the cached, intimate, 404 and 409 exits above.
@@ -3399,8 +3434,11 @@ async def _cache_and_mirror_essay(
             # purchase -- no charge, no dial, no overwrite (#623).
             _log_essay_cache_hit(note, _CACHE_HIT_IN_BARRIER)
             return note
-        if entry.deleted_at is not None or entry.classification == JournalClassification.INTIMATE:
+        if entry.deleted_at is not None or not admits_egress(entry.classification):
             return note
+        # Shadow only (#3059). ``_cache_essay`` commits before it dials, so this
+        # read is released with its own before anything leaves the process.
+        await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
         cached = await _cache_essay(
             session, note, _sanitize_message(entry.message), clients.api_key
         )
@@ -3451,13 +3489,19 @@ async def _mirror_cached_essay(
         destination = await resolved_vault_destination(session, entry.user_id)
 
         async def _record_intent() -> bool:
-            return await record_mirror_intent(
+            recorded = await record_mirror_intent(
                 session,
                 user_id=entry.user_id,
                 entry_id=cast("int", entry.id),
                 marginalia_id=marginalia_id,
                 destination=destination,
             )
+            if recorded:
+                # Shadow only (#3059): the mirror was admitted and its PUT is
+                # next. Committed so no connection is held across that PUT.
+                await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
+                await session.commit()
+            return recorded
 
         await mirror_voice_draft(
             clients.vault_client,
@@ -3714,10 +3758,12 @@ async def delete_journal_entry(
 
     Stamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.
     This preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the
-    usage audit trail is never orphaned, and allows recovery within the
-    configurable retention window.  Soft-deleted rows are invisible to all
-    read paths (list, get, ``load_recent_conversation``) which filter
-    ``deleted_at IS NULL``.
+    usage audit trail is never orphaned.  Soft-deleted rows are invisible to
+    all read paths (list, get, ``load_recent_conversation``) which filter
+    ``deleted_at IS NULL``, and no recovery path is exposed.  There is no
+    automatic retention window: the row and its derivatives (margin notes,
+    promoted quotes, completion suggestions) persist until account deletion
+    or an operator purge (#3063; see ``domain.retention``).
     """
     entry_id = cast("int", entry.id)
     # The ownership dependency's read opened a transaction. End it before

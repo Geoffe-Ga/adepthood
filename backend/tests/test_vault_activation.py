@@ -1571,15 +1571,17 @@ async def test_stuck_teardown_is_visible_only_to_operations(
 
     assert refused.status_code == HTTPStatus.FORBIDDEN
     assert visible.status_code == HTTPStatus.OK
-    assert visible.json() == [
-        {
-            "creek_job_id": "job-stuck",
-            "state": "failed",
-            "attempts": 3,
-            "retryable": True,
-            "failure_reason": "provider_unavailable",
-        }
-    ]
+    (listed,) = visible.json()
+    # The request time is the receipt's own, so only its presence is pinned
+    # here; tests/incident/test_tabletop.py pins that it is the request time.
+    assert datetime.fromisoformat(listed.pop("pending_since"))
+    assert listed == {
+        "creek_job_id": "job-stuck",
+        "state": "failed",
+        "attempts": 3,
+        "retryable": True,
+        "failure_reason": "provider_unavailable",
+    }
 
 
 def test_activation_openapi_is_stable_and_contains_no_connection_secret() -> None:

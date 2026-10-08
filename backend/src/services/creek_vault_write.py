@@ -62,7 +62,7 @@ from domain.creek_vault import (
     VaultTierCeiling,
     tier_ceiling_for,
 )
-from models.journal_entry import JournalClassification
+from domain.privacy_tier import admits_egress
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -247,17 +247,20 @@ async def store_and_classify(
 
     The order of checks is load-bearing:
 
-    1. An ``intimate`` classification short-circuits to
-       :attr:`VaultWriteStatus.SKIPPED_INTIMATE` *before touching the client* --
-       see the module docstring for why intimate bodies are withheld.
-    2. :func:`~domain.creek_vault.tier_ceiling_for` resolves the tier, raising
-       ``ValueError`` (fail closed) for an unknown classification -- this error
-       propagates, since an unrecognized tier must never widen to OPEN. A tier
-       that resolves to :attr:`~domain.creek_vault.VaultTierCeiling.INTIMATE`
-       short-circuits exactly as step 1 does, and that is not a duplicate of it:
-       step 1 knows one *spelling*, this knows the *tier*, so a classification
-       added later that maps to intimate under any other name is withheld by
-       this line rather than discovered at the wire.
+    1. A classification outside the egress allowlist
+       (:func:`domain.privacy_tier.admits_egress`, #3059) -- intimate, unknown,
+       empty or wrongly spelled -- short-circuits to
+       :attr:`VaultWriteStatus.SKIPPED_INTIMATE` *before touching the client*,
+       so an unrecognized tier is withheld rather than widened to OPEN. See the
+       module docstring for why intimate bodies are withheld.
+    2. :func:`~domain.creek_vault.tier_ceiling_for` resolves the ceiling,
+       raising ``ValueError`` only if its map has drifted from the allowlist. A
+       tier that resolves to
+       :attr:`~domain.creek_vault.VaultTierCeiling.INTIMATE` short-circuits as
+       step 1 does, and that is not a duplicate of it: the allowlist judges the
+       *journal* tier, this judges the *vault* ceiling it maps to, so a map edit
+       that sent an eligible tier to intimate is withheld by this line rather
+       than discovered at the wire.
     3. A handshake probes the vault; an unavailable or non-ingesting vault
        degrades to :attr:`VaultWriteStatus.UNAVAILABLE`.
     4. Ingest runs; a transport failure or a ``stored=False`` result degrades to
@@ -278,7 +281,7 @@ async def store_and_classify(
     raises :class:`~domain.creek_vault.CreekVaultError`: the caller can persist
     the entry unconditionally and only records vault metadata on INGESTED.
     """
-    if classification == JournalClassification.INTIMATE:
+    if not admits_egress(classification):
         return _SKIPPED_INTIMATE_OUTCOME
     tier_ceiling = tier_ceiling_for(classification)
     if tier_ceiling is VaultTierCeiling.INTIMATE:

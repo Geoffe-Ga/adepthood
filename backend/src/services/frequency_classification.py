@@ -62,7 +62,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from domain.frequencies import Frequency, frequency_table
-from models.journal_entry import JournalClassification
+from domain.privacy_tier import admits_egress
 from services.botmason import (
     LLMCreditExhaustedError,
     LLMProviderError,
@@ -130,11 +130,14 @@ and an overall_confidence of 0.0."""
 
 
 class IntimateContentRefusedError(Exception):
-    """Raised when classification is asked for INTIMATE-tier content.
+    """Raised when classification is asked for content whose tier may not egress.
 
-    Not a degradation. Reaching this means a caller tried to route the most
-    sensitive tier to a cloud provider, which is a defect in the caller, so it
-    is raised loudly enough to fail a test rather than logged and forgotten.
+    Named for INTIMATE, the tier it was written for, but since #3059 raised for
+    *any* tier outside :data:`domain.privacy_tier.EGRESS_ELIGIBLE_TIERS` --
+    intimate, unknown, empty or wrongly spelled alike. Not a degradation.
+    Reaching this means a caller tried to route a tier that may not egress to
+    a cloud provider, which is a defect in the caller, so it is raised loudly
+    enough to fail a test rather than logged and forgotten.
     """
 
 
@@ -311,14 +314,16 @@ def _classification_of(response: LLMResponse) -> FrequencyClassification:
 async def classify_frequencies(
     content: str,
     *,
-    classification: JournalClassification,
+    classification: str,
     api_key: str | None = None,
     timeout_seconds: float | None = None,
 ) -> FrequencyClassification:
     """Classify ``content`` into the frequency ontology.
 
-    Raises :class:`IntimateContentRefusedError` for INTIMATE content, before any
-    provider call is constructed, and re-raises
+    Raises :class:`IntimateContentRefusedError` for any tier that is not
+    egress-eligible (intimate, unknown, empty -- see
+    :func:`domain.privacy_tier.admits_egress`), before any provider call is
+    constructed, and re-raises
     :class:`services.botmason.LLMCreditExhaustedError` after logging which
     provider refused. Every other failure -- no key, a transient provider
     failure, a timeout, a malformed reply, a code outside the ontology --
@@ -341,7 +346,7 @@ async def classify_frequencies(
     default, and what every interactive write passes -- leaves the provider
     layer's own timeout and retry budget in charge.
     """
-    if classification is JournalClassification.INTIMATE:
+    if not admits_egress(classification):
         raise IntimateContentRefusedError
     try:
         response = await _reply_within(content, api_key=api_key, timeout_seconds=timeout_seconds)

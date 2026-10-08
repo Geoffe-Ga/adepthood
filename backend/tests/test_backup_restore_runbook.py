@@ -52,8 +52,10 @@ from cryptography.fernet import Fernet
 from sqlalchemy import Table, inspect
 
 from models.journal_entry import JournalEntry
+from scripts import restore_suppression as restore_cli
 from services import journal_encryption
 from services.journal_encryption import EncryptedString
+from services.restore_suppression import RESTORE_ID_ENV_VAR, RESTORE_SUPPRESSION_REQUIRED_ENV_VAR
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEPLOYMENT_DOC = _REPO_ROOT / "DEPLOYMENT.md"
@@ -219,3 +221,59 @@ def test_every_variable_the_runbook_expands_is_one_it_also_assigns(runbook: str)
         f"the runbook expands {undefined} but never assigns them; "
         "an operator pasting these blocks would run them empty"
     )
+
+
+# The restore-suppression step (#3063) is a draft awaiting the owner; it is
+# marked as such so nobody reads it as a ratified promise.
+_DRAFT_MARKER = "DRAFT for owner review (#3063)"
+_RESTORE_CLI_MODULE = "scripts.restore_suppression"
+# ``python -m scripts.restore_suppression <args...>`` with ``\``-continued lines.
+_RESTORE_CLI_CALL = re.compile(
+    re.escape(_RESTORE_CLI_MODULE) + r"((?:[^\n]*\\\n)*[^\n]*)",
+)
+
+
+def test_restore_suppression_step_names_the_real_cli_and_switches(runbook: str) -> None:
+    """The draft step's command parses with the real CLI, and its env names are the code's."""
+    assert _DRAFT_MARKER in runbook
+    keys = runbook.index("**Supply the keys.**")
+    suppress = runbook.index("**Suppress resurrected deletions.**")
+    verify = runbook.index("**Verify before cutting over**")
+    assert keys < suppress < verify, "reapply must run after the keys and before verification"
+
+    call = _RESTORE_CLI_CALL.search(runbook)
+    assert call, f"the runbook never invokes {_RESTORE_CLI_MODULE}"
+    argv = call.group(1).replace("\\\n", " ").replace('"', "").split()
+    parsed = restore_cli.parse_args(argv)
+    assert parsed.command == "reapply"
+
+    assert RESTORE_SUPPRESSION_REQUIRED_ENV_VAR in runbook
+    assert RESTORE_ID_ENV_VAR in runbook
+
+
+def test_restored_deployment_turns_the_gate_on(runbook: str) -> None:
+    """The draft step makes the restored app refuse to serve until reapply completed.
+
+    Any write to a resurrected row before reapply is a write to a page somebody
+    deleted, so turning the gate on is a step, not an option.
+    """
+    step = runbook[
+        runbook.index("**Suppress resurrected deletions.**") : runbook.index(
+            "**Verify before cutting over**"
+        )
+    ]
+    assert f"`{RESTORE_SUPPRESSION_REQUIRED_ENV_VAR}=1`" in step
+    assert "Optionally" not in step
+
+
+def test_restore_id_is_chosen_once_not_regenerated_per_run(runbook: str) -> None:
+    """A rerun must reuse the restore id, or the completed-restore refusal never fires.
+
+    ``reapply`` refuses a restore id it already completed. An id minted by a
+    command substitution (``$(date ...)``) is new on every paste, so a rerun
+    after cutover would be accepted -- exactly what the refusal exists to stop.
+    """
+    assignments = re.findall(rf"\b{RESTORE_ID_ENV_VAR}=([^\s;]+)", runbook)
+    assert assignments, f"the runbook never assigns {RESTORE_ID_ENV_VAR}"
+    generated = [value for value in assignments if "$(" in value or "`" in value]
+    assert not generated, f"{RESTORE_ID_ENV_VAR} is regenerated per run: {generated}"

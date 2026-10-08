@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, StringConstraints, field_serializer
+from pydantic import BaseModel, ConfigDict, StringConstraints, field_serializer
 
 from models.entitlement import EntitlementKind
+from models.vault_activation import VaultCustodyMode
+from services.account_egress_barrier import EgressBarrierState
+from services.managed_vault_rollout import ManagedVaultRolloutState
 
 # Six decimal places match the storage scale on
 # :class:`models.llm_usage_log.LLMUsageLog.estimated_cost_usd` so the
@@ -187,6 +190,18 @@ class EnergyPlanCleanupResult(BaseModel):
     older_than_days: int
 
 
+class JournalEntryPurgeResult(BaseModel):
+    """Outcome of the soft-deleted journal-entry purge: counts and the window used.
+
+    ``blocked`` counts expired entries kept back because a remote withdrawal
+    they owe is not yet confirmed. Counts only -- never an id or a word.
+    """
+
+    deleted: int
+    blocked: int
+    older_than_days: int
+
+
 class FeedbackCleanupResult(BaseModel):
     """Outcome of a feedback retention sweep: rows deleted + the window used.
 
@@ -306,3 +321,26 @@ class AdminUserSummary(BaseModel):
     monthly_messages_used: int
     wallet_audit: list[WalletAuditEntry]
     gumroad_sales: list[GumroadSaleSummary]
+
+
+class ServingReceipt(BaseModel):
+    """Operator-only, content-free description of the build that is serving.
+
+    The field set is closed (``extra="forbid"``) so no later edit can widen it
+    into an environment dump, and the two capability fields are pinned to the
+    only values the code can back today: no attestation exists for an ordinary
+    Fly allocation, and no model digest or inference probe exists for a local
+    model (issue #2871; B05/B07 own the positive path).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    receipt_schema: Literal[1]
+    release: str
+    content_version: str
+    egress_barrier: EgressBarrierState
+    managed_vault_rollout: ManagedVaultRolloutState
+    creek_contract_version: str
+    custody_modes_supported: list[VaultCustodyMode]
+    attested_confidential: Literal[False]
+    local_model: Literal["unknown"]

@@ -88,6 +88,7 @@ from domain.creek_vault import (
     VaultPipelineJob,
     VaultPipelineJobState,
     VaultPipelineStage,
+    VaultSendSuspendedError,
 )
 from domain.dates import ensure_aware
 from models.vault_pipeline_follow_up import VaultPipelineFollowUp
@@ -861,6 +862,27 @@ async def _run_stage(
     return await _attempt_committed_run(session, client, run, context.stage, budget)
 
 
+#: Failures that are a definitive answer, recorded FAILED on the first attempt
+#: rather than retried. :class:`VaultSendSuspendedError` is listed first because
+#: it subclasses the transient :class:`CreekVaultUnavailableError`: the operator's
+#: vault-send switch refused it before the request was built (#3075), so it
+#: provably never left the process and "ambiguous" would be false.
+_DEFINITIVE_REFUSALS: tuple[type[Exception], ...] = (
+    VaultSendSuspendedError,
+    CreekCapabilityUnsupportedError,
+    CreekVaultAuthError,
+    CreekVaultContractError,
+    CreekVaultPayloadError,
+)
+
+
+def _refusal_event(exc: Exception) -> str:
+    """The log event for a definitive refusal, naming an operator suspension apart."""
+    if isinstance(exc, VaultSendSuspendedError):
+        return "creek vault pipeline stage suspended by operator"
+    return "creek vault pipeline stage was refused"
+
+
 async def _attempt_committed_run(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
@@ -873,16 +895,8 @@ async def _attempt_committed_run(
         raise RuntimeError("persisted vault pipeline run has no id")
     try:
         outcome, counts = await _perform_within_budget(session, client, run, stage, budget)
-    except (
-        CreekCapabilityUnsupportedError,
-        CreekVaultAuthError,
-        CreekVaultContractError,
-        CreekVaultPayloadError,
-    ):
-        _LOGGER.info(
-            "creek vault pipeline stage was refused",
-            extra={"stage": stage.value},
-        )
+    except _DEFINITIVE_REFUSALS as exc:
+        _LOGGER.info(_refusal_event(exc), extra={"stage": stage.value})
         await _commit_finished_run(
             session,
             run,
@@ -1065,6 +1079,10 @@ async def _retry_once(
         if not client.supports(CreekCapability.PIPELINE):
             await client.handshake()
         return await _perform(client, stage)
+    except VaultSendSuspendedError:
+        # A definitive local refusal wearing its transient parent's type (#3075):
+        # it must reach _retry_for_reconciliation, not be retried as a lost answer.
+        raise
     except (CreekVaultUnavailableError, TimeoutError):
         return None
 
@@ -1112,16 +1130,22 @@ async def _retry_for_reconciliation(
     client: CreekVaultPipelineClient,
     run: VaultPipelineRun,
     stage: VaultPipelineStage,
+    state: _Reconciliation,
 ) -> tuple[VaultPipelineOutcome, _StageCounts] | VaultPipelineJob | VaultPipelineOutcome | None:
-    """Try fresh admission, turning a definitive refusal into a final outcome."""
+    """Try fresh admission, turning a definitive refusal into a final outcome.
+
+    An operator suspension proves only that *this* retry never left the process
+    (#3075). It says nothing about the run's earlier attempts, so it ends the run
+    with the ambiguity those carry: AMBIGUOUS when one may have landed, and
+    FAILED only when none could have.
+    """
     try:
         return await _retry_once(session, client, run, stage)
-    except (
-        CreekCapabilityUnsupportedError,
-        CreekVaultAuthError,
-        CreekVaultContractError,
-        CreekVaultPayloadError,
-    ):
+    except VaultSendSuspendedError as exc:
+        _LOGGER.info(_refusal_event(exc), extra={"stage": stage.value})
+        return await _finish_exhausted_run(session, run, ambiguous=state.ambiguous)
+    except _DEFINITIVE_REFUSALS as exc:
+        _LOGGER.info(_refusal_event(exc), extra={"stage": stage.value})
         await _commit_finished_run(
             session,
             run,
@@ -1185,7 +1209,7 @@ async def _reconciliation_step(
             return outcome
     if run.attempt_count >= _MAX_STAGE_ATTEMPTS:
         return await _finish_exhausted_run(session, run, ambiguous=state.ambiguous)
-    retried = await _retry_for_reconciliation(session, client, run, stage)
+    retried = await _retry_for_reconciliation(session, client, run, stage, state)
     if isinstance(retried, VaultPipelineOutcome):
         return retried
     return await _continue_after_retry(session, run, retried, state)

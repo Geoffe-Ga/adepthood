@@ -2165,17 +2165,22 @@ async def test_intimate_entry_issues_zero_http_requests(
 async def test_unknown_classification_sends_nothing_over_http(
     http_clients: ClientFactory,
 ) -> None:
-    """An unrecognized classification fails closed before a single byte is sent."""
+    """An unrecognized classification fails closed before a single byte is sent.
+
+    Since #3059 the egress predicate is the vault write's first gate, so the
+    closed outcome is a skip rather than a ``ValueError`` from the ceiling map;
+    what this pins at the transport -- nothing reaches the wire -- is unchanged.
+    """
     handler = _VaultRouteHandler()
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http_clients(handler))
-    with pytest.raises(ValueError, match="bogus"):
-        await store_and_classify(
-            client,
-            entry_id=_ENTRY_ID,
-            body=_SENTINEL_BODY,
-            classification="bogus",
-            created_at=_CREATED_AT,
-        )
+    outcome = await store_and_classify(
+        client,
+        entry_id=_ENTRY_ID,
+        body=_SENTINEL_BODY,
+        classification="bogus",
+        created_at=_CREATED_AT,
+    )
+    assert outcome.status is VaultWriteStatus.SKIPPED_INTIMATE
     assert handler.requests == []
 
 

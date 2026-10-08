@@ -494,17 +494,41 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 # Paste DATABASE_PUBLIC_URL here; do not persist it in a dotfile or history.
 read -rs PGURL && export PGURL
 
-pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump"
-
+# DUMP_OK is set only if the dump, its verification and its encryption all
+# succeed. pg_dump creates its file before it connects, so a failed dump can
+# leave an empty or truncated archive that gpg would still encrypt; the
+# pg_restore --list step reads the archive and fails on one.
 # Encrypt before it leaves the machine. Passphrase lives in the password
 # manager, NOT beside the file and NOT with JOURNAL_ENCRYPTION_KEYS.
-gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump"
+DUMP_OK=0
+pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump" && \
+  pg_restore --list "adepthood-$STAMP.dump" >/dev/null && \
+  gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump" && \
+  DUMP_OK=1
 shred -u "adepthood-$STAMP.dump" 2>/dev/null || rm -P "adepthood-$STAMP.dump"
 ```
 
 Then copy `adepthood-$STAMP.dump.gpg` to storage that is not Railway. The
 custom format (`-Fc`) is required: it is what `pg_restore` reads, it compresses,
 and it lets you restore selectively.
+
+**Prune expired dumps on every weekly run.** *DRAFT for owner review (#3063);
+where the off-host copies live is still undecided.* "Kept 90 days" is only true
+if someone deletes the older ones. Once this run's dump is verified, delete every
+dump older than 90 days, locally and at the off-host destination:
+```bash
+# Local copies older than the 90-day retention, to the minute: an age in whole
+# days would round down and keep a dump a day too long. Runs only when this
+# run's dump verified and encrypted (DUMP_OK=1 above); a failed run deletes
+# nothing.
+[ "$DUMP_OK" = 1 ] && \
+  find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mmin +$((90 * 24 * 60)) -delete
+```
+Then, only once the new copy is confirmed present at the off-host destination,
+remove the same-aged `adepthood-*.dump.gpg` files there with that store's own
+tooling. The journal-entry purge's minimum
+window (`POST /admin/maintenance/journal-entries`) assumes this happens: a dump
+kept longer can still hold a purged page undeleted.
 
 > This leg is **manual today**. It is written down honestly rather than
 > described as automated: a weekly calendar reminder is the current mechanism,
@@ -547,11 +571,36 @@ costs.
    read this database, listing **every key that could have encrypted a row in
    this dump**, newest first. The current production key alone is not enough if
    the dump predates a rotation.
-8. **Verify before cutting over** (next section). A restore is not finished when
+8. **Suppress resurrected deletions.** *DRAFT for owner review (#3063); not yet
+   a ratified step of this procedure.* A backup taken before an account or a
+   journal page was deleted still holds it, and the deletion's own record is
+   restored away with it, so the deleted account could sign in again. Before
+   cutting over, reapply the deletion tombstones to the restored database:
+   ```bash
+   # From backend/, with DATABASE_URL pointing at the RESTORED database.
+   # TOMBSTONES is the content-free file exported with `export --out` from the
+   # live database before the restore (or from wherever it is kept -- where it
+   # lives is undecided, #3063 AC17; without one, deletions made after the
+   # backup cannot be suppressed and must be treated as resurrected).
+   # RESTORE_ID names THIS restore. Choose it once (e.g. after the backup you
+   # restored) and paste the same value on any rerun: a completed id is refused,
+   # which is what stops a second reapply after cutover.
+   TOMBSTONES=tombstones.json; RESTORE_ID=restore-of-backup-YYYYMMDD
+   PYTHONPATH=src python -m scripts.restore_suppression reapply \
+     --in "$TOMBSTONES" --restore-id "$RESTORE_ID"
+   ```
+   Exit 0 prints the counts; exit 1 is a refusal (a policy gap, or a restore
+   already marked complete -- never rerun a completed restore after cutover);
+   exit 2 is an unreadable file. Before the restored service starts at all,
+   set `RESTORE_SUPPRESSION_REQUIRED=1` and `RESTORE_ID` (the same value) on
+   it: the app then refuses to boot until that restore's reapply completed, so
+   nothing writes to a resurrected page first. Both are unset by default in the
+   code and change nothing until set here.
+9. **Verify before cutting over** (next section). A restore is not finished when
    `pg_restore` exits; it is finished when a journal entry decrypts.
-9. **Point the app at it** and bring the backend service back up. Watch the boot
-   log for `journal_encryption_enabled=True` and `/health` for
-   `{"status": "healthy", "database": "connected", ...}`.
+10. **Point the app at it** and bring the backend service back up. Watch the boot
+    log for `journal_encryption_enabled=True` and `/health` for
+    `{"status": "healthy", "database": "connected", ...}`.
 
 ### Verifying a restore
 
@@ -823,7 +872,7 @@ are being written in the clear.
 | `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic` |
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve).  Server-paid requests refuse `claude-opus-5`, `claude-opus-4-7` and `gpt-4-turbo` (`SERVER_PAID_REFUSED_MODELS`, #623: the resonance-economy decision record rules "refuse non-cost-bounded models on the server-paid path (no multiplier)"): a charged pass, letter or page is refunded and answers `502 llm_provider_error`, and the uncharged server-paid features (frequency classification, completion detection) degrade. A user's own key (BYOK) still reaches those models. |
-| `BOTMASON_DAILY_GENERATION_CEILING` | No | `100` | Charged generations (resonance passes, first essay letters, page transcriptions) one user may make per UTC day, net of refunded failures; past it a request answers `429 daily_generation_limit_reached` with `Retry-After` set to the seconds until 00:00 UTC, and nothing is charged. The default is the owner-ratified "configurable launch ceiling of 100 charged generations/day/user" (#623). Parsed like `BOTMASON_MONTHLY_CAP`: unset, empty, malformed or negative means 100. `0` is an emergency brake that refuses every charged generation. BYOK generations are never charged, so never counted. Counted from `walletaudit` in the database, so it holds across every worker and ignores the rate-limit kill switch. |
+| `BOTMASON_DAILY_GENERATION_CEILING` | No | `100` | Charged generations (resonance passes, first essay letters, page transcriptions) one user may make per UTC day, net of refunded failures; past it a request answers `429 daily_generation_limit_reached` with `Retry-After` set to the seconds until 00:00 UTC, and nothing is charged. The default is the owner-ratified "configurable launch ceiling of 100 charged generations/day/user" (#623). Parsed like `BOTMASON_MONTHLY_CAP`: unset, empty, malformed or negative means 100. `0` is an emergency brake that refuses every charged generation. BYOK generations are never charged, so never counted. Counted from `walletaudit` in the database, so it holds across every worker and ignores the rate-limit kill switch. Because BYOK bypasses it, `0` does not stop external inference: `PRIVACY_SUSPEND_EXTERNAL_AI` is the control that also stops BYOK calls. |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes. All rate-limit state lives in each worker's memory (there is no shared store), so the effective per-deployment budget of every limit -- ambient floor, burst floors, per-client ceiling, declared route limits -- is `WEB_CONCURRENCY` x the stated limit . That includes the per-user generation limit of 5 resonance or essay generations per minute (#623): it is per worker, so a deployment admits up to `WEB_CONCURRENCY` x 5 per user per minute. The other two generation guardrails are not: the cap of 2 concurrent generations per user (a `generationslot` lease row) and the daily ceiling above are both database-backed and hold across workers |
 | `ALLOWED_HOSTS` | Recommended in prod | *(empty)* | Comma-separated hostnames this deploy answers as, canonical one **first**. The authority half of the same question `TRUSTED_PROXY_CIDRS` answers for the scheme: both halves of every absolute URL the app mints are otherwise written by the caller, most visibly the router's trailing-slash `307`, which is answered before any auth check runs. A request naming an unlisted host is **not rejected** — its authority is replaced with the first entry and it proceeds normally, so a platform health prober whose `Host` you cannot predict still gets its `200` and nothing needs a path exemption; the original `Host` is recorded on that request's access-log line as `original_host`. Left empty, nothing is settled and behaviour is exactly as before, which is what keeps local dev, Expo and LAN addresses working unconfigured. Entries are bare hostnames with an optional port (`api.example.com`, `localhost:8000`) — no scheme, path or userinfo. Matching ignores the port; the substitution is verbatim. Wildcards are refused, not supported: this variable also names the host a non-matching request is settled onto, and a pattern has no single host to substitute. A malformed entry refuses the boot on every `ENV`; an unset one only warns, and only in production. |
 | `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Unset, the per-client overall ceiling (`CLIENT_CEILING_LIMIT`, 600/minute) is shared by every client too, which makes it a site-wide 600/minute across the whole API. Never list a public range you do not control. |
@@ -846,6 +895,9 @@ are being written in the clear.
 | `CREEK_PROVISIONING_AUTH_FILE` | With provisioning | *(empty)* | Must be the exact mounted path `/run/adepthood-secrets/creek-control-bearer`, containing Adepthood's Creek service bearer. The bearer itself must not be stored in the environment. |
 | `CREEK_PROVISIONING_HANDOFF_AUTH_FILE` | With provisioning | *(empty)* | Must be the exact mounted path `/run/adepthood-secrets/creek-handoff-bearer`, containing a distinct, separately rotated bearer used to authenticate Creek's one-time connection handoff callback. |
 | `CREEK_MANAGED_VAULT_ALERT_EMAIL` | With managed-vault activation | *(empty)* | Monitored operator mailbox for content-free fleet alerts. Managed-vault rollout remains unavailable unless this is a valid email address. |
+| `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED` | With managed-vault activation | *(unset = off)* | Switch for **new** managed-vault activations. Unset, empty, `0`, `false`, `no` or `off` turns them off; `1`, `true`, `yes` or `on` turns them on, subject to the other rollout settings; any other value leaves the rollout incomplete, so no new activation is admitted. It gates new activations only: vaults that already exist keep replicating and reflecting. To stop content reaching existing vaults during an incident, use `PRIVACY_SUSPEND_VAULT_SEND`. |
+| `PRIVACY_SUSPEND_EXTERNAL_AI` | No | *(unset = off)* | Operator privacy-incident switch (#3075). On, it refuses every cloud language-model call, server-paid **and** BYOK, before any provider client is built. Resonance, essay letters, completion detection and page transcription answer `503 ai_suspended` and charge nothing. Journal create, read and edit, export and account deletion keep working; frequency classification on a write degrades to unclassified, and the entry is still saved. A cached essay letter and the care surface for an intimate entry are still served. **Only unset, empty or `false` (case- and whitespace-insensitive) is off; every other value, including `0`, `off` and `no`, suspends.** An unrecognised value is also logged once at boot by variable name, never by value. Read at call time; the boot log line `privacy_suspension_state` and `GET /admin/privacy-suspensions` confirm the state. The two switches are independent: this one does not stop vault sends, and `PRIVACY_SUSPEND_VAULT_SEND` does not stop cloud calls, so flip both for zero external egress of content. |
+| `PRIVACY_SUSPEND_VAULT_SEND` | No | *(unset = off)* | Operator privacy-incident switch (#3075). On, it refuses every content-bearing Creek vault request (any request with a body, and any `POST`, `PUT` or `PATCH`: journal ingest, reflection, upload, Voice Draft upsert, and pipeline classify/link) before it reaches the wire. The journal write, reflection and upload paths treat it as an unavailable vault, so writing is still saved locally. A pipeline stage it refuses ends on that attempt without further retries. It is recorded `failed` when no attempt could have reached the vault, and `ambiguous` when an earlier, unanswered attempt may have. Body-free requests continue: the capability probe, job polls, the wheel read, and the content-free journal withdrawal and Voice Draft deletion. Teardown reconciliation through the provisioning client is not affected. Same parsing as `PRIVACY_SUSPEND_EXTERNAL_AI`: only unset, empty or `false` is off. Confirm with `GET /admin/privacy-suspensions`. |
 | `ACCOUNT_EGRESS_BARRIER_CROSS_WORKER_ENABLED` | No | *(unset = on)* | Switch for the **cross-worker** half of the per-account egress barrier. Unset or `true` is on; `false` suppresses the PostgreSQL advisory statements and nothing else. Any other value is refused and reported as a defect rather than read as either answer. See "Per-account egress barrier" below — this is not a feature flag for the barrier itself, which cannot be turned off. |
 
 ### Per-account egress barrier

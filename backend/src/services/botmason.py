@@ -30,6 +30,7 @@ from errors import bad_request, payment_required, service_unavailable
 from privacy.recipients import REGISTERED_PROVIDER_BASE_URLS
 from security import sanitize_user_text
 from services.journal_encryption import production_in_force
+from services.privacy_suspension import AI_SUSPENDED_DETAIL, external_ai_suspended
 from services.provider_probe import probed_provider
 from services.stub_completions import canned_completion
 
@@ -341,6 +342,25 @@ class LLMCreditExhaustedError(LLMProviderError):
         """Record the provider whose balance is spent alongside its own words."""
         super().__init__(message)
         self.provider = provider
+
+
+class ExternalAISuspendedError(LLMProviderError):
+    """The operator has suspended every external language-model call (#3075).
+
+    Raised by :func:`generate_response` as its very first act while
+    ``PRIVACY_SUSPEND_EXTERNAL_AI`` is on -- before the system prompt, the
+    provider decision, the stub branch or any client construction -- so a
+    suspended deployment builds no SDK client and opens no socket, whoever's
+    key the request carries. Its message is the stable ``ai_suspended`` code.
+
+    It subclasses :class:`LLMProviderError` so every caller that already
+    degrades on a provider failure (frequency classification, completion
+    detection) degrades on this too and the writing is never lost; it is not in
+    :data:`_PROVIDER_ERROR_TYPES`, and it is raised outside the ``try``, so it
+    escapes with its identity intact.
+    """
+
+    code = AI_SUSPENDED_DETAIL
 
 
 # OpenAI publishes machine-readable codes for a spent balance, so the carve-out
@@ -1150,7 +1170,14 @@ async def generate_response(
 
     Returns an :class:`LLMResponse` carrying both the generated text and the
     token counts needed to log usage downstream.
+
+    While the operator's ``PRIVACY_SUSPEND_EXTERNAL_AI`` switch is on this
+    raises :class:`ExternalAISuspendedError` before anything else -- before key
+    resolution, the provider decision, the stub branch or any client is built --
+    for server-paid and BYOK calls alike (#3075).
     """
+    if external_ai_suspended():
+        raise ExternalAISuspendedError(AI_SUSPENDED_DETAIL)
     # Provider/network/SDK/config failures normalize to LLMProviderError so the
     # chat layer can catch one SDK-agnostic type. A genuine internal bug
     # (TypeError/KeyError/unrelated RuntimeError) is not in the tuple, so it
@@ -1163,9 +1190,7 @@ async def generate_response(
         spec = PROVIDER_REGISTRY.get(provider)
         if spec is None:
             # Default: stub provider for development and testing.
-            if images:
-                return _stub_vision_response(user_message, len(images))
-            return _stub_response(user_message, resolved_prompt)
+            return _stub_answer(user_message, resolved_prompt, images)
         model = _get_model(provider)
         # Both checks run before dispatch and raise LLMProviderError subclasses,
         # which are not in _PROVIDER_ERROR_TYPES, so they escape this try
@@ -1182,6 +1207,15 @@ async def generate_response(
     except _PROVIDER_ERROR_TYPES as exc:
         raise _classify_provider_error(exc) from exc
     return result
+
+
+def _stub_answer(
+    user_message: str, system_prompt: str, images: Sequence[ImagePayload] | None
+) -> LLMResponse:
+    """The stub provider's answer: a canned transcription for images, else a canned reply."""
+    if images:
+        return _stub_vision_response(user_message, len(images))
+    return _stub_response(user_message, system_prompt)
 
 
 def _stub_response(user_message: str, system_prompt: str = "") -> LLMResponse:

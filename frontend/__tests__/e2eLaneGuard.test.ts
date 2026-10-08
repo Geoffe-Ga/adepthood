@@ -108,6 +108,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'map-stage-persona.browser.e2e.test.ts',
   'practice-catalog-details.browser.e2e.test.ts',
   'practice-deep-link.browser.e2e.test.ts',
+  'practice-paused-sitting.browser.e2e.test.ts',
   'practice-quick-launch-green.browser.e2e.test.ts',
   'practice-stats.browser.e2e.test.ts',
   'practice-unconfirmed-stage.browser.e2e.test.ts',

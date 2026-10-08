@@ -1224,6 +1224,134 @@ _SACRED_PAUSE = (
 )
 
 
+#: Stage 7 alternatives — the six practices the course lists in yellow-10,
+#: "Alternatives for Yellow Practice". Each is drawn from the chapter's own
+#: wording; the course asks that whichever is chosen run the full 45 minutes
+#: and train both concentration and awareness.
+_WALKING_MEDITATION = (
+    "Forty-five minutes of slow, continuous walking with attention on each step.",
+    (
+        "Find a quiet path or room where you can walk slowly, continuously, "
+        "for 45 minutes. Focus on the sensations of each step — the lifting "
+        "of the foot, the movement through air, the placement on the ground. "
+        "When your mind wanders, return to the walking. This is especially "
+        "good if stillness is a struggle: it gives the body something to do "
+        "while the mind trains."
+    ),
+)
+
+_YOGA_PRACTICE = (
+    "Forty-five minutes of slow, mindful yoga as a moving meditation.",
+    (
+        "Move through a slow, mindful yoga flow, holding each pose for several "
+        "breaths and moving with complete attention to alignment and "
+        "sensation. It is not a workout; it is a moving meditation, training "
+        "attention through the body for the full 45 minutes."
+    ),
+)
+
+_FREE_WRITING = (
+    "Forty-five minutes of unbroken stream-of-consciousness writing.",
+    (
+        "Set the timer and write without stopping for 45 minutes. No "
+        "editing, no crossing out — just let the hand move. Watch the "
+        "contents of your mind arise on the page. Over time you begin to see "
+        "the patterns, the loops, the conditioning, and that seeing is the "
+        "beginning of choice."
+    ),
+)
+
+_SUBTLE_ENERGY_SCANNING = (
+    "Forty-five minutes of slow somatic scanning for subtle energetic sensation.",
+    (
+        "Lie down or sit comfortably. Spend 45 minutes slowly scanning your "
+        "body for subtle energetic sensations — tingling, warmth, pressure, "
+        "flow. This trains interoceptive awareness, the ability to sense "
+        "what is happening inside the body."
+    ),
+)
+
+_CHANTING_KIRTAN_YELLOW = (
+    "Forty-five minutes of repetitive devotional chanting as mantra meditation.",
+    (
+        "Chant repetitively and devotionally, with full attention, for 45 "
+        "minutes. The repetition stabilizes the mind, the devotion opens the "
+        "heart, and the sustained focus trains concentration."
+    ),
+)
+
+_NOTING_PRACTICE = (
+    "Forty-five minutes of vipassana noting: name each thing as it arises.",
+    (
+        "Sit in meditation and mentally note everything that arises — "
+        "'thinking', 'hearing', 'itching', 'planning', 'remembering'. The "
+        "noting keeps you anchored in the present moment and keeps you from "
+        "getting lost in thought. Continue for the full 45 minutes."
+    ),
+)
+
+#: Stage 9 alternatives — the six practices the course lists in ultraviolet-7,
+#: "Alternatives for Ultraviolet Practice", for when breath-based jhana
+#: practice isn't accessible or resonant. Each is drawn from the chapter's
+#: own wording; the chapter still recommends trying breath-based jhana first.
+_VIPASSANA_NOTING = (
+    "Forty-five minutes of continuous noting toward insight into impermanence.",
+    (
+        "Sit in meditation and continuously note everything that arises: "
+        "seeing, hearing, thinking, feeling, itching, planning. The noting "
+        "keeps you present and trains you to see the impermanence of all "
+        "phenomena."
+    ),
+)
+
+_METTA_JHANAS = (
+    "Forty-five minutes of lovingkindness as the object of absorption.",
+    (
+        "Instead of the breath, use lovingkindness as the object. Cultivate "
+        "metta — goodwill — toward yourself, then toward others, until the "
+        "heart opens into warmth. This is a heart-centered rather than "
+        "concentration-centered doorway to absorption."
+    ),
+)
+
+_KASINA_PRACTICE = (
+    "Forty-five minutes of one-pointed gazing on a colored disk.",
+    (
+        "Gaze at a colored disk, or visualize one with eyes closed. When the "
+        "image becomes stable, close your eyes and hold the mental image. "
+        "This trains one-pointed concentration."
+    ),
+)
+
+_BODY_SCANNING_FOR_JHANA = (
+    "Forty-five minutes of body scanning that rests in pleasant sensation.",
+    (
+        "Slowly scan the body, noticing subtle sensations. When pleasant "
+        "sensations arise, rest attention there and let them intensify. This "
+        "is a somatic doorway to pīti and sukha."
+    ),
+)
+
+_MANTRA_REPETITION = (
+    "Forty-five minutes repeating a single mantra as a continuous stream.",
+    (
+        "Repeat a single mantra — a sacred phrase or sound — for the entire "
+        "sit. Let the mantra become a continuous stream, and let the mind "
+        "unify with the sound."
+    ),
+)
+
+_CHANNELING_WRITING_45 = (
+    "Forty-five minutes of receptive writing: ask, then write what comes.",
+    (
+        "Sit quietly and ask, 'What would you have me know?' Then write "
+        "whatever comes, without filtering. This is absorption through "
+        "receptivity — letting wisdom move through you rather than trying to "
+        "figure it out."
+    ),
+)
+
+
 PRESET_COPY: dict[str, tuple[str, str]] = {
     "5-4-3-2-1 grounding": _S1,
     "Tarot meditation": _S2,
@@ -1300,4 +1428,16 @@ PRESET_COPY: dict[str, tuple[str, str]] = {
     "Hierarchical Re-Feeling": _HIERARCHICAL_RE_FEELING,
     "Reflective Tarot Draw": _REFLECTIVE_TAROT_DRAW,
     "Sacred Pause": _SACRED_PAUSE,
+    "Walking Meditation": _WALKING_MEDITATION,
+    "Yoga Practice": _YOGA_PRACTICE,
+    "Free-Writing": _FREE_WRITING,
+    "Subtle Energy Scanning": _SUBTLE_ENERGY_SCANNING,
+    "Chanting / Kirtan": _CHANTING_KIRTAN_YELLOW,
+    "Noting Practice": _NOTING_PRACTICE,
+    "Vipassana Noting": _VIPASSANA_NOTING,
+    "Metta Jhanas": _METTA_JHANAS,
+    "Kasina Practice": _KASINA_PRACTICE,
+    "Body Scanning for Jhana": _BODY_SCANNING_FOR_JHANA,
+    "Mantra Repetition": _MANTRA_REPETITION,
+    "Channeling Writing (45 min)": _CHANNELING_WRITING_45,
 }

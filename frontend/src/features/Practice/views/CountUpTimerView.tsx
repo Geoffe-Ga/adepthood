@@ -3,7 +3,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { RitualControls, RitualState } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import { useSessionSurface } from './sessionSurface';
 import { SESSION_CAPTION_LABEL, SUCCESS_FILL, SessionContainer } from './shared';
@@ -19,7 +19,13 @@ const CountUpTimerView = ({ state, controls }: Props): React.JSX.Element => {
   const surface = useSessionSurface();
   return (
     <SessionContainer testID="count-up-timer-view">
-      <Text style={[styles.time, { color: surface.text }]} testID="count-up-elapsed">
+      <Text
+        style={[styles.time, { color: surface.text }]}
+        testID="count-up-elapsed"
+        accessibilityRole="timer"
+        accessibilityLabel={spokenTime(state.elapsedMs, 'elapsed')}
+        accessibilityLiveRegion="polite"
+      >
         {formatTime(state.elapsedMs)}
       </Text>
       <Text style={[styles.label, { color: surface.textSoft }]}>elapsed</Text>
