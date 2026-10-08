@@ -34,25 +34,14 @@ _DELETE_ACCOUNT_SCREEN = (
     _REPO_ROOT / "frontend" / "src" / "features" / "Settings" / "DeleteAccountScreen.tsx"
 )
 
-# The frontend's copy of the bound, and the Jest suite that pins the screen's
-# copy against it, so a frontend-only PR is held to the same rules (#3115).
+# The frontend's copy of the bound. The Jest suite that holds the screen to
+# these rules reads them, and the backend figure, from this repo's Python
+# through ``@/testing/backendSource``, so it runs on either side's change (#3115).
 _FRONTEND_BACKUP_SCHEDULE: Final = (
     _REPO_ROOT / "frontend" / "src" / "constants" / "backupSchedule.ts"
 )
-_FRONTEND_COPY_TEST: Final = (
-    _REPO_ROOT
-    / "frontend"
-    / "src"
-    / "features"
-    / "Settings"
-    / "__tests__"
-    / "DeleteAccountScreenBackupCopy.test.tsx"
-)
 _FRONTEND_BOUND_DECLARATION: Final = re.compile(
     r"^export const OLDEST_LIVE_BACKUP_DAYS = (\d+);$", re.MULTILINE
-)
-_FRONTEND_PINNED_LITERAL: Final = re.compile(
-    r"^const PINNED_OLDEST_LIVE_BACKUP_DAYS = (\d+);$", re.MULTILINE
 )
 # How the screen interpolates the frontend constant into its copy.
 _FRONTEND_BOUND_PLACEHOLDER: Final = "${OLDEST_LIVE_BACKUP_DAYS}"
@@ -114,17 +103,15 @@ def _prose(document: Path) -> str:
 
 
 def test_frontend_bound_is_the_backend_bound() -> None:
-    """The frontend constant and its Jest pin both hold ``OLDEST_LIVE_BACKUP_DAYS``.
+    """The frontend constant the screen renders holds ``OLDEST_LIVE_BACKUP_DAYS``.
 
-    The screen renders the frontend constant; the Jest suite pins that constant
-    to a literal. Both are read here and held to the backend figure, so a
-    change on either side alone fails a suite.
+    The delete-account Jest suite derives the same figure from
+    ``domain.retention_stores`` and holds the constant to it, so the pin fails
+    on whichever side's CI the change runs in.
     """
     declared = _frontend_literal(_FRONTEND_BACKUP_SCHEDULE, _FRONTEND_BOUND_DECLARATION)
-    pinned = _frontend_literal(_FRONTEND_COPY_TEST, _FRONTEND_PINNED_LITERAL)
 
     assert declared == OLDEST_LIVE_BACKUP_DAYS
-    assert pinned == OLDEST_LIVE_BACKUP_DAYS
 
 
 def test_the_screen_renders_the_shared_bound_not_a_transcribed_one() -> None:
@@ -133,14 +120,6 @@ def test_the_screen_renders_the_shared_bound_not_a_transcribed_one() -> None:
 
     assert f"about {_FRONTEND_BOUND_PLACEHOLDER} days" in source
     assert f"{OLDEST_LIVE_BACKUP_DAYS} days" not in source
-
-
-def test_the_frontend_suite_bans_every_overclaim() -> None:
-    """The Jest suite's overclaim ban lists each phrase this one does."""
-    jest_suite = _FRONTEND_COPY_TEST.read_text(encoding="utf-8")
-
-    missing = [claim for claim in _OVERCLAIMS if f"'{claim}'" not in jest_suite]
-    assert not missing, f"{_FRONTEND_COPY_TEST.name} does not ban {missing}"
 
 
 def _unframed_bound_offsets(copy: str) -> list[int]:

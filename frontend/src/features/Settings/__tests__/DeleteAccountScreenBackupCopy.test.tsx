@@ -8,6 +8,13 @@
  * the backend suite. This is the frontend half of the pin: the same bound,
  * the same framing rule and the same overclaim ban, read from what the
  * screen renders.
+ *
+ * Nothing here is transcribed from the backend. The bound is derived from
+ * `backend/src/domain/retention_stores.py` the way the backend derives it, and
+ * the framing phrases, the framing window and the overclaim ban are read from
+ * the backend test. Reading them through `@/testing/backendSource` marks this
+ * suite cross-boundary, so it runs on a backend-only change as well as on a
+ * frontend-only one: changing the figure on either side alone fails here.
  */
 import { fireEvent, render, waitFor, type RenderAPI } from '@testing-library/react-native';
 import React from 'react';
@@ -17,6 +24,7 @@ import DeleteAccountScreen from '../DeleteAccountScreen';
 import { users, type AccountDeletionReceipt } from '@/api';
 import { OLDEST_LIVE_BACKUP_DAYS } from '@/constants/backupSchedule';
 import { useAuth } from '@/context/AuthContext';
+import { readBackendSource } from '@/testing/backendSource';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
@@ -34,34 +42,80 @@ const mockDeleteMyAccount = users.deleteMyAccount as jest.MockedFunction<
   typeof users.deleteMyAccount
 >;
 
-// CROSS-STACK CONTRACT: the backend pins `OLDEST_LIVE_BACKUP_DAYS` in
-// `backend/src/domain/retention_stores.py` to this literal too, by reading
-// `frontend/src/constants/backupSchedule.ts`. Changing the figure on either
-// side fails a test until both move together.
-const PINNED_OLDEST_LIVE_BACKUP_DAYS = 97;
+const RETENTION_STORES = readBackendSource('src', 'domain', 'retention_stores.py');
+const BACKEND_COPY_TEST = readBackendSource('tests', 'test_deletion_backup_copy.py');
 
-// Mirrors `_SCHEDULE_FRAMINGS` and `_FRAMING_WINDOW_CHARS` in
-// backend/tests/test_deletion_backup_copy.py: one of these phrases must sit in
-// the same sentence as each statement of the bound, before it, and no further
-// back than the window.
-const SCHEDULE_FRAMINGS = ['on our backup schedule', 'on that schedule'];
-const FRAMING_WINDOW_CHARS = 160;
+/**
+ * The first capture group of `pattern`'s match in `source` (or the whole match
+ * when it captures nothing), or a failure naming what moved.
+ */
+function matchOne(source: string, pattern: RegExp, what: string): string {
+  const match = source.match(pattern);
+  if (!match) throw new Error(`the backend no longer declares ${what} as ${pattern}`);
+  return match[1] ?? match[0];
+}
 
-// Mirrors `_OVERCLAIMS` there: deletion as total and instant, or the backup
-// bound as something enforced. The backend test checks each of its phrases is
-// listed here.
-const OVERCLAIMS = [
-  'immediate and irreversible',
-  'immediate and total',
-  'everything of yours goes',
-  'nothing left to restore',
-  'each is deleted when its retention runs out',
-  'is gone within about',
-  'we guarantee',
-  'guaranteed',
-  'is deleted within',
-  'are deleted within',
-];
+/** Every double-quoted string literal in a Python snippet. */
+function pythonStrings(snippet: string): string[] {
+  return Array.from(snippet.matchAll(/"([^"\\]*)"/g)).flatMap((match) =>
+    match[1] === undefined ? [] : [match[1]],
+  );
+}
+
+/**
+ * `OLDEST_LIVE_BACKUP_DAYS` as `retention_stores.py` computes it: the largest
+ * `retention_days + interval_days` across `BACKUP_LEGS`. Each step of that
+ * derivation is matched, so a backend change to its shape fails here instead of
+ * being silently mis-read.
+ */
+function backendOldestLiveBackupDays(): number {
+  matchOne(
+    RETENTION_STORES,
+    /^OLDEST_LIVE_BACKUP_DAYS: Final = max\(leg\.oldest_live_copy_days for leg in BACKUP_LEGS\)$/m,
+    'OLDEST_LIVE_BACKUP_DAYS',
+  );
+  matchOne(
+    RETENTION_STORES,
+    /def oldest_live_copy_days\(self\) -> int:\n(?: {8}.*\n)*? {8}return self\.retention_days \+ self\.interval_days$/m,
+    'oldest_live_copy_days',
+  );
+  const constants = new Map(
+    Array.from(RETENTION_STORES.matchAll(/^([A-Z_]+): Final = (\d+)$/gm), (match) => [
+      match[1],
+      Number(match[2]),
+    ]),
+  );
+  const legs = Array.from(
+    RETENTION_STORES.matchAll(
+      /BackupLeg\(\s*key="[^"]+",\s*retention_days=([A-Z_]+),\s*interval_days=([A-Z_]+),/g,
+    ),
+    (match) => {
+      const [retention, interval] = [constants.get(match[1]), constants.get(match[2])];
+      if (retention === undefined || interval === undefined) {
+        throw new Error(`a backup leg names ${match[1]} / ${match[2]}, not integer constants`);
+      }
+      return retention + interval;
+    },
+  );
+  if (legs.length === 0) throw new Error('retention_stores.py declares no BackupLeg');
+  return Math.max(...legs);
+}
+
+// One of these phrases must sit in the same sentence as each statement of the
+// bound, before it, and no further back than the window -- the backend test's
+// own `_SCHEDULE_FRAMINGS` and `_FRAMING_WINDOW_CHARS`.
+const SCHEDULE_FRAMINGS = pythonStrings(
+  matchOne(BACKEND_COPY_TEST, /^_SCHEDULE_FRAMINGS: [^=]+= \(([^)]*)\)$/m, '_SCHEDULE_FRAMINGS'),
+);
+const FRAMING_WINDOW_CHARS = Number(
+  matchOne(BACKEND_COPY_TEST, /^_FRAMING_WINDOW_CHARS: Final = (\d+)$/m, '_FRAMING_WINDOW_CHARS'),
+);
+
+// The backend test's `_OVERCLAIMS`: deletion as total and instant, or the
+// backup bound as something enforced.
+const OVERCLAIMS = pythonStrings(
+  matchOne(BACKEND_COPY_TEST, /^_OVERCLAIMS: [^=]+= \(\n([\s\S]*?)\n\)$/m, '_OVERCLAIMS'),
+);
 
 const RECEIPT: AccountDeletionReceipt = {
   recoverable: false,
@@ -76,7 +130,7 @@ const RECEIPT: AccountDeletionReceipt = {
   },
 };
 
-const BOUND = `about ${PINNED_OLDEST_LIVE_BACKUP_DAYS} days`;
+const BOUND = `about ${OLDEST_LIVE_BACKUP_DAYS} days`;
 
 /** The part of a `toJSON()` host element this suite reads: its children. */
 interface RenderedNode {
@@ -123,8 +177,14 @@ beforeEach(() => {
 });
 
 describe('DeleteAccountScreen backup copy (#3115)', () => {
-  test('the shared backup figure is the literal the backend pins', () => {
-    expect(OLDEST_LIVE_BACKUP_DAYS).toBe(PINNED_OLDEST_LIVE_BACKUP_DAYS);
+  test('the shared backup figure is the one the backend derives', () => {
+    expect(OLDEST_LIVE_BACKUP_DAYS).toBe(backendOldestLiveBackupDays());
+  });
+
+  test('the rules read from the backend test are all there', () => {
+    expect(SCHEDULE_FRAMINGS).toContain('on our backup schedule');
+    expect(FRAMING_WINDOW_CHARS).toBeGreaterThan(0);
+    expect(OVERCLAIMS).toEqual(expect.arrayContaining(['nothing left to restore', 'guaranteed']));
   });
 
   test('the framing check is local: a schedule phrase in another sentence does not count', () => {
