@@ -265,7 +265,6 @@ _PARAPHRASE_PROBES = [
     ("Remember when we sat by the river?", RuleId.SHARED_MEMORY),
     ("You've told me this before.", RuleId.SHARED_MEMORY),
     ("You have told me about the river.", RuleId.SHARED_MEMORY),
-    ("Last time you wrote, you were sad.", RuleId.SHARED_MEMORY),
     ("I recall you said the river was loud.", RuleId.SHARED_MEMORY),
     ("As your AI companion, I see this.", RuleId.AI_IDENTITY),
     ("I'm Claude, and the river matters.", RuleId.AI_IDENTITY),
@@ -296,6 +295,11 @@ def test_paraphrased_cues_are_caught(letter: str, rule: RuleId) -> None:
         ("You talked about the river before, in your own words.", RuleId.SHARED_MEMORY),
         ("You may remember when the water was loud.", RuleId.SHARED_MEMORY),
         ("Last time the river rose, you stayed home.", RuleId.SHARED_MEMORY),
+        # Review round 2: the model is shown the writer's earlier pieces, so
+        # pointing at their own past writing invents no shared memory.
+        ("Last time you wrote, you were sad.", RuleId.SHARED_MEMORY),
+        ("Last time you wrote about the river, it was frozen.", RuleId.SHARED_MEMORY),
+        ("Last time you wrote about the river, it was loud too.", RuleId.SHARED_MEMORY),
         ("As your morning went on, the river stayed loud.", RuleId.AI_IDENTITY),
         ("You are here whenever you need to be.", RuleId.COMPANION_CUE),
         ("Give the bruise time to heal.", RuleId.THERAPEUTIC_GUARANTEE),
@@ -522,6 +526,44 @@ def test_quote_inside_a_note_body_must_ground(body: str, ungrounded: bool) -> No
     flagged = Violation(RuleId.NOTE_QUOTE_UNGROUNDED, "note:0") in score.violations
     assert flagged is ungrounded
     assert (RuleId.NOTE_QUOTE_UNGROUNDED in score.blocking) is ungrounded
+
+
+_PRIOR_ENTRY = "The ice held my weight all the way across. Nobody believed me."
+
+
+@pytest.mark.parametrize("given_prior", [True, False])
+def test_quotes_of_an_earlier_entry_ground_only_if_the_model_was_shown_it(
+    given_prior: bool,
+) -> None:
+    """A connection note may quote the writer's earlier entry verbatim -- if it saw it."""
+    body = (
+        "Last time you wrote \u201cThe ice held my weight all the way across.\u201d "
+        "Today the water moves."
+    )
+    note = replace(_note(_RIVER, "The water was loud."), note=body)
+    sample = replace(
+        _sample(_RIVER, notes=(note,), letter=body),
+        prior_entries=(_PRIOR_ENTRY,) if given_prior else (),
+    )
+    score = _scored(sample)
+    ungrounded = {RuleId.NOTE_QUOTE_UNGROUNDED, RuleId.LETTER_QUOTE_UNGROUNDED}
+    assert (ungrounded <= score.blocking) is not given_prior
+    assert ungrounded.isdisjoint(score.rule_ids) is given_prior
+    assert RuleId.SHARED_MEMORY not in score.rule_ids
+
+
+def test_anchor_ambiguity_is_judged_within_the_entry_only() -> None:
+    """A passage the writer also used in an earlier entry still anchors unambiguously here."""
+    note = _note(_RIVER, "The water was loud.")
+    sample = replace(_sample(_RIVER, notes=(note,)), prior_entries=("Again. The water was loud.",))
+    assert RuleId.AMBIGUOUS_ANCHOR not in _scored(sample).rule_ids
+
+
+def test_quote_spliced_across_two_entries_does_not_ground() -> None:
+    """Each elided quote must ground within ONE piece of the writer's writing."""
+    letter = "You wrote: \u201cI walked to the river \u2026 Nobody believed me.\u201d"
+    sample = replace(_sample(_RIVER, letter=letter), prior_entries=(_PRIOR_ENTRY,))
+    assert RuleId.LETTER_QUOTE_UNGROUNDED in _scored(sample).blocking
 
 
 def test_writer_first_person_quoted_back_is_not_self_reference() -> None:
