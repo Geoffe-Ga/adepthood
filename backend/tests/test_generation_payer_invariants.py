@@ -149,12 +149,30 @@ def test_nothing_in_src_arms_the_seam() -> None:
     assert subscript_writes == [], subscript_writes
 
 
+def _admits_through_gate(graph: SourceGraph, module: str, body: ast.AST) -> bool:
+    """Whether ``body`` calls the payer gate, directly or through a same-module helper.
+
+    One level of helper is followed -- ``run_resonance`` admits through
+    ``_care_if_unpaid`` so a refused distressed writer still gets care -- and
+    only helpers defined in the same module, so the check stays lexical.
+    """
+    if _calls_named(body, _PAYER_GATE):
+        return True
+    for node in ast.walk(body):
+        if not isinstance(node, ast.Call):
+            continue
+        helper = graph.body_of(Site(module, _dotted(node.func).rsplit(".", 1)[-1]))
+        if helper is not None and _calls_named(helper, _PAYER_GATE):
+            return True
+    return False
+
+
 def _gated(graph: SourceGraph, trail: tuple[str, ...]) -> bool:
-    """Whether any function on ``trail`` lexically calls the payer gate."""
+    """Whether any function on ``trail`` admits through the payer gate."""
     for step in trail[:-1]:
         module, _, name = step.rpartition(".")
         body = graph.body_of(Site(module, name))
-        if body is not None and _calls_named(body, _PAYER_GATE):
+        if body is not None and _admits_through_gate(graph, module, body):
             return True
     return False
 

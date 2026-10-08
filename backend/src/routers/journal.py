@@ -2332,6 +2332,33 @@ async def _resonance_payment(
     return None, await preflight_deduction(session, user_id)
 
 
+async def _care_if_unpaid(
+    session: AsyncSession, user_id: int, message: str, clients: _ReflectionClients
+) -> ResonanceResponse | None:
+    """Admit the pass through the payer gate, or answer a refused distressed writer with care.
+
+    No personal key and nothing to pay with is refused here, free (#3096). A
+    vault-bound pass is answered by the vault, so only an app-provider pass
+    also needs a server provider able to answer at all. Care never depends on
+    the payer (NORTH-STAR §10): when the gate refuses an entry the local screen
+    flags, the writer gets the care surface with no reflection -- the 200 the
+    client already renders -- instead of a bare 402. ``None`` means admitted.
+    """
+    try:
+        await require_ai_payer(
+            session,
+            user_id,
+            clients.api_key,
+            app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
+        )
+    except HTTPException as refusal:
+        care = _care_for(message)
+        if care is None or refusal.status_code != status.HTTP_402_PAYMENT_REQUIRED:
+            raise
+        return await _care_only_response(session, user_id, _care_surface(care))
+    return None
+
+
 @router.post("/{entry_id}/resonance", response_model=ResonanceResponse)
 @limiter.limit("10/minute")
 async def run_resonance(
@@ -2411,15 +2438,9 @@ async def run_resonance(
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
     require_external_ai_available()
-    # No personal key and nothing to pay with is refused here, free (#3096). A
-    # vault-bound pass is answered by the vault, so only an app-provider pass
-    # also needs a server provider able to answer at all.
-    await require_ai_payer(
-        session,
-        current_user,
-        clients.api_key,
-        app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
-    )
+    refused_care = await _care_if_unpaid(session, current_user, message, clients)
+    if refused_care is not None:
+        return refused_care
     require_generation_minute_available(current_user)
     async with generation_slot(session, current_user):
         return await _run_admitted_resonance(session, current_user, entry, clients)

@@ -39,12 +39,14 @@ from services.generation_access import (
 )
 from services.wallet import has_generation_capacity
 from tests.incident.test_privacy_suspension import (
+    _DISTRESS_BODY,
     _MINUTE_BUCKET_ROUTES,
     _call_route,
     arm_anthropic,
     count_rows,
     record_admission,
     record_minute_bucket,
+    seed_entry,
     signup,
     wallet,
 )
@@ -342,8 +344,10 @@ async def test_a_personal_key_proceeds_on_a_stub_server_with_an_empty_wallet(
     route: str,
 ) -> None:
     """With a key, generation proceeds as today: it reaches the key's own provider."""
-    disarm_stub_seam(monkeypatch)
     stub = arm_anthropic(monkeypatch)
+    # After arming: ``arm_anthropic`` configures a server provider, and this
+    # case is about a ``stub`` server with no seam.
+    disarm_stub_seam(monkeypatch)
     headers, user_id, _ = await signup(async_client, f"byok_{route}")
     await empty_wallet(db_session, monkeypatch, user_id)
     before_wallet = await wallet(db_session, user_id)
@@ -377,3 +381,64 @@ async def test_credits_on_a_real_provider_proceed_as_today(
     assert stub.request_count >= 1
     usage = await db_session.execute(select(LLMUsageLog).where(col(LLMUsageLog.user_id) == user_id))
     assert all(row.provider != botmason.STUB_PROVIDER_NAME for row in usage.scalars().all())
+
+
+# --- care never depends on the payer ------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payer_state", ["unarmed_stub", "empty_wallet"])
+async def test_a_refused_distressed_entry_still_receives_care(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    payer_state: str,
+) -> None:
+    """A writer in distress gets the care surface even when nobody can pay for a reading.
+
+    The care screen is local and free (NORTH-STAR §10), so a payer refusal must
+    not swallow it: the answer is a 200 carrying ``care`` and no notes -- the
+    shape the client already renders -- with nothing charged and no slot taken.
+    """
+    # Armed first: ``arm_anthropic`` configures a server provider of its own,
+    # which the payer state below then overrides.
+    stub = arm_anthropic(monkeypatch)
+    if payer_state == "unarmed_stub":
+        disarm_stub_seam(monkeypatch)
+    else:
+        configure_server_provider(monkeypatch)
+    minute = record_minute_bucket(monkeypatch)
+    admitted = record_admission(monkeypatch)
+    headers, user_id, _ = await signup(async_client, f"care_{payer_state}")
+    if payer_state == "empty_wallet":
+        await empty_wallet(db_session, monkeypatch, user_id)
+    entry_id = await seed_entry(db_session, user_id, body=_DISTRESS_BODY)
+    before_wallet = await wallet(db_session, user_id)
+    before_audit = await count_rows(db_session, WalletAudit)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert body["care"] is not None
+    assert body["care"]["resources"]
+    assert body["marginalia"] == []
+    assert admitted == []
+    assert minute == []
+    assert stub.request_count == 0
+    await _assert_refused_for_free(db_session, user_id, before_wallet, before_audit)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_ordinary_entry_still_gets_the_payer_refusal(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Control: only an elevated entry turns the refusal into care; others keep the 402."""
+    disarm_stub_seam(monkeypatch)
+    headers, user_id, _ = await signup(async_client, "care_control")
+    entry_id = await seed_entry(db_session, user_id)
+
+    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json() == {"detail": KEY_REQUIRED}
