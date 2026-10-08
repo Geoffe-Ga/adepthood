@@ -41,6 +41,13 @@ function progressCopy(state: VaultActivation['state']): string {
   }
 }
 
+function progressDetail(state: VaultActivation['state']): string {
+  if (state === 'deleting') {
+    return 'Secure cleanup may take up to 24 hours. You can leave this page and return later; your journal remains available.';
+  }
+  return 'You can keep journaling while this finishes.';
+}
+
 const CustodyNotice = (): React.JSX.Element => (
   <View style={styles.notice} testID="activation-custody-notice">
     <Text style={styles.noticeTitle}>Provider-managed custody</Text>
@@ -136,7 +143,7 @@ const Progress = ({ state }: { state: VaultActivation['state'] }): React.JSX.Ele
     <ActivityIndicator size="small" color={accent.primary} />
     <View style={styles.progressText}>
       <Text style={styles.sectionTitle}>{progressCopy(state)}</Text>
-      <Text style={styles.body}>You can keep journaling while this finishes.</Text>
+      <Text style={styles.body}>{progressDetail(state)}</Text>
     </View>
   </View>
 );
