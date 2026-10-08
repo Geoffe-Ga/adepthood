@@ -96,7 +96,8 @@ _QUOTE_TRIM = " \t\n.,;:!?\u2026"
 class RuleId(StrEnum):
     """Every rule the rubric can report, by stable id."""
 
-    #: A kept note's span does not hold the text it claims to quote.
+    #: A kept note's span does not hold the text it claims to quote, or the
+    #: note's own text quotes words that are not in the entry.
     NOTE_QUOTE_UNGROUNDED = "note_quote_ungrounded"
     #: A kept note quotes text that occurs more than once; the pipeline
     #: anchors the first copy, which may not be the one the model meant.
@@ -409,11 +410,11 @@ def _is_claim_length(quote: str) -> bool:
     return len(quote.split()) >= MIN_QUOTE_WORDS or wide >= MIN_QUOTE_CHARS_WIDE
 
 
-def _ungrounded_letter_quotes(letter: str, entry: str) -> bool:
-    """True when the letter quotes a claim-length span the entry does not hold."""
+def _has_ungrounded_quote(text: str, entry: str) -> bool:
+    """True when ``text`` quotes a claim-length span the entry does not hold."""
     return any(
         _is_claim_length(_quote_body(m)) and not _grounds(_quote_body(m), entry)
-        for m in _quoted_spans(letter)
+        for m in _quoted_spans(text)
     )
 
 
@@ -453,7 +454,10 @@ def _note_violations(index: int, note: MarginaliaAnchored, entry: str) -> list[V
     """Grounding checks for one kept note, then the phrase rules over its text."""
     target = f"note:{index}"
     found: list[Violation] = []
-    if entry[note.anchor_start : note.anchor_end] != note.anchor_text:
+    # Either the anchor is not where it claims, or the note's own text quotes
+    # words the writer never wrote: both put invented words in their mouth.
+    misanchored = entry[note.anchor_start : note.anchor_end] != note.anchor_text
+    if misanchored or _has_ungrounded_quote(note.note, entry):
         found.append(Violation(RuleId.NOTE_QUOTE_UNGROUNDED, target))
     if len(quote_occurrences(entry, note.anchor_text)) > 1:
         found.append(Violation(RuleId.AMBIGUOUS_ANCHOR, target))
@@ -463,7 +467,7 @@ def _note_violations(index: int, note: MarginaliaAnchored, entry: str) -> list[V
 def _letter_violations(letter: str, entry: str) -> list[Violation]:
     """Grounding of the letter's quotes, then the phrase rules over the letter."""
     found: list[Violation] = []
-    if _ungrounded_letter_quotes(letter, entry):
+    if _has_ungrounded_quote(letter, entry):
         found.append(Violation(RuleId.LETTER_QUOTE_UNGROUNDED, "letter"))
     return found + _output_violations("letter", letter, entry)
 

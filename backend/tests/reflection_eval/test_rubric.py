@@ -21,6 +21,7 @@ from tests.reflection_eval.rubric import (
     ReflectionScore,
     RuleId,
     Severity,
+    Violation,
     quote_occurrences,
     score_reflection,
 )
@@ -330,6 +331,24 @@ def test_misanchored_note_is_blocking_not_raised() -> None:
         kind="theme", anchor_start=0, anchor_end=11, anchor_text="Work ran long.", note=_CANNED_NOTE
     )
     assert RuleId.NOTE_QUOTE_UNGROUNDED in _scored(_sample(entry, notes=(note,))).blocking
+
+
+@pytest.mark.parametrize(
+    ("body", "ungrounded"),
+    [
+        ("You also wrote \u201cI swam across the river at night\u201d, which matters.", True),
+        ("You also wrote 'my brother swam with me', and that matters.", True),
+        ("You also wrote \u201cI walked to the river at dawn\u201d, which matters.", False),
+        ("You let the sound stand on its own.", False),
+    ],
+)
+def test_quote_inside_a_note_body_must_ground(body: str, ungrounded: bool) -> None:
+    """A correctly anchored note cannot invent the writer's words in its own text."""
+    note = replace(_note(_RIVER, "The water was loud."), note=body)
+    score = _scored(_sample(_RIVER, notes=(note,)))
+    flagged = Violation(RuleId.NOTE_QUOTE_UNGROUNDED, "note:0") in score.violations
+    assert flagged is ungrounded
+    assert (RuleId.NOTE_QUOTE_UNGROUNDED in score.blocking) is ungrounded
 
 
 def test_writer_first_person_quoted_back_is_not_self_reference() -> None:
