@@ -4,8 +4,8 @@
 credits or a key, and never hand out canned stub text. These prove it
 structurally, for the routes and call sites somebody adds tomorrow:
 
-* the stub's answer is built from exactly one call site, inside
-  :func:`services.botmason.generate_response`, under an ``if`` that asks
+* the stub's answer is built from exactly one call site, in the helper only
+  :func:`services.botmason.generate_response` calls, under an ``if`` that asks
   :func:`services.botmason.stub_seam_armed` -- nothing else in ``src`` can reach
   it, and nothing in ``src`` arms the seam;
 * the canned completions module is imported by the stub alone;
@@ -32,6 +32,7 @@ from tests.support.egress_call_graph import Site, SourceGraph, egress_reaching_r
 
 _SRC: Final = Path(__file__).resolve().parents[1] / "src"
 _STUB_ENTRY: Final = "_stub_answer"
+_STUB_GATE: Final = "_unconfigured_answer"
 _STUB_BUILDERS: Final = frozenset({"_stub_response", "_stub_vision_response"})
 _SEAM_CHECK: Final = "stub_seam_armed"
 _SEAM_ENV_NAME: Final = "STUB_SEAM_ENV_VAR"
@@ -79,12 +80,14 @@ def _guarding_ifs(tree: ast.Module, target: ast.AST) -> list[ast.If]:
 
 
 def test_the_stub_answer_has_one_call_site_behind_the_seam() -> None:
-    """Only ``generate_response`` builds a stub answer, and only when the seam is armed."""
+    """Only ``generate_response`` reaches a stub answer, and only when the seam is armed."""
     sites = _call_sites(_STUB_ENTRY)
+    gate_callers = {(module, owner) for module, owner, _ in _call_sites(_STUB_GATE)}
 
     assert [(module, owner) for module, owner, _ in sites] == [
-        ("services/botmason.py", "generate_response")
+        ("services/botmason.py", _STUB_GATE)
     ], sites
+    assert gate_callers == {("services/botmason.py", "generate_response")}, gate_callers
     tree = _trees()["services/botmason.py"]
     guards = _guarding_ifs(tree, sites[0][2])
     assert any(_calls_named(guard.test, _SEAM_CHECK) for guard in guards), [

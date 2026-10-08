@@ -1240,12 +1240,7 @@ async def generate_response(
 
         spec = PROVIDER_REGISTRY.get(provider)
         if spec is None:
-            # No real provider. The canned stub answers only as an armed test
-            # seam; otherwise nothing may answer, and saying so beats inventing
-            # a reflection (#3096).
-            if stub_seam_armed():
-                return _stub_answer(user_message, resolved_prompt, images)
-            raise NoGenerationSourceError(KEY_REQUIRED_DETAIL)
+            return _unconfigured_answer(user_message, resolved_prompt, images)
         model = _get_model(provider)
         # Both checks run before dispatch and raise LLMProviderError subclasses,
         # which are not in _PROVIDER_ERROR_TYPES, so they escape this try
@@ -1262,6 +1257,19 @@ async def generate_response(
     except _PROVIDER_ERROR_TYPES as exc:
         raise _classify_provider_error(exc) from exc
     return result
+
+
+def _unconfigured_answer(
+    user_message: str, system_prompt: str, images: Sequence[ImagePayload] | None
+) -> LLMResponse:
+    """Answer a request no real provider serves: the armed stub seam, or a refusal.
+
+    The canned stub answers only as an armed test seam; otherwise nothing may
+    answer, and saying so beats inventing a reflection (#3096).
+    """
+    if stub_seam_armed():
+        return _stub_answer(user_message, system_prompt, images)
+    raise NoGenerationSourceError(KEY_REQUIRED_DETAIL)
 
 
 def _stub_answer(
