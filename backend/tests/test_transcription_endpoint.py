@@ -10,6 +10,8 @@ transcribed text.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from http import HTTPStatus
 from unittest.mock import AsyncMock
 
@@ -101,6 +103,53 @@ async def test_production_stub_provider_is_refused_before_wallet_deduction(
     preflight.assert_not_awaited()
     after = await _wallet_snapshot(db_session, "production_stub@example.com")
     assert _units_spent(before, after) == 0
+    assert await _usage_row_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payer", ["server_provider", "byok_on_stub"])
+async def test_text_only_model_is_422_before_slot_or_wallet_deduction(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    payer: str,
+) -> None:
+    """A model that cannot see images is refused before the slot, the charge or a dial.
+
+    The payer gate admits both cases -- a server provider with credits, and a
+    personal key on a stub server -- so this is the route's own pre-charge
+    ``model_lacks_vision`` guard answering, through the real
+    ``vision_provider_available`` with the model reported text-only.
+    """
+    transport = use_openai(monkeypatch, HTTPStatus.OK, {})
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
+    headers = await _signup(async_client, f"text_only_{payer}")
+    if payer == "byok_on_stub":
+        monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        headers = {**headers, "X-LLM-API-Key": OPENAI_KEY}
+    monkeypatch.setattr(botmason_service, "supports_vision", lambda _provider, _model: False)
+    preflight = AsyncMock()
+    monkeypatch.setattr("routers.transcription.preflight_deduction", preflight)
+    slots: list[str] = []
+
+    @asynccontextmanager
+    async def _slot(*_args: object, **_kwargs: object) -> AsyncIterator[None]:
+        slots.append("slot")
+        yield
+
+    monkeypatch.setattr("routers.transcription.generation_slot", _slot)
+    email = f"text_only_{payer}@example.com"
+    before = await _wallet_snapshot(db_session, email)
+
+    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
+
+    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, resp.text
+    assert resp.json()["detail"] == "model_lacks_vision"
+    preflight.assert_not_awaited()
+    assert slots == []
+    assert transport.request_count == 0
+    assert _units_spent(before, await _wallet_snapshot(db_session, email)) == 0
     assert await _usage_row_count(db_session) == 0
 
 
