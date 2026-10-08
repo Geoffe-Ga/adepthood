@@ -26,7 +26,10 @@ request carrying a person's content, so credits buy nothing on the app-provider
 path. :func:`services.botmason.server_generation_available` is the one predicate
 that says so -- true only for the armed stub test seam -- and this gate's
 ``llm_key_required`` arm covers every keyless app-provider request. Credits pay
-only for a non-cloud source: the caller's own vault (``app_provider=False``).
+only when the caller's vault answers (``app_provider=False``); whether the vault
+itself uses a cloud model is the vault's boundary (``CREEK_DOWNSTREAM_MODEL``,
+under the Creek deployment's ``CREEK_CLOUD_CONSENT``), and is not yet verified
+per receipt -- a known gap escalated to the owner (ADR 0009 Decision item 4).
 """
 
 from __future__ import annotations

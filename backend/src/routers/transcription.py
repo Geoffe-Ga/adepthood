@@ -70,9 +70,10 @@ _TRANSCRIPTION_ATTEMPTS = 1
 router = build_router(
     prefix="/journal",
     tags=["journal"],
-    # 402 is a payer refusal: ``preflight_deduction`` refuses a server-paid page
-    # when neither wallet has capacity, and ``resolve_chat_api_key`` refuses a
-    # provider configuration that requires a missing caller/server key.
+    # 402 is a payer refusal: ``require_ai_payer`` refuses a page with no key of
+    # the writer's own (``llm_key_required``; there is no server-key fallback
+    # since ADR 0009 phase (a)), and ``preflight_deduction`` an empty wallet on
+    # the armed stub test seam.
     # 429 is the generation guardrails' (#623): the concurrent slot and the
     # wallet's daily ceiling; 503 is the slot failing closed.
     extra_statuses=(

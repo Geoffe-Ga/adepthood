@@ -150,6 +150,14 @@ answers to this record's follow-up questions, given the same evening.
    model or the managed runtime is live, credits buy no app-provider
    inference; that is the feature loss Decision item 12 accepts.
 
+   **Known gap, escalated to the owner: a vault-answered request is not
+   proven non-cloud.** Credits pay only when the caller's vault answers; whether the vault itself uses a cloud model is the vault's boundary (`CREEK_DOWNSTREAM_MODEL`, under the Creek deployment's `CREEK_CLOUD_CONSENT`), and is not yet verified per receipt. A managed vault whose Creek deployment sets
+   `CREEK_CLOUD_CONSENT` could therefore answer a credit-funded request
+   from a cloud model on a key the operator holds. Closing it needs either a
+   vault contract field that reports a local route per answer, or credit
+   admission limited to vaults the person connected themselves; the owner
+   decides which.
+
    **Honest limit, decided by the owner:** processing in that managed
    runtime is **not operator-blind while it runs**. The runtime sees the
    plaintext it processes and stores none of it. The same holds for a
@@ -233,13 +241,13 @@ history and future content stand or fall together.
 
 ### Option status_quo
 
-*HEAD today.*
+*HEAD when this record was decided (2026-10-07): the pre-phase-(a) baseline.*
 
 - **Boundary:** The Adepthood server process, its database and backups, Creek on ordinary Fly, and every configured model vendor all see plaintext; provider-managed custody is not operator-blind. (`repo:backend/src/services/journal_encryption.py::KEYS_ENV_VAR`)
 - **Key custody:** Server env var JOURNAL_ENCRYPTION_KEYS holds every key; EncryptedString decrypts on every ORM read. No per-person key exists. (`repo:backend/tests/test_custody_decision_record.py::test_custody_codec_has_no_per_principal_key`)
 - **Recovery:** Operator restores from backup with the env keys; password reset restores full access. (`repo:backend/src/services/journal_encryption.py::KEYS_ENV_VAR`)
 - **Metadata leakage:** Everything: content, sizes, timestamps, counts, tiers, ids, network metadata. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
-- **Inference location:** Server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
+- **Inference location:** Pre-phase-(a) baseline: server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. Phase (a)'s first slice (#3067) removed the app-key payer. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Supported platforms:** Web only ships; native is configured but unshipped. (`repo:DEPLOYMENT.md`)
 - **Client delivery and update trust:** Operator-served web bundle with a report-only CSP; a modified bundle is undetectable to the person. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** Nothing removed: 18 EncryptedString columns across 10 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
@@ -479,7 +487,8 @@ stores. This record consumes them and does not rebuild them.
   `LLM_API_KEY`, so a credit-funded message reached a cloud vendor on the
   app's account. Phase (a)'s first slice (#3067) removed that fallback: a
   request without the person's own key is refused `llm_key_required` unless
-  their vault answers it.
+  their vault answers it. Credits pay only when the caller's vault answers; whether the vault itself uses a cloud model is the vault's boundary (`CREEK_DOWNSTREAM_MODEL`, under the Creek deployment's `CREEK_CLOUD_CONSENT`), and is not yet verified per receipt. That is the known gap recorded under
+  Decision item 4.
 - **Decided:** credits fund **non-cloud** inference only. That means the
   person's vault-local model (B05) or a managed no-retention runtime we run. A
   BYOK call pays its own vendor and debits no credits. With neither credits

@@ -222,7 +222,9 @@ changes.
   a request without the person's own key is refused `llm_key_required`
   unless their vault answers it, together with
   [#3096](https://github.com/Geoffe-Ga/adepthood/issues/3096). ADR 0009
-  Decision item 4 records the change.
+  Decision item 4 records the change, and the gap that remains: credits pay
+  when the vault answers, and whether the vault itself uses a cloud model is
+  not yet verified per receipt.
 - **Decision 4, recovery.** "No operator escrow and no operator-assisted
   recovery reset" is kept and is decided to apply to the journal. On
   2026-10-07 the owner chose the factors: a recovery phrase the person

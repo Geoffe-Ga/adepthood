@@ -99,7 +99,7 @@ STUB_SEAM_ENV_VAR = "BOTMASON_STUB_SEAM"
 _STUB_SEAM_ARMED_VALUE = "true"
 
 # The 402 detail for a request only the person's own key can answer: no personal
-# key, and nothing non-cloud to spend credits on (ADR 0009 phase (a), #3067).
+# key, and no vault to answer what credits could pay for (ADR 0009 phase (a), #3067).
 # Mirrored in ``frontend/src/api/errorMessages.ts``.
 KEY_REQUIRED_DETAIL = "llm_key_required"
 
@@ -650,9 +650,10 @@ def server_generation_available() -> bool:
     carries a person's content, and under ADR 0009 phase (a) (#3067) a cloud
     model is reached only with the person's own key: a configured
     ``BOTMASON_PROVIDER`` and the server's ``LLM_API_KEY`` buy a keyless request
-    nothing. Credits pay only for a non-cloud source -- the person's vault,
-    which a route admits separately -- so on the app-provider path a writer
-    without a key of their own is refused ``llm_key_required``.
+    nothing. Credits pay only when the person's vault answers, which a route
+    admits separately (whether the vault itself uses a cloud model is its own
+    boundary, not yet verified per receipt) -- so on the app-provider path a
+    writer without a key of their own is refused ``llm_key_required``.
     """
     return stub_seam_armed()
 
@@ -687,8 +688,10 @@ def _matches_provider_rule(api_key: str, rule: tuple[str, tuple[str, ...]] | Non
 def _validated_header_key(header_value: str | None) -> str | None:
     """Strip, validate, and return the user-supplied BYOK key or ``None``.
 
-    Returns ``None`` when the header is absent or empty (so the caller can
-    fall back to the env var).  Raises 400 when the value is present but
+    Returns ``None`` when the header is absent or empty. There is no fallback
+    to a server key (ADR 0009 phase (a), #3067): a keyless request is refused
+    by the route's payer gate (``llm_key_required``) or, at the leaf, by
+    :class:`NoGenerationSourceError`.  Raises 400 when the value is present but
     matches no known provider's key format.  Validation is keyed on the
     key itself — not on ``BOTMASON_PROVIDER`` — because a BYOK key selects
     its own provider; a stub-configured server must still accept a real
@@ -711,7 +714,7 @@ def resolve_chat_api_key(header_value: str | None) -> str | None:
     server's ``LLM_API_KEY`` never pays for a call carrying a person's content
     (ADR 0009 phase (a), #3067), so ``None`` means "no cloud model may answer",
     and the route's payer gate (:func:`services.generation_access.require_ai_payer`)
-    decides whether a non-cloud source can. The key is used for a single call
+    decides whether the caller's vault can. The key is used for a single call
     and is never persisted, logged, or echoed back.
     """
     return _validated_header_key(header_value)

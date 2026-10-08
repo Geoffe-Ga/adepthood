@@ -143,7 +143,7 @@
         "source": "repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS"
       },
       "inference_location": {
-        "value": "Server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound.",
+        "value": "Pre-phase-(a) baseline: server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. Phase (a)'s first slice (#3067) removed the app-key payer.",
         "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
       },
       "supported_platforms": {

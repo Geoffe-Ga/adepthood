@@ -21,13 +21,19 @@ Three independent spies, so no single blind spot can make the claim vacuous:
   a host that is not this machine.
 
 Each family carries a counterweight that sends the same request *with* the
-writer's own key and watches the spies fire, so a spy that cannot see a dial
-fails here rather than passing everything.
+writer's own key and watches the spies fire, and the socket layer has its own
+(a real lookup and a real connect to unroutable addresses), so a spy that
+cannot see a dial fails here rather than passing everything.
 
-The second claim is B07 provenance: a BotMason credit debit stands only beside a
-receipt that names a non-cloud source (the writer's vault). A keyless request
-the app's cloud provider would have answered is refused before the wallet is
-touched, and a caller-paid one never touches it.
+The second claim is B07 provenance, and it is narrower than "non-cloud": a
+BotMason credit debit stands only beside a receipt that names a
+**vault-answered** source, never the app's own provider. Credits pay only when
+the caller's vault answers; whether the vault itself uses a cloud model is the
+vault's boundary (``CREEK_DOWNSTREAM_MODEL``, under the Creek deployment's
+``CREEK_CLOUD_CONSENT``), and is not yet verified per receipt -- a known gap
+escalated to the owner. A keyless request the app's provider would have
+answered is refused before the wallet is touched, and a caller-paid one never
+touches it.
 """
 
 from __future__ import annotations
@@ -38,6 +44,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Final, cast
 
+import httpx
 import pytest
 from sqlmodel import col, select
 
@@ -111,9 +118,10 @@ _ANTHROPIC_OK: Final[dict[str, object]] = {
     "usage": {"input_tokens": 1, "output_tokens": 1},
 }
 
-#: The receipt sources that name a cloud vendor's answer. A credit may never
-#: stand beside one of these.
-_CLOUD_SOURCES: Final = frozenset({MarginaliaSource.APP_PROVIDER.value})
+#: The receipt sources that name the app's own provider. A credit may never stand
+#: beside one of these. This does NOT prove a vault-answered receipt is
+#: non-cloud: the vault's own model routing is outside what a receipt records.
+_APP_PROVIDER_SOURCES: Final = frozenset({MarginaliaSource.APP_PROVIDER.value})
 
 
 @dataclass
@@ -122,7 +130,7 @@ class EgressSpy:
 
     stubs: list[TransportStub]
     clients: list[str] = field(default_factory=list)
-    connects: list[object] = field(default_factory=list)
+    connects: list[tuple[object, ...]] = field(default_factory=list)
     lookups: list[str] = field(default_factory=list)
 
     def requests(self) -> int:
@@ -224,6 +232,30 @@ async def _audit_rows(session: AsyncSession, user_id: int) -> list[WalletAudit]:
         select(WalletAudit).where(col(WalletAudit.user_id) == user_id).order_by(col(WalletAudit.id))
     )
     return list(result.scalars().all())
+
+
+# --- the socket spy's own counterweight ----------------------------------------
+
+
+_UNRESOLVABLE_HOST: Final = "vendor.invalid"
+#: TEST-NET-1 (RFC 5737): routable syntax, never answered.
+_UNROUTABLE_ADDRESS: Final = "192.0.2.1"
+_DIAL_TIMEOUT_SECONDS: Final = 0.2
+
+
+@pytest.mark.asyncio
+async def test_the_socket_spy_records_a_real_lookup_and_a_real_connect(
+    cloud_ready: EgressSpy,
+) -> None:
+    """A dial that bypasses both SDK factories is still seen at the socket layer."""
+    with pytest.raises(socket.gaierror):
+        socket.getaddrinfo(_UNRESOLVABLE_HOST, 443)
+    with pytest.raises(httpx.HTTPError):
+        async with httpx.AsyncClient(timeout=_DIAL_TIMEOUT_SECONDS, trust_env=False) as client:
+            await client.get(f"http://{_UNROUTABLE_ADDRESS}/")
+
+    assert _UNRESOLVABLE_HOST in cloud_ready.lookups
+    assert any(address[0] == _UNROUTABLE_ADDRESS for address in cloud_ready.connects)
 
 
 # --- chat: the leaf every feature funnels through ------------------------------
@@ -405,7 +437,7 @@ async def _note_sources(session: AsyncSession, user_id: int) -> set[str | None]:
 
 
 @pytest.mark.asyncio
-async def test_a_credit_debit_stands_only_beside_a_non_cloud_receipt(
+async def test_a_credit_debit_stands_only_beside_a_vault_answered_receipt(
     async_client: AsyncClient,
     db_session: AsyncSession,
     cloud_ready: EgressSpy,
@@ -445,4 +477,4 @@ async def test_a_credit_debit_stands_only_beside_a_non_cloud_receipt(
     assert await _note_sources(db_session, vault_id) == {MarginaliaSource.CREEK_VAULT.value}
     for user_id in (keyless_id, byok_id, vault_id):
         if await _settled_debits(db_session, user_id):
-            assert not (await _note_sources(db_session, user_id)) & _CLOUD_SOURCES
+            assert not (await _note_sources(db_session, user_id)) & _APP_PROVIDER_SOURCES
