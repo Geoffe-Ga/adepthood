@@ -73,9 +73,9 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
   marginalia and essays, completion detection, transcription, and
   `services/creek_vault_reflect.py`.
 - **The web build is the only client that ships** (see the `APP_BASE_URL` row
-  in `DEPLOYMENT.md`). The operator's nginx serves it, and
-  `frontend/nginx.conf` sends `Content-Security-Policy-Report-Only`, which
-  reports and does not enforce. Native targets are configured in
+  in `DEPLOYMENT.md`). The operator's nginx serves it. When this record was
+  written the CSP was report-only; phase (b)'s first slice has since made it
+  enforced (see "Client delivery and update trust"). Native targets are configured in
   `frontend/app.json` and `frontend/eas.json` but are not shipped. On web,
   `frontend/src/storage/secureStringStore.ts` keeps secrets in localStorage.
 - **Ordinary-Fly vaults are operator-readable by ratified decision.**
@@ -235,7 +235,7 @@ history and future content stand or fall together.
 - **Metadata leakage:** Everything: content, sizes, timestamps, counts, tiers, ids, network metadata. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
 - **Inference location:** Server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Supported platforms:** Web only ships; native is configured but unshipped. (`repo:DEPLOYMENT.md`)
-- **Client delivery and update trust:** Operator-served web bundle with a report-only CSP; a modified bundle is undetectable to the person. (`repo:frontend/nginx.conf`)
+- **Client delivery and update trust:** Operator-served web bundle with an enforced CSP and SRI; a modified bundle is undetectable to the person, because both are served by us. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** Nothing removed: 18 EncryptedString columns across 10 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defends a database or backup thief only while the env keys stay separate; nothing against operator, host, compelled update, subpoena or support pressure. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
@@ -337,7 +337,7 @@ history and future content stand or fall together.
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
 - **Inference location:** Device first; then the person's vault-local model or a managed no-retention runtime we run (paid by credits, labelled on each use, not operator-blind while it runs); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
 - **Supported platforms:** Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later. (`owner:2026-10-07#B12-web`)
-- **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now, signed builds later; the CSP is report-only today, and CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
+- **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now (live since phase (b)'s first slice), signed builds later; CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** The 12 in-scope EncryptedString columns of journal_scope_proposal (of the 18; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
@@ -368,8 +368,14 @@ certifies that claim for that platform.
 ## Client delivery and update trust
 
 - **Web today:** the operator serves the bundle on every page load.
-  `frontend/nginx.conf` sends `Content-Security-Policy-Report-Only` at both
-  locations, so the CSP reports violations but does not enforce them. Nothing
+  `frontend/nginx.conf` sends an enforced `Content-Security-Policy` at every
+  location that sets headers, with `script-src 'self'` and no `'unsafe-inline'`
+  or `'unsafe-eval'` for scripts. `connect-src` is narrowed to the build's API
+  origin, its Sentry origin when one is configured, and the two BYOK vendors.
+  Styles keep `'unsafe-inline'`, an accepted risk, because react-native-web
+  injects them at runtime. `frontend/web-hardening/sri.js` stamps every script and
+  stylesheet in the built `index.html` with a `sha384` integrity hash, and the
+  build fails if any is missing or wrong. Both are served by us. Nothing
   out-of-band lets a person check the code they ran. Under BD this is the
   weakest link: a served bundle can capture the key and so read stored
   history as well as future content. That is why the web claim is scoped.
@@ -605,13 +611,13 @@ with payer and location (B07). This composes with #3096.
 ### Phase (b): client key generation and the encrypted-sync envelope
 
 **First slice: enforce the CSP and add SRI** on the web client. Change
-`frontend/nginx.conf` from `Content-Security-Policy-Report-Only` to an
+`frontend/nginx.conf` from a report-only CSP header to an
 enforced `Content-Security-Policy`, and add Subresource Integrity to the
 served bundles. This comes first because of the consequence in the Decision
 section: enrolment is opt-in, web may not enrol before CSP plus SRI, and
 native comes later, so **nobody can enrol until this slice ships**.
-`test_custody_adr_names_enforcement_that_exists` pins the report-only header;
-rewrite it in the same change.
+`test_custody_adr_names_enforcement_that_exists` pinned the report-only
+header and was rewritten in the same change; it now pins the enforced one.
 
 Then: Generate keys on the device. Use an AEAD envelope bound to owner,
 object type, object id and version, with rollback defence. The proposed

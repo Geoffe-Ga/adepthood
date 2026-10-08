@@ -151,7 +151,7 @@
         "source": "repo:DEPLOYMENT.md"
       },
       "update_trust": {
-        "value": "Operator-served web bundle with a report-only CSP; a modified bundle is undetectable to the person.",
+        "value": "Operator-served web bundle with an enforced CSP and SRI; a modified bundle is undetectable to the person, because both are served by us.",
         "source": "repo:frontend/nginx.conf"
       },
       "primary_copy_removal": {
@@ -451,7 +451,7 @@
         "source": "owner:2026-10-07#B12-web"
       },
       "update_trust": {
-        "value": "Native: store-signed builds (later). Web: enforced CSP plus SRI now, signed builds later; the CSP is report-only today, and CSP plus SRI cannot stop us serving a different bundle.",
+        "value": "Native: store-signed builds (later). Web: enforced CSP plus SRI now (live since phase (b)'s first slice), signed builds later; CSP plus SRI cannot stop us serving a different bundle.",
         "source": "repo:frontend/nginx.conf"
       },
       "primary_copy_removal": {

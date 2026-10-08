@@ -50,6 +50,10 @@ _ADR = _ADR_DIR / "0009-privacy-custody-and-inference-architecture.md"
 _SCORECARD = _ADR_DIR / "0009-architecture-scorecard.json"
 _EPIC_DRAFT = _ADR_DIR / "0009-b13-epic-draft.md"
 _NGINX_CONF = _REPO_ROOT / "frontend" / "nginx.conf"
+_SRI_SCRIPT = _REPO_ROOT / "frontend" / "web-hardening" / "sri.js"
+# The server level, which locations without their own headers inherit, and
+# ``location = /index.html``, which sets its own and so must repeat it.
+_CSP_HEADER_SITES = 2
 
 # The options the issue compares, the status quo at HEAD, and the composite the
 # owner selected (B's user-held keys with D's device-side and vault-local
@@ -626,8 +630,10 @@ def test_phase_plan_puts_web_protection_first_and_labels_runtime_use() -> None:
 def test_custody_adr_names_enforcement_that_exists() -> None:
     """The symbols and config the record argues from are still real.
 
-    If the CSP is ever enforced, the update-trust section is stale: rewrite it
-    here rather than deleting the assertion.
+    Phase (b)'s first slice made the web CSP enforced and added SRI, so the
+    record says so in the present tense and nowhere still calls it report-only.
+    If either is ever rolled back, the update-trust section is stale again:
+    rewrite it here rather than deleting the assertion.
     """
     text = _adr_text()
     nginx = _NGINX_CONF.read_text(encoding="utf-8")
@@ -636,9 +642,13 @@ def test_custody_adr_names_enforcement_that_exists() -> None:
     assert je.KEYS_ENV_VAR == "JOURNAL_ENCRYPTION_KEYS"
     assert "EncryptedString" in text
     assert EncryptedString.__module__ == "services.journal_encryption"
-    assert "Content-Security-Policy-Report-Only" in text
-    assert "add_header Content-Security-Policy-Report-Only" in nginx
-    assert re.search(r"add_header Content-Security-Policy\s+\"", nginx) is None
+    assert "Content-Security-Policy-Report-Only" not in nginx
+    assert len(re.findall(r"add_header Content-Security-Policy\s+\"", nginx)) >= _CSP_HEADER_SITES
+    assert "Content-Security-Policy-Report-Only" not in text
+    assert "report-only today" not in text
+    assert "sends an enforced `Content-Security-Policy`" in _flat(text)
+    assert _SRI_SCRIPT.is_file()
+    assert "frontend/web-hardening/sri.js" in text
     assert "Creek-Vault ADR 0014" in text
 
 
