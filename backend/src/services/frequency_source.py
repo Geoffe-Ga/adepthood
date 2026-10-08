@@ -19,10 +19,18 @@ averaged, not called. A second opinion nobody asked for still costs the user a
 provider call and still ships their writing to a cloud they were running a vault
 specifically to avoid.
 
-**Every failure degrades in silence, and none of them is ever a failed write.**
-An absent, unavailable, capability-poor, refusing or unreadable vault falls back
-to the operator-side classifier exactly as ``_read_balance`` falls back to the
-local balance, and the degrade is recorded through
+**Whether a failure may fall back depends on the caller's boundary (#3061).**
+For a caller with no vault
+(:attr:`~services.reflection_boundary.ReflectionBoundary.APP_PROVIDER`), an
+absent, unavailable, capability-poor, refusing or unreadable vault falls back to
+the operator-side classifier exactly as ``_read_balance`` falls back to the local
+balance. For a caller whose AI operations are bound to their vault
+(:attr:`~services.reflection_boundary.ReflectionBoundary.VAULT_BOUND`), it never
+does: a vault that gives no usable answer raises
+:class:`~services.reflection_boundary.VaultSourceUnavailableError` and the
+operator-side classifier is not entered -- falling back would ship their writing
+to exactly the provider they connected a vault to stay answered without. Either
+way the vault's own fault is recorded through
 :func:`services.creek_vault_read.log_read_degraded` -- the same closed-vocabulary
 record the wheel path writes, because a read that is invisible to the user is
 one only a log can count. The single exception is
@@ -41,10 +49,11 @@ those four.
 
 The vault branch is unreachable in this deployment today --
 :meth:`services.creek_vault_client.HttpCreekVaultClient.classify` refuses
-outright while Creek's ``/v1`` classify shape is unratified upstream -- so the
-rule degrades to the operator-side classifier on every call. That is the correct
-steady state, and it is why the rule is written now rather than after rows
-exist: provenance added later is a backfill nobody can answer.
+outright while Creek's ``/v1`` classify shape is unratified upstream -- and no
+route calls :func:`select_frequency_classification` yet. The rule is written now
+rather than after rows exist because provenance added later is a backfill nobody
+can answer, and its boundary is a required argument so that whoever wires it in
+cannot reintroduce a silent vault-then-cloud fallback by omission.
 
 Storing the provenance is a separate step this module does not take.
 ``CorpusFragment`` carries no column for it yet, and the classification a
@@ -65,13 +74,18 @@ from domain.creek_vault import (
     tier_ceiling_for,
 )
 from domain.frequencies import FREQUENCY_CODES, Frequency
-from models.journal_entry import JournalClassification
+from domain.privacy_tier import admits_egress
 from services.creek_vault_read import log_read_degraded
 from services.frequency_classification import (
     ClassificationSource,
     FrequencyClassification,
     IntimateContentRefusedError,
     classify_frequencies,
+)
+from services.reflection_boundary import (
+    ReflectionBoundary,
+    VaultSourceUnavailableError,
+    VaultSourceUnavailableReason,
 )
 
 #: What one vault tag is worth. Creek's classify answer is a *set of positions*,
@@ -151,7 +165,7 @@ async def _read_classification(
 
 
 async def fetch_vault_classification(
-    client: CreekVaultClient, content: str, *, classification: JournalClassification
+    client: CreekVaultClient, content: str, *, classification: str
 ) -> FrequencyClassification | None:
     """Return the vault's reading of ``content``, or ``None`` to fall back.
 
@@ -168,28 +182,44 @@ async def fetch_vault_classification(
     The tier ceiling is the fragment's own, resolved through
     :func:`~domain.creek_vault.tier_ceiling_for`, so a public entry travels at
     ``OPEN`` and a personal one at ``PERSONAL`` rather than everything sharing
-    one fixed ceiling. INTIMATE never reaches here at all.
+    one fixed ceiling. A tier that may not egress (intimate, unknown) raises
+    :class:`~services.frequency_classification.IntimateContentRefusedError`
+    before the handshake, so this entry point fails closed on its own rather
+    than trusting its caller (#3059).
     """
+    if not admits_egress(classification):
+        raise IntimateContentRefusedError
     await client.handshake()
     if not (client.is_available() and client.supports(CreekCapability.CLASSIFY)):
         return None
-    return await _read_classification(client, content, tier_ceiling_for(classification.value))
+    return await _read_classification(client, content, tier_ceiling_for(classification))
 
 
 async def select_frequency_classification(
     client: CreekVaultClient,
     content: str,
     *,
-    classification: JournalClassification,
+    classification: str,
+    boundary: ReflectionBoundary,
     api_key: str | None = None,
 ) -> FrequencyClassification:
-    """Return the vault's classification of ``content``, else the operator-side one.
+    """Return the vault's classification of ``content``, else the operator-side one if allowed.
 
     The precedence rule, and the only place it is written: one source per
     fragment, never a hybrid, the answer stamped with whichever side produced it.
 
+    ``boundary`` is required, with no default, and decides the "else". Under
+    :attr:`~services.reflection_boundary.ReflectionBoundary.VAULT_BOUND` a vault
+    that gives no usable answer raises
+    :class:`~services.reflection_boundary.VaultSourceUnavailableError`
+    (``NO_ANSWER``; the vault's own fault, if any, is already recorded) and the
+    operator side is never entered. Under ``APP_PROVIDER`` it falls back as it
+    always has.
+
     Raises :class:`~services.frequency_classification.IntimateContentRefusedError`
-    for INTIMATE content, before the handshake and before the operator-side call
+    for any tier that may not egress (intimate, unknown, empty -- see
+    :func:`domain.privacy_tier.admits_egress`), before the handshake and before
+    the operator-side call
     -- the refusal precedes both paths rather than sitting inside one of them.
 
     A spent balance on the operator-side call propagates as
@@ -206,9 +236,11 @@ async def select_frequency_classification(
     operator-side classifier only; a vault is reached with the deployment's own
     vault credential and has no use for it.
     """
-    if classification is JournalClassification.INTIMATE:
+    if not admits_egress(classification):
         raise IntimateContentRefusedError
     from_vault = await fetch_vault_classification(client, content, classification=classification)
     if from_vault is not None:
         return from_vault
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        raise VaultSourceUnavailableError(VaultSourceUnavailableReason.NO_ANSWER)
     return await classify_frequencies(content, classification=classification, api_key=api_key)

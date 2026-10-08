@@ -67,8 +67,14 @@ _NO_DSN = ""
 
 
 def disarm_sentry() -> None:
-    """Leave the process with an inert Sentry client, whatever the environment says."""
-    sentry_sdk.init(dsn=_NO_DSN)
+    """Leave the process with an inert Sentry client, whatever the environment says.
+
+    Built with the same integrations switched off as the production client: an
+    integration's ``setup_once`` patches FastAPI, logging and HTTP clients for
+    the life of the process, so a default-configured reset would leave every
+    later test running under instrumentation production never installs.
+    """
+    sentry_sdk.init(dsn=_NO_DSN, default_integrations=False, auto_enabling_integrations=False)
 
 
 @contextmanager

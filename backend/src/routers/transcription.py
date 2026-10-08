@@ -58,6 +58,7 @@ from services.llm_usage import (
     log_generation_settled,
     record_llm_usage,
 )
+from services.privacy_suspension import require_external_ai_available
 from services.wallet import preflight_deduction
 
 logger = logging.getLogger(__name__)
@@ -263,8 +264,10 @@ async def transcribe_page(
     """Transcribe one image of text, charging BotMason only when it pays the provider.
 
     Stateless: no journal row is written and the metered call carries no
-    ``journal_entry_id``. Strict ordering — the image is validated first (422
-    without any charge), then the caller key and vision capability are resolved.
+    ``journal_entry_id``. Strict ordering — an operator's external-AI
+    suspension answers 503 ``ai_suspended`` before anything else (#3075), then
+    the image is validated (422 without any charge), then the caller key and
+    vision capability are resolved.
     A production stub is refused before the wallet is touched. A valid caller
     key bypasses both BotMason buckets; otherwise the wallet is deducted (402
     when out of capacity). A provider failure rolls the transaction back so a
@@ -275,6 +278,7 @@ async def transcribe_page(
     Only metadata (user id, total tokens) is logged — never the base64 image
     payload or the transcribed text.
     """
+    require_external_ai_available()
     image = _validate_image(payload.image_base64, payload.media_type)
     byok_key = resolve_chat_api_key(x_llm_api_key)
     if not vision_provider_available(byok_key):

@@ -53,7 +53,7 @@ describe('TagPicker', () => {
     expect(utils.getByTestId('tag-picker-0-trigger')).toBeTruthy();
     expect(utils.getByText('Red')).toBeTruthy();
     // Badge reflects ownership of the chosen tag.
-    expect(utils.getByTestId('tag-picker-0-badge')).toHaveTextContent('System');
+    expect(utils.getByTestId('tag-picker-0-badge')).toHaveTextContent('Built in');
   });
 
   it('opens to a searchable list of library tags', () => {
@@ -132,7 +132,7 @@ describe('TagPicker', () => {
       { id: 9, slug: 'mine', label: 'Mine', owner_user_id: 7, created_at: '2026-01-01T00:00:00Z' },
     ];
     const utils = renderPicker({ tagLibrary: mixed, selectedSlug: 'mine' });
-    expect(utils.getByTestId('tag-picker-0-badge')).toHaveTextContent('Custom');
+    expect(utils.getByTestId('tag-picker-0-badge')).toHaveTextContent('Yours');
     fireEvent.press(utils.getByTestId('tag-picker-0-trigger'));
     expect(utils.getByTestId('tag-picker-0-group-library')).toBeTruthy();
     expect(utils.getByTestId('tag-picker-0-group-yours')).toBeTruthy();
@@ -170,7 +170,30 @@ describe('TagPicker', () => {
     expect(utils.queryByText('Stale wording')).toBeNull();
   });
 
-  it('surfaces a create error without dismissing the form', async () => {
+  it('surfaces a translated create error without dismissing the form', async () => {
+    const onCreateTag = jest.fn(async () => {
+      throw new ApiError(409, 'tag_slug_taken');
+    });
+    const utils = renderPicker({ onCreateTag });
+    fireEvent.press(utils.getByTestId('tag-picker-0-trigger'));
+    fireEvent.press(utils.getByTestId('tag-picker-0-new'));
+    fireEvent.changeText(utils.getByTestId('tag-picker-0-creator-label'), 'Dupe');
+    await act(async () => {
+      fireEvent.press(utils.getByTestId('tag-picker-0-creator-confirm'));
+    });
+    await waitFor(() =>
+      expect(utils.getByTestId('tag-picker-0-creator-error')).toHaveTextContent(
+        'You already have a tag by that name. Pick a different one.',
+      ),
+    );
+    // The status line and the contract code are for the log, not the reader.
+    const shown = utils.getByTestId('tag-picker-0-creator-error');
+    expect(shown).not.toHaveTextContent('409');
+    expect(shown).not.toHaveTextContent('tag_slug_taken');
+    expect(utils.getByTestId('tag-picker-0-creator')).toBeTruthy();
+  });
+
+  it('shows the plain fallback when a create error carries no code', async () => {
     const onCreateTag = jest.fn(async () => {
       throw new Error('Slug already exists');
     });
@@ -183,7 +206,7 @@ describe('TagPicker', () => {
     });
     await waitFor(() =>
       expect(utils.getByTestId('tag-picker-0-creator-error')).toHaveTextContent(
-        'Slug already exists',
+        'Could not create that tag.',
       ),
     );
   });

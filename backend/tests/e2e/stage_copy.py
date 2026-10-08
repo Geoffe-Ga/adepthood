@@ -6,8 +6,9 @@ throwaway database::
 
     python -m tests.e2e.stage_copy show
     python -m tests.e2e.stage_copy set-subtitle --stage <N> --subtitle <TEXT>
+    python -m tests.e2e.stage_copy set-field --stage <N> --field <FIELD> --value <TEXT>
 
-Both subcommands write a single JSON object to stdout and exit 0.
+Every subcommand writes a single JSON object to stdout and exits 0.
 
 Why this exists: the stage copy a traveller reads -- a stage's title and the
 two-word subtitle beneath it -- lives in the ``coursestage`` table, is served by
@@ -22,7 +23,11 @@ and writes it here instead.
 
 ``show`` reports every stage's number, title and subtitle in stage order and
 changes nothing. ``set-subtitle`` writes one stage's subtitle and reports the
-row back. Neither touches any other column, and neither goes near the request
+row back. ``set-field`` writes one whitelisted copy field -- the subtitle, or
+since #2666 the persona (``relationship_to_free_will``), which the Map now reads
+from ``GET /stages`` -- and reports the value it stored beside the one it
+replaced, so a spec can bind what the screen showed to the row and put the row
+back. Neither touches any other column, and neither goes near the request
 path: nothing is stubbed, mocked, patched or rebound, so the seam under test is
 exactly the production one. The rows are addressed through the ``CourseStage``
 model the router itself selects, so a column rename breaks this helper loudly
@@ -59,6 +64,12 @@ SHOW_COMMAND = "show"
 #: Subcommand that rewrites one stage's subtitle.
 SET_SUBTITLE_COMMAND = "set-subtitle"
 
+#: Subcommand that rewrites one whitelisted copy field of one stage.
+SET_FIELD_COMMAND = "set-field"
+
+#: The copy fields ``set-field`` may write; every other column is refused.
+SETTABLE_FIELDS: tuple[str, ...] = ("subtitle", "relationship_to_free_will")
+
 #: The JSON object each subcommand emits; values are ints, strings and lists.
 JsonObject = dict[str, object]
 
@@ -83,20 +94,37 @@ def _require_env(name: str) -> str:
     return value
 
 
-def _require_subtitle(subtitle: str) -> str:
-    """Return ``subtitle`` unchanged, refusing to write an empty one.
+def _require_text(value: str, option: str) -> str:
+    """Return ``value`` unchanged, refusing to write an empty one.
 
-    A blank subtitle would make the spec's assertion vacuous: every render site
+    A blank value would make the spec's assertion vacuous: every render site
     interpolates the string as it stands, so an empty one is indistinguishable
     from a render site that dropped the field.
 
     Raises:
-        StageCopyError: The subtitle is blank or whitespace only.
+        StageCopyError: The value is blank or whitespace only.
     """
-    if not subtitle.strip():
-        msg = "--subtitle must not be blank; an empty subtitle asserts nothing"
+    if not value.strip():
+        msg = f"{option} must not be blank; an empty value asserts nothing"
         raise StageCopyError(msg)
-    return subtitle
+    return value
+
+
+def _require_subtitle(subtitle: str) -> str:
+    """Return ``subtitle`` unchanged, refusing a blank one (see :func:`_require_text`)."""
+    return _require_text(subtitle, "--subtitle")
+
+
+def _require_settable(field: str) -> str:
+    """Return ``field`` when ``set-field`` may write it.
+
+    Raises:
+        StageCopyError: The field is not in :data:`SETTABLE_FIELDS`.
+    """
+    if field not in SETTABLE_FIELDS:
+        msg = f"{field!r} is not settable; set-field writes only {', '.join(SETTABLE_FIELDS)}"
+        raise StageCopyError(msg)
+    return field
 
 
 def _serialize(row: CourseStage) -> JsonObject:
@@ -156,6 +184,36 @@ async def _set_subtitle(session: AsyncSession, stage_number: int, subtitle: str)
     return _serialize(row)
 
 
+async def set_field(session: AsyncSession, stage_number: int, field: str, value: str) -> JsonObject:
+    """Write ``value`` into one whitelisted copy field of one stage.
+
+    Only that one column is assigned, after the whitelist and the non-blank
+    guard have both passed, so a refused write changes nothing.
+
+    Returns:
+        The stage number, the field, the value now stored and the value it
+        replaced.
+
+    Raises:
+        StageCopyError: The field is off the whitelist, the value is blank, or
+            no stage carries that number.
+    """
+    _require_settable(field)
+    _require_text(value, "--value")
+    row = await _load_stage(session, stage_number)
+    previous = str(getattr(row, field))
+    setattr(row, field, value)
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return {
+        "stage_number": row.stage_number,
+        "field": field,
+        "value": str(getattr(row, field)),
+        "previous": previous,
+    }
+
+
 async def _in_session(operation: Operation) -> JsonObject:
     """Run ``operation`` against the lane's database, disposing the engine after."""
     engine = create_async_engine(
@@ -170,7 +228,7 @@ async def _in_session(operation: Operation) -> JsonObject:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Return the parser for the two subcommands the frontend lane invokes."""
+    """Return the parser for the subcommands the frontend lane invokes."""
     parser = argparse.ArgumentParser(
         description="Read and rewrite stage copy for the frontend e2e lane.",
     )
@@ -179,11 +237,22 @@ def _build_parser() -> argparse.ArgumentParser:
     write = subcommands.add_parser(SET_SUBTITLE_COMMAND, help="rewrite one stage's subtitle")
     write.add_argument("--stage", required=True, type=int, help="the stage number to rewrite")
     write.add_argument("--subtitle", required=True, help="the subtitle to store on that stage")
+    field = subcommands.add_parser(SET_FIELD_COMMAND, help="rewrite one whitelisted copy field")
+    field.add_argument("--stage", required=True, type=int, help="the stage number to rewrite")
+    field.add_argument("--field", required=True, choices=SETTABLE_FIELDS, help="the field")
+    field.add_argument("--value", required=True, help="the text to store in that field")
     return parser
 
 
 def _select_operation(args: argparse.Namespace) -> Operation:
     """Return the unit of work the parsed arguments ask for."""
+    if str(args.command) == SET_FIELD_COMMAND:
+        return partial(
+            set_field,
+            stage_number=int(args.stage),
+            field=_require_settable(str(args.field)),
+            value=_require_text(str(args.value), "--value"),
+        )
     if str(args.command) == SET_SUBTITLE_COMMAND:
         return partial(
             _set_subtitle,

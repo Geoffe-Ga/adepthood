@@ -303,6 +303,11 @@ POLICY: Mapping[str, TablePolicy] = {
         "wanted offered, meaningless once there is nobody to offer them to.",
     ),
     "promptresponse": _erase("user_id", "Answers to the weekly prompts."),
+    "restoremarker": _retain(
+        "Content-free record that a restored database had its deletions "
+        "reapplied: an operator restore id, a state and counts. It names no "
+        "account, and it is what stops a completed restore being reapplied twice.",
+    ),
     "revokedtoken": _retain(
         "Opaque JWT ids with an expiry and nothing else — no account column "
         "exists to sweep on, and the rows age out on their own.",
@@ -350,6 +355,15 @@ POLICY: Mapping[str, TablePolicy] = {
         "An opaque Creek job id and teardown state retained after the account "
         "is gone so operations can prove no billable allocation survived. It "
         "has no user id, content, endpoint, or credential.",
+    ),
+    "voicedraftretraction": _erase(
+        "user_id",
+        "Content-free bookkeeping of which of the account's essays were offered "
+        "to its vault and whether their withdrawal is confirmed: ids, a closed "
+        "state and failure code, an opaque destination fingerprint, timestamps. "
+        "Erased with the account for now; whether remote cleanup should outlive "
+        "erasure (which would mean retaining a destination credential) is an "
+        "owner decision tracked by B08 / #3060.",
     ),
     "walletaudit": _erase(
         "user_id",

@@ -166,7 +166,7 @@ In the backend service's **Variables** tab, add:
 |----------|-------|-----------|
 | `ENV` | `production` | Yes |
 | `SECRET_KEY` | *(see below)* | Yes |
-| `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it |
+| `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it (production meaning `ENV=production` *or* Railway's `RAILWAY_ENVIRONMENT_NAME=production`) |
 | `PROD_DOMAIN` | `https://app.yourdomain.example` | Yes |
 | `BOTMASON_PROVIDER` | `stub` | Yes (use `stub` to start) |
 | `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
@@ -427,15 +427,21 @@ So key custody is part of backup custody, and it cuts both ways:
   dies with the Railway account. There must be a second copy of every key ever
   used — current *and* rotated-out — held somewhere the platform outage cannot
   reach: a password manager entry or an offline escrow. `[HUMAN ACTION]` —
-  establishing that escrow is not something a deploy can do for you, and it is
-  tracked in issue #2319 until it is.
+  establishing that escrow is not something a deploy can do for you. Issue
+  #2319, which tracked it, is closed with its escrow items checked; nothing in
+  this repository can confirm the escrow, so re-check that it holds every key in
+  `JOURNAL_ENCRYPTION_KEYS` — current *and* retired — whenever the list changes.
 - **Keys must never be stored with the backup.** A dump and its keys in the same
   bucket, archive, or download folder is one compromise away from being
   plaintext, which defeats the encryption entirely. Different system, different
   credentials.
-- **Keep retired keys.** Rows re-encrypt lazily, so a restored backup can carry
-  rows written under a key that production stopped using months ago. Discarding
-  a key discards every un-rewritten row that needed it.
+- **Keep retired keys.** A rotation re-encrypts a column only when a write
+  modifies it; every other value keeps the token of the key it was written
+  under until the sweep (see [Rotation](#journal-encryption-at-rest)) moves it.
+  And a restored backup carries whatever tokens the database held when the
+  backup was taken, so it can need a key that production stopped using months
+  ago. Discarding a key discards every row — live or in a backup — that still
+  needs it.
 
 `SECRET_KEY` is in the same category, with a smaller blast radius: losing it
 invalidates every issued JWT (everyone is logged out) but destroys no data.
@@ -458,8 +464,9 @@ Weekly (kept 1 month), and Monthly (kept 3 months); pick Daily.
 
 `[HUMAN ACTION]` to enable the platform leg: Railway dashboard → Postgres
 service → **Backups** → set schedule to Daily → confirm a backup appears within
-24 hours. Nothing in this repository can turn it on for you; issue #2319 tracks
-it until someone does.
+24 hours. Nothing in this repository can turn it on for you. Issue #2319, which
+tracked this, closed without the Daily schedule being confirmed, so treat the
+platform leg as unverified until someone has seen a Daily backup appear (#3058).
 
 **Recovery point objective (RPO): 24 hours.** Up to a day of writing can be lost
 in a total-loss scenario. **Recovery time objective (RTO): 1 hour** — the time
@@ -487,17 +494,41 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 # Paste DATABASE_PUBLIC_URL here; do not persist it in a dotfile or history.
 read -rs PGURL && export PGURL
 
-pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump"
-
+# DUMP_OK is set only if the dump, its verification and its encryption all
+# succeed. pg_dump creates its file before it connects, so a failed dump can
+# leave an empty or truncated archive that gpg would still encrypt; the
+# pg_restore --list step reads the archive and fails on one.
 # Encrypt before it leaves the machine. Passphrase lives in the password
 # manager, NOT beside the file and NOT with JOURNAL_ENCRYPTION_KEYS.
-gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump"
+DUMP_OK=0
+pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump" && \
+  pg_restore --list "adepthood-$STAMP.dump" >/dev/null && \
+  gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump" && \
+  DUMP_OK=1
 shred -u "adepthood-$STAMP.dump" 2>/dev/null || rm -P "adepthood-$STAMP.dump"
 ```
 
 Then copy `adepthood-$STAMP.dump.gpg` to storage that is not Railway. The
 custom format (`-Fc`) is required: it is what `pg_restore` reads, it compresses,
 and it lets you restore selectively.
+
+**Prune expired dumps on every weekly run.** *DRAFT for owner review (#3063);
+where the off-host copies live is still undecided.* "Kept 90 days" is only true
+if someone deletes the older ones. Once this run's dump is verified, delete every
+dump older than 90 days, locally and at the off-host destination:
+```bash
+# Local copies older than the 90-day retention, to the minute: an age in whole
+# days would round down and keep a dump a day too long. Runs only when this
+# run's dump verified and encrypted (DUMP_OK=1 above); a failed run deletes
+# nothing.
+[ "$DUMP_OK" = 1 ] && \
+  find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mmin +$((90 * 24 * 60)) -delete
+```
+Then, only once the new copy is confirmed present at the off-host destination,
+remove the same-aged `adepthood-*.dump.gpg` files there with that store's own
+tooling. The journal-entry purge's minimum
+window (`POST /admin/maintenance/journal-entries`) assumes this happens: a dump
+kept longer can still hold a purged page undeleted.
 
 > This leg is **manual today**. It is written down honestly rather than
 > described as automated: a weekly calendar reminder is the current mechanism,
@@ -540,11 +571,36 @@ costs.
    read this database, listing **every key that could have encrypted a row in
    this dump**, newest first. The current production key alone is not enough if
    the dump predates a rotation.
-8. **Verify before cutting over** (next section). A restore is not finished when
+8. **Suppress resurrected deletions.** *DRAFT for owner review (#3063); not yet
+   a ratified step of this procedure.* A backup taken before an account or a
+   journal page was deleted still holds it, and the deletion's own record is
+   restored away with it, so the deleted account could sign in again. Before
+   cutting over, reapply the deletion tombstones to the restored database:
+   ```bash
+   # From backend/, with DATABASE_URL pointing at the RESTORED database.
+   # TOMBSTONES is the content-free file exported with `export --out` from the
+   # live database before the restore (or from wherever it is kept -- where it
+   # lives is undecided, #3063 AC17; without one, deletions made after the
+   # backup cannot be suppressed and must be treated as resurrected).
+   # RESTORE_ID names THIS restore. Choose it once (e.g. after the backup you
+   # restored) and paste the same value on any rerun: a completed id is refused,
+   # which is what stops a second reapply after cutover.
+   TOMBSTONES=tombstones.json; RESTORE_ID=restore-of-backup-YYYYMMDD
+   PYTHONPATH=src python -m scripts.restore_suppression reapply \
+     --in "$TOMBSTONES" --restore-id "$RESTORE_ID"
+   ```
+   Exit 0 prints the counts; exit 1 is a refusal (a policy gap, or a restore
+   already marked complete -- never rerun a completed restore after cutover);
+   exit 2 is an unreadable file. Before the restored service starts at all,
+   set `RESTORE_SUPPRESSION_REQUIRED=1` and `RESTORE_ID` (the same value) on
+   it: the app then refuses to boot until that restore's reapply completed, so
+   nothing writes to a resurrected page first. Both are unset by default in the
+   code and change nothing until set here.
+9. **Verify before cutting over** (next section). A restore is not finished when
    `pg_restore` exits; it is finished when a journal entry decrypts.
-9. **Point the app at it** and bring the backend service back up. Watch the boot
-   log for `journal_encryption_enabled=True` and `/health` for
-   `{"status": "healthy", "database": "connected", ...}`.
+10. **Point the app at it** and bring the backend service back up. Watch the boot
+    log for `journal_encryption_enabled=True` and `/health` for
+    `{"status": "healthy", "database": "connected", ...}`.
 
 ### Verifying a restore
 
@@ -677,12 +733,44 @@ copy on `corpusfragment`. A single plaintext copy beside the ciphertext would be
 the copy a stolen dump yields, so the set is pinned by a test rather than by this
 list. **Key presence is the switch**: with no key configured the columns are
 plaintext, which is the right default on a laptop and unacceptable on a server.
-So a boot with `ENV=production` and no key **fails**, naming the variable — the
-deploy never goes live rather than quietly storing every user's writing in the
-clear.
+So a production boot with no key **fails**, naming the variable — the deploy
+never goes live rather than quietly storing every user's writing in the clear.
+
+"Production" is decided by two signals, either of which is enough: `ENV` set to
+`production`, or the environment name Railway injects
+(`RAILWAY_ENVIRONMENT_NAME`, or the legacy `RAILWAY_ENVIRONMENT`) equal to
+`production`. `ENV` is typed by a person and can be missing or wrong; the
+platform's name for the environment cannot be forgotten. A process that carries
+Railway's deploy markers (`RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`,
+`RAILWAY_PUBLIC_DOMAIN`) but no environment name is treated as production too.
+The check also runs at the write itself, not only at boot: wherever production
+is in force and no key is configured, writing an encrypted column raises instead
+of storing plaintext — so a script, a migration or a worker that never ran the
+boot check cannot store prose in the clear either. Note that this assumes the
+Railway production environment is literally named `production`; if it is named
+otherwise, only `ENV` protects it.
 
 Outside production an empty value is normal and silent: requiring a key to run a
 local server or the test suite would be friction with no security benefit.
+Staging (`RAILWAY_ENVIRONMENT_NAME=staging`) counts as outside production.
+
+**What is not encrypted.** Encryption covers the columns typed `EncryptedString`,
+listed by `backend/src/services/encryption_inventory.py`. Every other column that
+can hold text is classified, with a reason, in
+`backend/tests/test_column_classification.py`, and a new unclassified column
+fails the suite. Some of those plaintext columns are derived from encrypted
+writing — `corpusfragment.embedding` and `frequency_weights`, and
+`journalentry.vault_tags`, `classification` and `tag` — and some are short text
+a person typed: goal, habit and group names, a renamed practice, a display name.
+They are stored in the clear today.
+
+**Who can read it.** The keys live in the same Railway project as the database.
+Anyone who can read the service's variables and reach the database can read
+every encrypted column; anyone who can reach the database alone can read every
+plaintext column above. Encryption at rest protects a stolen disk, dump or
+backup that travels without the keys
+([ADR 0005](docs/adr/0005-operator-side-ontologization.md)); it does not keep
+the operator out.
 
 **Generate a key:**
 ```bash
@@ -701,17 +789,62 @@ compromises both.
 JOURNAL_ENCRYPTION_KEYS=<new-key>,<previous-key>
 ```
 
-The **first** key encrypts every new write; **every** listed key can decrypt. So
-a rotation is: generate a new key, prepend it, redeploy. The registry is cached
-per worker, so the change takes effect on restart — rotation is a deploy-time
-operation, not a runtime one.
+The **first** key encrypts every new write; **every** listed key can decrypt. The
+registry is cached per worker, so a change takes effect on restart — rotation is
+a deploy-time operation, not a runtime one.
 
-Rows re-encrypt lazily, on their next write. Nothing rewrites the corpus for
-you, so **keep the previous key listed** until you are willing to lose whatever
-has not been rewritten under the new one. Dropping a key that some row still
-needs does not degrade to plaintext and does not return the ciphertext as if it
-were the user's text — the read raises. There is no recovery from a discarded
-key: the ciphertext is the only copy.
+Prepending a key does **not** re-encrypt existing rows. A write re-encrypts only
+the columns it modifies, so a value nobody edits keeps the token of the key it
+was written under indefinitely, and a row written before any key was configured
+stays plaintext. Dropping a key that some row still needs does not degrade to
+plaintext and does not return the ciphertext as if it were the user's text — the
+read raises. There is no recovery from a discarded key: the ciphertext is the
+only copy. So a rotation is finished by a sweep, run from `backend/` with
+`DATABASE_URL` and `JOURNAL_ENCRYPTION_KEYS` set exactly as the service has them:
+
+1. Generate a new key, put it in escrow, prepend it, redeploy. The new key0
+   must be **deployed and escrowed before** `--apply`: the sweep encrypts the
+   whole corpus under it, and a key that exists only in an operator's shell is
+   a corpus production cannot read and nobody can recover. Each worker's boot
+   log then carries `journal_encryption_primary_fingerprint=<12 hex>` — a
+   non-secret fingerprint of key0, never the key.
+2. `PYTHONPATH=src python -m scripts.journal_encryption_sweep audit` — prints
+   `primary_key_fingerprint=<12 hex>` for the key0 in *your* shell, then, per
+   `table.column`, how many values are NULL, plaintext, readable by each key
+   position (`key0` is the new primary), and readable by none. Counts and names
+   only: never a value or a key. The fingerprint must equal the boot log's; if
+   it does not, your shell does not hold the deployed keys — stop.
+3. `PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt` — a dry
+   run that reports what would be rewritten and writes nothing.
+4. `PYTHONPATH=src python -m scripts.journal_encryption_sweep reencrypt --apply --primary-fingerprint <12 hex>`,
+   passing the fingerprint from the deployed service's boot log — the command
+   refuses (exit `3`, nothing written) unless it matches this shell's key0. It
+   rewrites every plaintext and old-key value under the primary key, in
+   batches committed one at a time. Each write is compare-and-swap, so a value a
+   user edits meanwhile is skipped rather than overwritten. A value no listed key
+   can read stops the run before anything in its batch is written; plaintext is
+   never written. An interrupted run can be rerun (rows already on the primary
+   key are skipped) or resumed from the last line it printed with
+   `--start-after table.column:ID`.
+5. Repeat the audit until it exits `0`.
+
+Exit codes, for both commands: `0` clean; `1` rows remain (plaintext or
+old-key values, or rows a user edited during the sweep — run it again); `2` a
+malformed command line; `3` an integrity stop (no key, a malformed key, a
+missing or mismatched `--primary-fingerprint` on `--apply`, or a value no
+listed key can read); `4` a database stop (a timeout, deadlock or lost
+connection mid-run — the batch in flight is rolled back, and the error is
+reported by class, column and resume point only, never with the values it was
+writing).
+
+Only once the audit exits `0` with the old key still listed is that key no
+longer needed by the **live** database. It is still needed by every backup taken
+before the sweep (see [Backups and Restore](#backups-and-restore)), so it stays
+in escrow until the last such backup has aged out.
+
+Reads of legacy plaintext from an encrypted column while a key is configured
+are also signalled at runtime: each worker logs one `journal_plaintext_read`
+warning (no content, no row) the first time it sees one.
 
 **A malformed key fails fast in every environment**, production or not. A typo
 is never re-read as "encryption is off".
@@ -722,8 +855,9 @@ is never re-read as "encryption is off".
 journal_encryption_enabled=True
 ```
 
-`False` in a production log means the deploy predates this check or `ENV` is not
-`production` — either way, journals are being written in the clear.
+`False` in a production log means the deploy predates this check, or neither
+`ENV` nor Railway's environment name says `production` — either way, journals
+are being written in the clear.
 
 ## Environment Variables Reference
 
@@ -733,12 +867,12 @@ journal_encryption_enabled=True
 |----------|----------|---------|-------------|
 | `ENV` | Yes | `development` | `development`, `staging`, or `production` |
 | `SECRET_KEY` | Yes | `replace-me` | JWT signing key. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so `ENV=production` without it refuses to boot; outside production empty is the normal local state. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
+| `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so production without it refuses to boot and refuses encrypted-column writes (production is `ENV=production` or `RAILWAY_ENVIRONMENT_NAME=production`); outside production empty is the normal local state. Rotation is finished by `scripts.journal_encryption_sweep`, not by later writes. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
 | `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS. Every live frontend origin must appear; this deployment's web origin is in [Production origins](#production-origins). |
 | `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic` |
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve).  Server-paid requests refuse `claude-opus-5`, `claude-opus-4-7` and `gpt-4-turbo` (`SERVER_PAID_REFUSED_MODELS`, #623: the resonance-economy decision record rules "refuse non-cost-bounded models on the server-paid path (no multiplier)"): a charged pass, letter or page is refunded and answers `502 llm_provider_error`, and the uncharged server-paid features (frequency classification, completion detection) degrade. A user's own key (BYOK) still reaches those models. |
-| `BOTMASON_DAILY_GENERATION_CEILING` | No | `100` | Charged generations (resonance passes, first essay letters, page transcriptions) one user may make per UTC day, net of refunded failures; past it a request answers `429 daily_generation_limit_reached` with `Retry-After` set to the seconds until 00:00 UTC, and nothing is charged. The default is the owner-ratified "configurable launch ceiling of 100 charged generations/day/user" (#623). Parsed like `BOTMASON_MONTHLY_CAP`: unset, empty, malformed or negative means 100. `0` is an emergency brake that refuses every charged generation. BYOK generations are never charged, so never counted. Counted from `walletaudit` in the database, so it holds across every worker and ignores the rate-limit kill switch. |
+| `BOTMASON_DAILY_GENERATION_CEILING` | No | `100` | Charged generations (resonance passes, first essay letters, page transcriptions) one user may make per UTC day, net of refunded failures; past it a request answers `429 daily_generation_limit_reached` with `Retry-After` set to the seconds until 00:00 UTC, and nothing is charged. The default is the owner-ratified "configurable launch ceiling of 100 charged generations/day/user" (#623). Parsed like `BOTMASON_MONTHLY_CAP`: unset, empty, malformed or negative means 100. `0` is an emergency brake that refuses every charged generation. BYOK generations are never charged, so never counted. Counted from `walletaudit` in the database, so it holds across every worker and ignores the rate-limit kill switch. Because BYOK bypasses it, `0` does not stop external inference: `PRIVACY_SUSPEND_EXTERNAL_AI` is the control that also stops BYOK calls. |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes. All rate-limit state lives in each worker's memory (there is no shared store), so the effective per-deployment budget of every limit -- ambient floor, burst floors, per-client ceiling, declared route limits -- is `WEB_CONCURRENCY` x the stated limit . That includes the per-user generation limit of 5 resonance or essay generations per minute (#623): it is per worker, so a deployment admits up to `WEB_CONCURRENCY` x 5 per user per minute. The other two generation guardrails are not: the cap of 2 concurrent generations per user (a `generationslot` lease row) and the daily ceiling above are both database-backed and hold across workers |
 | `ALLOWED_HOSTS` | Recommended in prod | *(empty)* | Comma-separated hostnames this deploy answers as, canonical one **first**. The authority half of the same question `TRUSTED_PROXY_CIDRS` answers for the scheme: both halves of every absolute URL the app mints are otherwise written by the caller, most visibly the router's trailing-slash `307`, which is answered before any auth check runs. A request naming an unlisted host is **not rejected** — its authority is replaced with the first entry and it proceeds normally, so a platform health prober whose `Host` you cannot predict still gets its `200` and nothing needs a path exemption; the original `Host` is recorded on that request's access-log line as `original_host`. Left empty, nothing is settled and behaviour is exactly as before, which is what keeps local dev, Expo and LAN addresses working unconfigured. Entries are bare hostnames with an optional port (`api.example.com`, `localhost:8000`) — no scheme, path or userinfo. Matching ignores the port; the substitution is verbatim. Wildcards are refused, not supported: this variable also names the host a non-matching request is settled onto, and a pattern has no single host to substitute. A malformed entry refuses the boot on every `ENV`; an unset one only warns, and only in production. |
 | `TRUSTED_PROXY_CIDRS` | Recommended in prod | *(empty)* | Comma-separated IPs/CIDRs of the reverse proxies you operate, e.g. the platform ingress range. Until it is set, `X-Forwarded-For` is ignored (every client behind the ingress shares one rate-limit bucket and one audited IP) and `X-Forwarded-Proto` is untrusted, so redirects and absolute URLs stay `http://`. Unset, the per-client overall ceiling (`CLIENT_CEILING_LIMIT`, 600/minute) is shared by every client too, which makes it a site-wide 600/minute across the whole API. Never list a public range you do not control. |
@@ -761,6 +895,9 @@ journal_encryption_enabled=True
 | `CREEK_PROVISIONING_AUTH_FILE` | With provisioning | *(empty)* | Must be the exact mounted path `/run/adepthood-secrets/creek-control-bearer`, containing Adepthood's Creek service bearer. The bearer itself must not be stored in the environment. |
 | `CREEK_PROVISIONING_HANDOFF_AUTH_FILE` | With provisioning | *(empty)* | Must be the exact mounted path `/run/adepthood-secrets/creek-handoff-bearer`, containing a distinct, separately rotated bearer used to authenticate Creek's one-time connection handoff callback. |
 | `CREEK_MANAGED_VAULT_ALERT_EMAIL` | With managed-vault activation | *(empty)* | Monitored operator mailbox for content-free fleet alerts. Managed-vault rollout remains unavailable unless this is a valid email address. |
+| `CREEK_MANAGED_VAULT_ACTIVATION_ENABLED` | With managed-vault activation | *(unset = off)* | Switch for **new** managed-vault activations. Unset, empty, `0`, `false`, `no` or `off` turns them off; `1`, `true`, `yes` or `on` turns them on, subject to the other rollout settings; any other value leaves the rollout incomplete, so no new activation is admitted. It gates new activations only: vaults that already exist keep replicating and reflecting. To stop content reaching existing vaults during an incident, use `PRIVACY_SUSPEND_VAULT_SEND`. |
+| `PRIVACY_SUSPEND_EXTERNAL_AI` | No | *(unset = off)* | Operator privacy-incident switch (#3075). On, it refuses every cloud language-model call, server-paid **and** BYOK, before any provider client is built. Resonance, essay letters, completion detection and page transcription answer `503 ai_suspended` and charge nothing. Journal create, read and edit, export and account deletion keep working; frequency classification on a write degrades to unclassified, and the entry is still saved. A cached essay letter and the care surface for an intimate entry are still served. **Only unset, empty or `false` (case- and whitespace-insensitive) is off; every other value, including `0`, `off` and `no`, suspends.** An unrecognised value is also logged once at boot by variable name, never by value. Read at call time; the boot log line `privacy_suspension_state` and `GET /admin/privacy-suspensions` confirm the state. The two switches are independent: this one does not stop vault sends, and `PRIVACY_SUSPEND_VAULT_SEND` does not stop cloud calls, so flip both for zero external egress of content. |
+| `PRIVACY_SUSPEND_VAULT_SEND` | No | *(unset = off)* | Operator privacy-incident switch (#3075). On, it refuses every content-bearing Creek vault request (any request with a body, and any `POST`, `PUT` or `PATCH`: journal ingest, reflection, upload, Voice Draft upsert, and pipeline classify/link) before it reaches the wire. The journal write, reflection and upload paths treat it as an unavailable vault, so writing is still saved locally. A pipeline stage it refuses ends on that attempt without further retries. It is recorded `failed` when no attempt could have reached the vault, and `ambiguous` when an earlier, unanswered attempt may have. Body-free requests continue: the capability probe, job polls, the wheel read, and the content-free journal withdrawal and Voice Draft deletion. Teardown reconciliation through the provisioning client is not affected. Same parsing as `PRIVACY_SUSPEND_EXTERNAL_AI`: only unset, empty or `false` is off. Confirm with `GET /admin/privacy-suspensions`. |
 | `ACCOUNT_EGRESS_BARRIER_CROSS_WORKER_ENABLED` | No | *(unset = on)* | Switch for the **cross-worker** half of the per-account egress barrier. Unset or `true` is on; `false` suppresses the PostgreSQL advisory statements and nothing else. Any other value is refused and reported as a defect rather than read as either answer. See "Per-account egress barrier" below — this is not a feature flag for the barrier itself, which cannot be turned off. |
 
 ### Per-account egress barrier
@@ -1406,6 +1543,9 @@ This runs:
 - [ ] Health check returns `{"status":"healthy","database":"connected",...}`
 - [ ] Alembic migrations are up to date (if configured)
 - [ ] `BOTMASON_PROVIDER` is set (`stub` is fine to start)
+- [ ] `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` are unset, or each names exactly its provider's
+      registered `https` host in `backend/src/privacy/recipients.py`. Production refuses to boot
+      on any other value, such as an unregistered AI gateway (#3065)
 
 ---
 

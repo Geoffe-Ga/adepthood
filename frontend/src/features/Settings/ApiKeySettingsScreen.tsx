@@ -71,7 +71,7 @@ const MASK_VISIBLE_CHARS = 4;
 // key can't persist. Kept generic (never the raw thrown error) to avoid leaking
 // keychain internals into the UI.
 export const SECURE_STORAGE_WARNING =
-  "Secure storage is unavailable on this device, so your API key can't be saved. It will still work for this session, but it won't persist after you close the app. Try restarting the app, then save your key again.";
+  "Secure storage is unavailable on this device, so your API key can't be saved. It will keep working until you close the app, and then it will be gone. Try restarting the app, then save your key again.";
 
 // Built from the provider map so the error copy can never drift from the
 // supported set: e.g. `"sk-" (OpenAI) or "sk-ant-" (Anthropic)`.
@@ -193,7 +193,7 @@ const KeyInputRow = ({
 
 const REMOVE_KEY_DIALOG_TITLE = 'Remove API key?';
 const REMOVE_KEY_DIALOG_BODY =
-  'BotMason will fall back to the shared server key (if configured). You can add your own key again at any time.';
+  'Adepthood will use its own shared key instead, if one is set up. You can add your own key again whenever you like.';
 const REMOVE_KEY_CANCEL_LABEL = 'Cancel';
 const REMOVE_KEY_CONFIRM_LABEL = 'Remove';
 

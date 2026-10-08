@@ -11,7 +11,7 @@
       "aspect": "Agency",
       "category": "Yes-And-Ness",
       "divine_gender_polarity": "Divine Masculine",
-      "free_will_description": "Individuals are unaware of the concept of free will. Their actions are purely reactive and instinctual, driven by basic survival needs. This is the bottom of Maslow's Pyramid, the Root Chakra, the first stage Piaget's cognitive development or step one of Erikson's psychosocial development etc.",
+      "free_will_description": "When we first move through Beige we operate like a Biological Machine—a bundle of reflexes, needs, cravings, and instincts. Basically, a baby. An addict deep in the territory of abuse. A victim of trauma, deprivation, or circumstance struggling to survive. It’s not something to feel guilty about.",
       "growing_up_stage": "Survival",
       "id": "beige",
       "relationship_to_free_will": "Biological Machine",
@@ -35,7 +35,7 @@
       "aspect": "Self-Love",
       "category": "Love",
       "divine_gender_polarity": "Divine Masculine",
-      "free_will_description": "Behavior is driven by a subconscious urge to alleviate the pain of emotions (that may or may not even be consciously noticed) that tell us that we are not enough. Without self-love toward these aversion based feelings, the tendency is to forge dominator \"power over others.\"",
+      "free_will_description": "APTITUDE teaches that Free Will only becomes real when you learn to express power differently. The Dominator believes they are acting freely, but in truth, they are ruled by fear and shame. Their \"choices\" are reactions. Their \"power\" is armor.",
       "growing_up_stage": "Ego-centrism",
       "id": "red",
       "relationship_to_free_will": "Dominator",
@@ -47,7 +47,7 @@
       "aspect": "Community Love",
       "category": "Love",
       "divine_gender_polarity": "Divine Feminine",
-      "free_will_description": "Behavior is determined by the attempt to meet the expectations of the relationships that the individual is embedded within; we are defined by roles: partners, parents, children, coworkers, friends, pupils, etc",
+      "free_will_description": "At Blue, you do what you're told. You follow the rules. You meet the expectations.",
       "growing_up_stage": "Conformity",
       "id": "blue",
       "relationship_to_free_will": "Victim",
@@ -71,7 +71,7 @@
       "aspect": "Embodied Understanding",
       "category": "Understanding",
       "divine_gender_polarity": "Divine Feminine",
-      "free_will_description": "Behavior is driven by a desire to be virtuous, to apply rules fairly, to reduce the influence of hierarchy, and to respect everyone's perspectives. Free Will is still absent as behavior follows predictably from a set of pluralistic heuristics.",
+      "free_will_description": "Here's the truth: recognizing that you've been conditioned is not the same as freeing yourself from that conditioning. Naming your trauma is not the same as healing it. Understanding why you're afraid doesn't make you brave.",
       "growing_up_stage": "Pluralistic",
       "id": "green",
       "relationship_to_free_will": "Shadow Glorifier",
@@ -83,7 +83,7 @@
       "aspect": "Systems Wisdom",
       "category": "Wisdom",
       "divine_gender_polarity": "Divine Masculine",
-      "free_will_description": "The ability to reflect on all the influences of stages prior to Yellow develops and the individual becomes convinced that Free Will is essentially an illusion.",
+      "free_will_description": "Yellow is where you start to see the forces. Where you develop enough metacognitive capacity to observe your own patterns as they arise. And from that observation, you gain the smallest sliver of space—the gap between impulse and action. And in that gap, choice becomes possible.",
       "growing_up_stage": "Integrative",
       "id": "yellow",
       "relationship_to_free_will": "Despairing Analyst",
@@ -95,8 +95,8 @@
       "aspect": "True Self Connection",
       "category": "Wisdom",
       "divine_gender_polarity": "Divine Feminine",
-      "free_will_description": "Spiritual development that leads to an experience of the nondual nature of the Kosmos that allows the Adept to burn off karma, develop nonreactivity, break unhealthy and ineffective patterns, escape samsara and unbridle from determinism effectively.",
-      "growing_up_stage": "Nonduality",
+      "free_will_description": "The part of you that chose to incarnate into these conditions. The part that has a purpose, a mission, a knowing that the personality cannot access through effort alone.",
+      "growing_up_stage": "True Self Connection",
       "id": "teal",
       "relationship_to_free_will": "True Self Embodier",
       "spiral_dynamics_color": "Teal",
@@ -119,7 +119,7 @@
       "aspect": "Emptiness",
       "category": "Awareness",
       "divine_gender_polarity": "Divine Hermaphrodite",
-      "free_will_description": "There is no longer an individual who can have Free Will. This body becomes a perfect instrument of the evolution of consciousness, an empty Nobody who simply does the perfect thing in every situation—the thing that will result in the most spiritual growth for all involved.",
+      "free_will_description": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through. There is no \"you\" to have free will. And yet, choice is obviously happening. Actions arise. Intentions form. Life unfolds.",
       "growing_up_stage": "Pure Awareness",
       "id": "clearlight",
       "relationship_to_free_will": "Whole Adept",
@@ -149,6 +149,62 @@
       "field": "relationship_to_free_will",
       "stage_id": "teal",
       "value": "True Self Embodier"
+    },
+    {
+      "authority": "markdown/01-beige/04-the-relationship-to-free-will-at-beige.md",
+      "csv_value": "Individuals are unaware of the concept of free will. Their actions are purely reactive and instinctual, driven by basic survival needs. This is the bottom of Maslow's Pyramid, the Root Chakra, the first stage Piaget's cognitive development or step one of Erikson's psychosocial development etc.",
+      "field": "free_will_description",
+      "stage_id": "beige",
+      "value": "When we first move through Beige we operate like a Biological Machine—a bundle of reflexes, needs, cravings, and instincts. Basically, a baby. An addict deep in the territory of abuse. A victim of trauma, deprivation, or circumstance struggling to survive. It’s not something to feel guilty about."
+    },
+    {
+      "authority": "markdown/03-red/04-the-relationship-to-free-will-at-red-dominator.md",
+      "csv_value": "Behavior is driven by a subconscious urge to alleviate the pain of emotions (that may or may not even be consciously noticed) that tell us that we are not enough. Without self-love toward these aversion based feelings, the tendency is to forge dominator \"power over others.\"",
+      "field": "free_will_description",
+      "stage_id": "red",
+      "value": "APTITUDE teaches that Free Will only becomes real when you learn to express power differently. The Dominator believes they are acting freely, but in truth, they are ruled by fear and shame. Their \"choices\" are reactions. Their \"power\" is armor."
+    },
+    {
+      "authority": "markdown/04-blue/04-the-relationship-to-free-will-at-blue-victim.md",
+      "csv_value": "Behavior is determined by the attempt to meet the expectations of the relationships that the individual is embedded within; we are defined by roles: partners, parents, children, coworkers, friends, pupils, etc",
+      "field": "free_will_description",
+      "stage_id": "blue",
+      "value": "At Blue, you do what you're told. You follow the rules. You meet the expectations."
+    },
+    {
+      "authority": "markdown/06-green/04-the-relationship-to-free-will-at-green-shadow-glorifier.md",
+      "csv_value": "Behavior is driven by a desire to be virtuous, to apply rules fairly, to reduce the influence of hierarchy, and to respect everyone's perspectives. Free Will is still absent as behavior follows predictably from a set of pluralistic heuristics.",
+      "field": "free_will_description",
+      "stage_id": "green",
+      "value": "Here's the truth: recognizing that you've been conditioned is not the same as freeing yourself from that conditioning. Naming your trauma is not the same as healing it. Understanding why you're afraid doesn't make you brave."
+    },
+    {
+      "authority": "markdown/07-yellow/05-the-relationship-to-free-will-at-yellow-intentional-actor.md",
+      "csv_value": "The ability to reflect on all the influences of stages prior to Yellow develops and the individual becomes convinced that Free Will is essentially an illusion.",
+      "field": "free_will_description",
+      "stage_id": "yellow",
+      "value": "Yellow is where you start to see the forces. Where you develop enough metacognitive capacity to observe your own patterns as they arise. And from that observation, you gain the smallest sliver of space—the gap between impulse and action. And in that gap, choice becomes possible."
+    },
+    {
+      "authority": "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md",
+      "csv_value": "Nonduality",
+      "field": "growing_up_stage",
+      "stage_id": "teal",
+      "value": "True Self Connection"
+    },
+    {
+      "authority": "markdown/08-teal/04-the-relationship-to-free-will-at-teal-true-self-embodier.md",
+      "csv_value": "Spiritual development that leads to an experience of the nondual nature of the Kosmos that allows the Adept to burn off karma, develop nonreactivity, break unhealthy and ineffective patterns, escape samsara and unbridle from determinism effectively.",
+      "field": "free_will_description",
+      "stage_id": "teal",
+      "value": "The part of you that chose to incarnate into these conditions. The part that has a purpose, a mission, a knowing that the personality cannot access through effort alone."
+    },
+    {
+      "authority": "markdown/10-clearlight/04-the-relationship-to-free-will-at-clear-light-adept.md",
+      "csv_value": "There is no longer an individual who can have Free Will. This body becomes a perfect instrument of the evolution of consciousness, an empty Nobody who simply does the perfect thing in every situation—the thing that will result in the most spiritual growth for all involved.",
+      "field": "free_will_description",
+      "stage_id": "clearlight",
+      "value": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through. There is no \"you\" to have free will. And yet, choice is obviously happening. Actions arise. Intentions form. Life unfolds."
     }
   ]
 }

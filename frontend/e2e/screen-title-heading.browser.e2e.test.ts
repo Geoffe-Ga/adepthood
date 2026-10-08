@@ -41,7 +41,7 @@ const WALKED_TITLES: Readonly<Record<string, string>> = {
   DeleteAccount: 'Delete account',
   SupportCare: 'Support & care',
   VaultActivation: 'Create managed vault',
-  VaultSettings: 'Where your corpus lives',
+  VaultSettings: 'Where your writing lives',
 };
 
 /**

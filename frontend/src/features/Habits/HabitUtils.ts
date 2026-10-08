@@ -5,10 +5,9 @@ import { STAGE_DURATIONS_DAYS } from '../../constants/program';
 import { brightenColor, colors, STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
 import {
   DEFAULT_TIMEZONE,
-  MS_PER_DAY,
   addDaysInTZ,
+  MS_PER_DAY,
   dayKeyInTZ,
-  dayKeyToInstant,
   streakFromCompletions,
   subtractiveLongestStreakFromCompletions,
   subtractiveStreakFromCompletions,
@@ -179,9 +178,9 @@ export const isGoalAchieved = (
   habit: Habit,
   tz: string = DEFAULT_TIMEZONE,
 ): boolean => {
-  const todayProgress = calculateTodaysProgress(habit, tz);
+  const periodProgress = unitsInCurrentPeriod(habit, goal, tz);
   const targetValue = getGoalTarget(goal);
-  return goal.is_additive ? todayProgress >= targetValue : todayProgress <= targetValue;
+  return goal.is_additive ? periodProgress >= targetValue : periodProgress <= targetValue;
 };
 
 /**
@@ -229,42 +228,69 @@ export const getMarkerPositions = (
   };
 };
 
-const DAYS_PER_WEEK = 7;
-/** Average days per month (365.25 / 12) for daily-equivalent normalization. */
-const APPROX_DAYS_PER_MONTH = 30.437;
+export type HabitPeriodKind = 'day' | 'week' | 'month';
+
+/** Calendar bucket used by period-aware habit scoring. */
+export interface HabitPeriod {
+  kind: HabitPeriodKind;
+  key: (dayKey: string) => string;
+}
+
+const DAY_PERIOD: HabitPeriod = {
+  kind: 'day',
+  key: (dayKey) => dayKey,
+};
+
+const MONTH_PERIOD: HabitPeriod = {
+  kind: 'month',
+  key: (dayKey) => dayKey.slice(0, 7),
+};
+
+const DAYS_IN_WEEK = 7;
+const ISO_MONDAY_OFFSET = 6;
+
+/** Resolve a calendar day to the Monday that starts its ISO week. */
+const isoWeekKey = (dayKey: string): string => {
+  // Noon UTC keeps the parsed calendar day clear of every DST boundary. The
+  // value is calendar-only: account timezone conversion already happened in
+  // ``completionDayKey`` / ``todayInUserTZ`` before this helper sees it.
+  const weekday = new Date(`${dayKey}T12:00:00Z`).getUTCDay();
+  const daysSinceMonday = (weekday + ISO_MONDAY_OFFSET) % DAYS_IN_WEEK;
+  return addDaysInTZ(dayKey, -daysSinceMonday, DEFAULT_TIMEZONE);
+};
+
+const WEEK_PERIOD: HabitPeriod = {
+  kind: 'week',
+  key: isoWeekKey,
+};
+
+/**
+ * Period a goal is scored over. Weekly periods start Monday; monthly periods
+ * are calendar months. Daily and per-session goals retain day scoring.
+ */
+export const periodOf = (goal: Pick<Goal, 'frequency_unit'>): HabitPeriod => {
+  if (goal.frequency_unit === 'per_week') return WEEK_PERIOD;
+  if (goal.frequency_unit === 'per_month') return MONTH_PERIOD;
+  return DAY_PERIOD;
+};
 
 export const getGoalTarget = (goal: Goal): number => {
   if (!goal) return 0;
-  if (goal.frequency_unit === 'per_day') {
-    return goal.target;
-  }
-  if (goal.frequency_unit === 'per_week') {
-    return (goal.target / DAYS_PER_WEEK) * goal.frequency;
-  }
-  if (goal.frequency_unit === 'per_month') {
-    return (goal.target / APPROX_DAYS_PER_MONTH) * goal.frequency;
-  }
-  return goal.target;
-};
-
-const DAYS_PER_PERIOD: Record<string, number> = {
-  per_week: DAYS_PER_WEEK,
-  per_month: APPROX_DAYS_PER_MONTH,
+  return periodOf(goal).kind === 'day' ? goal.target : goal.target * goal.frequency;
 };
 
 /** Smallest target a marker drop may propose; an empty goal is not a goal. */
 const MIN_GOAL_TARGET = 1;
 
 /**
- * Exact inverse of {@link getGoalTarget}: turn a daily-equivalent back into
- * the goal's own raw units. `null` when the cadence has no frequency to
- * divide by, which no real goal has but a malformed row can.
+ * Exact inverse of {@link getGoalTarget}: turn a period target back into the
+ * goal's own per-occurrence units. `null` when the cadence has no frequency
+ * to divide by, which no real goal has but a malformed row can.
  */
-const rawTargetFor = (goal: Goal, dailyEquivalent: number): number | null => {
-  const days = DAYS_PER_PERIOD[goal.frequency_unit];
-  if (days === undefined) return dailyEquivalent;
+const rawTargetFor = (goal: Goal, periodTarget: number): number | null => {
+  if (periodOf(goal).kind === 'day') return periodTarget;
   if (goal.frequency <= 0) return null;
-  return (dailyEquivalent * days) / goal.frequency;
+  return periodTarget / goal.frequency;
 };
 
 /** Round a raw target to whole units, never below {@link MIN_GOAL_TARGET}. */
@@ -275,10 +301,10 @@ const roundedTarget = (raw: number | null): number | null =>
  * Inverse of {@link getMarkerPositions} for one draggable tier: the raw
  * target a marker dropped at `percent` should be saved with.
  *
- * Marker positions live in daily-equivalent space while `goal.target` is raw,
- * so a per_week or per_month habit needs the round trip through
- * {@link rawTargetFor} — reading the percentage straight against the stretch
- * target saves the wrong number in every non-daily cadence.
+ * Marker positions live in period-target space (`target × frequency`) while
+ * `goal.target` is per occurrence, so a per_week or per_month habit needs the
+ * round trip through {@link rawTargetFor} — reading the percentage straight
+ * against the stretch target saves the wrong number in every non-daily cadence.
  *
  * Returns `null` when the position carries no target to invert: a degenerate
  * goal set, or a subtractive low marker, which {@link getMarkerPositions}
@@ -312,6 +338,29 @@ export const completionDayKey = (
   completion: Pick<Completion, 'local_day' | 'timestamp'>,
   tz: string = DEFAULT_TIMEZONE,
 ): string => completion.local_day ?? dayKeyInTZ(completion.timestamp, tz);
+
+/**
+ * Sum signed completion units in the goal's current account-local period.
+ * Canonical ``local_day`` wins over the audit timestamp; only legacy cached
+ * rows without it are converted through the account timezone. The result is
+ * floored at zero, matching the server's visible day-total contract.
+ */
+export const unitsInCurrentPeriod = (
+  habit: Habit,
+  goal: Pick<Goal, 'frequency_unit'>,
+  tz: string = DEFAULT_TIMEZONE,
+): number => {
+  if (!habit.completions || habit.completions.length === 0) return 0;
+  const period = periodOf(goal);
+  const currentPeriodKey = period.key(todayInUserTZ(tz));
+  let total = 0;
+  for (const completion of habit.completions) {
+    if (period.key(completionDayKey(completion, tz)) === currentPeriodKey) {
+      total += completion.completed_units;
+    }
+  }
+  return Math.max(0, total);
+};
 
 /**
  * Sum completion units in the user's current calendar day, floored at zero.
@@ -397,11 +446,11 @@ export const getGoalTier = (habit: Habit, tz: string = DEFAULT_TIMEZONE): GoalTi
     return { currentGoal: habit.goals[0]!, nextGoal: null, completedAllGoals: false };
   }
 
-  const todayProgress = calculateTodaysProgress(habit, tz);
+  const periodProgress = unitsInCurrentPeriod(habit, stretchGoal, tz);
   const isSubtractive = isSubtractiveHabit(habit);
   return isSubtractive
-    ? resolveSubtractiveTier(todayProgress, lowGoal, clearGoal, stretchGoal)
-    : resolveAdditiveTier(todayProgress, lowGoal, clearGoal, stretchGoal);
+    ? resolveSubtractiveTier(periodProgress, lowGoal, clearGoal, stretchGoal)
+    : resolveAdditiveTier(periodProgress, lowGoal, clearGoal, stretchGoal);
 };
 
 /** Progress on the unified 0-100 scale shared with :func:`getMarkerPositions`. */
@@ -410,19 +459,19 @@ export const getProgressPercentage = (
   currentGoal: Goal,
   tz: string = DEFAULT_TIMEZONE,
 ): number => {
-  const todayProgress = calculateTodaysProgress(habit, tz);
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
+  const periodProgress = unitsInCurrentPeriod(habit, stretchGoal, tz);
   const stretchTarget = getGoalTarget(stretchGoal);
 
   if (!isSubtractiveHabit(habit)) {
     if (stretchTarget <= 0) return 100;
-    return clampPercentage((todayProgress / stretchTarget) * 100);
+    return clampPercentage((periodProgress / stretchTarget) * 100);
   }
 
   const lowGoal = habit.goals.find((g) => g.tier === 'low') ?? currentGoal;
   const range = getGoalTarget(lowGoal) - stretchTarget;
-  if (range <= 0) return todayProgress <= stretchTarget ? 100 : 0;
-  return clampPercentage(100 - ((todayProgress - stretchTarget) / range) * 100);
+  if (range <= 0) return periodProgress <= stretchTarget ? 100 : 0;
+  return clampPercentage(100 - ((periodProgress - stretchTarget) / range) * 100);
 };
 
 /**
@@ -445,15 +494,15 @@ export const getProgressBarColor = (
 
   if (!clearGoal) return stageColor;
 
-  const todayProgress = calculateTodaysProgress(habit, tz);
+  const periodProgress = unitsInCurrentPeriod(habit, clearGoal, tz);
 
   if (!isSubtractiveHabit(habit)) {
-    return todayProgress >= getGoalTarget(clearGoal) ? brightenColor(stageColor) : stageColor;
+    return periodProgress >= getGoalTarget(clearGoal) ? brightenColor(stageColor) : stageColor;
   }
 
   // Subtractive: victory when staying at or under stretch target
   const stretchGoal = habit.goals.find((g) => g.tier === 'stretch');
-  if (stretchGoal && todayProgress <= getGoalTarget(stretchGoal)) {
+  if (stretchGoal && periodProgress <= getGoalTarget(stretchGoal)) {
     return brightenColor(stageColor);
   }
 
@@ -461,8 +510,6 @@ export const getProgressBarColor = (
 };
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DAYS_IN_WEEK = 7;
-
 const emptyStats = (): HabitStatsData => ({
   values: new Array(DAYS_IN_WEEK).fill(0) as number[],
   completionsByDay: new Array(DAYS_IN_WEEK).fill(0) as number[],
@@ -528,6 +575,148 @@ const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): num
 };
 
 /**
+ * The goal that speaks for a habit's streak cadence. Frequency is shared by
+ * every tier, so the clear tier wins; without one, the polarity rule's
+ * threshold goal (subtractive) or the first goal (additive) does — the same
+ * choice as the backend ``period_cadence_for_goals`` / ``_cadence_goal``;
+ * change both together.
+ */
+const streakCadenceGoal = (habit: Habit): Goal | undefined =>
+  habit.goals.find((g) => g.tier === 'clear') ??
+  habit.goals.find((g) => !g.is_additive) ??
+  habit.goals[0];
+
+/** The period a habit's streak is counted in: days, ISO weeks, or calendar months. */
+export const streakPeriodKind = (habit: Habit): HabitPeriodKind => {
+  const goal = streakCadenceGoal(habit);
+  return goal ? periodOf(goal).kind : 'day';
+};
+
+/** Everything a weekly / monthly streak walk needs (#2819). */
+export interface PeriodStreakCadence {
+  kind: Exclude<HabitPeriodKind, 'day'>;
+  /** The clear tier's `target × frequency`. */
+  periodTarget: number;
+  /**
+   * The habit's start as a `YYYY-MM-DD` key. A subtractive walk starts at the
+   * period containing it (judged on the days the habit existed) and never
+   * counts an earlier period — the backend `PeriodCadence` rule.
+   */
+  startDay: string;
+  subtractive: boolean;
+}
+
+/** One logged amount on a user-local calendar day. */
+export interface DayUnits {
+  day: string;
+  units: number;
+}
+
+const MONTHS_PER_YEAR = 12;
+
+/** First day (`YYYY-MM-DD`) of the period containing `dayKey`. */
+const periodStartDay = (dayKey: string, kind: PeriodStreakCadence['kind']): string =>
+  kind === 'week' ? isoWeekKey(dayKey) : `${dayKey.slice(0, 7)}-01`;
+
+/** First day of the period `step` periods away from the one starting at `startDay`. */
+const shiftPeriod = (startDay: string, kind: PeriodStreakCadence['kind'], step: 1 | -1): string => {
+  if (kind === 'week') return addDaysInTZ(startDay, step * DAYS_IN_WEEK, DEFAULT_TIMEZONE);
+  const year = Number.parseInt(startDay.slice(0, 4), 10);
+  const monthIndex = Number.parseInt(startDay.slice(5, 7), 10) - 1 + step;
+  const shiftedYear = year + Math.floor(monthIndex / MONTHS_PER_YEAR);
+  const shiftedMonth = ((monthIndex % MONTHS_PER_YEAR) + MONTHS_PER_YEAR) % MONTHS_PER_YEAR;
+  return `${String(shiftedYear).padStart(4, '0')}-${String(shiftedMonth + 1).padStart(2, '0')}-01`;
+};
+
+const periodMet = (total: number, cadence: PeriodStreakCadence): boolean =>
+  cadence.subtractive ? total <= cadence.periodTarget : total >= cadence.periodTarget;
+
+interface PeriodWalk {
+  totals: Map<string, number>;
+  first: string;
+  open: string;
+}
+
+const periodWalk = (
+  days: ReadonlyArray<DayUnits>,
+  today: string,
+  cadence: PeriodStreakCadence,
+): PeriodWalk => {
+  const totals = new Map<string, number>();
+  let first = periodStartDay(cadence.startDay, cadence.kind);
+  for (const { day, units } of days) {
+    const key = periodStartDay(day, cadence.kind);
+    totals.set(key, (totals.get(key) ?? 0) + units);
+    // Additive history logged before the start still counts, like the day streak.
+    if (!cadence.subtractive && key < first) first = key;
+  }
+  return { totals, first, open: periodStartDay(today, cadence.kind) };
+};
+
+/**
+ * Current streak of consecutive met periods. Mirrors the backend owner
+ * ``domain.streaks.period_current_streak``: the open period (containing
+ * `today`) counts when already met and is grace otherwise; walking back from
+ * the last closed period, the first unmet one ends the streak.
+ */
+export const periodCurrentStreak = (
+  days: ReadonlyArray<DayUnits>,
+  today: string,
+  cadence: PeriodStreakCadence,
+): number => {
+  const { totals, first, open } = periodWalk(days, today, cadence);
+  if (first > open) return 0;
+  let streak = periodMet(totals.get(open) ?? 0, cadence) ? 1 : 0;
+  let cursor = shiftPeriod(open, cadence.kind, -1);
+  while (cursor >= first && periodMet(totals.get(cursor) ?? 0, cadence)) {
+    streak += 1;
+    cursor = shiftPeriod(cursor, cadence.kind, -1);
+  }
+  return streak;
+};
+
+/**
+ * Longest run of consecutive met periods up to the open one. Mirrors
+ * ``domain.streaks.period_longest_streak``; an unmet open period simply does
+ * not extend the run.
+ */
+export const periodLongestStreak = (
+  days: ReadonlyArray<DayUnits>,
+  today: string,
+  cadence: PeriodStreakCadence,
+): number => {
+  const { totals, first, open } = periodWalk(days, today, cadence);
+  let longest = 0;
+  let run = 0;
+  for (let cursor = first; cursor <= open; cursor = shiftPeriod(cursor, cadence.kind, 1)) {
+    if (periodMet(totals.get(cursor) ?? 0, cadence)) {
+      run += 1;
+      longest = Math.max(longest, run);
+    } else if (cursor !== open) {
+      run = 0;
+    }
+  }
+  return longest;
+};
+
+/** The habit's weekly / monthly streak cadence, or `null` for day cadences. */
+const periodStreakCadence = (habit: Habit, tz: string): PeriodStreakCadence | null => {
+  const goal = streakCadenceGoal(habit);
+  if (!goal) return null;
+  const { kind } = periodOf(goal);
+  if (kind === 'day') return null;
+  return {
+    kind,
+    periodTarget: goal.target * goal.frequency,
+    startDay: dayKeyInTZ(habit.start_date, tz),
+    subtractive: isSubtractiveHabit(habit),
+  };
+};
+
+const toDayUnits = (completions: ReadonlyArray<Completion>, tz: string): DayUnits[] =>
+  completions.map((c) => ({ day: completionDayKey(c, tz), units: c.completed_units }));
+
+/**
  * Subtractive habits (e.g. "abstain from sugar") count *no-log* days as
  * abstention successes, so the additive helper — which requires a row
  * per counted day — is wrong for them.  Returns `null` when the habit
@@ -549,7 +738,7 @@ const subtractiveStreakInputs = (
   if (nonAdditive.length === 0) return null;
   const thresholdGoal = habit.goals.find((g) => g.tier === 'clear') ?? nonAdditive[0]!;
   return {
-    clearThreshold: getGoalTarget(thresholdGoal),
+    clearThreshold: thresholdGoal.target,
     startDate: dayKeyInTZ(habit.start_date, tz),
   };
 };
@@ -563,12 +752,18 @@ const subtractiveStreakInputs = (
  * For subtractive habits, delegates to the abstention-aware helper so a
  * habit with no log entries still accrues streak days — the user has
  * stayed clean since `habit.start_date`.
+ *
+ * A weekly / monthly habit counts met periods instead (#2819).
  */
 const computeCurrentStreak = (
   habit: Habit,
   completions: ReadonlyArray<Completion>,
   tz: string,
 ): number => {
+  const cadence = periodStreakCadence(habit, tz);
+  if (cadence) {
+    return periodCurrentStreak(toDayUnits(completions, tz), todayInUserTZ(tz), cadence);
+  }
   const subtractive = subtractiveStreakInputs(habit, tz);
   if (subtractive) {
     return subtractiveStreakFromCompletions(
@@ -599,6 +794,8 @@ const computeCurrentStreak = (
  * a contradictory "Current: 7 · Longest: 0" pair for any habit whose
  * current streak is non-zero but has no log entries (the
  * ``computeLongestStreak`` input is empty in that case).
+ *
+ * A weekly / monthly habit counts met periods instead (#2819).
  */
 const computeLongestStreakFor = (
   habit: Habit,
@@ -606,6 +803,10 @@ const computeLongestStreakFor = (
   sortedDays: Date[],
   tz: string,
 ): number => {
+  const cadence = periodStreakCadence(habit, tz);
+  if (cadence) {
+    return periodLongestStreak(toDayUnits(completions, tz), todayInUserTZ(tz), cadence);
+  }
   const subtractive = subtractiveStreakInputs(habit, tz);
   if (subtractive) {
     return subtractiveLongestStreakFromCompletions(
@@ -698,50 +899,12 @@ export const toLocalHabitStats = (api: ApiHabitStats): HabitStatsData => ({
   completionDates: api.completion_dates,
 });
 
-// A gap needs at least a first and a last day to bound it.
-const MIN_KEYS_TO_BOUND_GAP = 2;
-// Day step used when walking the range between first and last completion.
-const NEXT_DAY_OFFSET = 1;
-
-/**
- * Calculate days without completions between the first and last completion,
- * using each row's canonical ``local_day`` (with a timestamp-derived fallback
- * for legacy cached rows).
- *
- * Walking the gap purely on `YYYY-MM-DD` day keys (which sort and compare
- * lexicographically in chronological order) keeps the arithmetic in one
- * timezone, so consecutive local days that straddle the UTC boundary no
- * longer register a phantom missed day.
- */
-export const calculateMissedDays = (habit: Habit, tz: string = DEFAULT_TIMEZONE): Date[] => {
-  const completions = habit.completions;
-  if (!completions || completions.length === 0) return [];
-
-  const completedKeys = new Set<string>();
-  for (const c of completions) {
-    completedKeys.add(completionDayKey(c, tz));
-  }
-  if (completedKeys.size < MIN_KEYS_TO_BOUND_GAP) return [];
-
-  const sortedKeys = Array.from(completedKeys).sort();
-  const lastKey = sortedKeys[sortedKeys.length - 1]!;
-
-  const missed: Date[] = [];
-  let cursorKey = addDaysInTZ(sortedKeys[0]!, NEXT_DAY_OFFSET, tz);
-  while (cursorKey < lastKey) {
-    if (!completedKeys.has(cursorKey)) {
-      missed.push(dayKeyToInstant(cursorKey, tz));
-    }
-    cursorKey = addDaysInTZ(cursorKey, NEXT_DAY_OFFSET, tz);
-  }
-
-  return missed;
-};
-
 // Logs a number of units for the given habit. The additive optimistic streak
 // advances once per user-local day; a subtractive streak is already earned by
 // abstaining and is left for the server's check-in response to authoritatively
-// reconcile. Returns the updated habit object.
+// reconcile. A weekly / monthly streak is recomputed from the period walk, since
+// a log only moves it when it completes the open period. Returns the updated
+// habit object.
 export const logHabitUnits = (
   habit: Habit,
   amount: number,
@@ -760,13 +923,32 @@ export const logHabitUnits = (
     completed_units: amount,
   };
 
+  const completions = habit.completions ? [...habit.completions, completion] : [completion];
+  const dayStreak = isSubtractive || alreadyLoggedToday ? habit.streak : habit.streak + 1;
   return {
     ...habit,
-    streak: isSubtractive || alreadyLoggedToday ? habit.streak : habit.streak + 1,
+    streak: periodStreakCadence(habit, tz)
+      ? computeCurrentStreak(habit, completions, tz)
+      : dayStreak,
     last_completion_date: date,
-    completions: habit.completions ? [...habit.completions, completion] : [completion],
+    completions,
   };
 };
+
+const STREAK_UNIT: Record<HabitPeriodKind, string> = { day: 'day', week: 'week', month: 'month' };
+
+/**
+ * "N days" / "N weeks" / "N months" for a streak counted in `kind` periods.
+ * The day form keeps its long-standing always-plural copy.
+ */
+export const formatStreakCount = (streak: number, kind: HabitPeriodKind): string => {
+  if (kind === 'day') return `${streak} days`;
+  return `${streak} ${STREAK_UNIT[kind]}${streak === 1 ? '' : 's'}`;
+};
+
+/** "N-day" / "N-week" / "N-month" — the streak as a compound adjective. */
+export const formatStreakAdjective = (streak: number, kind: HabitPeriodKind): string =>
+  `${streak}-${STREAK_UNIT[kind]}`;
 
 export const calculateNetEnergy = (cost: number, returnValue: number): number => {
   return returnValue - cost;

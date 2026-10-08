@@ -32,12 +32,12 @@ export const FEEDBACK_PREVIEW_COPY = {
 /** A readable label for each of the seven envelope keys. */
 export const FEEDBACK_CONTEXT_LABELS: Readonly<Record<keyof FeedbackContext, string>> = {
   screen: 'Screen',
-  control: 'Control',
+  control: 'Button you used',
   platform: 'Platform',
   app_build: 'App build',
-  viewport_class: 'Viewport class',
+  viewport_class: 'Screen size',
   locale: 'Locale',
-  correlation_id: 'Correlation id',
+  correlation_id: 'Tracking number',
 };
 
 /** The entry points' visible labels and accessible name. */

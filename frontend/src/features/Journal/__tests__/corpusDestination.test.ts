@@ -30,13 +30,13 @@ const EVERY_VAULT: readonly [string, VaultConnectionState][] = [
 ];
 
 describe('corpusDestinationForReadiness', () => {
-  it('sends a gathering account with no vault to Where your corpus lives', () => {
+  it('sends a gathering account with no vault to Where your writing lives', () => {
     expect(corpusDestinationForReadiness({ state: 'gathering' }, NOTHING_CONNECTED)).toBe(
       'VaultSettings',
     );
   });
 
-  it('sends a ready account with no vault to Where your corpus lives', () => {
+  it('sends a ready account with no vault to Where your writing lives', () => {
     expect(corpusDestinationForReadiness({ state: 'ready' }, NOTHING_CONNECTED)).toBe(
       'VaultSettings',
     );

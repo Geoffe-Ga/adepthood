@@ -110,12 +110,12 @@ class User(SQLModel, table=True):
     # auth helper currently reads it, so existing signups continue
     # to authenticate exactly as before.
     #
-    # ``deleted_at`` -- soft-delete timestamp.  When set, the account
-    # is treated as gone for query purposes (login fails, lookups
-    # filter it out) but the row sticks around for audit trail and
-    # GDPR retention windows.  Hard-delete via right-to-be-forgotten
-    # remains available; soft-delete is for the common case where a
-    # user pauses their account and may return.
+    # ``deleted_at`` -- reserved soft-delete timestamp.  Nothing writes
+    # it today: account deletion hard-deletes the row
+    # (``services.account_deletion``), and no retention window exists
+    # for an account (#3063).  Auth helpers still treat a non-NULL value
+    # as gone (login fails, lookups filter it out), so a future pause
+    # feature would be honoured without a schema change.
     is_active: bool = Field(
         default=True,
         sa_column=Column(Boolean(), nullable=False, server_default="1"),

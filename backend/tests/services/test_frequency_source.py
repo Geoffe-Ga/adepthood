@@ -18,6 +18,7 @@ positions and be silently wrong for four.
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import logging
 import pathlib
@@ -50,6 +51,11 @@ from services import frequency_classification as fc
 from services import frequency_source as fs
 from services.botmason import LLMCreditExhaustedError
 from services.creek_vault_read import _DEGRADED_EVENT, VaultReadDegradeReason
+from services.reflection_boundary import (
+    ReflectionBoundary,
+    VaultSourceUnavailableError,
+    VaultSourceUnavailableReason,
+)
 from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
@@ -222,7 +228,10 @@ async def test_the_operator_classifier_is_never_entered_when_the_vault_answers(
     client = _vault(("F3",))
 
     result = await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PERSONAL
+        client,
+        _BODY,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.VAULT_BOUND,
     )
 
     assert result.source is fc.ClassificationSource.VAULT
@@ -240,7 +249,10 @@ async def test_a_vault_answer_is_never_blended_with_the_operator_answer(
     client = _vault(("F3",))
 
     result = await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PERSONAL
+        client,
+        _BODY,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.VAULT_BOUND,
     )
 
     assert set(result.weights) == {Frequency.F3}
@@ -255,7 +267,10 @@ async def test_every_frequency_code_is_a_tag_the_vault_may_return(
     client = _vault(tuple(code.value for code in Frequency))
 
     result = await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PUBLIC
+        client,
+        _BODY,
+        classification=JournalClassification.PUBLIC,
+        boundary=ReflectionBoundary.VAULT_BOUND,
     )
 
     assert set(result.weights) == set(Frequency)
@@ -270,7 +285,10 @@ async def test_a_repeated_tag_is_one_position_not_two(
     client = _vault(("F3", "F3"))
 
     result = await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PERSONAL
+        client,
+        _BODY,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.VAULT_BOUND,
     )
 
     assert result.weights == {Frequency.F3: fs.VAULT_TAG_WEIGHT}
@@ -285,7 +303,10 @@ async def test_the_public_tier_reaches_the_vault_at_the_open_ceiling(
     client = _vault(("F1",))
 
     await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PUBLIC
+        client,
+        _BODY,
+        classification=JournalClassification.PUBLIC,
+        boundary=ReflectionBoundary.VAULT_BOUND,
     )
 
     assert client.classify_calls == [(_BODY, VaultTierCeiling.OPEN)]
@@ -295,27 +316,72 @@ async def test_the_public_tier_reaches_the_vault_at_the_open_ceiling(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "classification",
+    [JournalClassification.INTIMATE, "intimate", "INTIMATE", "bogus", ""],
+)
 async def test_intimate_refuses_before_either_path_is_entered(
     monkeypatch: pytest.MonkeyPatch,
+    classification: str,
 ) -> None:
     """Not a degradation, and not even a handshake.
 
     The operator classifier raises on any call and the vault records every one,
-    so this fails if the refusal is moved below either entry point.
+    so this fails if the refusal is moved below either entry point. Plain-``str``
+    and unknown tiers are refused the same way (#3059): the allowlist, not an
+    identity check against one enum member, decides.
     """
     _forbid_operator(monkeypatch)
     client = _vault(("F3",))
 
     with pytest.raises(fc.IntimateContentRefusedError):
         await fs.select_frequency_classification(
-            client, _BODY, classification=JournalClassification.INTIMATE
+            client,
+            _BODY,
+            classification=classification,
+            boundary=ReflectionBoundary.VAULT_BOUND,
         )
 
     assert client.handshake_calls == 0
     assert client.classify_calls == []
 
 
-# --- every vault failure degrades to the operator ----------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("classification", [JournalClassification.INTIMATE, "intimate", "bogus"])
+async def test_the_vault_entry_point_refuses_on_its_own(classification: str) -> None:
+    """Reached directly, the vault read refuses a non-eligible tier before its handshake.
+
+    ``tier_ceiling_for("intimate")`` resolves to a real ceiling, so without its
+    own gate this entry point would dial at the intimate ceiling (#3059).
+    """
+    client = _vault(("F3",))
+
+    with pytest.raises(fc.IntimateContentRefusedError):
+        await fs.fetch_vault_classification(client, _BODY, classification=classification)
+
+    assert client.handshake_calls == 0
+    assert client.classify_calls == []
+
+
+@pytest.mark.asyncio
+async def test_plain_str_public_reaches_the_vault_at_the_open_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stored tier arrives as a ``str``; it resolves its ceiling without an enum's ``.value``."""
+    _forbid_operator(monkeypatch)
+    client = _vault(("F3",))
+
+    await fs.select_frequency_classification(
+        client,
+        _BODY,
+        classification="public",
+        boundary=ReflectionBoundary.VAULT_BOUND,
+    )
+
+    assert client.classify_calls == [(_BODY, VaultTierCeiling.OPEN)]
+
+
+# --- with no vault bound, every vault failure degrades to the operator ------
 
 
 @pytest.mark.asyncio
@@ -329,7 +395,10 @@ async def test_an_unavailable_vault_degrades_without_calling_classify(
     )
 
     result = await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PERSONAL
+        client,
+        _BODY,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert result.source is fc.ClassificationSource.OPERATOR
@@ -348,7 +417,10 @@ async def test_a_vault_that_does_not_advertise_classify_degrades(
     )
 
     result = await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PERSONAL
+        client,
+        _BODY,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert result.source is fc.ClassificationSource.OPERATOR
@@ -394,7 +466,10 @@ async def test_every_seam_error_degrades_silently_and_is_logged(
 
     with caplog.at_level(logging.WARNING, logger="services.creek_vault_read"):
         result = await fs.select_frequency_classification(
-            client, _BODY, classification=JournalClassification.PERSONAL
+            client,
+            _BODY,
+            classification=JournalClassification.PERSONAL,
+            boundary=ReflectionBoundary.APP_PROVIDER,
         )
 
     assert result.source is fc.ClassificationSource.OPERATOR
@@ -402,6 +477,82 @@ async def test_every_seam_error_degrades_silently_and_is_logged(
     assert len(records) == 1
     assert records[0]["capability"] == CreekCapability.CLASSIFY.value
     assert records[0]["reason"] == reason.value
+
+
+# --- with the vault bound, no failure ever reaches the operator (#3061) -------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "client",
+    [
+        pytest.param(
+            RecordingClassifyVaultClient(
+                available=False, classification=VaultClassification(tags=("F3",))
+            ),
+            id="unavailable",
+        ),
+        pytest.param(
+            RecordingClassifyVaultClient(
+                capabilities=frozenset(), classification=VaultClassification(tags=("F3",))
+            ),
+            id="classify_not_advertised",
+        ),
+        pytest.param(
+            RecordingClassifyVaultClient(error=CreekVaultUnavailableError("down")),
+            id="seam_unavailable",
+        ),
+        pytest.param(
+            RecordingClassifyVaultClient(error=CreekVaultAuthError("rejected")),
+            id="seam_auth",
+        ),
+        pytest.param(
+            RecordingClassifyVaultClient(error=CreekVaultContractError("refused")),
+            id="seam_contract",
+        ),
+        pytest.param(
+            RecordingClassifyVaultClient(error=CreekVaultPayloadError("unreadable")),
+            id="seam_payload",
+        ),
+        pytest.param(
+            RecordingClassifyVaultClient(error=CreekCapabilityUnsupportedError("unsupported")),
+            id="seam_capability",
+        ),
+        pytest.param(_vault(("F3", "F11")), id="tag_outside_ontology"),
+        pytest.param(_vault((FREQUENCY_NAMES[Frequency.F5],)), id="tag_by_name"),
+        pytest.param(_vault(()), id="empty_tags"),
+    ],
+)
+async def test_a_vault_bound_caller_is_never_classified_by_the_operator(
+    monkeypatch: pytest.MonkeyPatch, client: RecordingClassifyVaultClient
+) -> None:
+    """Every way the vault can fail to answer raises; the operator side is never entered.
+
+    The dormant twin of the reflection fallback: the vault-first rule used to
+    end in an operator-side call on every failure, which for a vault-bound
+    writer is their writing sent to the very provider they connected a vault to
+    stay answered without. The operator fake raises on invocation, so "called
+    and discarded" cannot pass.
+    """
+    _forbid_operator(monkeypatch)
+
+    with pytest.raises(VaultSourceUnavailableError) as refused:
+        await fs.select_frequency_classification(
+            client,
+            _BODY,
+            classification=JournalClassification.PERSONAL,
+            boundary=ReflectionBoundary.VAULT_BOUND,
+        )
+
+    assert refused.value.reason is VaultSourceUnavailableReason.NO_ANSWER
+
+
+def test_the_boundary_has_no_default() -> None:
+    """A caller wiring this in must say which boundary it is under; omission is not APP_PROVIDER."""
+    parameter = inspect.signature(fs.select_frequency_classification).parameters["boundary"]
+
+    assert parameter.default is inspect.Parameter.empty
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 # --- an unreadable or empty vault answer -------------------------------------
@@ -422,7 +573,10 @@ async def test_a_tag_outside_the_ontology_rejects_the_whole_answer(
 
     with caplog.at_level(logging.WARNING, logger="services.creek_vault_read"):
         result = await fs.select_frequency_classification(
-            client, _BODY, classification=JournalClassification.PERSONAL
+            client,
+            _BODY,
+            classification=JournalClassification.PERSONAL,
+            boundary=ReflectionBoundary.APP_PROVIDER,
         )
 
     assert result.source is fc.ClassificationSource.OPERATOR
@@ -451,7 +605,10 @@ async def test_a_tag_naming_a_position_rather_than_coding_it_is_refused(
     client = _vault((tag,))
 
     result = await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PERSONAL
+        client,
+        _BODY,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert result.source is fc.ClassificationSource.OPERATOR
@@ -472,7 +629,10 @@ async def test_an_empty_tag_tuple_is_a_vault_that_did_not_answer(
     client = _vault(())
 
     result = await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PERSONAL
+        client,
+        _BODY,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert result.source is fc.ClassificationSource.OPERATOR
@@ -492,7 +652,10 @@ async def test_an_unreadable_vault_answer_and_a_failing_operator_still_never_rai
     monkeypatch.setattr(fc, "generate_response", down)
 
     result = await fs.select_frequency_classification(
-        client, _BODY, classification=JournalClassification.PERSONAL
+        client,
+        _BODY,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert result is fc.UNCLASSIFIED
@@ -520,7 +683,10 @@ async def test_an_operator_side_balance_that_is_spent_propagates(
 
     with pytest.raises(LLMCreditExhaustedError) as refused:
         await fs.select_frequency_classification(
-            client, _BODY, classification=JournalClassification.PERSONAL
+            client,
+            _BODY,
+            classification=JournalClassification.PERSONAL,
+            boundary=ReflectionBoundary.APP_PROVIDER,
         )
 
     assert refused.value.provider == "anthropic"

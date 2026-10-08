@@ -4,7 +4,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { scheduledCues } from '../engine/cues';
 import type { IntervalBellConfig, RitualControls, RitualState } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
@@ -33,7 +33,13 @@ const IntervalBellView = ({ config, state, controls }: Props): React.JSX.Element
   return (
     <SessionContainer testID="interval-bell-view" style={styles.container}>
       <Text style={[styles.label, { color: surface.textSoft }]}>next bell</Text>
-      <Text style={[styles.time, { color: surface.text }]} testID="interval-bell-next">
+      <Text
+        style={[styles.time, { color: surface.text }]}
+        testID="interval-bell-next"
+        accessibilityRole="timer"
+        accessibilityLabel={spokenTime(untilNextMs, 'next')}
+        accessibilityLiveRegion="polite"
+      >
         {formatTime(untilNextMs)}
       </Text>
       <ScrollView

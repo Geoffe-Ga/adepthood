@@ -1,7 +1,7 @@
 /**
  * The one read of `GET /vault/connection` every surface shares (#3017).
  *
- * Where your corpus lives renders from it, and the three ways into "Bring in
+ * Where your writing lives renders from it, and the three ways into "Bring in
  * your writing" -- the Settings row, the Journal band and drawer, and the
  * seeding screen itself -- gate on it, because a corpus lives in a vault
  * (#3015). One read, one reading of it: unknown until the server answers, and

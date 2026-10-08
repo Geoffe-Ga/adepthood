@@ -1325,6 +1325,16 @@
         "title": "DocumentImportResponse",
         "type": "object"
       },
+      "EgressBarrierState": {
+        "description": "Operator-visible state of the barrier's cross-worker half.",
+        "enum": [
+          "disabled",
+          "incomplete",
+          "ready"
+        ],
+        "title": "EgressBarrierState",
+        "type": "string"
+      },
       "EnergyPlan": {
         "properties": {
           "items": {
@@ -1598,6 +1608,16 @@
             ],
             "title": "Essay Generated At"
           },
+          "essay_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarginaliaSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -1618,6 +1638,17 @@
             "title": "Note",
             "type": "string"
           },
+          "receipt_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Version"
+          },
           "remaining_balance": {
             "title": "Remaining Balance",
             "type": "integer"
@@ -1625,6 +1656,37 @@
           "remaining_messages": {
             "title": "Remaining Messages",
             "type": "integer"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarginaliaSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Model"
+          },
+          "source_provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InferenceProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "$ref": "#/components/schemas/MarginaliaStatus"
@@ -3542,6 +3604,17 @@
         "title": "ImportDestination",
         "type": "string"
       },
+      "InferenceProvider": {
+        "description": "Who the answering side reported itself as, in a closed vocabulary.\n\n``creek`` is the vault; the rest are the app provider's own names, with\n``stub`` for the demo provider. An unrecognized name is recorded as\n``NULL`` rather than widened into one of these.",
+        "enum": [
+          "anthropic",
+          "openai",
+          "stub",
+          "creek"
+        ],
+        "title": "InferenceProvider",
+        "type": "string"
+      },
       "IntervalBellConfig": {
         "additionalProperties": false,
         "description": "Meditation window with bells at evenly-spaced or explicit offsets.\n\nExactly one of ``interval_minutes`` (evenly spaced) or\n``cue_offsets_minutes`` (explicit list) must be set — the two are\nmutually exclusive, validated below.",
@@ -3682,6 +3755,30 @@
         ],
         "title": "JournalClassification",
         "type": "string"
+      },
+      "JournalEntryPurgeResult": {
+        "description": "Outcome of the soft-deleted journal-entry purge: counts and the window used.\n\n``blocked`` counts expired entries kept back because a remote withdrawal\nthey owe is not yet confirmed. Counts only -- never an id or a word.",
+        "properties": {
+          "blocked": {
+            "title": "Blocked",
+            "type": "integer"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "older_than_days": {
+            "title": "Older Than Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted",
+          "blocked",
+          "older_than_days"
+        ],
+        "title": "JournalEntryPurgeResult",
+        "type": "object"
       },
       "JournalEntryUpdate": {
         "description": "Partial update for a journal entry (PATCH).\n\nEvery field is optional; an empty payload is rejected (422) so a no-op PATCH\ncan't silently bump ``updated_at``. ``message`` is re-sanitized server-side.",
@@ -4126,6 +4223,16 @@
         "title": "LinkDuplicateCommand",
         "type": "object"
       },
+      "ManagedVaultRolloutState": {
+        "description": "Operator-visible state; callers expose only one unavailable answer.",
+        "enum": [
+          "disabled",
+          "incomplete",
+          "ready"
+        ],
+        "title": "ManagedVaultRolloutState",
+        "type": "string"
+      },
       "MarginaliaKind": {
         "description": "What a margin note surfaces about the anchored span.",
         "enum": [
@@ -4154,7 +4261,7 @@
         "type": "object"
       },
       "MarginaliaResponse": {
-        "description": "A single margin note returned to clients.\n\n``user_id`` is intentionally excluded — the client already knows its own\nidentity and exposing surrogate keys aids enumeration (mirrors the journal\nentry response).",
+        "description": "A single margin note returned to clients.\n\n``user_id`` is intentionally excluded — the client already knows its own\nidentity and exposing surrogate keys aids enumeration (mirrors the journal\nentry response).\n\nThe provenance fields (#3062) are the server's record of which side answered\nthe note (``source``) and its letter (``essay_source``), stamped when they\nwere written. Every one is ``None`` on a row written before receipts\nexisted -- \"source not recorded\" -- and none is ever inferred from the\naccount's current vault connection. ``source_model`` is the answering\nside's own report, never an attestation.",
         "properties": {
           "anchor_end": {
             "title": "Anchor End",
@@ -4196,6 +4303,16 @@
             ],
             "title": "Essay Generated At"
           },
+          "essay_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarginaliaSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -4210,6 +4327,48 @@
           "note": {
             "title": "Note",
             "type": "string"
+          },
+          "receipt_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipt Version"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarginaliaSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Model"
+          },
+          "source_provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InferenceProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "status": {
             "$ref": "#/components/schemas/MarginaliaStatus"
@@ -4236,6 +4395,16 @@
         ],
         "title": "MarginaliaResponse",
         "type": "object"
+      },
+      "MarginaliaSource": {
+        "description": "Which side answered a note or its letter, as the server observed it (#3062).\n\n``creek_vault`` -- the caller's own vault answered. ``app_provider`` -- the\napp's model provider answered. ``demo`` -- the stub provider answered with\ncanned text: a demo, never a reflection, and never charged. A ``NULL``\ncolumn means the source was not recorded (a row older than receipts); it is\nnever inferred from the account's current vault connection.",
+        "enum": [
+          "creek_vault",
+          "app_provider",
+          "demo"
+        ],
+        "title": "MarginaliaSource",
+        "type": "string"
       },
       "MarginaliaStatus": {
         "description": "Whether a note still anchors cleanly or has drifted.\n\n``active`` anchors cleanly; ``stale`` means the underlying text changed\nenough that the note may no longer fit its span.",
@@ -4599,6 +4768,17 @@
         "title": "ModelUsageBreakdown",
         "type": "object"
       },
+      "OperationSource": {
+        "description": "Which side answered one operation of a pass, as a response reports it (#3062).\n\nThe persisted :class:`~models.marginalia.MarginaliaSource` values, plus\n``none``: the operation was not run at all (detection with no candidates,\nor under a vault-bound boundary). ``none`` is a fact about this pass and is\nnever stored, so it can never be mistaken for a row whose source was not\nrecorded.",
+        "enum": [
+          "creek_vault",
+          "app_provider",
+          "demo",
+          "none"
+        ],
+        "title": "OperationSource",
+        "type": "string"
+      },
       "Page_FeedbackTriageSummary_": {
         "properties": {
           "has_more": {
@@ -4633,6 +4813,38 @@
           "has_more"
         ],
         "title": "Page[FeedbackTriageSummary]",
+        "type": "object"
+      },
+      "PassProvenance": {
+        "description": "Who answered each operation of a resonance pass, and who paid for it (#3062).\n\n``notes`` is the reflection -- including one that answered with nothing, so\nan empty pass still says which source was empty. ``detection`` is the\ncompletion check, with ``detection_checked`` saying whether it actually\nreturned. ``paid_by`` is ``free`` for a demo and for a refunded empty pass,\n``own_key`` when the caller's key paid, and ``wallet`` when the deduction\nstands.",
+        "properties": {
+          "detection": {
+            "$ref": "#/components/schemas/ProvenanceReceipt"
+          },
+          "detection_checked": {
+            "title": "Detection Checked",
+            "type": "boolean"
+          },
+          "notes": {
+            "$ref": "#/components/schemas/ProvenanceReceipt"
+          },
+          "paid_by": {
+            "enum": [
+              "own_key",
+              "wallet",
+              "free"
+            ],
+            "title": "Paid By",
+            "type": "string"
+          }
+        },
+        "required": [
+          "notes",
+          "detection",
+          "detection_checked",
+          "paid_by"
+        ],
+        "title": "PassProvenance",
         "type": "object"
       },
       "PasswordResetAccepted": {
@@ -5567,6 +5779,26 @@
         "title": "PracticeTagUpdate",
         "type": "object"
       },
+      "PrivacySuspensionStatus": {
+        "additionalProperties": false,
+        "description": "Which operator suspension switches are on: two booleans and nothing else.\n\nThe \"time to safe state\" probe an operator reads after flipping a switch and\nrestarting. Flat and closed (``extra=\"forbid\"``) so no account, content or\nraw environment value can ever be added to it by accident.",
+        "properties": {
+          "external_ai_suspended": {
+            "title": "External Ai Suspended",
+            "type": "boolean"
+          },
+          "vault_send_suspended": {
+            "title": "Vault Send Suspended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "external_ai_suspended",
+          "vault_send_suspended"
+        ],
+        "title": "PrivacySuspensionStatus",
+        "type": "object"
+      },
       "ProgramCalendarResponse": {
         "description": "The server's date-derived program calendar.\n\nExposes the anchor and both answers so the frontend can drop its\nclient-only fallback if desired: ``calendar_stage``/``calendar_week``\nare derived from ``program_started_at`` against the shared\n``STAGE_DURATIONS_DAYS`` schedule and pace what the program *offers*;\n``current_stage`` is the record of what the user has *entered*, which\nthe endpoint brings up to the calendar before answering. Effective\nunlock is ``domain.stage_authority.open_through`` — the union of the\ntwo, never the record alone. ``cycle_number`` is exposed so the\nfrontend can seed its \"Cycle N\" indicator on cold start.",
         "properties": {
@@ -6010,6 +6242,45 @@
           "response"
         ],
         "title": "PromptSubmit",
+        "type": "object"
+      },
+      "ProvenanceReceipt": {
+        "description": "Which side answered one operation of a resonance pass (#3062).\n\nClosed vocabulary throughout except ``model``, the answering side's own\nreport of itself. ``source`` is ``none`` when the operation was not run.",
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InferenceProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "receipt_version": {
+            "title": "Receipt Version",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/OperationSource"
+          }
+        },
+        "required": [
+          "source",
+          "receipt_version"
+        ],
+        "title": "ProvenanceReceipt",
         "type": "object"
       },
       "RandomIntervalBellConfig": {
@@ -6555,7 +6826,7 @@
         "type": "object"
       },
       "ResonanceResponse": {
-        "description": "Result of a resonance pass: the new notes plus refreshed wallet balances.\n\n``suggestions`` carries any completion suggestions detected on the same pass\n(additive, best-effort — empty when none are found or detection failed).\n\n``care`` is ``None`` for an ordinary entry (no behavior change); on an acute\n-distress signal it carries the human + professional support surface, which\naccompanies — never replaces — the reflection (NORTH-STAR §10). It is derived\nonly from the entry being processed, so it can never leak across users.\n\n``private`` is ``True`` only for an ``intimate`` entry (issue #895): such an\nentry is never sent to a cloud LLM, so no marginalia/suggestions are produced\nand ``private_message`` carries the non-shaming explanation. Both fields are\ndefaulted, so every existing (public/personal) response is byte-for-byte\nunchanged.\n\n``contraction`` is ``None`` for a healthy or new user; on a sustained thinning\nof the habit foundation it carries a warm, declinable reflection. It is\ncomputed locally (no LLM) and has zero side effects on progression, and — like\n``care`` / ``private`` — is defaulted so every existing response is unchanged.\n\n``no_notes_message`` is the sentence the writer reads when the pass produced\nno margin notes at all — set whenever ``marginalia`` is empty on a pass that\nactually ran, and ``None`` otherwise (including for the ``private`` path,\nwhich carries its own copy). It is the server's own wording rather than a\nflag the client interprets, because only the server knows *which* of the\nseveral ways to arrive at zero notes actually happened, and a client\ninventing a second explanation would be guessing at a cause it cannot see.\n\n``related_praxis`` and ``related_eddies`` are the writer's own compiled vault\npages this entry touched — surfaced only when a connected vault answered the\nreflection, and empty on every other path (no vault, a vault that degraded or\ndeferred to the cloud, the private/intimate floor, the care short-circuit).\nEmpty rather than absent, so a client never has to tell \"this server does not\nsend them\" apart from \"this pass surfaced none\". Both are bounded at the\nseam that reads them, so the margin stays a note rather than a dashboard.",
+        "description": "Result of a resonance pass: the new notes plus refreshed wallet balances.\n\n``suggestions`` carries any completion suggestions detected on the same pass\n(additive, best-effort — empty when none are found or detection failed).\n\n``care`` is ``None`` for an ordinary entry (no behavior change); on an acute\n-distress signal it carries the human + professional support surface, which\naccompanies — never replaces — the reflection (NORTH-STAR §10). It is derived\nonly from the entry being processed, so it can never leak across users.\n\n``private`` is ``True`` only for an ``intimate`` entry (issue #895): such an\nentry is never sent to a cloud LLM, so no marginalia/suggestions are produced\nand ``private_message`` carries the non-shaming explanation. Both fields are\ndefaulted, so every existing (public/personal) response is byte-for-byte\nunchanged.\n\n``contraction`` is ``None`` for a healthy or new user; on a sustained thinning\nof the habit foundation it carries a warm, declinable reflection. It is\ncomputed locally (no LLM) and has zero side effects on progression, and — like\n``care`` / ``private`` — is defaulted so every existing response is unchanged.\n\n``no_notes_message`` is the sentence the writer reads when the pass produced\nno margin notes at all — set whenever ``marginalia`` is empty on a pass that\nactually ran, and ``None`` otherwise (including for the ``private`` path,\nwhich carries its own copy). It is the server's own wording rather than a\nflag the client interprets, because only the server knows *which* of the\nseveral ways to arrive at zero notes actually happened, and a client\ninventing a second explanation would be guessing at a cause it cannot see.\n\n``related_praxis`` and ``related_eddies`` are the writer's own compiled vault\npages this entry touched — surfaced only when a connected vault answered the\nreflection, and empty on every other path (no vault, a vault that degraded or\ndeferred to the cloud, the private/intimate floor, the care short-circuit).\nEmpty rather than absent, so a client never has to tell \"this server does not\nsend them\" apart from \"this pass surfaced none\". Both are bounded at the\nseam that reads them, so the margin stays a note rather than a dashboard.\n\n``provenance`` says which side answered each operation of the pass and who\npaid (#3062). ``None`` on the private and care-only paths, where no\noperation ran.",
         "properties": {
           "care": {
             "anyOf": [
@@ -6615,6 +6886,16 @@
               }
             ],
             "title": "Private Message"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PassProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "related_eddies": {
             "default": [],
@@ -6802,6 +7083,65 @@
           "label"
         ],
         "title": "SensePrompt",
+        "type": "object"
+      },
+      "ServingReceipt": {
+        "additionalProperties": false,
+        "description": "Operator-only, content-free description of the build that is serving.\n\nThe field set is closed (``extra=\"forbid\"``) so no later edit can widen it\ninto an environment dump, and the two capability fields are pinned to the\nonly values the code can back today: no attestation exists for an ordinary\nFly allocation, and no model digest or inference probe exists for a local\nmodel (issue #2871; B05/B07 own the positive path).",
+        "properties": {
+          "attested_confidential": {
+            "const": false,
+            "title": "Attested Confidential",
+            "type": "boolean"
+          },
+          "content_version": {
+            "title": "Content Version",
+            "type": "string"
+          },
+          "creek_contract_version": {
+            "title": "Creek Contract Version",
+            "type": "string"
+          },
+          "custody_modes_supported": {
+            "items": {
+              "$ref": "#/components/schemas/VaultCustodyMode"
+            },
+            "title": "Custody Modes Supported",
+            "type": "array"
+          },
+          "egress_barrier": {
+            "$ref": "#/components/schemas/EgressBarrierState"
+          },
+          "local_model": {
+            "const": "unknown",
+            "title": "Local Model",
+            "type": "string"
+          },
+          "managed_vault_rollout": {
+            "$ref": "#/components/schemas/ManagedVaultRolloutState"
+          },
+          "receipt_schema": {
+            "const": 1,
+            "title": "Receipt Schema",
+            "type": "integer"
+          },
+          "release": {
+            "title": "Release",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_schema",
+          "release",
+          "content_version",
+          "egress_barrier",
+          "managed_vault_rollout",
+          "creek_contract_version",
+          "custody_modes_supported",
+          "attested_confidential",
+          "local_model"
+        ],
+        "title": "ServingReceipt",
         "type": "object"
       },
       "ShareLinkCreateRequest": {
@@ -8652,6 +8992,15 @@
         "title": "VaultConnectionResponse",
         "type": "object"
       },
+      "VaultCustodyMode": {
+        "description": "Closed custody vocabulary negotiated with Creek provisioning v2.",
+        "enum": [
+          "provider_managed",
+          "wrapped_artifact_only"
+        ],
+        "title": "VaultCustodyMode",
+        "type": "string"
+      },
       "VaultDisposition": {
         "description": "What the deletion did — and did not do — outside adepthood.",
         "properties": {
@@ -8700,7 +9049,7 @@
         "type": "string"
       },
       "VaultTeardownStatus": {
-        "description": "Content-free reconciliation state visible only to operations.",
+        "description": "Content-free reconciliation state visible only to operations.\n\n``pending_since`` is when the teardown was *requested*, not when it was last\nretried: a stuck deletion keeps its true age across every retry, which is\nthe one number an operator triaging it needs (#3075).",
         "properties": {
           "attempts": {
             "title": "Attempts",
@@ -8728,6 +9077,11 @@
             ],
             "title": "Failure Reason"
           },
+          "pending_since": {
+            "format": "date-time",
+            "title": "Pending Since",
+            "type": "string"
+          },
           "retryable": {
             "title": "Retryable",
             "type": "boolean"
@@ -8747,7 +9101,8 @@
           "state",
           "attempts",
           "retryable",
-          "failure_reason"
+          "failure_reason",
+          "pending_since"
         ],
         "title": "VaultTeardownStatus",
         "type": "object"
@@ -8805,6 +9160,16 @@
             "format": "date-time",
             "title": "Essay Generated At",
             "type": "string"
+          },
+          "essay_source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MarginaliaSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "journal_entry_id": {
             "title": "Journal Entry Id",
@@ -10036,6 +10401,317 @@
           }
         },
         "summary": "Cleanup Feedback Reports",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/maintenance/journal-entries": {
+      "post": {
+        "description": "Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.\n\nRemoves their margin notes, promoted passages, completion suggestions and\ncorpus fragments, and clears the metering link, as ``domain.retention``\nderives from the schema. Entries still owing a remote withdrawal are kept\nand counted as ``blocked``. The window is at least the age of the oldest\nlive backup copy (retention plus one backup interval), so -- provided\nbackups are expired as DEPLOYMENT.md says -- no live backup holds a purged\nentry undeleted. It is required -- there is no default,\nbecause how long a deleted page is kept is the owner's promise to make\n(#3063) -- and nothing schedules this route.",
+        "operationId": "purge_journal_entries_admin_maintenance_journal_entries_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "older_than_days",
+            "required": true,
+            "schema": {
+              "maximum": 36500,
+              "minimum": 97,
+              "title": "Older Than Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEntryPurgeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Purge Journal Entries",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/privacy-suspensions": {
+      "get": {
+        "description": "Report which operator privacy suspension switches are on (#3075).\n\nContent-free and database-free: it reads the same environment the guards\nread, at call time, so it is the probe that confirms a flipped switch has\ntaken effect on the serving process.",
+        "operationId": "get_privacy_suspensions_admin_privacy_suspensions_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacySuspensionStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Privacy Suspensions",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/serving-receipt": {
+      "get": {
+        "description": "Report which build is serving, for the pilot evidence ``serving_receipts`` check.\n\nOperator-only and content-free: a closed field set naming the exact\nplatform SHA (or ``unknown``), content pin, barrier and rollout states,\npinned Creek contract and custody vocabulary -- never a pilot id, URL,\nbearer path, or configured secret (issue #2871).",
+        "operationId": "get_serving_receipt_admin_serving_receipt_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServingReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Serving Receipt",
         "tags": [
           "admin"
         ]
@@ -16275,7 +16951,7 @@
     },
     "/invitations": {
       "get": {
-        "description": "Generate newly-warranted invitations, then return the caller's pending ones.\n\nThe generation pass runs first and is idempotent — it inserts only\ncoordinates that have no prior row (dismissed rows included), so polling\nthis endpoint never accumulates duplicates. A connected vault also feeds a\ncorpus-theme source into that pass. The listing that follows returns only\nthe caller's rows with ``dismissed_at IS NULL``, ordered by ``created_at``;\ndeclined and other users' invitations are excluded.",
+        "description": "Generate newly-warranted invitations, then return the caller's pending ones.\n\nThe generation pass runs first and is idempotent — it inserts only\ncoordinates that have no prior row (dismissed rows included), so polling\nthis endpoint never accumulates duplicates. A connected vault also feeds a\ncorpus-theme source into that pass while the course ring is enabled. The\nlisting that follows returns only the caller's rows with\n``dismissed_at IS NULL`` whose ring the caller has not declined, ordered by\n``created_at``; declined, quieted and other users' invitations are excluded.",
         "operationId": "list_invitations_invitations_get",
         "parameters": [
           {
@@ -17358,7 +18034,7 @@
     },
     "/journal/transcribe-page": {
       "post": {
-        "description": "Transcribe one image of text, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — the image is validated first (422\nwithout any charge), then the caller key and vision capability are resolved.\nA production stub is refused before the wallet is touched. A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills, and so does a reply that is no text or a refusal\n(422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one\nrow per real, non-stub call) and committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
+        "description": "Transcribe one image of text, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — an operator's external-AI\nsuspension answers 503 ``ai_suspended`` before anything else (#3075), then\nthe image is validated (422 without any charge), then the caller key and\nvision capability are resolved.\nA production stub is refused before the wallet is touched. A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills, and so does a reply that is no text or a refusal\n(422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one\nrow per real, non-stub call) and committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
         "operationId": "transcribe_page_journal_transcribe_page_post",
         "parameters": [
           {
@@ -17679,7 +18355,7 @@
     },
     "/journal/{entry_id}": {
       "delete": {
-        "description": "Soft-delete a journal entry (BUG-JOURNAL-007).\n\nStamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.\nThis preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the\nusage audit trail is never orphaned, and allows recovery within the\nconfigurable retention window.  Soft-deleted rows are invisible to all\nread paths (list, get, ``load_recent_conversation``) which filter\n``deleted_at IS NULL``.",
+        "description": "Soft-delete a journal entry (BUG-JOURNAL-007).\n\nStamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.\nThis preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the\nusage audit trail is never orphaned.  Soft-deleted rows are invisible to\nall read paths (list, get, ``load_recent_conversation``) which filter\n``deleted_at IS NULL``, and no recovery path is exposed.  There is no\nautomatic retention window: the row and its derivatives (margin notes,\npromoted quotes, completion suggestions) persist until account deletion\nor an operator purge (#3063; see ``domain.retention``).",
         "operationId": "delete_journal_entry_journal__entry_id__delete",
         "parameters": [
           {
@@ -18518,7 +19194,7 @@
     },
     "/journal/{entry_id}/resonance": {
       "post": {
-        "description": "Run a resonance pass, charging BotMason only when it pays the provider.\n\nA validated caller-owned key bypasses both BotMason wallet buckets. Without\none, wallet pre-flight deducts one message (402 when out of capacity). That\ndeduction commits with every read the pass depends on before the first\noutbound call, so no pooled connection is held across the vault probe,\nreflection pass, or completion detection. A failed server-paid pass is\nsettled by a compensating credit; a failed BYOK pass merely rolls back its\nstaged writes because there is no wallet spend to reverse.\n\nA pass that *succeeds* and still persists no notes is neither an error nor a\nnon-event: it is a writer who waited and received nothing. Those get the\nserver's own explanation in ``no_notes_message`` — never an empty 200 the\nclient has to interpret — and the deduction is reversed in the bucket it\ncame from, so silence costs the writer nothing. The reversal is a crediting\nentry rather than a rollback on purpose: the provider call really happened,\nand rolling back would erase the usage record of what it cost us along with\nany completion suggestions the same pass legitimately found.\n\nThe entry is first screened for an acute-distress signal with a pure, local\ncheck; on an elevated signal the response carries a ``care`` surface (human +\nprofessional support) that accompanies — never replaces — the reflection, and\nis returned even if the LLM pass fails, so care never depends on the LLM\n(NORTH-STAR §10). An ordinary entry behaves exactly as before (``care`` None).\n\nAfter the pass commits, a read-only, deterministic contraction check may add a\nwarm, declinable reflection when the habit foundation has thinned. It runs\nonly on this non-intimate happy path — never for an intimate entry, whose\nprivacy floor returns above — and never mutates progression.\n\nWhen a vault is connected and the entry is neither intimate nor\ndistress-flagged, the reflection routes to that vault's own corpus; otherwise\nit is generated by the local cloud LLM exactly as before.\n\nThe context that accompanies the entry is chosen by\n:func:`~services.higher_self_grounding.gather_grounding` — the account's own\nontologized corpus where it holds anything, the recency window where it does\nnot. It is gathered on every pass, vault or not: a vault that degrades hands\nthe prompt to the cloud fallback, which is the path this context is for.\n\nA vault may answer that request with its own care escalation, meaning its\ncare guard read acute distress in writing adepthood's local screen did not\nflag. That is a 200 carrying adepthood's own reviewed care surface and no\nreflection — never a 502, and never the cloud's answer, since falling back\nwould hand the writer exactly the model prose the guard refused. The\nany committed BotMason deduction is refunded, so the pass costs them nothing.",
+        "description": "Run a resonance pass, charging BotMason only when it pays the provider.\n\nA validated caller-owned key bypasses both BotMason wallet buckets. Without\none, wallet pre-flight deducts one message (402 when out of capacity). That\ndeduction commits with every read the pass depends on before the first\noutbound call, so no pooled connection is held across the vault probe,\nreflection pass, or completion detection. A failed server-paid pass is\nsettled by a compensating credit; a failed BYOK pass merely rolls back its\nstaged writes because there is no wallet spend to reverse.\n\nA pass that *succeeds* and still persists no notes is neither an error nor a\nnon-event: it is a writer who waited and received nothing. Those get the\nserver's own explanation in ``no_notes_message`` — never an empty 200 the\nclient has to interpret — and the deduction is reversed in the bucket it\ncame from, so silence costs the writer nothing. The reversal is a crediting\nentry rather than a rollback on purpose: the provider call really happened,\nand rolling back would erase the usage record of what it cost us along with\nany completion suggestions the same pass legitimately found.\n\nThe entry is first screened for an acute-distress signal with a pure, local\ncheck; on an elevated signal the response carries a ``care`` surface (human +\nprofessional support) that accompanies — never replaces — the reflection, and\nis returned even if the LLM pass fails, so care never depends on the LLM\n(NORTH-STAR §10). An ordinary entry behaves exactly as before (``care`` None).\n\nAfter the pass commits, a read-only, deterministic contraction check may add a\nwarm, declinable reflection when the habit foundation has thinned. It runs\nonly on this non-intimate happy path — never for an intimate entry, whose\nprivacy floor returns above — and never mutates progression.\n\nWhich model may answer is decided once, server-side, by the caller's\nboundary (#3061). With no vault, the app provider answers the reflection and\ncompletion detection exactly as before. With a vault -- connected, still\nprovisioning, or currently undialable -- the vault answers the reflection or\nnothing does: a vault with nothing to say is a refunded zero-note pass, a\nvault that cannot answer is a refunded, retryable 503\n``reflection_source_unavailable``, a locally flagged entry gets the care\nsurface alone, and completion detection is skipped (``checked`` false on the\nstandalone route). None of those reaches the app provider, whatever key the\nrequest carries.\n\nThe context that accompanies the entry is chosen by\n:func:`~services.higher_self_grounding.gather_grounding` — the account's own\nontologized corpus where it holds anything, the recency window where it does\nnot. Only the app provider's prompt carries it; a vault builds its own.\n\nA vault may answer that request with its own care escalation, meaning its\ncare guard read acute distress in writing adepthood's local screen did not\nflag. That is a 200 carrying adepthood's own reviewed care surface and no\nreflection — never a 502, and never the cloud's answer, since falling back\nwould hand the writer exactly the model prose the guard refused. The\nany committed BotMason deduction is refunded, so the pass costs them nothing.",
         "operationId": "run_resonance_journal__entry_id__resonance_post",
         "parameters": [
           {
@@ -18855,7 +19531,7 @@
     },
     "/journal/{entry_id}/suggestions/detect": {
       "post": {
-        "description": "Check an entry for completed habits independently of literary resonance.\n\nThis route is intentionally uncharged and never calls Creek: a short body or\na literary-reflection refusal must not prevent the writer from receiving a\nhabit/practice offer. Intimate entries keep their privacy floor and never\nleave the process. Provider failures remain best-effort, with ``checked``\ntelling the client whether an empty result really means \"no match\".\n\nThe INTIMATE check here is only the cheap fast path: the authoritative\nfloor is re-read under the account hold, just before the dial (#3008).",
+        "description": "Check an entry for completed habits independently of literary resonance.\n\nThis route is intentionally uncharged and never calls Creek: a short body or\na literary-reflection refusal must not prevent the writer from receiving a\nhabit/practice offer. Intimate entries keep their privacy floor and never\nleave the process. Provider failures remain best-effort, with ``checked``\ntelling the client whether an empty result really means \"no match\".\n\nThe INTIMATE check here is only the cheap fast path: the authoritative\nfloor is re-read under the account hold, just before the dial (#3008).\n\nA vault-bound caller answers ``checked: false`` before any candidate is\nread: a vault has no detection capability, and the app provider is not\ntheirs to be sent to (#3061).",
         "operationId": "detect_entry_suggestions_journal__entry_id__suggestions_detect_post",
         "parameters": [
           {
@@ -18867,6 +19543,22 @@
               "minimum": 1,
               "title": "Entry Id",
               "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
             }
           },
           {
@@ -18884,22 +19576,6 @@
                 }
               ],
               "title": "X-Llm-Api-Key"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -27617,7 +28293,7 @@
     },
     "/vault/connection": {
       "delete": {
-        "description": "Remove this account's vault connection, credential included.\n\nIdempotent, and 204 either way: an account that had no connection ends up in\nthe state it asked for, so reporting a 404 would describe the plumbing\nrather than the outcome.",
+        "description": "Remove a BYO connection, refusing managed lifecycle ownership.\n\nA managed binding or unresolved activation returns 409 without mutation.\nOtherwise removal is idempotent: an absent BYO connection also returns 204.",
         "operationId": "delete_vault_connection_vault_connection_delete",
         "parameters": [
           {
@@ -27680,6 +28356,16 @@
               }
             },
             "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
           },
           "422": {
             "content": {
@@ -27779,6 +28465,16 @@
             },
             "description": "No such resource -- or none this caller is allowed to see."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -27806,7 +28502,7 @@
         ]
       },
       "put": {
-        "description": "Set or replace this account's vault connection, refusing a URL it cannot use.\n\nThe URL is judged before anything is written, so a refused connection leaves\nno row behind and the account keeps whatever it had -- a half-applied\nreplacement would pair a new URL with an old credential and send one vault's\nsecret to another.\n\n``PUT`` rather than ``POST`` because the resource is singular and the\noperation is idempotent: an account has at most one vault, and sending the\nsame body twice leaves the same one connection.\n\nThe URL is checked before the credential, so a request carrying both a bad\ndestination and an unusable key is answered about the destination. That is\nthe order the two cost: a URL naming private space is an attempt on this\ndeployment's network, and a malformed key is a paste that went wrong.",
+        "description": "Set or replace a BYO connection, refusing managed lifecycle ownership.\n\nThe URL is judged before anything is written, so a refused connection leaves\nno row behind and the account keeps whatever it had -- a half-applied\nreplacement would pair a new URL with an old credential and send one vault's\nsecret to another.\n\n``PUT`` rather than ``POST`` because the resource is singular and the\noperation is idempotent: an account has at most one vault, and sending the\nsame body twice leaves the same one connection.\n\nThe URL is checked before the credential, so a request carrying both a bad\ndestination and an unusable key is answered about the destination. That is\nthe order the two cost: a URL naming private space is an attempt on this\ndeployment's network, and a malformed key is a paste that went wrong.",
         "operationId": "put_vault_connection_vault_connection_put",
         "parameters": [
           {
@@ -27886,6 +28582,16 @@
               }
             },
             "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
           },
           "422": {
             "content": {

@@ -4,10 +4,17 @@ import React from 'react';
 import { Animated, StyleSheet, Text } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
-import { lensCaptionWidth, lensCenterForStage, lensFrame } from '../magnifierGeometry';
+import {
+  lensCaptionWidth,
+  lensCenterForStage,
+  lensFrame,
+  lensStageIdentity,
+} from '../magnifierGeometry';
 import type { LensCaption } from '../magnifierGeometry';
 import MagnifierLens, { lensTouchStyle } from '../MagnifierLens';
 import { stageWavePoint } from '../waveGeometry';
+
+import { mockMakeCanonicalStage } from './stageVocabularyGolden';
 
 // A deterministic per-stage caption stand-in for the store-fed lookup: each
 // stage carries a distinct title+subtitle so a test can prove the lens
@@ -15,6 +22,7 @@ import { stageWavePoint } from '../waveGeometry';
 const captionForStage = (stageNumber: number): LensCaption => ({
   title: `Title ${stageNumber}`,
   subtitle: `Subtitle for stage ${stageNumber}.`,
+  identity: lensStageIdentity(mockMakeCanonicalStage(stageNumber), stageNumber),
 });
 
 // Mutable reduced-motion knob: default true so lens repositioning is instant
@@ -34,6 +42,7 @@ interface RenderOptions {
   onSettleStage?: jest.Mock;
   onOpenStage?: jest.Mock;
   onDragActiveChange?: jest.Mock;
+  captionForStage?: (_stageNumber: number) => LensCaption;
 }
 
 const renderLens = (options: RenderOptions = {}) => {
@@ -48,7 +57,7 @@ const renderLens = (options: RenderOptions = {}) => {
         anchors={options.anchors ?? {}}
         focusedStage={options.focusedStage ?? 1}
         currentStage={options.currentStage ?? 1}
-        captionForStage={captionForStage}
+        captionForStage={options.captionForStage ?? captionForStage}
         onSettleStage={onSettleStage}
         onOpenStage={onOpenStage}
         onDragActiveChange={options.onDragActiveChange}
@@ -295,6 +304,18 @@ describe('MagnifierLens', () => {
       lens.props.onResponderTerminate();
     });
     expect(onSettleStage).toHaveBeenCalledWith(2);
+  });
+
+  it('speaks the identity its caption carries, verbatim, whatever the server named the stage', () => {
+    const { tree } = renderLens({
+      captionForStage: (n) => ({
+        ...captionForStage(n),
+        identity: 'Quiet, stage 1 · BEIGE, Sentinel Persona',
+      }),
+    });
+    expect(lensNode(tree).props.accessibilityLabel).toContain(
+      'Magnifier over Quiet, stage 1 · BEIGE, Sentinel Persona.',
+    );
   });
 
   it('exposes a button role with a label that identifies the stage and reads both new facts', () => {

@@ -274,9 +274,9 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Every check-in the account logged — the raw material of every streak.",
     ),
     "goalcompletionspend": Omitted(
-        "A hashed transport-retry receipt. It prevents one check-in operation "
-        "from being applied twice but is not content the account authored; the "
-        "check-in itself is exported from goalcompletion.",
+        "A receipt that stops one check-in from being counted twice if the app "
+        "has to retry. It holds nothing you wrote; the check-in itself is in "
+        "goal_completions.",
     ),
     "goalgroup": _include(
         "goal_groups",
@@ -296,7 +296,7 @@ MANIFEST: Mapping[str, ExportRule] = {
     ),
     "invitationsignal": Omitted(
         "Which invitations the interface showed and how they were dismissed. "
-        "Interaction telemetry about the app, not writing by the account.",
+        "Bookkeeping about what the app showed, not anything you wrote.",
     ),
     "journalentry": _include(
         "journal_entries",
@@ -314,8 +314,7 @@ MANIFEST: Mapping[str, ExportRule] = {
         "receipt itself is already omitted.",
     ),
     "llmusagelog": Omitted(
-        "Per-request AI metering: token counts and prices. Operational "
-        "accounting about the account's usage, not anything it wrote.",
+        "A tally of what each AI request cost. Bookkeeping about usage, not anything you wrote.",
     ),
     "loginattempt": Omitted(
         "Sign-in attempts and the IP addresses they came from. Security "
@@ -326,8 +325,7 @@ MANIFEST: Mapping[str, ExportRule] = {
     "marginalia": _include(
         "margin_notes",
         Marginalia,
-        "Notes the account wrote in the margins of its own entries, and the "
-        "passages they anchor to.",
+        "AI margin notes on the account's entries, and the passages they anchor to.",
     ),
     "mettareturnarc": _include(
         "return_arcs",
@@ -411,6 +409,10 @@ MANIFEST: Mapping[str, ExportRule] = {
         # ``journalentry`` above).
         drop_columns=("idem_key",),
     ),
+    "restoremarker": Omitted(
+        "Operator bookkeeping for a database restore: a restore id, a state and "
+        "counts. It names no account.",
+    ),
     "revokedtoken": Omitted(
         "Expired JWT identifiers with no owner column at all. Nothing here "
         "names an account, and the rows age out on their own.",
@@ -488,6 +490,11 @@ MANIFEST: Mapping[str, ExportRule] = {
     "vaultteardownreceipt": Omitted(
         "Content-free post-deletion reconciliation state. It has no account "
         "reference and belongs to operations, not to an export.",
+    ),
+    "voicedraftretraction": Omitted(
+        "Content-free bookkeeping of which essays were mirrored to the "
+        "account's vault and whether their withdrawal was confirmed. The essays "
+        "themselves are exported with their notes; this is housekeeping.",
     ),
     "walletaudit": Omitted(
         "The offering-balance ledger. Operational accounting, and rows about "

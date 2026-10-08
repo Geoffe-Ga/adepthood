@@ -7,8 +7,9 @@ import { StatList, StatRow } from '../../../components/StatRow';
 import { CHART_AXIS_LABEL_COLOR, CHART_STYLE, SPACING, STAGE_COLORS } from '../../../design/tokens';
 import styles from '../Habits.styles';
 import type { HabitStatsData, StatsModalProps } from '../Habits.types';
-import { generateStatsForHabit } from '../HabitUtils';
+import { formatStreakCount, generateStatsForHabit, streakPeriodKind } from '../HabitUtils';
 
+import { STATS_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
 
 const FALLBACK_CHART_COLOR = 'rgba(134, 65, 244, 1)';
@@ -122,7 +123,7 @@ const TabBar = ({ selectedTab, onSelect }: TabBarProps) => (
 );
 
 interface CalendarTabProps {
-  habit: { stage: string };
+  habit: NonNullable<StatsModalProps['habit']>;
   stats: HabitStatsData;
 }
 
@@ -137,8 +138,14 @@ const CalendarTab = ({ habit, stats }: CalendarTabProps) => (
       }}
     />
     <StatList>
-      <StatRow label="Longest Streak:" value={`${stats.longestStreak} days`} />
-      <StatRow label="Current Streak:" value={`${stats.currentStreak} days`} />
+      <StatRow
+        label="Longest Streak:"
+        value={formatStreakCount(stats.longestStreak, streakPeriodKind(habit))}
+      />
+      <StatRow
+        label="Current Streak:"
+        value={formatStreakCount(stats.currentStreak, streakPeriodKind(habit))}
+      />
       <StatRow label="Completion Rate:" value={`${Math.round(stats.completionRate * 100)}%`} />
       <StatRow label="Total Completions:" value={`${stats.totalCompletions}`} />
     </StatList>
@@ -163,6 +170,20 @@ const StatsHeaderTitle = ({ habit }: { habit: { name: string; icon: string } }) 
   </>
 );
 
+interface StatsHeaderProps {
+  habit: { name: string; icon: string };
+  onClose: () => void;
+}
+
+/** The sheet's header: the habit's stats title and its named close button. */
+const StatsHeader = ({ habit, onClose }: StatsHeaderProps) => (
+  <ModalHeader
+    title={<StatsHeaderTitle habit={habit} />}
+    onClose={onClose}
+    closeLabel={STATS_CLOSE_LABEL}
+  />
+);
+
 interface StatsContentProps {
   habit: NonNullable<StatsModalProps['habit']>;
   stats: HabitStatsData;
@@ -180,7 +201,7 @@ const StatsContent = (props: StatsContentProps) => {
 
   return (
     <View style={[styles.statsModalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
-      <ModalHeader title={<StatsHeaderTitle habit={habit} />} onClose={onClose} />
+      <StatsHeader habit={habit} onClose={onClose} />
       <TabBar selectedTab={selectedTab} onSelect={onSelectTab} />
       <ScrollView style={styles.statsContainer}>
         {loading && (

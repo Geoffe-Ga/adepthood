@@ -66,11 +66,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.frequencies import Frequency
+from domain.privacy_tier import egress_eligible_clause
 from domain.stage_authority import open_through
 from domain.stage_progress import get_user_progress
-from models.journal_entry import JournalClassification, JournalEntry
+from models.corpus_fragment import CorpusFragment
+from models.journal_entry import JournalEntry
 from security import sanitize_user_text
-from services.corpus_store import RetrievalQuery, resolve_stage_frequency, retrieve_fragments
+from services.corpus_store import (
+    RetrievalQuery,
+    RetrievedFragment,
+    resolve_stage_frequency,
+    retrieve_fragments,
+)
+from services.privacy_lineage import LineageOperation, observe_lineage
 
 # How many pieces of the reader's own writing may accompany their entry to the
 # language-model provider. Published in ``docs/legal/privacy-policy.md`` and
@@ -81,10 +89,13 @@ GROUNDING_LIMIT = 3
 
 # The most SQL statements one grounding may issue: the stage lookup, the colour
 # lookup, the corpus retrieval, and — only when the corpus came back empty —
-# the fallback window. Asserted as a count rather than a duration because a
-# wall-clock budget fails under unrelated load, while a query that starts
-# running per fragment shows up in a count immediately.
-GROUNDING_STATEMENT_BUDGET = 4
+# the fallback window; plus one more for the folded-quote lineage shadow count
+# (#3059), a single grouped read whatever the window's size. The corpus path,
+# which skips the window, spends that slot on reading the fragments' source
+# entry ids and then makes the same one count. Asserted as a count rather than a
+# duration because a wall-clock budget fails under unrelated load, while a
+# query that starts running per fragment shows up in a count immediately.
+GROUNDING_STATEMENT_BUDGET = 5
 
 
 class GroundingSource(StrEnum):
@@ -132,30 +143,49 @@ async def _current_frequency(session: AsyncSession, user_id: int) -> Frequency |
     return await resolve_stage_frequency(session, open_through(progress))
 
 
-async def _recent_entry_bodies(session: AsyncSession, user_id: int, exclude_id: int) -> list[str]:
-    """The caller's most recent other entry bodies, for connection context.
+async def _recent_entries(
+    session: AsyncSession, user_id: int, exclude_id: int
+) -> list[tuple[int, str]]:
+    """The caller's most recent other entries, as ``(id, body)``, for connection context.
 
-    Intimate entries (issue #895) are excluded: these bodies are embedded in the
+    Intimate entries (issue #895) -- and any tier outside the egress allowlist
+    (#3059) -- are excluded: these bodies are embedded in the
     resonance prompt and sent to the cloud LLM, so an intimate entry must never
     reach the cloud even as *prior context* for a newer non-intimate entry's
     pass. The classification is read off the persisted row (never client-supplied
     at resonance time), mirroring the per-entry privacy floor in ``run_resonance``.
     Legacy rows are run through today's exact text boundary again: sanitized-empty
     bodies disappear, while non-empty bodies become the same canonical prose a
-    current write would have persisted.
+    current write would have persisted. Each id stays paired with the body it
+    produced, so the ids describe exactly what is sent.
     """
     result = await session.execute(
-        select(JournalEntry.message)
+        select(col(JournalEntry.id), col(JournalEntry.message))
         .where(
             JournalEntry.user_id == user_id,
             JournalEntry.id != exclude_id,
             col(JournalEntry.deleted_at).is_(None),
-            col(JournalEntry.classification) != JournalClassification.INTIMATE,
+            egress_eligible_clause(col(JournalEntry.classification)),
         )
         .order_by(col(JournalEntry.id).desc())
         .limit(GROUNDING_LIMIT)
     )
-    return [sanitized for body in result.scalars().all() if (sanitized := sanitize_user_text(body))]
+    return [
+        (entry_id, sanitized)
+        for entry_id, body in result.all()
+        if (sanitized := sanitize_user_text(body))
+    ]
+
+
+async def _fragment_source_entries(session: AsyncSession, fragment_ids: list[int]) -> list[int]:
+    """The journal entries the chosen corpus fragments were derived from, if any."""
+    result = await session.execute(
+        select(col(CorpusFragment.source_entry_id)).where(
+            col(CorpusFragment.id).in_(fragment_ids),
+            col(CorpusFragment.source_entry_id).is_not(None),
+        )
+    )
+    return [entry_id for entry_id in result.scalars().all() if entry_id is not None]
 
 
 async def gather_grounding(
@@ -183,10 +213,65 @@ async def gather_grounding(
         ),
     )
     if fragments:
-        return Grounding(
-            bodies=tuple(fragment.content for fragment in fragments),
-            source=GroundingSource.CORPUS,
-            fragment_ids=tuple(fragment.fragment_id for fragment in fragments),
+        return await _corpus_grounding(
+            session, fragments, user_id=user_id, subject_entry_id=exclude_entry_id
         )
-    bodies = await _recent_entry_bodies(session, user_id, exclude_entry_id)
-    return Grounding(bodies=tuple(bodies), source=GroundingSource.RECENT_ENTRIES, fragment_ids=())
+    return await _window_grounding(session, user_id=user_id, subject_entry_id=exclude_entry_id)
+
+
+async def _corpus_grounding(
+    session: AsyncSession,
+    fragments: list[RetrievedFragment],
+    *,
+    user_id: int,
+    subject_entry_id: int,
+) -> Grounding:
+    """The corpus answer, after shadow-counting the entries its fragments came from."""
+    fragment_ids = [fragment.fragment_id for fragment in fragments]
+    await _observe_prior_lineage(
+        session,
+        user_id=user_id,
+        subject_entry_id=subject_entry_id,
+        entry_ids=await _fragment_source_entries(session, fragment_ids),
+    )
+    return Grounding(
+        bodies=tuple(fragment.content for fragment in fragments),
+        source=GroundingSource.CORPUS,
+        fragment_ids=tuple(fragment_ids),
+    )
+
+
+async def _window_grounding(
+    session: AsyncSession, *, user_id: int, subject_entry_id: int
+) -> Grounding:
+    """The recency-window answer, after shadow-counting the entries it carries."""
+    window = await _recent_entries(session, user_id, subject_entry_id)
+    await _observe_prior_lineage(
+        session,
+        user_id=user_id,
+        subject_entry_id=subject_entry_id,
+        entry_ids=[entry_id for entry_id, _ in window],
+    )
+    return Grounding(
+        bodies=tuple(body for _, body in window),
+        source=GroundingSource.RECENT_ENTRIES,
+        fragment_ids=(),
+    )
+
+
+async def _observe_prior_lineage(
+    session: AsyncSession, *, user_id: int, subject_entry_id: int, entry_ids: list[int]
+) -> None:
+    """Shadow-count restricted folded quotes in the context about to be sent (#3059).
+
+    Observation only: the context is unchanged. ``gather_grounding`` is reached
+    only for a subject the caller already admitted to egress, so no subject
+    check is repeated here.
+    """
+    await observe_lineage(
+        session,
+        LineageOperation.PRIOR_CONTEXT,
+        user_id=user_id,
+        subject_entry_id=subject_entry_id,
+        entry_ids=entry_ids,
+    )

@@ -157,7 +157,18 @@ _PASS_FACTS: dict[str, dict[str, object]] = {
         "deployment_verification_green": True,
         "unexplained_product_skips": 0,
     },
+    "serving_receipts": {
+        "backend_receipt_present": True,
+        "frontend_receipt_present": True,
+        "mixed_release_responses": 0,
+        "legacy_receipt_responses": 0,
+        "egress_barrier_state": "ready",
+        "managed_vault_rollout_state": "ready",
+        "attested_confidential_reported": False,
+        "local_model_claim": "unknown",
+    },
 }
+_SERVED_RELEASE_FIELDS = ("backend_served_release", "frontend_served_release")
 
 
 def _artifact_digest(kind: str) -> str:
@@ -344,7 +355,7 @@ def _current_creek_prerequisite_model_dump() -> dict[str, object]:
 
 def _passed_record() -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": "passed",
         "executed_at": "2026-09-14T12:30:00Z",
         "revisions": {
@@ -359,6 +370,8 @@ def _passed_record() -> dict[str, object]:
             "creek_fleet_schedule_revision": "4" * 40,
             "provisioning_contract": "2.1.0",
             "vault_contract": "0.16.0",
+            "backend_served_release": _SHA,
+            "frontend_served_release": _SHA,
         },
         "claims": {
             "custody_mode": "provider_managed",
@@ -909,3 +922,125 @@ def test_cli_rejects_unreadable_json_without_echoing_input(
     output = capsys.readouterr()
     assert marker not in output.out
     assert marker not in output.err
+
+
+def _serving_facts(record: dict[str, object]) -> dict[str, object]:
+    return cast("dict[str, object]", _check(record, "serving_receipts")["facts"])
+
+
+def test_schema_v2_record_is_rejected() -> None:
+    record = _passed_record()
+    record["schema_version"] = 2
+
+    errors = evidence.validate_record(record, require_passed=True)
+
+    assert "record has unsupported schema_version" in errors
+
+
+def test_template_is_pending_v3_with_serving_receipts() -> None:
+    record = json.loads(_TEMPLATE.read_text(encoding="utf-8"))
+
+    assert record["schema_version"] == evidence.SCHEMA_VERSION == 3
+    assert "serving_receipts" in record["checks"]
+    for field in _SERVED_RELEASE_FIELDS:
+        assert field in record["revisions"]
+        assert record["revisions"][field] is None
+
+
+@pytest.mark.parametrize("field", _SERVED_RELEASE_FIELDS)
+def test_passed_record_rejects_served_release_drift(field: str) -> None:
+    record = _passed_record()
+    _mapping(record, "revisions")[field] = "c" * 40
+
+    errors = evidence.validate_record(record, require_passed=True)
+
+    assert "revisions contain invalid exact coordinates" in errors
+
+
+@pytest.mark.parametrize("field", _SERVED_RELEASE_FIELDS)
+@pytest.mark.parametrize("value", ["unknown", None, _SHA.upper()])
+def test_passed_record_rejects_unknown_served_release(field: str, value: object) -> None:
+    record = _passed_record()
+    _mapping(record, "revisions")[field] = value
+
+    errors = evidence.validate_record(record, require_passed=True)
+
+    assert "revisions contain invalid exact coordinates" in errors
+
+
+def test_failed_record_may_record_the_drifted_served_release() -> None:
+    record = _passed_record()
+    record["status"] = "failed"
+    _check(record, "serving_receipts")["outcome"] = "failed"
+    _mapping(record, "revisions")["frontend_served_release"] = "c" * 40
+
+    assert evidence.validate_record(record, require_passed=False) == ()
+
+    _mapping(record, "revisions")["frontend_served_release"] = "unknown"
+    errors = evidence.validate_record(record, require_passed=False)
+    assert "revisions contain invalid exact coordinates" in errors
+
+
+@pytest.mark.parametrize("fact", ["backend_receipt_present", "frontend_receipt_present"])
+def test_passed_record_rejects_missing_serving_receipt(fact: str) -> None:
+    record = _passed_record()
+    _serving_facts(record)[fact] = False
+
+    errors = evidence.validate_record(record, require_passed=True)
+
+    assert "passed acceptance facts do not match required invariants" in errors
+
+
+def test_passed_record_rejects_absent_serving_receipts_check() -> None:
+    record = _passed_record()
+    del _mapping(record, "checks")["serving_receipts"]
+
+    errors = evidence.validate_record(record, require_passed=True)
+
+    assert "checks must contain the exact required acceptance set" in errors
+
+
+@pytest.mark.parametrize("fact", ["mixed_release_responses", "legacy_receipt_responses"])
+def test_passed_record_rejects_mixed_version_and_legacy_client(fact: str) -> None:
+    record = _passed_record()
+    _serving_facts(record)[fact] = 1
+
+    errors = evidence.validate_record(record, require_passed=True)
+
+    assert "passed acceptance facts do not match required invariants" in errors
+
+
+@pytest.mark.parametrize("fact", ["egress_barrier_state", "managed_vault_rollout_state"])
+@pytest.mark.parametrize("state", ["disabled", "incomplete"])
+def test_passed_record_rejects_false_health(fact: str, state: str) -> None:
+    record = _passed_record()
+    _serving_facts(record)[fact] = state
+
+    errors = evidence.validate_record(record, require_passed=True)
+
+    assert "acceptance facts must be closed primitive observations" in errors
+
+
+def test_local_model_readiness_cannot_be_claimed_in_v3() -> None:
+    record = _passed_record()
+    record["status"] = "pending"
+    check = _check(record, "serving_receipts")
+    check["outcome"] = "pending"
+    _serving_facts(record)["local_model_claim"] = "ready"
+
+    errors = evidence.validate_record(record, require_passed=False)
+    assert "acceptance facts must be closed primitive observations" in errors
+
+    _serving_facts(record)["local_model_claim"] = None
+    _serving_facts(record)["model_digest"] = f"sha256:{'0' * 64}"
+    errors = evidence.validate_record(record, require_passed=False)
+    assert "acceptance facts have unknown or missing fields" in errors
+
+
+def test_attested_confidential_reported_true_is_rejected() -> None:
+    record = _passed_record()
+    _serving_facts(record)["attested_confidential_reported"] = True
+
+    errors = evidence.validate_record(record, require_passed=True)
+
+    assert "passed acceptance facts do not match required invariants" in errors

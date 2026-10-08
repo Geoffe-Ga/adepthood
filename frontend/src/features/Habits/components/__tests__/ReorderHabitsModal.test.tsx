@@ -9,6 +9,7 @@ import { accent, STAGE_COLORS } from '../../../../design/tokens';
 import { useProgramStore } from '../../../../store/useProgramStore';
 import { dayKeyInTZ } from '../../../../utils/dateUtils';
 import type { Habit } from '../../Habits.types';
+import { REORDER_HABITS_CLOSE_LABEL } from '../modalCloseLabels';
 
 jest.mock('@react-native-async-storage/async-storage', () => ({
   setItem: jest.fn(() => Promise.resolve()),
@@ -139,6 +140,17 @@ describe('ReorderHabitsModal — the drag handle glyph (#3009)', () => {
       expect(handle.props.importantForAccessibility).toBe('no-hide-descendants');
     }
     expect(result.queryAllByText('⠿')).toHaveLength(0);
+  });
+});
+
+describe('ReorderHabitsModal — header close button', () => {
+  it('names its close button after the Reorder Habits title and closes on press', () => {
+    const onClose = jest.fn();
+    const result = render(
+      <ReorderHabitsModal visible habits={HABITS} onClose={onClose} onSaveOrder={jest.fn()} />,
+    );
+    fireEvent.press(result.getByRole('button', { name: REORDER_HABITS_CLOSE_LABEL }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -24,6 +24,7 @@ import {
 } from '../HabitUtils';
 import { displaySlots } from '../services/habitOrdering';
 
+import { REORDER_HABITS_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
 
 const SAVE_ORDER_LABEL = 'Save Order';
@@ -659,15 +660,16 @@ const ReorderBody = ({
   onSave,
 }: ReorderBodyProps) => (
   <View testID="reorder-modal-card" style={styles.reorderModalContent}>
-    <ModalHeader title="Reorder Habits" onClose={onClose} />
+    <ModalHeader title="Reorder Habits" onClose={onClose} closeLabel={REORDER_HABITS_CLOSE_LABEL} />
     <ReorderDateButton
       startDate={startDate}
       onOpenPicker={onOpenPicker}
       onSelectDate={onSelectDate}
     />
     <Text style={styles.reorderInstructions}>
-      Drag by the handle to reorder or cross a range line. Habits 1-8 start 21 days apart; habits
-      9-10 start 42 days apart.
+      Drag by the handle to change the order, or drag a habit across one of the lines to move it to
+      a different part of your program. Habits 1-8 start 21 days apart; habits 9-10 start 42 days
+      apart.
     </Text>
     <ReorderList orderedHabits={orderedHabits} onDragEnd={onDragEnd} />
     <Button

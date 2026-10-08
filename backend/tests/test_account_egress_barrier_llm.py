@@ -30,7 +30,7 @@ from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
 from domain.creek_vault import CreekCapability, VaultReflection, VaultTierCeiling
 from main import app
 from models.completion_suggestion import CompletionSuggestion
@@ -49,7 +49,9 @@ from models.wallet_audit import (
 from routers import journal
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
+from services.reflection_boundary import ReflectionBoundary
 from tests.helpers.log_lines import records_for
+from tests.support.fake_llm import real_provider_response
 from tests.test_account_egress_barrier import (
     DELETION_BEGIN,
     DELETION_RESPONSE,
@@ -478,13 +480,8 @@ class SlowNumberedProvider:
         self.calls += 1
         number = self.calls
         await asyncio.sleep(_SLOW_DIAL_SECONDS)
-        return LLMResponse(
-            text=f"Dear friend, this is letter number {number}.",
-            provider="stub",
-            model=STUB_MODEL_NAME,
-            prompt_tokens=0,
-            completion_tokens=0,
-        )
+        # A real provider's letter: a stub letter is a refunded demo (#3062).
+        return real_provider_response(f"Dear friend, this is letter number {number}.")
 
 
 @pytest.mark.asyncio
@@ -643,9 +640,18 @@ def _released_provider(monkeypatch: pytest.MonkeyPatch) -> PausedProvider:
 
 
 def _connect_vault(monkeypatch: pytest.MonkeyPatch) -> _RecordingReflectVault:
-    """Connect a recording vault for every request in this test."""
+    """Connect a recording vault, and bind the caller's AI operations to it, for this test.
+
+    The boundary is what routes a pass to the vault (#3061); serving the client
+    alone would leave the caller app-provider-bound and the vault never asked.
+    """
     vault = _RecordingReflectVault()
     monkeypatch.setitem(app.dependency_overrides, get_creek_vault_client, lambda: vault)
+    monkeypatch.setitem(
+        app.dependency_overrides,
+        get_reflection_boundary,
+        lambda: ReflectionBoundary.VAULT_BOUND,
+    )
     return vault
 
 
@@ -781,11 +787,12 @@ async def test_a_connected_vault_is_never_asked_to_reflect_a_body_made_intimate_
     concurrent_session_factory: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The vault is a model too, and its cloud fallback is the cloud: neither is dialled.
+    """The vault is a model too: under the vault boundary neither it nor the app is dialled.
 
     ``select_reflection_llm`` has no intimate gate of its own -- it would bind an
-    intimate-tier vault reflection whose degrade falls back to the cloud -- so the
-    pass must stop before it is ever asked.
+    intimate-tier vault reflection -- so the pass must stop before it is ever
+    asked. The caller is vault-bound (#3061), so this also pins the PATCH that
+    wins the hold for a writer whose pass could never fall back to the cloud.
     """
     provider = _released_provider(monkeypatch)
     vault = _connect_vault(monkeypatch)

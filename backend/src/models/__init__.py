@@ -39,6 +39,7 @@ from .practice_tag import PracticeTag
 from .promoted_quote import PromotedQuote
 from .prompt_dismissal import PromptDismissal
 from .prompt_response import PromptResponse
+from .restore_marker import RestoreMarker
 from .revoked_token import RevokedToken
 from .stage_content import StageContent
 from .stage_progress import StageProgress
@@ -55,6 +56,7 @@ from .vault_activation import (
 )
 from .vault_pipeline_follow_up import VaultPipelineFollowUp
 from .vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
+from .voice_draft_retraction import VoiceDraftRetraction
 from .wallet_audit import WalletAudit
 
 __all__ = [
@@ -99,6 +101,7 @@ __all__ = [
     "PromotedQuote",
     "PromptDismissal",
     "PromptResponse",
+    "RestoreMarker",
     "RevokedToken",
     "StageContent",
     "StageProgress",
@@ -114,5 +117,6 @@ __all__ = [
     "VaultPipelineOutcome",
     "VaultPipelineRun",
     "VaultTeardownReceipt",
+    "VoiceDraftRetraction",
     "WalletAudit",
 ]

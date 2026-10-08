@@ -157,6 +157,14 @@ export interface UseResonanceResult {
    * is not a failure and must not be dressed as one.
    */
   noNotesMessage: string | null;
+  /**
+   * Which side answered the latest pass's reflection, exactly as the server
+   * reported it (#3062) -- including the source of a pass that kept no notes.
+   * ``null`` until a pass reports one, after a pass that did not (an older
+   * server, the private floor, care), and on load-on-open, which runs no pass.
+   * Never derived from the vault connection.
+   */
+  notesSource: string | null;
   /** Compiled praxis pages related by the latest completed resonance pass. */
   relatedPraxis: RelatedPraxis[];
   /** Recurring corpus patterns related by the latest completed resonance pass. */
@@ -369,6 +377,7 @@ interface LatestPassState {
   contraction: ContractionReflection | null;
   privateMessage: string | null;
   noNotesMessage: string | null;
+  notesSource: string | null;
   relatedPraxis: RelatedPraxis[];
   relatedEddies: RelatedEddy[];
   /** Resolved, non-intimate passes so far; survives ``clear`` because it counts history. */
@@ -377,12 +386,18 @@ interface LatestPassState {
   receive: (_result: ResonanceResponse) => void;
 }
 
+/** The reflection's source as the pass reported it, or ``null`` when it reported none. */
+function reportedNotesSource(result: ResonanceResponse): string | null {
+  return result.provenance?.notes.source ?? null;
+}
+
 /** Own every surface that describes only the latest completed resonance pass. */
 function useLatestPassState(): LatestPassState {
   const [care, setCare] = useState<CareResponse | null>(null);
   const [contraction, setContraction] = useState<ContractionReflection | null>(null);
   const [privateMessage, setPrivateMessage] = useState<string | null>(null);
   const [noNotesMessage, setNoNotesMessage] = useState<string | null>(null);
+  const [notesSource, setNotesSource] = useState<string | null>(null);
   const [relatedPraxis, setRelatedPraxis] = useState<RelatedPraxis[]>([]);
   const [relatedEddies, setRelatedEddies] = useState<RelatedEddy[]>([]);
   const [completedPasses, setCompletedPasses] = useState(0);
@@ -392,6 +407,7 @@ function useLatestPassState(): LatestPassState {
     setContraction(null);
     setPrivateMessage(null);
     setNoNotesMessage(null);
+    setNotesSource(null);
     setRelatedPraxis([]);
     setRelatedEddies([]);
   }, []);
@@ -402,6 +418,7 @@ function useLatestPassState(): LatestPassState {
     useContractionSignalStore.getState().observe(result.contraction ?? null);
     setPrivateMessage(result.private_message ?? null);
     setNoNotesMessage(result.no_notes_message ?? null);
+    setNotesSource(reportedNotesSource(result));
     setRelatedPraxis(result.related_praxis ?? []);
     setRelatedEddies(result.related_eddies ?? []);
     // The server never counts an intimate pass, and neither does this: a
@@ -415,6 +432,7 @@ function useLatestPassState(): LatestPassState {
     contraction,
     privateMessage,
     noNotesMessage,
+    notesSource,
     relatedPraxis,
     relatedEddies,
     completedPasses,
@@ -629,6 +647,7 @@ export function useResonance({
     contraction: latestPass.contraction,
     privateMessage: latestPass.privateMessage,
     noNotesMessage: latestPass.noNotesMessage,
+    notesSource: latestPass.notesSource,
     relatedPraxis: latestPass.relatedPraxis,
     relatedEddies: latestPass.relatedEddies,
     completedPasses: latestPass.completedPasses,

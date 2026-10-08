@@ -28,7 +28,7 @@ from client_ip import (
 from database import async_session_factory, get_session
 from database import engine as database_engine
 from database_schema import require_database_schema_current
-from dependencies.creek_vault import resolve_creek_vault_client
+from dependencies.creek_vault import resolve_creek_vault_client, resolved_vault_destination
 from error_responses import refusal_responses
 from errors import install_exception_handlers
 from middleware import (
@@ -41,6 +41,11 @@ from middleware import (
     UnhandledExceptionMiddleware,
 )
 from observability import configure_logging
+from privacy.recipients import (
+    PROVIDER_BASE_URL_ENV_VARS,
+    REGISTERED_PROVIDER_BASE_URLS,
+    base_url_override_violations,
+)
 from rate_limit import declared_limit_retry_after, limiter, rate_limit_exceeded_response
 from request_host import ALLOWED_HOSTS_ENV_VAR, allowed_hosts, unusable_host_entries
 from routers.admin import router as admin_router
@@ -108,11 +113,14 @@ from services.creek_vault_pipeline import (
     close_vault_pipeline_tasks,
     resume_vault_pipeline_runs,
 )
+from services.creek_vault_voice_drafts import resume_voice_draft_retractions
 from services.managed_vault_rollout import (
     ManagedVaultRolloutState,
     load_managed_vault_rollout,
 )
+from services.privacy_suspension import log_suspension_state
 from services.provider_probe import PROVIDER_PROBE_ENV_VAR, armed_probe_token
+from services.restore_suppression import assert_restore_reapplied
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +154,14 @@ async def _recover_provisioning_until_shutdown() -> None:
             await reconcile_vault_teardowns(async_session_factory, client)
         except (OSError, RuntimeError, SQLAlchemyError):
             logger.warning("creek teardown recovery could not read its durable state")
+        try:
+            await resume_voice_draft_retractions(
+                async_session_factory,
+                resolve_creek_vault_client,
+                resolved_vault_destination,
+            )
+        except (OSError, RuntimeError, SQLAlchemyError):
+            logger.warning("voice draft withdrawal recovery could not read its durable state")
         await asyncio.sleep(_PROVISIONING_RECOVERY_INTERVAL_SECONDS)
 
 
@@ -380,13 +396,16 @@ def validate_journal_encryption_config() -> None:
     healthy, and the column an operator believed was encrypted is readable by
     anyone who reaches the database. Nothing in the running system says so.
 
-    So production requires the key and non-production does not. The environment
-    gate is ``ENV``, the same explicit variable the rest of this module's
-    startup checks read, rather than anything inferred from an incidental
-    setting. Staging is deliberately left with development: it is a deploy for
-    material nobody has promised to protect, and taking one down over an unset
-    variable would only teach operators to set it to a throwaway key that then
-    rides to production.
+    So production requires the key and non-production does not. The gate is
+    ``journal_encryption.production_in_force`` -- the same decision the codec
+    itself uses to refuse a plaintext write -- which reads ``ENV`` *and* the
+    environment name Railway injects. ``ENV`` is typed by a person and can be
+    missing or wrong; the platform's own name for the environment cannot be
+    forgotten, so either one saying production is enough, and a platform deploy
+    that names no environment at all is treated as production. Staging is
+    deliberately left with development: it is a deploy for material nobody has
+    promised to protect, and taking one down over an unset variable would only
+    teach operators to set it to a throwaway key that then rides to production.
 
     The order of the two checks matters and is tested. ``is_enabled`` is
     consulted first, so a configured-but-invalid key raises out of the
@@ -400,7 +419,7 @@ def validate_journal_encryption_config() -> None:
     """
     if journal_encryption.is_enabled():
         return
-    if os.getenv("ENV", "development") != "production":
+    if not journal_encryption.production_in_force():
         return
     msg = (
         f"{journal_encryption.KEYS_ENV_VAR} must be set in production. Without it "
@@ -640,6 +659,48 @@ def validate_provider_probe_config() -> None:
         f"{PROVIDER_PROBE_ENV_VAR} to boot, and configure BOTMASON_PROVIDER and "
         "LLM_API_KEY if this deployment is meant to reach a provider at all "
         "(see backend/.env.example)."
+    )
+    raise RuntimeError(msg)
+
+
+def validate_llm_base_url_config() -> None:
+    """Refuse a production boot whose provider base URL leaves the recipient register.
+
+    Both provider SDKs read their own variable -- ``OPENAI_BASE_URL`` and
+    ``ANTHROPIC_BASE_URL`` -- whenever a client is built without an explicit
+    ``base_url``, and nothing else in this app mentions either one. So one
+    deployment setting could redirect every journal body, prior letter and
+    transcription photograph to whatever host it named, with no code change and
+    nothing in the running system saying so. The register
+    (:mod:`privacy.recipients`) names the one host each provider may be; this
+    is the boot half of holding the deployment to it, and the dial in
+    :mod:`services.botmason` pins the same URL so a value set after boot is
+    never read either.
+
+    The production predicate is ``journal_encryption.production_in_force``, the
+    one the encryption refusal uses, so a platform deploy with ``ENV`` unset is
+    held to it. Outside production the variables are the end-to-end lane's way
+    of pointing the real SDK clients at a loopback fake, and are left alone.
+
+    The refusal names the variable and the registered host and never renders
+    the value: a URL can carry a credential in its userinfo.
+    """
+    if not journal_encryption.production_in_force():
+        return
+    violations = base_url_override_violations(os.environ)
+    if not violations:
+        return
+    registered = ", ".join(
+        f"{PROVIDER_BASE_URL_ENV_VARS[p]} -> {url}"
+        for p, url in REGISTERED_PROVIDER_BASE_URLS.items()
+    )
+    msg = (
+        f"{', '.join(violations)} points a language-model SDK at a host the recipient "
+        "register does not list. The SDK reads that variable implicitly, so every "
+        "journal body, prior letter and photograph sent for a reflection would leave "
+        f"for that host instead. The registered endpoints are: {registered}. Unset "
+        "the variable to boot; a gateway is a new recipient and is added to "
+        "backend/src/privacy/recipients.py only after owner review (#3065)."
     )
     raise RuntimeError(msg)
 
@@ -976,6 +1037,15 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # Make the journal-encryption state observable per worker (each uvicorn
     # worker caches its own key registry) without reading source (audit-destub-05b).
     logger.info("journal_encryption_enabled=%s", journal_encryption.is_enabled())
+    # Which operator privacy suspensions this worker booted under, by name (#3075).
+    log_suspension_state()
+    if journal_encryption.is_enabled():
+        # Non-secret: the operator sweep refuses to write under any other key0
+        # (``--primary-fingerprint``), so this is the value it is checked against.
+        logger.info(
+            "journal_encryption_primary_fingerprint=%s",
+            journal_encryption.primary_key_fingerprint(),
+        )
 
     # ...and in production, refuse the boot outright: an unset key there is a
     # deploy that stores every user's journal in plaintext, which the log line
@@ -1011,6 +1081,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # users, so an armed production deploy never goes live.
     validate_provider_probe_config()
 
+    # The same shape for the SDKs' own redirect: a provider base URL off the
+    # recipient register would send every reflection's journal content to an
+    # unlisted host, so a production deploy carrying one never goes live.
+    validate_llm_base_url_config()
+
     # A production boot with no proxy allowlist still serves traffic, but every
     # client behind the ingress shares one throttle bucket and one audit IP --
     # a state only this warning makes visible.
@@ -1040,6 +1115,9 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # a stale checkout fails at boot with the Alembic remedy instead of serving
     # healthy routes until the first journal write reaches a missing column.
     await require_database_schema_current(database_engine)
+    # Default off. When an operator turns it on after a restore, refuse to serve
+    # until that restore's deletions were reapplied (#3063, DEPLOYMENT.md).
+    await assert_restore_reapplied(async_session_factory)
 
     # ritual-practice ops: on every boot, seed the catalog (stages, presets,
     # course content) so a fresh database is immediately usable.

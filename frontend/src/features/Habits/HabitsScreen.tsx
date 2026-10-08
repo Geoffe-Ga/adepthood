@@ -17,7 +17,6 @@ import HabitEmojiPicker from './components/HabitEmojiPicker';
 import HabitsDrawer from './components/HabitsDrawer';
 import { HabitsEmptyState } from './components/HabitsEmptyState';
 import HabitSettingsModal from './components/HabitSettingsModal';
-import MissedDaysModal from './components/MissedDaysModal';
 import OnboardingModal from './components/OnboardingModal';
 import ReorderHabitsModal from './components/ReorderHabitsModal';
 import StatsModal from './components/StatsModal';
@@ -30,7 +29,6 @@ import {
   generateStatsForHabit,
   toLocalHabitStats,
   buildPagedHabits,
-  calculateMissedDays,
   countCarryover,
   formatStageRange,
   habitColorAtSlot,
@@ -94,52 +92,30 @@ interface HabitModalsProps {
   userTimezone: string;
 }
 
-/**
- * Missed-days for the modal, gated on modal-open. ``calculateMissedDays`` scans
- * every completion, so it must not run on the (frequent) closed-modal renders —
- * the modal is hidden unless ``open`` is set. Extracted so the gate is unit-testable.
- */
-export const missedDaysFor = (
-  open: boolean,
-  habit: Habit | null,
-  tz?: string,
-): ReturnType<typeof calculateMissedDays> => (open && habit ? calculateMissedDays(habit, tz) : []);
-
 const HabitDataModals = ({
   modals,
   selectedHabit,
   habitStats,
   actions,
-}: Omit<HabitModalsProps, 'habits' | 'onAddHabit' | 'userTimezone'>) => {
-  const { userTimezone } = useAuth();
-  return (
-    <>
-      <GoalModal
-        visible={modals.goal}
-        habit={selectedHabit}
-        onClose={() => modals.close('goal')}
-        onUpdateGoal={actions.updateGoal}
-        onUpdateGoalUnits={actions.updateGoalUnits}
-        onLogUnit={actions.logUnit}
-        onUpdateHabit={actions.updateHabit}
-      />
-      <StatsModal
-        visible={modals.stats}
-        habit={selectedHabit}
-        stats={habitStats}
-        onClose={() => modals.close('stats')}
-      />
-      <MissedDaysModal
-        visible={modals.missedDays}
-        habit={selectedHabit}
-        missedDays={missedDaysFor(modals.missedDays, selectedHabit, userTimezone)}
-        onClose={() => modals.close('missedDays')}
-        onBackfill={actions.backfillMissedDays}
-        onNewStartDate={actions.setNewStartDate}
-      />
-    </>
-  );
-};
+}: Omit<HabitModalsProps, 'habits' | 'onAddHabit' | 'userTimezone'>) => (
+  <>
+    <GoalModal
+      visible={modals.goal}
+      habit={selectedHabit}
+      onClose={() => modals.close('goal')}
+      onUpdateGoal={actions.updateGoal}
+      onUpdateGoalUnits={actions.updateGoalUnits}
+      onLogUnit={actions.logUnit}
+      onUpdateHabit={actions.updateHabit}
+    />
+    <StatsModal
+      visible={modals.stats}
+      habit={selectedHabit}
+      stats={habitStats}
+      onClose={() => modals.close('stats')}
+    />
+  </>
+);
 
 const HabitWriteModals = ({
   modals,
@@ -235,9 +211,9 @@ export const EnergyCTA = ({ onOpen, onArchive }: { onOpen: () => void; onArchive
       style={styles.energyScaffoldingButton}
       onPress={onOpen}
       accessibilityRole="button"
-      accessibilityLabel="Perform Energy Scaffolding"
+      accessibilityLabel="Start Energy Scaffolding"
     >
-      <Text style={styles.energyScaffoldingButtonText}>Perform Energy Scaffolding</Text>
+      <Text style={styles.energyScaffoldingButtonText}>Start Energy Scaffolding</Text>
     </TouchableOpacity>
     <TouchableOpacity
       testID="archive-energy-cta"

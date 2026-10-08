@@ -30,7 +30,7 @@ export interface CorpusConsentDecision {
 }
 
 /** The Settings group the switches sit in, and this screen's eyebrow. */
-export const CORPUS_GROUP_TITLE = 'Your corpus';
+export const CORPUS_GROUP_TITLE = 'Your writing';
 export const CORPUS_CONSENT_EYEBROW = CORPUS_GROUP_TITLE;
 export const CORPUS_CONSENT_TITLE = 'Writing reflections can draw on';
 
@@ -52,8 +52,8 @@ export const CORPUS_CONSENT_CONSEQUENCE_HEADING = 'What turning one on does';
 
 /** The first consequence: sorting is a model call, once per save. */
 export const CORPUS_CONSENT_CONSEQUENCE_SENDING =
-  'Each entry you save is sent once to the language-model provider to be sorted — one call as ' +
-  'it is saved, and one more if you go back and change its wording or its tier.';
+  'Each entry you save is sent once to the AI service that sorts it, as it is saved — and once ' +
+  'more if you go back and change its wording or its privacy setting.';
 
 /** The second: withdrawing is a deletion, not a preference. */
 export const CORPUS_CONSENT_CONSEQUENCE_REMOVAL =
@@ -113,20 +113,20 @@ export const CORPUS_CONSENT_ROW_DESCRIPTION =
  */
 export const CORPUS_INVITATION_REACH =
   'Saying yes also sorts the entries you have already written, apart from any you marked ' +
-  'Intimate — the same one call per entry — so a reflection can draw on all of it and not only ' +
-  'on what comes after.';
+  'Intimate — each one sent once, the same as a new entry — so a reflection can draw on all of ' +
+  'it and not only on what comes after.';
 
 /** Leads to the decision itself; matches the shelf band's wording. */
 export const CORPUS_INVITATION_OPEN_LABEL = 'Look at the decision';
-export const CORPUS_INVITATION_OPEN_A11Y = 'Open the decision about your corpus';
+export const CORPUS_INVITATION_OPEN_A11Y = 'Open the decision about your writing';
 
 /** A plain decline. The question may return, quietly, after a while. */
 export const CORPUS_INVITATION_NOT_NOW_LABEL = 'Not now';
-export const CORPUS_INVITATION_NOT_NOW_A11Y = 'Set the question about your corpus aside for now';
+export const CORPUS_INVITATION_NOT_NOW_A11Y = 'Set the question about your writing aside for now';
 
 /** A final decline. The question is not offered again. */
 export const CORPUS_INVITATION_NEVER_LABEL = 'Do not ask again';
-export const CORPUS_INVITATION_NEVER_A11Y = 'Do not offer the question about your corpus again';
+export const CORPUS_INVITATION_NEVER_A11Y = 'Do not offer the question about your writing again';
 
 /** One source's name and what it covers, in the reader's language. */
 export interface CorpusSourceCopy {

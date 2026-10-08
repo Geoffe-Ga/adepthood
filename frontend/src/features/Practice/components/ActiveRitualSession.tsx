@@ -86,6 +86,14 @@ import TalliedGroundingView from '@/features/Practice/views/TalliedGroundingView
 import TarotMeditationView from '@/features/Practice/views/TarotMeditationView';
 
 const KEEP_AWAKE_TAG = 'ritual-engine';
+
+/**
+ * Non-blocking notice shown when the bells cannot play on this device (the
+ * audio player failed to load, or the browser blocked playback). The session
+ * itself is unaffected. Wording awaits an owner-light copy review (#3072 AC10).
+ */
+export const BELLS_UNAVAILABLE_COPY =
+  "Bells can't play on this device right now. Your timer still runs as usual.";
 const SAVE_FALLBACK =
   "We couldn't save your practice session. Check your connection and try again — your timer minutes are still safe here.";
 
@@ -121,6 +129,14 @@ interface ActiveSession {
   onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
   completedWindow: { start: Date; end: Date } | null;
   saveError: string | null;
+  /** True once a bell has genuinely failed to play this session. */
+  bellsUnavailable: boolean;
+  /**
+   * The session's one audio adapter. The random-bell view plays its own bells
+   * (the engine schedules none for that mode), so it is handed this adapter
+   * rather than building a second one whose failures nothing would hear.
+   */
+  audio: AudioAdapter;
   /** Lifts the random-bell view's live schedule metadata for the harvest. */
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
   submitSession: (
@@ -150,6 +166,8 @@ export const ActiveRitualSession = forwardRef<ActiveRitualSessionHandle, ActiveR
           cardPick={session.cardPick}
           onMindfulAnchorComplete={session.onMindfulAnchorComplete}
           saveError={session.saveError}
+          bellsUnavailable={session.bellsUnavailable}
+          audio={session.audio}
           onRandomBellMetadata={session.onRandomBellMetadata}
         />
         <RitualConfiguratorSheet
@@ -265,22 +283,32 @@ function useHarvestedMetadata(
   };
 }
 
-function useEngineDeps(tarotCardIndex: number, injectedAudio?: AudioAdapter): EngineDeps {
+interface SessionEngineDeps {
+  deps: EngineDeps;
+  bellsUnavailable: boolean;
+  audio: AudioAdapter;
+}
+
+function useEngineDeps(tarotCardIndex: number, injectedAudio?: AudioAdapter): SessionEngineDeps {
   const [haptics] = useState(() => createExpoHapticsAdapter());
-  const [audio] = useState<AudioAdapter>(() => injectedAudio ?? createExpoAudioAdapter());
+  const [bellsUnavailable, setBellsUnavailable] = useState(false);
+  const [audio] = useState<AudioAdapter>(
+    () => injectedAudio ?? createExpoAudioAdapter(() => setBellsUnavailable(true)),
+  );
   useEffect(() => () => audio.dispose?.(), [audio]);
-  return useMemo(
+  const deps = useMemo(
     () => ({ startCardIndex: tarotCardIndex, haptics, audio }),
     [tarotCardIndex, haptics, audio],
   );
+  return { deps, bellsUnavailable, audio };
 }
 
 function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const tarotCardIndex = useTarotCardIndex(props);
-  const engineDeps = useEngineDeps(tarotCardIndex, props.audio);
+  const { deps: engineDeps, bellsUnavailable, audio } = useEngineDeps(tarotCardIndex, props.audio);
   const [state, controls] = useRitualEngine(props.effectiveConfig, engineDeps);
   useKeepAwakeWhileRunning(state.status);
-  const window = useCompletionWindow(state.status);
+  const window = useCompletionWindow(state.status, state.elapsedMs);
   const [saveError, setSaveError] = useState<string | null>(null);
   const cardPick = useCardPick(props.effectiveConfig);
   const {
@@ -319,6 +347,8 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
     onMindfulAnchorComplete,
     completedWindow: window.completedWindow,
     saveError,
+    bellsUnavailable,
+    audio,
     onRandomBellMetadata,
     submitSession,
   };
@@ -367,25 +397,44 @@ interface CompletionWindow {
   reset: () => void;
 }
 
-function useCompletionWindow(status: RitualState['status']): CompletionWindow {
+/**
+ * Track the wall-clock window a completed sitting is saved with.
+ *
+ * `start` is stamped on the sitting's *first* start (`idle`/`complete` →
+ * `running`), never on a resume, so pausing mid-sit cannot truncate the
+ * record. `end` is `start + active elapsed` — pause time is excluded, so
+ * `end - start` is exactly the time spent practising — capped at "now" so a
+ * clock stepped backwards mid-sit can never post a future `ended_at`, and
+ * floored at `start` so the window always satisfies `ended_at >= started_at`.
+ * That is all the floor promises. A clock that was fast when `start` was
+ * stamped and is corrected mid-sit leaves `start` itself in the server's
+ * future, which the server still refuses; re-anchoring `start` (e.g. to now
+ * minus active elapsed) would be needed for that case.
+ */
+function useCompletionWindow(status: RitualState['status'], elapsedMs: number): CompletionWindow {
   const [completedWindow, setCompletedWindow] = useState<{ start: Date; end: Date } | null>(null);
   const startedAtRef = useRef<Date | null>(null);
   const prevStatusRef = useRef(status);
   useEffect(() => {
     const prev = prevStatusRef.current;
-    if (prev !== 'running' && status === 'running') {
+    if ((prev === 'idle' || prev === 'complete') && status === 'running') {
       startedAtRef.current = new Date();
     }
     if (prev !== 'complete' && status === 'complete') {
       const started = startedAtRef.current ?? new Date();
-      setCompletedWindow({ start: started, end: new Date() });
+      const startMs = started.getTime();
+      const end = new Date(Math.max(startMs, Math.min(startMs + elapsedMs, Date.now())));
+      setCompletedWindow({ start: started, end });
     }
     if (status === 'idle' && prev !== 'idle') {
       setCompletedWindow(null);
       startedAtRef.current = null;
     }
     prevStatusRef.current = status;
-  }, [status]);
+    // Re-running on an `elapsedMs` change is harmless: every branch above is
+    // gated on a status *transition*, and the reducer freezes elapsed on
+    // completion, so the window is computed once from the final value.
+  }, [status, elapsedMs]);
   const reset = useCallback(() => {
     setCompletedWindow(null);
     startedAtRef.current = null;
@@ -445,6 +494,8 @@ interface SessionCardProps {
   cardPick: PickedCard | null;
   onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
   saveError: string | null;
+  bellsUnavailable: boolean;
+  audio: AudioAdapter;
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
 }
 
@@ -462,10 +513,16 @@ function SessionCard(props: SessionCardProps): React.JSX.Element {
           controls={props.controls}
           tarotCardIndex={props.tarotCardIndex}
           cardPick={props.cardPick}
+          audio={props.audio}
           onRandomBellMetadata={props.onRandomBellMetadata}
           onMindfulAnchorComplete={props.onMindfulAnchorComplete}
         />
       </SessionSurfaceProvider>
+      {props.bellsUnavailable && (
+        <Text style={styles.notice} testID="ritual-bells-unavailable">
+          {BELLS_UNAVAILABLE_COPY}
+        </Text>
+      )}
       {props.saveError !== null && (
         <Text style={styles.error} testID="active-practice-save-error">
           {props.saveError}
@@ -481,6 +538,7 @@ interface ModeViewProps {
   controls: RitualControls;
   tarotCardIndex: number;
   cardPick: PickedCard | null;
+  audio: AudioAdapter;
   onRandomBellMetadata: (metadata: RandomIntervalBellMetadata) => void;
   onMindfulAnchorComplete: (_metadata: MindfulAnchorMetadata) => void;
 }
@@ -494,6 +552,7 @@ function ModeView(props: ModeViewProps): React.JSX.Element {
         config={config}
         state={state}
         controls={controls}
+        audio={props.audio}
         onMetadataChange={props.onRandomBellMetadata}
       />
     );
@@ -620,6 +679,14 @@ const styles = StyleSheet.create({
   card: {
     paddingBottom: SPACING.lg,
     marginBottom: SPACING.lg,
+  },
+  notice: {
+    // Informational, not an error: the session carries on. The light
+    // border swatch reads on the umber ground like the save-error ink does.
+    color: colors.destructive.border,
+    fontSize: 14,
+    marginTop: SPACING.md,
+    textAlign: 'center',
   },
   error: {
     // The light destructive border swatch doubles as an AA-clearing (~6.3:1)

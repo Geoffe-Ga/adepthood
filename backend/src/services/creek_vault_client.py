@@ -96,7 +96,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
 from types import MappingProxyType, TracebackType
-from typing import NoReturn, cast
+from typing import Final, NoReturn, cast
 from urllib.parse import quote
 
 import httpx
@@ -125,6 +125,7 @@ from domain.creek_vault import (
     VaultPipelineJob,
     VaultPipelineStage,
     VaultReflection,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     VaultUploadRequest,
     VaultUploadResult,
@@ -176,6 +177,7 @@ from services.creek_vault_url_user import (
     classify_user_vault_url_host,
     vault_url_host,
 )
+from services.privacy_suspension import vault_send_suspended
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -289,6 +291,24 @@ _HTTP_CALL_TIMED_OUT_ERRORS: tuple[type[Exception], ...] = (
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
 _PARSE_ERROR_TYPES: tuple[type[Exception], ...] = (KeyError, TypeError, AttributeError, ValueError)
+
+
+#: The methods that write: a request with one of these is content-bearing even
+#: when it happens to carry no body, because the verb itself is the send.
+_CONTENT_BEARING_METHODS: Final = frozenset({"POST", "PUT", "PATCH"})
+
+
+def carries_content(method: str, json_body: Mapping[str, object] | None) -> bool:
+    """Whether a vault request may carry account content, and so is suspendable.
+
+    Structural rather than a list of verbs (#3075): any body, on any method, is
+    content -- so a future ``DELETE`` that grows a body is refused under
+    ``PRIVACY_SUSPEND_VAULT_SEND`` by construction -- and any write method is
+    content even without one. What remains is a body-free ``GET`` or ``DELETE``:
+    the capability probe, a job poll, the wheel read, and the two withdrawals,
+    which only ever reduce what the vault holds.
+    """
+    return json_body is not None or method.upper() in _CONTENT_BEARING_METHODS
 
 
 class _IncompatibleContractVersionError(Exception):
@@ -1714,7 +1734,16 @@ class HttpCreekVaultClient:
         phase moves: connecting, writing and acquiring a pooled connection are no
         slower against a busy vault than against an idle one, and widening them
         would bound nothing.
+
+        **The operator's vault-send suspension is checked first** (#3075): while
+        ``PRIVACY_SUSPEND_VAULT_SEND`` is on, a request that
+        :func:`carries_content` raises :class:`VaultSendSuspendedError` before
+        the credential header is even built, so nothing reaches the wire. It is
+        not an ``OSError`` or ``httpx`` error, so no verb's transport ``except``
+        rewraps it.
         """
+        if vault_send_suspended() and carries_content(method, json_body):
+            raise VaultSendSuspendedError
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             _CEILING_HEADER: ceiling.value,

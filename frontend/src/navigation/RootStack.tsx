@@ -209,7 +209,7 @@ const SettingsScreens = (): React.JSX.Element => (
     <Stack.Screen
       name="SeedCorpus"
       component={SeedCorpusScreen}
-      options={{ title: 'Your corpus' }}
+      options={{ title: 'Your writing' }}
     />
     <Stack.Screen
       name="CorpusConsent"
@@ -251,7 +251,7 @@ const RootStack = (): React.JSX.Element => (
     <Stack.Screen
       name="VaultSettings"
       component={VaultSettingsScreen}
-      options={{ title: 'Where your corpus lives' }}
+      options={{ title: 'Where your writing lives' }}
     />
     <Stack.Screen
       name="VaultActivation"

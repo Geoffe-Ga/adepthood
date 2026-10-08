@@ -114,13 +114,13 @@ describe('MapScreen — journey narrative', () => {
     expect(findText(tree, 'YOU ARE HERE')).toBe(true);
   });
 
-  it('shows an "Unlocks in N days" timeline on a locked stage', () => {
+  it('shows an "Opens in N days" timeline on a locked stage', () => {
     // Calendar at stage 5, so stage 8 is locked.
     mockMapState.daysUntilStage = 9;
     const tree = create(<MapScreen />);
     const unlock = tree.root.findByProps({ testID: 'stage-unlock-8' });
     expect(unlock).toBeTruthy();
-    expect(findText(tree, 'Unlocks in 9 days')).toBe(true);
+    expect(findText(tree, 'Opens in 9 days')).toBe(true);
   });
 
   it('grounds the detail modal on the showcase surface tinted with the stage colour', () => {
@@ -243,8 +243,8 @@ describe('MapScreen — journey narrative', () => {
 
     const celebration = tree.root.findByProps({ testID: 'stage-celebration' });
     expect(celebration).toBeTruthy();
-    // Names the next stage that unlocked.
-    expect(findText(tree, 'Stage 4 unlocked')).toBe(true);
+    // Names the next stage that has just opened.
+    expect(findText(tree, 'Stage 4 is open to you now')).toBe(true);
     act(() => tree.unmount());
   });
 
@@ -264,7 +264,7 @@ describe('MapScreen — journey narrative', () => {
     });
 
     expect(tree.root.findByProps({ testID: 'stage-celebration' })).toBeTruthy();
-    expect(findText(tree, 'The next stage unlocked')).toBe(false);
+    expect(findText(tree, 'The next stage is open to you now')).toBe(false);
     expect(findText(tree, BEGIN_AGAIN_COPY.celebration)).toBe(true);
     act(() => tree.unmount());
   });

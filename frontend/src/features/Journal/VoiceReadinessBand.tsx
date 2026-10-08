@@ -69,7 +69,7 @@ const BAND_LABEL = 'Where your reflections come from';
 // The decline is an icon-only X in the card's top-right corner (#2949, the
 // same close variant CareSupportNote adopted in #2862), so the word the sighted
 // reader used to see lives on in the accessible name alone.
-const DISMISS_A11Y = 'Not now — set this note about your corpus aside';
+const DISMISS_A11Y = 'Not now — set this note about where reflections come from aside';
 
 type BandNavigation = NativeStackNavigationProp<RootStackParamList>;
 

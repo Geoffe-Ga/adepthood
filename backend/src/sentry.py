@@ -6,7 +6,7 @@ breadcrumbs are exactly where a journal entry, a transcript, or a bearer key
 lives at the moment something throws.  Shipping those to a vendor would be a
 worse failure than the invisibility this module exists to fix.
 
-The configuration is therefore subtractive twice over:
+Two independent locks keep it shut:
 
 * :func:`init_error_monitoring` turns off every automatic capture channel.
   ``default_integrations`` / ``auto_enabling_integrations`` are off, so no
@@ -16,14 +16,17 @@ The configuration is therefore subtractive twice over:
   only path an event can take into the vendor is the explicit
   :func:`capture_exception` call the global handler in ``errors.py`` already
   makes — there is no second error-handling path.
-* :func:`scrub_event` then runs on every outgoing event as a last line of
-  defence, deleting the sections a future SDK upgrade (or a re-enabled
-  integration) could repopulate and redacting credential-shaped text.
+* :func:`scrub_event` then *rebuilds* every outgoing event from an allowlist
+  of fields: release and request identity, and per exception its type, frame
+  locations and a content-free reason.  The exception message itself is never
+  copied — it is authored at the raise site and can interpolate anything — so
+  neither it nor any field a future SDK adds can reach the vendor (#3079).
 
 Monitoring is wholly optional, on the same terms as ``CREEK_VAULT_URL``:
 with ``SENTRY_DSN`` unset the SDK is never initialised, the deployment runs
 normally, and boot says so exactly once.  Degrading is not swallowing — the
-structured ``unhandled_exception`` log record with its full traceback is
+structured ``unhandled_exception`` log record with its traceback (frames and
+exception types; messages are withheld by ``observability``'s formatter) is
 emitted by ``errors._sanitized_500`` either way, so an unconfigured
 deployment loses the operator inbox, never the diagnosis.
 """
@@ -33,12 +36,16 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Mapping
+from datetime import datetime
 from typing import Final, TypedDict, Unpack, cast
 
 import sentry_sdk
 from sentry_sdk.transport import Transport
 from sentry_sdk.types import Breadcrumb, BreadcrumbHint, Event, Hint
 from sentry_sdk.utils import BadDsn
+
+from telemetry_safety import MESSAGE_WITHHELD, exception_chain, exception_reason
 
 logger = logging.getLogger(__name__)
 
@@ -56,30 +63,10 @@ UNKNOWN_RELEASE: Final = "unknown"
 REQUEST_CONTEXT_KEY: Final = "adepthood_request"
 
 REDACTED: Final = "[redacted]"
-TRUNCATION_MARKER: Final = "…[truncated]"
 
 # Seconds the shutdown flush may spend draining the queue.  Bounded because a
 # monitoring vendor being slow must not hold a deploy's rollover open.
 SHUTDOWN_FLUSH_TIMEOUT_SECONDS: Final = 2.0
-
-# An exception message is the one field this module cannot structurally
-# guarantee: it is authored at the raise site, and a message that interpolates
-# a value could interpolate an entry body.  The house rule is that exception
-# messages are static and capability-named (see ``dependencies/creek_vault.py``
-# refusing to echo a config value); this cap bounds the damage when a message
-# somewhere does not follow it.
-MAX_EXCEPTION_MESSAGE_CHARS: Final = 512
-
-# Keys deleted wherever they appear in an event.  ``request`` carries the body
-# and headers, ``extra``/``breadcrumbs`` carry whatever an integration logged,
-# and ``vars`` is a stack frame's locals — the four channels through which a
-# default-configured SDK ships user content.
-_DROPPED_KEYS: Final = frozenset({"request", "extra", "breadcrumbs", "vars"})
-
-# A string value is redacted outright when its key names a credential, whatever
-# the value looks like.  Substring match, so ``x-llm-api-key`` and
-# ``authorization`` are both caught by one entry each.
-_CREDENTIAL_KEY_MARKERS: Final = ("authorization", "password", "secret", "token", "api_key", "dsn")
 
 # Environment variables whose *value* is a credential.  An opaque vault key has
 # no recognisable shape, so the only reliable way to spot one that reached a
@@ -121,6 +108,41 @@ class SentryContext(TypedDict, total=False):
     request_method: str
 
 
+# The allowlist an outgoing event is rebuilt from (#3079). Every field below is
+# release identity, request identity, or the location and class of a failure;
+# none is authored from user input. Widening any of these is a privacy decision
+# -- and backend/tests/security/test_telemetry_sentinels.py asserts the output
+# stays inside them.
+_TOP_LEVEL_FIELDS: Final = ("event_id", "timestamp", "platform", "level", "environment", "release")
+_SDK_FIELDS: Final = ("name", "version")
+_TAG_FIELDS: Final = ("request_id",)
+# Derived from the TypedDict, so the one reviewed place to add a context field
+# is still :class:`SentryContext`.
+_REQUEST_CONTEXT_FIELDS: Final = tuple(sorted(SentryContext.__optional_keys__))
+# ``value`` is deliberately absent: it is the exception message, and is
+# replaced by a content-free reason instead of copied.
+_ENTRY_FIELDS: Final = ("type", "module")
+# ``data`` and ``description`` are left out: both are free text.
+_MECHANISM_FIELDS: Final = ("type", "handled", "exception_id", "parent_id", "is_exception_group")
+# A frame's location only. ``abs_path`` names the host's filesystem, and
+# ``pre_context``/``context_line``/``post_context``/``vars`` are source and
+# locals -- exactly where the entry body sits at the moment of the raise.
+_FRAME_FIELDS: Final = ("filename", "module", "function", "lineno", "in_app")
+# Values a picked field may hold. A container in a scalar slot is dropped, not
+# walked, so nothing nested can ride in under an allowlisted name.
+_SCALARS: Final = (str, bool, int, float, datetime)
+# ``sys.exc_info()`` is a (type, value, traceback) triple.
+_EXC_INFO_ARITY: Final = 3
+
+#: Reported as the exception type when an entry carries no usable one.
+UNREPORTABLE_EXCEPTION_TYPE: Final = "UnreportableEvent"
+
+#: SDK integrations a deployment may run with. Empty: no automatic capture of
+#: requests, log records or outbound calls. A test pins the client's installed
+#: set to this, so an SDK upgrade that re-enables a default fails loudly.
+APPROVED_INTEGRATIONS: Final[frozenset[str]] = frozenset()
+
+
 def _configured_secret_values() -> tuple[str, ...]:
     """Return this deployment's credential values, long enough to be redactable."""
     values = (os.getenv(name, "") for name in _SECRET_ENV_VARS)
@@ -141,77 +163,175 @@ def redact_text(text: str, secrets: tuple[str, ...] = ()) -> str:
     return text
 
 
-def _is_credential_key(key: str) -> bool:
-    """Report whether a key names a field whose value is a credential."""
-    lowered = key.lower()
-    return any(marker in lowered for marker in _CREDENTIAL_KEY_MARKERS)
+def _string_keyed(node: object) -> dict[str, object]:
+    """Return ``node``'s string-keyed items if it is a mapping, else nothing."""
+    if not isinstance(node, dict):
+        return {}
+    return {key: value for key, value in node.items() if isinstance(key, str)}
 
 
-def _scrub_mapping(node: dict[str, object], secrets: tuple[str, ...]) -> None:
-    """Drop the capture channels and redact the strings of one mapping, in place."""
-    for key in _DROPPED_KEYS.intersection(node):
-        del node[key]
-    for key, value in node.items():
-        if isinstance(value, str):
-            node[key] = REDACTED if _is_credential_key(key) else redact_text(value, secrets)
-        else:
-            _scrub_node(value, secrets)
+def _items(node: object) -> list[object]:
+    """Return ``node`` if it is a list, else nothing."""
+    return node if isinstance(node, list) else []
 
 
-def _scrub_node(node: object, secrets: tuple[str, ...]) -> None:
-    """Recurse into a mapping or sequence, scrubbing in place."""
-    if isinstance(node, dict):
-        _scrub_mapping(node, secrets)
-    elif isinstance(node, list):
-        for index, item in enumerate(node):
-            if isinstance(item, str):
-                node[index] = redact_text(item, secrets)
-            else:
-                _scrub_node(item, secrets)
+def _pick(node: object, fields: tuple[str, ...]) -> dict[str, object]:
+    """Copy the named fields of a mapping, keeping only scalar values."""
+    source = _string_keyed(node)
+    return {field: source[field] for field in fields if isinstance(source.get(field), _SCALARS)}
 
 
-def _exception_values(event: dict[str, object]) -> list[dict[str, object]]:
+def _rebuild_frames(entry: dict[str, object]) -> list[dict[str, object]]:
+    """Return an entry's frames as location only: no source lines, no locals."""
+    frames = _items(_string_keyed(entry.get("stacktrace")).get("frames"))
+    return [_pick(frame, _FRAME_FIELDS) for frame in frames if isinstance(frame, dict)]
+
+
+def _unreportable_entry() -> dict[str, object]:
+    """Return the entry reported when nothing about the exception was usable."""
+    return {"type": UNREPORTABLE_EXCEPTION_TYPE, "value": MESSAGE_WITHHELD}
+
+
+def _rebuild_entry(entry: dict[str, object], codes: dict[str, str]) -> dict[str, object]:
+    """Rebuild one exception entry: type, module, mechanism, frames, and a code."""
+    rebuilt = _pick(entry, _ENTRY_FIELDS)
+    exc_type = rebuilt.get("type")
+    if not isinstance(exc_type, str):
+        return _unreportable_entry()
+    rebuilt["value"] = codes.get(exc_type, MESSAGE_WITHHELD)
+    mechanism = _pick(entry.get("mechanism"), _MECHANISM_FIELDS)
+    if mechanism:
+        rebuilt["mechanism"] = mechanism
+    frames = _rebuild_frames(entry)
+    if frames:
+        rebuilt["stacktrace"] = {"frames": frames}
+    return rebuilt
+
+
+def _exception_entries(event: dict[str, object]) -> list[dict[str, object]]:
     """Return the event's exception entries, tolerating any other shape."""
-    exception = event.get("exception")
-    if not isinstance(exception, dict):
-        return []
-    values = exception.get("values")
-    if not isinstance(values, list):
-        return []
-    return [entry for entry in values if isinstance(entry, dict)]
+    values = _items(_string_keyed(event.get("exception")).get("values"))
+    return [_string_keyed(entry) for entry in values if isinstance(entry, dict)]
 
 
-def _cap_exception_messages(event: dict[str, object]) -> None:
-    """Truncate over-long exception messages in place."""
-    for entry in _exception_values(event):
-        message = entry.get("value")
-        if isinstance(message, str) and len(message) > MAX_EXCEPTION_MESSAGE_CHARS:
-            entry["value"] = message[:MAX_EXCEPTION_MESSAGE_CHARS] + TRUNCATION_MARKER
+def _hinted_exception(hint: Mapping[str, object]) -> BaseException | None:
+    """Return the exception a ``before_send`` hint carries, if it is a real one."""
+    exc_info = hint.get("exc_info")
+    if not isinstance(exc_info, tuple) or len(exc_info) != _EXC_INFO_ARITY:
+        return None
+    exc = exc_info[1]
+    return exc if isinstance(exc, BaseException) else None
 
 
-def scrub_event(event: dict[str, object], _hint: dict[str, object]) -> dict[str, object]:
-    """Strip every private channel from an outgoing event (``before_send``).
+def _declared_codes(hint: Mapping[str, object]) -> dict[str, str]:
+    """Map each exception type name in the hint's chain to the code it declares.
 
-    Runs on the event the client has already built, so it is defence in depth
-    behind the options in :func:`init_error_monitoring`, not a substitute for
-    them: if a future SDK version repopulates ``request`` or a frame's ``vars``
-    despite the options, this still deletes them before the transport sees the
-    event.
+    The SDK names an entry by its type alone, so the code is matched by name.
+    A name two classes in the chain share, with different codes, is left out:
+    the entry then reports the marker rather than a guess.
     """
-    _cap_exception_messages(event)
-    _scrub_node(event, _configured_secret_values())
-    return event
+    exc = _hinted_exception(hint)
+    if exc is None:
+        return {}
+    candidates = _reasons_by_type_name(exception_chain(exc))
+    return {name: reasons.pop() for name, reasons in candidates.items() if len(reasons) == 1}
+
+
+def _reasons_by_type_name(chain: list[BaseException]) -> dict[str, set[str]]:
+    """Collect, per type name (bare and qualified), every reason the chain reports for it."""
+    candidates: dict[str, set[str]] = {}
+    for linked in chain:
+        reason = exception_reason(linked)
+        for name in {type(linked).__name__, type(linked).__qualname__}:
+            candidates.setdefault(name, set()).add(reason)
+    return candidates
+
+
+def _rebuilt_sections(event: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Return the allowlisted ``sdk``, ``tags`` and ``contexts`` sections, empty ones dropped."""
+    request_context = _pick(
+        _string_keyed(event.get("contexts")).get(REQUEST_CONTEXT_KEY), _REQUEST_CONTEXT_FIELDS
+    )
+    sections: dict[str, dict[str, object]] = {
+        "sdk": _pick(event.get("sdk"), _SDK_FIELDS),
+        "tags": _pick(event.get("tags"), _TAG_FIELDS),
+        "contexts": {REQUEST_CONTEXT_KEY: request_context} if request_context else {},
+    }
+    return {name: section for name, section in sections.items() if section}
+
+
+def _rebuild_event(event: dict[str, object], codes: dict[str, str]) -> dict[str, object]:
+    """Construct the outgoing event from the allowlist alone."""
+    rebuilt = _pick(event, _TOP_LEVEL_FIELDS)
+    rebuilt.update(_rebuilt_sections(event))
+    entries = [_rebuild_entry(entry, codes) for entry in _exception_entries(event)]
+    rebuilt["exception"] = {"values": entries or [_unreportable_entry()]}
+    return rebuilt
+
+
+def _minimal_event() -> dict[str, object]:
+    """Return the event shipped when the rebuild itself failed.
+
+    Built from this deployment's configuration, never from the event, so the
+    operator still learns which environment and release failed to report.
+    """
+    return {
+        "level": "error",
+        "platform": "python",
+        "environment": os.getenv(ENVIRONMENT_ENV_VAR) or DEFAULT_ENVIRONMENT,
+        "release": _configured_release(),
+        "exception": {"values": [_unreportable_entry()]},
+    }
+
+
+def _redacted_mapping(node: dict[object, object], secrets: tuple[str, ...]) -> dict[object, object]:
+    """Return a mapping with every string value redacted, recursively."""
+    return {key: _redacted(value, secrets) for key, value in node.items()}
+
+
+def _redacted(node: object, secrets: tuple[str, ...]) -> object:
+    """Return ``node`` with every string passed through :func:`redact_text`."""
+    if isinstance(node, str):
+        return redact_text(node, secrets)
+    if isinstance(node, dict):
+        return _redacted_mapping(node, secrets)
+    if isinstance(node, list):
+        return [_redacted(item, secrets) for item in node]
+    return node
+
+
+def scrub_event(event: object, hint: Mapping[str, object]) -> dict[str, object]:
+    """Rebuild an outgoing event from an allowlist (``before_send``).
+
+    Constructive, not subtractive: the result is a new dict holding only the
+    fields named in this module -- release identity, the request-identity
+    context, and per exception its type, mechanism, frame locations and a
+    content-free reason (:func:`telemetry_safety.exception_reason`). An
+    exception message, a frame's source lines or locals, a request body, a log
+    entry, or a key some future SDK invents is never copied, so it cannot ship.
+
+    Never raises and never returns its input: a shape it cannot read yields
+    :func:`_minimal_event`. Credential redaction then runs over the strings
+    that survived, as a second, independent lock.
+    """
+    try:
+        rebuilt = _rebuild_event(_string_keyed(event), _declared_codes(hint))
+    except Exception:
+        logger.exception(
+            "error_monitoring_event_unreadable: the outgoing event could not be rebuilt, "
+            "so a minimal event naming no detail was reported in its place"
+        )
+        rebuilt = _minimal_event()
+    return cast("dict[str, object]", _redacted(rebuilt, _configured_secret_values()))
 
 
 def _before_send(event: Event, hint: Hint) -> Event:
     """Adapt :func:`scrub_event` to the SDK's ``before_send`` signature.
 
-    The SDK types an event as a closed ``TypedDict``, which cannot be indexed
-    by a computed key; :func:`scrub_event` needs exactly that to delete a key
-    wherever it appears.  The scrub is in place, so the same object comes back.
+    The SDK types an event as a closed ``TypedDict``; the rebuild constructs a
+    plain dict from an allowlist of SDK field names, so it is cast back here.
     """
-    scrub_event(cast("dict[str, object]", event), hint)
-    return event
+    return cast("Event", scrub_event(event, hint))
 
 
 def drop_breadcrumb(_crumb: Breadcrumb, _hint: BreadcrumbHint) -> Breadcrumb | None:
@@ -234,12 +354,17 @@ def _configured_release() -> str:
     )
 
 
+def configured_release() -> str:
+    """The build version, for content-free operator logs and receipts outside this module."""
+    return _configured_release()
+
+
 def init_error_monitoring(transport: Transport | None = None) -> bool:
     """Initialise error monitoring if a DSN is configured; report whether it is.
 
     Never raises.  An unset DSN is a supported way to run this app, and a
-    mistyped one must not cost a deploy: both degrade to "no vendor, full local
-    logs" and say so once, mirroring ``validate_creek_vault_url_config``.
+    mistyped one must not cost a deploy: both degrade to "no vendor, local
+    logs only" and say so once, mirroring ``validate_creek_vault_url_config``.
 
     ``transport`` is an injection seam for the tests, which drive *this*
     function — DSN handling, option set and all — with events landing in a list

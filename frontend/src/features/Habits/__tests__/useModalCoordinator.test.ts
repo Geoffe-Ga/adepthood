@@ -11,10 +11,36 @@ describe('useModalCoordinator', () => {
     expect(result.current.stats).toBe(false);
     expect(result.current.settings).toBe(false);
     expect(result.current.reorder).toBe(false);
-    expect(result.current.missedDays).toBe(false);
     expect(result.current.onboarding).toBe(false);
     expect(result.current.addHabit).toBe(false);
     expect(result.current.emojiPicker).toBe(false);
+  });
+
+  it('tracks exactly the modals the Habits screen can open', () => {
+    const { result } = renderHook(() => useModalCoordinator());
+    const flags = Object.entries(result.current).filter(([, v]) => typeof v === 'boolean');
+    expect(flags.map(([k]) => k).sort()).toEqual([
+      'addHabit',
+      'emojiPicker',
+      'goal',
+      'onboarding',
+      'reorder',
+      'settings',
+      'stats',
+    ]);
+    expect(flags.every(([, v]) => v === false)).toBe(true);
+    expect(Object.keys(result.current).sort()).toEqual([
+      'addHabit',
+      'close',
+      'closeAll',
+      'emojiPicker',
+      'goal',
+      'onboarding',
+      'open',
+      'reorder',
+      'settings',
+      'stats',
+    ]);
   });
 
   it('BUG-FE-HABIT-008: open() preserves prior modal flags', () => {
@@ -44,7 +70,6 @@ describe('useModalCoordinator', () => {
     expect(result.current.stats).toBe(false);
     expect(result.current.settings).toBe(false);
     expect(result.current.reorder).toBe(false);
-    expect(result.current.missedDays).toBe(false);
     expect(result.current.onboarding).toBe(false);
     expect(result.current.addHabit).toBe(false);
     expect(result.current.emojiPicker).toBe(false);

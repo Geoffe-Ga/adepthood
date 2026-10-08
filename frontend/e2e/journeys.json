@@ -117,6 +117,35 @@
     "issue": 2814
   },
   {
+    "id": "habits.weekly-cadence-fills-over-the-week",
+    "description": "A user whose Lifting habit is three sessions per week logs once on Monday, rests on Tuesday, and still sees one of three rather than an empty day or a full bar. Wednesday advances the same bar to two of three, Friday fills it, the following Monday starts a new period, and a monthly habit follows its account-local calendar month. The marker, tier, colour, tooltip, and long-press fill all read the same period total. Uncovered because the current habits browser journey creates only daily goals and never opens GoalModal to persist a weekly cadence; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by HabitUtils.test.ts for ISO-week/month, timezone, DST, additive/subtractive, and rollover behavior; HabitTileTooltip.test.tsx for the rendered fraction and marker; and starFill.test.ts for the logged delta.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitTile.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": ["GET /habits/", "PUT /habits/{habit_id}/goals/units", "POST /goal_completions/"],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2814
+  },
+  {
+    "id": "habits.weekly-streak-survives-a-rest-day",
+    "description": "A user whose Lifting habit is three sessions per week met that target in each of the last two ISO weeks and has logged once so far this week. The tile, GET /habits, GET /habits/{habit_id}/stats and every check-in response all report a streak of 2 weeks: a rest day never breaks it, the still-open week is grace until it is met, and completing it makes 3 weeks. The tile, stats sheet and reminder say weeks or months instead of days. Uncovered because the current habits browser journey creates only daily goals and never persists a weekly cadence; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by one shared parity fixture (backend/tests/fixtures/streak_parity/cadence_streaks.json) evaluated by backend tests/domain/test_period_streaks.py and frontend periodStreaks.test.ts for per_day, per_week and per_month, additive and subtractive; by backend test_habit_cadence_streaks_api.py across GET /habits, stats and both check-in paths; and by HabitUtils.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitTile.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": [
+        "GET /habits/",
+        "GET /habits/{habit_id}/stats",
+        "PUT /habits/{habit_id}/goals/units",
+        "POST /goal_completions/"
+      ],
+      "tables": ["habit", "goal", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2814
+  },
+  {
     "id": "habits.subtractive-no-log-streak",
     "description": "A user creates a subtractive habit that began today and has not logged the behavior. The server classifies the three-goal habit by the shared any-goal polarity rule and reports a one-day abstention streak; after a real reload, the Habits tile shows 1 DAYS — ACHIEVED TODAY!, because zero behavior is both a no-log streak day and within the clear ceiling. The browser runs in the user's America/Los_Angeles timezone, so the create/load round-trip also exercises the local calendar boundary rather than reparsing the server's date as UTC midnight.",
     "crosses": {
@@ -154,19 +183,19 @@
   },
   {
     "id": "habits.offline-check-in-replay-drains",
-    "description": "A check-in tapped while the device is offline is queued on the device, and the next habits load replays that queue: an entry the server will never accept is dropped so the queue keeps draining behind it, while a dropped connection re-queues the unposted suffix intact. Uncovered because the real-wire lane cannot put the device offline and then make the server permanently reject a queued entry -- the constraint already recorded on errors.server-fault-is-not-offline, where no reachable failure can be manufactured without adding fault injection to the production app. Covering it needs a lane that can toggle connectivity and read the device queue. A dropped entry is also written to a bounded on-device quarantine (the most recent records only) and surfaced on the Habits screen as a count of the check-ins that could not be saved, dismissable by the user and wiped on logout, so the loss is no longer silent. The classification is pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx, and the notice by src/features/Habits/components/__tests__/DroppedCheckInNotice.test.tsx.",
+    "description": "A check-in tapped while the device is offline is queued on the device, and the next habits load replays that queue: an entry the server will never accept is dropped so the queue keeps draining behind it, while a dropped connection re-queues the unposted suffix intact. Covered by frontend/e2e/habits-offline-replay.browser.e2e.test.ts against the real backend. It takes the device offline with the browser context's setOffline and waits on the app's own offline banner, logs units through the goal sheet, and reads the queue straight out of the device's storage under the account-scoped key named by the device-owner stamp. Reconnecting does not replay the habit queue by itself; a habits load does, so every replay is one fresh load onto the journal shelf, whose mount load is the single drain, and Habits is opened only once the queue has reached its expected end state. It asserts exactly one POST /goal_completions/ per queued check-in, each carrying that entry's own Idempotency-Key, and reads the stored rows back out of band: the units total, and the local_day a same-day replay lands on. A check-in queued yesterday and replayed today, on a page clock pinned to midday in the account's zone, sends completed_on for yesterday and is stored on yesterday. A permanent rejection is a real 404 goal_not_found, produced by deleting the queued goal's habit out of band; the entry behind it still lands, and the drop is written to a bounded on-device quarantine (the most recent records only) and surfaced on the Habits screen as a count of the check-ins that could not be saved, an alert the user can dismiss and that a later load does not bring back; the quarantine is also wiped on logout. A transient failure is a harness-side abort of every attempt for one entry's key: the queue keeps exactly the unposted suffix and the next load posts only that. A server rejection with an unrecognised status that keeps recurring is retried, and given up on only after both MAX_CHECK_IN_REPLAY_ATTEMPTS counted rejections and MIN_POISON_AGE_MS since the first (#2473); it is then quarantined and surfaced like any other drop, while offline, timeout, 401 and availability failures (408, 429, 502, 503, 504) never count. The spec reaches the give-up with a harness-fulfilled 500 for one key and a seeded retry record already one refusal short of the cap and past the age floor, so the final refusal, the drain behind it and the notice are real while the week of refusals is not; the boundaries are pinned by src/features/Habits/services/__tests__/replayPolicy.test.ts. The classification is pinned by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx, and the notice by src/features/Habits/components/__tests__/DroppedCheckInNotice.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits", "goalCompletions"],
       "routes": ["GET /habits/", "POST /goal_completions/"],
       "tables": ["habit", "goal", "goalcompletion"]
     },
-    "status": "uncovered",
-    "issue": 2474
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-offline-replay.browser.e2e.test.ts"
   },
   {
     "id": "habits.demo-tile-stays-local",
-    "description": "In a build explicitly configured with EXPO_PUBLIC_HABIT_DEMO_MODE=true, with the habits fetch failing and no real cache, the app seeds ten demo placeholder tiles carrying fabricated ids 1-10, and those numbers are also the ids of whatever real rows the caller happens to own. A successful empty response never enters this mode. Every action on such a tile is local: revealing, reordering, renaming, changing the icon, resetting the start date, editing a goal or its shared units, logging a unit, opening stats, and -- the destructive one -- deleting. The tile changes or disappears in the store and nothing goes out, so a placeholder delete cannot become a DELETE against the user's own habit 3, and no \"Couldn't sync\" alert appears for something the user did only to themselves. A mixed store still performs each of those operations against the one genuinely server-backed row. Uncovered because the real-wire lane cannot produce the state -- it needs an explicitly demo-configured bundle and the habits fetch to throw while the cache is empty, while the lane's premise is a backend it can reach, the same constraint already recorded on habits.offline-check-in-replay-drains and errors.server-fault-is-not-offline. The same local-only rule covers every client-minted row, not just the demo family: onboarding scaffold rows and pre-sync added rows are marked hasClientMintedIds and may not put their provisional ids on the wire. A client-minted row is the user's real data, so it reaches the on-disk cache while a demo tile never does. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/serverIds.test.ts, src/features/Habits/services/__tests__/habitManager.test.ts, and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx.",
+    "description": "In a build explicitly configured with EXPO_PUBLIC_HABIT_DEMO_MODE=true, with the habits fetch failing and no real cache, the app seeds ten demo placeholder tiles carrying fabricated ids 1-10, and those numbers are also the ids of whatever real rows the caller happens to own. A successful empty response never enters this mode. Every action on such a tile is local: revealing, reordering, renaming, changing the icon, moving the start date in the reorder modal, editing a goal or its shared units, logging a unit, opening stats, and -- the destructive one -- deleting. The tile changes or disappears in the store and nothing goes out, so a placeholder delete cannot become a DELETE against the user's own habit 3, and no \"Couldn't sync\" alert appears for something the user did only to themselves. Covered by frontend/e2e/habits-demo-tile.browser.e2e.test.ts, which boots its own Expo web server on port 8080 (the other DEV_ORIGINS port, so no backend change) with EXPO_PUBLIC_HABIT_DEMO_MODE=true -- the flag is inlined at bundle time, so the shared lane's server stays non-demo, which frontend/e2e/frontendEnv.ts enforces fail-closed and the lane guard confines to that one spec. It signs up for real, aborts exactly GET /habits/ on the API origin from the harness, clears the on-device habit cache, and asserts the error state beside every HABIT_DEFAULTS tile, unlocked. It then locks and unlocks all, drags a tile and moves the first habit's start date in the reorder modal, renames, changes an icon, edits a low target and the shared unit, logs a unit (seeing the sample-habits notice), opens stats (rendered locally, never stuck loading) and deletes a tile -- recording every request and asserting none of PUT/DELETE /habits/{id}, DELETE /habits/{id}/completions, PUT /habits/{id}/goals/units, PUT /goals/{id}, POST /goal_completions/ or GET /habits/{id}/stats went out (the classifier is pinned by __tests__/demoTileBrowserSupport.test.ts). RN-web's Alert is a no-op, so that request log, not the screen, is the proof no sync alert was raised. After a reload with the list still failing, every placeholder is back as seeded: today's discard behaviour, pinned as current and not decided (#2465). One control is not reachable on web: the habit settings' start-date picker renders nothing there, so the start date is moved through the reorder modal's \"First habit start date\". DELETE /habits/{id}/completions has no client caller and stays in the asserted-absent list only as a demo-tile guard. The same local-only rule covers every client-minted row, not just the demo family: onboarding scaffold rows and pre-sync added rows are marked hasClientMintedIds and may not put their provisional ids on the wire. A client-minted row is the user's real data, so it reaches the on-disk cache while a demo tile never does; that half, and the mixed store where the one real row still syncs, stay pinned by unit tests in src/features/Habits/services/__tests__/serverIds.test.ts, src/features/Habits/services/__tests__/habitManager.test.ts, and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits", "goals", "goalCompletions"],
@@ -174,7 +203,6 @@
         "GET /habits/",
         "PUT /habits/{habit_id}",
         "DELETE /habits/{habit_id}",
-        "DELETE /habits/{habit_id}/completions",
         "PUT /habits/{habit_id}/goals/units",
         "PUT /goals/{goal_id}",
         "POST /goal_completions/",
@@ -182,20 +210,20 @@
       ],
       "tables": ["habit", "goal", "goalcompletion"]
     },
-    "status": "uncovered",
-    "issue": 2491
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-demo-tile.browser.e2e.test.ts"
   },
   {
     "id": "habits.added-habit-joins-the-program-cadence",
-    "description": "A habit added after onboarding takes the next rung on the program cadence rather than the day it was added, so the row sits where a reorder pass would put it and the date on its tile is the date its stage badge has always implied. The second half is the one that moved other screens: a row stamped today could undercut a start date the user picked in the future, because when no anchor is stored -- after a logout wipes it, or for an account that onboarded before the anchor existed -- the universal anchor Map, Practice, Course and Journal all read is re-derived as the minimum over program rows, and a today-stamped add won that minimum. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint already recorded on welcome.first-run-walkthrough-to-journal and habits.scaffolding-start-date-anchors-the-program: driving this journey means opening the add-habit sheet and reading the date on the tile it creates, and while the POST /habits/ body does carry the start_date, observing only that would not prove the user sees the rung, which is the half that regressed. Pinned meanwhile by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts (the \"addHabit lays a program row on the cadence\" block, which covers the stored anchor, the absent-anchor fallback, the day-one case, the carryover partition, the reload that follows the add, and the saturation past ten stages that this deliberately shares with the reorder modal).",
+    "description": "A habit added after onboarding takes the next rung on the program cadence rather than the day it was added, so the row sits where a reorder pass would put it and carries the date its stage badge has always implied. The second half is the one that moved other screens: a row stamped today could undercut a start date the user picked in the future, because when no anchor is stored -- after a logout wipes it, or for an account that onboarded before the anchor existed -- the universal anchor Map, Practice, Course and Journal all read is re-derived as the minimum over program rows, and a today-stamped add won that minimum. The covering Playwright spec pins the browser to UTC, signs up through the UI and seeds two program rows over POST /habits/ on the rungs of an anchor thirty days in the future, then reloads so the journal derives that anchor -- which the Map confirms before anything is added: stage 2 reads Opens in 51 days. It adds a habit through the Habits drawer's Add Habit sheet and reads two things that can fail. On the wire, the sheet's POST /habits/ carries the third rung (anchor + 42 days), not today, and GET /habits/ echoes that start_date on a program row. On screen, after a real log-out from Settings -- the spec checks the stored anchor is gone -- and a log-in through POST /auth/login, the anchor is re-derived from the rows, the added one among them, and the Map still reads Opens in 51 days; a today-stamped add would make it read 21. No habit tile renders a date, the reorder modal re-lays every program row on the cadence the moment it opens, and the web date picker in habit settings renders nothing, so none of those is the observation. Pinned in process as well by src/features/Habits/services/__tests__/habitManager.test.ts (the \"addHabit lays a program row on the cadence\" block, which covers the stored anchor, the absent-anchor fallback, the day-one case, the carryover partition, the reload that follows the add, and the saturation past ten stages that this deliberately shares with the reorder modal).",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
-      "client": ["habits"],
-      "routes": ["POST /habits/", "GET /habits/"],
-      "tables": ["habit"]
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "goal"]
     },
-    "status": "uncovered",
-    "issue": 2708
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-add-cadence.browser.e2e.test.ts"
   },
   {
     "id": "habits.scaffolding-start-date-anchors-the-program",
@@ -542,7 +570,7 @@
   },
   {
     "id": "journal.reopen-past-cycle-review-sees-its-own-sources",
-    "description": "A writer who finished the 36-week arc and began again reopens a review from their FIRST pass, at any level of the cadence -- a week, a stage, a section of three stages, or the whole course. The sources feed serves that cycle's own dailies, windowed against the anchor that cycle was lived under and clamped at the local midnight the loop happened, so the two laps abut rather than overlap and no entry from the new cycle appears under the old review's heading. A cycle whose anchor was destroyed by begin-again before this was fixed says its period cannot be reconstructed, rather than implying nothing was written then. The spec pins the browser to UTC, rewinds the anchor 230 days (20 days into stage 10) with tests.e2e.program_anchor, and lets a real GET /stages/program-calendar read record stage 10 in cycle 1; it then POSTs begin-again to the real route (the Map offers the button only at 100% stage-10 progress, which no lane writer produces) and asserts cycle 2 with cycle 1's anchor retained. With a finished first-pass daily (backdated 120 days), a DRAFT c1:course review and a finished cycle-2 daily that GET /reflections/sources for c2:w1 does serve, reopening the c1:course review from the shelf and opening Sources shows the first-pass daily and never the cycle-2 one; on the wire the window ends at the local midnight of the loop day, short of the course's natural 252 days, and the panel's period label names that declared window. With the anchor nulled by the out-of-band forget-past-anchor arrange (the state a pre-#2894 loop left), the feed is anchor_status unrecorded with no bounds and the panel shows the 'cannot be reconstructed' copy, with no period label and no empty-period copy. Sources is a writing-only door (#3002/#3004): it is opened on a draft review, and a FINISHED first-pass review opens to read with no Sources until Edit is pressed and confirmed. Pinned only by pytest and Jest: the week, stage and section levels, multi-loop index padding, and a review spanning weeks never lived (test_reflections_window.py, tests/domain/test_cycle_calendar.py, test_stages_api.py, ReflectionSourcesPanel.test.tsx).",
+    "description": "A writer who finished the 36-week arc and began again reopens a review from their FIRST pass, at any level of the cadence -- a week, a stage, a section of three stages, or the whole course. The sources feed serves that cycle's own dailies, windowed against the anchor that cycle was lived under and clamped at the local midnight the loop happened, so the two laps abut rather than overlap and no entry from the new cycle appears under the old review's heading. A cycle whose anchor was destroyed by begin-again before this was fixed says it can't tell which dates the review covered, rather than implying nothing was written then. The spec pins the browser to UTC, rewinds the anchor 230 days (20 days into stage 10) with tests.e2e.program_anchor, and lets a real GET /stages/program-calendar read record stage 10 in cycle 1; it then POSTs begin-again to the real route (the Map offers the button only at 100% stage-10 progress, which no lane writer produces) and asserts cycle 2 with cycle 1's anchor retained. With a finished first-pass daily (backdated 120 days), a DRAFT c1:course review and a finished cycle-2 daily that GET /reflections/sources for c2:w1 does serve, reopening the c1:course review from the shelf and opening Sources shows the first-pass daily and never the cycle-2 one; on the wire the window ends at the local midnight of the loop day, short of the course's natural 252 days, and the panel's period label names that declared window. With the anchor nulled by the out-of-band forget-past-anchor arrange (the state a pre-#2894 loop left), the feed is anchor_status unrecorded with no bounds and the panel shows the 'can't tell which dates this review covered' copy, with no period label and no empty-period copy. Sources is a writing-only door (#3002/#3004): it is opened on a draft review, and a FINISHED first-pass review opens to read with no Sources until Edit is pressed and confirmed. Pinned only by pytest and Jest: the week, stage and section levels, multi-loop index padding, and a review spanning weeks never lived (test_reflections_window.py, tests/domain/test_cycle_calendar.py, test_stages_api.py, ReflectionSourcesPanel.test.tsx).",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["reflections", "journal", "stages"],
@@ -613,6 +641,24 @@
     "coveredBy": "frontend/e2e/journal-vault-withdrawal.e2e.test.ts"
   },
   {
+    "id": "journal.intimate-reclassification-withdraws-copies",
+    "description": "A writer whose Personal page and generated Voice Draft have reached their connected Creek vault chooses Intimate for that page (#3060, #3077). The stricter tier is committed locally whatever the vault says. When the first content-free Voice Draft retraction fails at the real HTTP boundary, the PATCH answers the stable retryable 503 vault_withdrawal_pending -- the existing privacy control keeps Intimate selected and offers a retry -- instead of a 200 while the AI-authored draft is still in the vault. Choosing Intimate again re-sends the owed DELETE from a durable, content-free obligation row and succeeds only once the vault confirms both the draft and the journal replica absent. The lane uses the production client against the out-of-process contract fake.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/PrivacyTierControl.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /journal/{entry_id}"
+      ],
+      "tables": ["journalentry", "marginalia", "voicedraftretraction"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-intimate-withdrawal.e2e.test.ts"
+  },
+  {
     "id": "journal.stage-prompts-and-cadences",
     "description": "Someone in the middle of a stage opens the Journal shelf and sees that stage's whole prompt set, each with the cadence the curriculum states for it, then taps one and writes against that prompt rather than against whichever question the week happened to draw. The seam is the ordinal: the page carries prompt_ordinal into the respond call, and the server decides whether that ordinal is one the stage actually carries. The second seam is the one-response-per-week rule: uq_promptresponse_user_week means a week holds a single response whichever prompt it answers, so the shelf stops offering a tap once this week's is written and the entry page says so if a save is refused anyway. Uncovered because no lane spec talks to the prompts routes yet, and a mocked client agrees with itself about the ordinal check, the stage's unlock gate, and the unique constraint -- the three things only the server can refuse.",
     "crosses": {
@@ -630,7 +676,7 @@
   },
   {
     "id": "journal.ask-for-resonance",
-    "description": "A writer opens a page they finished days ago, asks for its resonance, and the reading lands in the margin against the words they actually wrote. The unhappy half is part of the journey rather than an edge case: a pass can legitimately keep nothing -- the model declines, or every quote it offers is a paraphrase that will not anchor -- and what the writer must never get is the outcome that was reported here, a button that visibly does nothing. So the journey ends either in a persisted note or in a sentence saying why there is none, with the charge reversed. Both endings are driven here against the configured default provider, which is the stub (BOTMASON_PROVIDER unset: no key, no network, no third party), so the route, the wallet, the anchoring and the rows are all real and only the model's sentences are canned; the stub declines exactly when the page gives it no sentence to copy, which is how the lane reaches the second ending. The spec also pins the privacy floor across the wire: an intimate page is answered before any provider is constructed, keeps no notes, and is not charged. What is NOT claimed is that any of it renders -- this lane runs on the node environment with node_modules untransformed and cannot mount JournalEntryScreen at all, the constraint recorded on welcome.first-run-walkthrough-to-journal. The margin's placement and its empty-state copy stay pinned by the Jest specs beside the screen; what crosses the seam here is that the note the margin will draw is one the server kept, anchored to characters the writer wrote. A pass also never runs over a copy whose latest write failed (#2980), nor while offline-typed words are held off the page (#2935): the screen's pass writer answers 'not saved' rather than the entry id, so nothing is generated or charged, the footer's Couldn't save / Retry keeps the save, the margin says the page has not saved (never 'write a little first'), and the next press after the save lands runs exactly one pass -- pinned client-side by frontend/src/features/Journal/__tests__/JournalEntryScreenResonanceDurable.test.tsx, since this lane cannot mount the screen.",
+    "description": "A writer opens a page they finished days ago, asks for its resonance, and the reading lands in the margin against the words they actually wrote. The unhappy half is part of the journey rather than an edge case: a pass can legitimately keep nothing -- the model declines, or every quote it offers is a paraphrase that will not anchor -- and what the writer must never get is the outcome that was reported here, a button that visibly does nothing. So the journey ends either in a persisted note or in a sentence saying why there is none, with the charge reversed. Every note the stub writes is recorded and returned as a demo (source demo, paid_by free) and its unit is handed back (#3062); a real provider's pass whose charge is kept cannot be reached on this lane and is declared as journal.real-provider-pass-keeps-its-charge. Both endings are driven here against the configured default provider, which is the stub (BOTMASON_PROVIDER unset: no key, no network, no third party), so the route, the wallet, the anchoring and the rows are all real and only the model's sentences are canned; the stub declines exactly when the page gives it no sentence to copy, which is how the lane reaches the second ending. The spec also pins the privacy floor across the wire: an intimate page is answered before any provider is constructed, keeps no notes, and is not charged. What is NOT claimed is that any of it renders -- this lane runs on the node environment with node_modules untransformed and cannot mount JournalEntryScreen at all, the constraint recorded on welcome.first-run-walkthrough-to-journal. The margin's placement and its empty-state copy stay pinned by the Jest specs beside the screen; what crosses the seam here is that the note the margin will draw is one the server kept, anchored to characters the writer wrote. A pass also never runs over a copy whose latest write failed (#2980), nor while offline-typed words are held off the page (#2935): the screen's pass writer answers 'not saved' rather than the entry id, so nothing is generated or charged, the footer's Couldn't save / Retry keeps the save, the margin says the page has not saved (never 'write a little first'), and the next press after the save lands runs exactly one pass -- pinned client-side by frontend/src/features/Journal/__tests__/JournalEntryScreenResonanceDurable.test.tsx, since this lane cannot mount the screen.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "resonance"],
@@ -644,6 +690,21 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/resonance.e2e.test.ts"
+  },
+  {
+    "id": "journal.vault-bound-reflection-fails-closed",
+    "description": "A writer who has connected a vault -- ready, still provisioning, or with a stored host this server will not dial, or the deployment vault's bound owner -- asks for resonance. Their pass is answered by the vault or by nothing (#3061): a vault with nothing usable to say is a refunded zero-note pass with the server's own explanation; a vault that cannot answer (down, refusing, timing out, unreadable, no reflect capability, an unrecognized tier) is a refunded, retryable 503 reflection_source_unavailable whose margin copy says nothing was charged and the entry is saved; a locally distress-flagged entry gets the care surface alone; and completion detection, inside the pass and on the standalone route, answers checked: false. In none of those is the app's own model provider dialled, whatever BYOK key the request carries. Still uncovered as a journey: the wire lane's bound vault owner now crosses the real seam on the happy arm only -- journal-vault-withdrawal.e2e.test.ts asserts its margin note is the lane vault's own answer to POST /v1/reflections -- while none of the fail-closed arms above is driven over the wire yet; the out-of-process fake Creek vault (fakeCreekVault.mjs) is their future home. Pinned meanwhile at the route by backend/tests/security/test_vault_boundary_no_fallback.py, structurally by backend/tests/security/test_app_provider_construction_chokepoint.py, and client-side by useResonance.test.tsx and errorMessages.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "completionSuggestions"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/{entry_id}/suggestions/detect"
+      ],
+      "tables": ["journalentry", "marginalia", "walletaudit", "uservaultconfig"]
+    },
+    "status": "uncovered",
+    "issue": 3078
   },
   {
     "id": "journal.care-support-dismiss-reopen",
@@ -689,7 +750,7 @@
   },
   {
     "id": "journal.told-what-an-essay-costs-before-it-charges",
-    "description": "A note's first letter is a charged depth under the owner-ratified launch economy (#623): one wallet unit to write it, nothing to reopen it. Opening a note with no letter shows an offer, not a request: what a letter is, that the entry goes to an AI model, the price for the payer in force (the writer's own key, the monthly allowance by its served cap, or an offering), and equal-weight Ask for the letter / Not now arms. Only Ask sends POST /journal/marginalia/{marginalia_id}/essay, with price_acknowledged: true. Across the real wire, a server-paid ask without the acknowledgement is refused 409 essay_price_unacknowledged and moves neither the wallet nor its audit trail; the acknowledged ask spends exactly one monthly unit (one spend_monthly row, no refund) and its answer carries the same remaining_messages, remaining_balance and monthly_reset_date that GET /user/usage then reports; reopening the cached letter, acknowledged or not, is free. Pinned by Jest rather than this lane: the offer's copy and a11y, no ask on open, a cached letter opening straight to the letter, and an essay 402 routing to the pass's refill dialog. Pinned by the backend suite rather than this lane: the exhausted-wallet 402 before any provider call, and refunds for failed and empty letters.",
+    "description": "A note's first letter is a charged depth under the owner-ratified launch economy (#623): one wallet unit to write it, nothing to reopen it. Opening a note with no letter shows an offer, not a request: what a letter is, that the entry goes to an AI model, the price for the payer in force (the writer's own key, the monthly allowance by its served cap, or an offering), and equal-weight Ask for the letter / Not now arms. Only Ask sends POST /journal/marginalia/{marginalia_id}/essay, with price_acknowledged: true. Across the real wire, a server-paid ask without the acknowledgement is refused 409 essay_price_unacknowledged and moves neither the wallet nor its audit trail; the acknowledged ask takes its monthly unit before the dial and, because every lane serves the stub provider whose letter is a labelled demo (#3062), hands it back in the same commit (spend_monthly then refund_demo, the letter's essay_source demo), and its answer carries the same remaining_messages, remaining_balance and monthly_reset_date that GET /user/usage then reports; a real provider's letter whose charge is kept is no longer reachable on this lane and is declared as journal.real-provider-pass-keeps-its-charge; reopening the cached letter, acknowledged or not, is free. Pinned by Jest rather than this lane: the offer's copy and a11y, no ask on open, a cached letter opening straight to the letter, and an essay 402 routing to the pass's refill dialog. Pinned by the backend suite rather than this lane: the exhausted-wallet 402 before any provider call, and refunds for failed and empty letters.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "resonance", "botmasonUsage"],
@@ -704,6 +765,50 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-essay-economy.e2e.test.ts"
+  },
+  {
+    "id": "journal.margin-note-source-survives-reload",
+    "description": "A writer asks for resonance and each margin note says which side answered it, as the server recorded it on the row in the same commit as the note (#3062); after a cold reload the label is read back from the persisted source, never re-derived from the pass or from whether a vault is connected. This lane serves the stub provider, so the note is labelled as a demo, the pass carries a one-line demo notice, and the wallet is unchanged. A note older than receipts, an unknown value and a missing field all read \"Source not recorded\" (pinned by the Jest specs for sourceLabel, MarginNote and the provenance schemas). The label wording is a draft pending owner review (#3062 E3).",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "GET /journal/{entry_id}/marginalia",
+        "GET /user/usage"
+      ],
+      "tables": ["journalentry", "marginalia", "walletaudit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-margin-note-source.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.vault-sourced-note-label",
+    "description": "A writer whose AI operations are bound to their connected Creek vault asks for resonance; the vault's note is recorded and labelled as answered by their Creek vault, with no model claimed (the vault's reflect response reports none), and a vault with nothing to say still names itself as the source of the empty pass (#3062). Uncovered across the wire: the lane's fake Creek vault advertises no reflect capability, so no spec can make the vault answer a pass. The backend suite pins the receipt (backend/tests/test_inference_provenance.py) and the Jest specs pin the label.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance", "GET /journal/{entry_id}/marginalia"],
+      "tables": ["marginalia", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 3062
+  },
+  {
+    "id": "journal.real-provider-pass-keeps-its-charge",
+    "description": "A writer's resonance pass, or a note's first letter, answered by the app's real model provider is labelled as such and keeps its wallet unit, while a demo (stub) answer is refunded (#3062). Every lane serves the stub provider, so since demo answers stopped being billed the charged-and-kept half of journal.ask-for-resonance and journal.told-what-an-essay-costs-before-it-charges is unreachable from any spec. The backend suite pins it (backend/tests/test_inference_provenance.py, and the charge assertions in test_resonance_endpoints.py and test_essay_endpoint.py that now answer as a real provider).",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "botmasonUsage"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /user/usage"
+      ],
+      "tables": ["marginalia", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 3062
   },
   {
     "id": "journal.generation-guardrail-refusal",
@@ -989,7 +1094,7 @@
   },
   {
     "id": "map.stage-annotations-legible",
-    "description": "Someone reads the Map at any viewport and every stage annotation stays legible: the Aspect word, a locked stage's padlock and \"Unlocks ...\" estimate, and a finished stage's check badge each stay off the wave's painted stroke, off each other and on screen, inside their own stage's cell and band, and a window too short for the table scrolls it rather than painting one stage onto the next (#2657); the lens's own caption -- the YOU ARE HERE chip, the stage title and subtitle -- stays on the glass, inside the rim and clear of the pill's rounded ends, so a caption set larger must grow the pill (#2960). Every grid size is a ramp step (#2960): stage copy that fits no step wraps at the 13px caption floor instead of shrinking, and each stage's left and center cells share one row that never shrinks below the taller cell's content, so a wrapped line or a long unlock estimate grows its own stage rather than spilling into the stage stacked with it; the right label is inset inside its cell, which is left unpadded so the columns keep the 2/2/1 flex split the wave is drawn to. Every line of every right-column aspect label reads whole -- never cut to an ellipsis -- and inside its own band: a label too wide for its cell by the glyph estimate falls back to its hyphenated lines (Aware- / ness on every standard phone from 320 to 414 wide, Under- / standing, Yes-And- / Ness), and no label line is capped with numberOfLines, so a line that runs wider than the estimate on any serif face wraps rather than truncating; a fifth test sweeps this rule across every phone width from 320 to 390 in 5px steps. At a desktop window the completed Map scrolls by no more than Begin again's button, so the whole table and Begin again's words read without scrolling; the top stage's cell takes no extra height for the lens when it is current, since the lens then overhangs only stage 9's UNITY watermark. The covering spec measures three states -- fresh (stage 1, stages 2-10 locked), partial (stage 5, stages 1-4 finished, second cycle so the cycle caption shows) and completed (stage 10 finished, Begin again showing) -- at 1280x720 and 390x844, plus a 1280x560 window for fresh and completed, each in one settled frame: two animation frames, then the text census and a sample of every wave path every 2px of arc (getPointAtLength through getScreenCTM) in the same evaluate. The current stage moves the only way it can, through tests.e2e.program_anchor (90 and 240 days back); per-stage completion has no writer at all, so the spec lets GET /stages and GET /stages/program-calendar reach the lane's server and rewrites only progress and cycle_number on the response -- nothing on the Map is stubbed. Before any rule runs it proves it measured something: a wave with length, and exactly as many unlock lines, padlocks in each column and badges as the state has locked and finished stages. The rules are pure functions in frontend/e2e/mapGeometry.ts pinned by src/design/__tests__/mapGeometry.test.ts. Each measure waits for its state to be established -- the calendar's stage in the journey read and under the lens's YOU ARE HERE chip, the cycle caption, Begin again -- and asserts those markers in the measured frame. A fourth test drags the lens with real touches (Input.dispatchTouchEvent in a touch context at 390x664, where the fresh Map scrolls): the lens moves and the Map's scroller stays put, while the same gesture on the table's text does scroll it. The magnifier pill and the EMPTINESS / UNITY watermark the converging wave rises through by design are the only intended covers. Screenshots and the measured frame land in e2e/artifacts/map-legibility/ for review; there is no pixel baseline.",
+    "description": "Someone reads the Map at any viewport and every stage annotation stays legible: the Aspect word, a locked stage's padlock and \"Opens ...\" estimate, and a finished stage's check badge each stay off the wave's painted stroke, off each other and on screen, inside their own stage's cell and band, and a window too short for the table scrolls it rather than painting one stage onto the next (#2657); the lens's own caption -- the YOU ARE HERE chip, the stage title and subtitle -- stays on the glass, inside the rim and clear of the pill's rounded ends, so a caption set larger must grow the pill (#2960). Every grid size is a ramp step (#2960): stage copy that fits no step wraps at the 13px caption floor instead of shrinking, and each stage's left and center cells share one row that never shrinks below the taller cell's content, so a wrapped line or a long unlock estimate grows its own stage rather than spilling into the stage stacked with it; the right label is inset inside its cell, which is left unpadded so the columns keep the 2/2/1 flex split the wave is drawn to. Every line of every right-column aspect label reads whole -- never cut to an ellipsis -- and inside its own band: a label too wide for its cell by the glyph estimate falls back to its hyphenated lines (Aware- / ness on every standard phone from 320 to 414 wide, Under- / standing, Yes-And- / Ness), and no label line is capped with numberOfLines, so a line that runs wider than the estimate on any serif face wraps rather than truncating; a fifth test sweeps this rule across every phone width from 320 to 390 in 5px steps. At a desktop window the completed Map scrolls by no more than Begin again's button, so the whole table and Begin again's words read without scrolling; the top stage's cell takes no extra height for the lens when it is current, since the lens then overhangs only stage 9's UNITY watermark. The covering spec measures three states -- fresh (stage 1, stages 2-10 locked), partial (stage 5, stages 1-4 finished, second cycle so the cycle caption shows) and completed (stage 10 finished, Begin again showing) -- at 1280x720 and 390x844, plus a 1280x560 window for fresh and completed, each in one settled frame: two animation frames, then the text census and a sample of every wave path every 2px of arc (getPointAtLength through getScreenCTM) in the same evaluate. The current stage moves the only way it can, through tests.e2e.program_anchor (90 and 240 days back); per-stage completion has no writer at all, so the spec lets GET /stages and GET /stages/program-calendar reach the lane's server and rewrites only progress and cycle_number on the response -- nothing on the Map is stubbed. Before any rule runs it proves it measured something: a wave with length, and exactly as many unlock lines, padlocks in each column and badges as the state has locked and finished stages. The rules are pure functions in frontend/e2e/mapGeometry.ts pinned by src/design/__tests__/mapGeometry.test.ts. Each measure waits for its state to be established -- the calendar's stage in the journey read and under the lens's YOU ARE HERE chip, the cycle caption, Begin again -- and asserts those markers in the measured frame. A fourth test drags the lens with real touches (Input.dispatchTouchEvent in a touch context at 390x664, where the fresh Map scrolls): the lens moves and the Map's scroller stays put, while the same gesture on the table's text does scroll it. The magnifier pill and the EMPTINESS / UNITY watermark the converging wave rises through by design are the only intended covers. Screenshots and the measured frame land in e2e/artifacts/map-legibility/ for review; there is no pixel baseline.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["auth", "stages"],
@@ -1010,6 +1115,30 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/depth.e2e.test.ts"
+  },
+  {
+    "id": "journal.journal-only-with-every-depth-declined",
+    "description": "A writer who declines every optional depth keeps a whole journal and is never invited back into a ring they turned off (#3073). On a fresh account (no corpus consent, no vault of their own, not the deployment vault's owner) Habits, Practices and Course are switched off through the real Settings switches and Sangha over PATCH /depth-preferences (its switch ships only in a build with a Sangha invite URL), and the stored state is read back. The drawer then lists no Habits, Practice or Course destination. The writer writes a page and runs a timed writing session to its end -- the finished-session note is the offer that used to show with habits off. The spec waits for the note's withheld marker, which renders only once the offer has read its stored answer and found both depths declined, and only then asserts no keep-as-habit or keep-as-practice offer, so the absence cannot be read during the offer's loading window. The page is found by search, reopened, exported (both export routes, and the Export screen renders) and deleted, and GET /invitations answers [] on the all-off path. Return cards, invitation cards, the contraction reflection and the link-a-habit pointer cannot appear on a fresh account, so they are pinned below rather than asserted absent here. Finally the lane's fake language-model provider and fake Creek vault counters are unchanged, so nothing left the box. The server-side gates are pinned in backend/tests: routers/test_invitations.py (a declined ring's pending invitations are hidden and return on re-enable, a course-off listing never reads the vault wheel, all-off generates nothing), services/test_invitations_service.py, routers/test_contraction_reflection.py (habits off -> contraction null) and routers/test_journal_journal_only.py (a fresh account's save at every tier and with every ring off builds no real vault client, calls no provider and opens no outbound request). Jest pins each client gate: DepthGate.test.tsx, JournalShelfScreen.test.tsx (Return hidden with habits off), InvitationStack.test.tsx (a declined ring's cards drop live, with no remount), WritingSessionOffer.test.tsx (only the kept depths' accepts beside the decline; nothing with both off), JournalEntryScreenTimer.test.tsx and JournalEntryScreenContraction.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["auth", "depthPreferences", "journal", "invitations", "users"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "GET /depth-preferences",
+        "PATCH /depth-preferences",
+        "POST /journal/",
+        "GET /journal/",
+        "GET /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "GET /invitations",
+        "GET /users/me/export",
+        "GET /users/me/export/journal.md"
+      ],
+      "tables": ["userdepthpreferences", "journalentry", "invitationsignal", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-only.browser.e2e.test.ts"
   },
   {
     "id": "seed.upload-document",
@@ -1049,7 +1178,7 @@
   },
   {
     "id": "corpus.bring-in-your-writing-needs-a-vault-first",
-    "description": "A corpus lives in a vault (owner ruling on #3015), and since #3016 the server keeps nothing a vault-less account sends, so 'Bring in your writing' waits for a place to keep what comes in (#3017). In Settings the Your corpus group now leads with Where your corpus lives; for an account GET /vault/connection says has nothing attached, the seed row keeps its name and icon but says where that place is set up, and opens Where your corpus lives rather than the picker. Unknown -- a read still out, a read that failed, or a provider-managed vault answered with no address -- is never read as none and keeps the picker, with the server's vault_required as the backstop. The spec drives this unstubbed on a fresh lane account, which has no vault of its own and is not the deployment binding's owner. The Journal band (CTA 'Give your corpus a place to live'), the Journal drawer's Your corpus door and the seeding screen's own invitation take the same rule and are pinned in their component suites (VoiceReadinessBand, JournalEntryScreenDrawer, JournalShelfScreenDrawer, SeedCorpusScreen). Known gap: the deployment binding's single owner has no connection row and so is shown the same invitation although their imports land.",
+    "description": "A corpus lives in a vault (owner ruling on #3015), and since #3016 the server keeps nothing a vault-less account sends, so 'Bring in your writing' waits for a place to keep what comes in (#3017). In Settings the Your corpus group now leads with Where your writing lives; for an account GET /vault/connection says has nothing attached, the seed row keeps its name and icon but says where that place is set up, and opens Where your writing lives rather than the picker. Unknown -- a read still out, a read that failed, or a provider-managed vault answered with no address -- is never read as none and keeps the picker, with the server's vault_required as the backstop. The spec drives this unstubbed on a fresh lane account, which has no vault of its own and is not the deployment binding's owner. The Journal band (CTA 'Give your writing a place to live'), the Journal drawer's Everything you've written door and the seeding screen's own invitation take the same rule and are pinned in their component suites (VoiceReadinessBand, JournalEntryScreenDrawer, JournalShelfScreenDrawer, SeedCorpusScreen). Known gap: the deployment binding's single owner has no connection row and so is shown the same invitation although their imports land.",
     "crosses": {
       "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
       "client": ["auth", "setTokenGetter", "vault", "corpus"],
@@ -1301,7 +1430,7 @@
   },
   {
     "id": "corpus.voice-readiness-tells-the-writer-where-the-voice-comes-from",
-    "description": "A person whose reflections are still drawn from their last few entries is told so, in the sentence that is true for their own account: the consent decision if they have not made it -- with what saying yes gives, in the same words Settings uses (#3003) -- the import surface if they have and a vault is attached or unknown, or -- since #3017, for an account the server says has nothing attached -- Where your corpus lives, under the call to action 'Give your corpus a place to live'. The band is declinable in one tap, renders no count, and never blocks resonance. The lane drives the two states and the move between them across the wire on its own account.",
+    "description": "A person whose reflections are still drawn from their last few entries is told so, in the sentence that is true for their own account: the consent decision if they have not made it -- with what saying yes gives, in the same words Settings uses (#3003) -- the import surface if they have and a vault is attached or unknown, or -- since #3017, for an account the server says has nothing attached -- Where your writing lives, under the call to action 'Give your writing a place to live'. The band is declinable in one tap, renders no count, and never blocks resonance. The lane drives the two states and the move between them across the wire on its own account.",
     "crosses": {
       "screen": "frontend/src/features/Journal/VoiceReadinessBand.tsx",
       "client": ["corpus", "corpusConsent", "auth", "setTokenGetter"],
@@ -1317,7 +1446,7 @@
   },
   {
     "id": "journal.corpus-survives-in-the-drawer-after-the-band-is-set-aside",
-    "description": "A writer can set aside the one-time explanation of where reflections come from without losing the corpus door. A cold reload proves the dismissal persists; the Journal drawer then remains the corpus's sole Journal surface, beside the icon-bearing Photograph a page action, and a fresh undecided account reaches the actual consent screen through a live GET /corpus/voice-readiness decision. The two mounted drawer hosts and the gathering arms -- to the import surface with a vault attached or unknown, and to Where your corpus lives with nothing attached (#3017) -- are pinned in the adjacent component suites because the browser starts from only one readiness state. Retrying a failed 'Load older entries' in the same drawer asks again for the missing page and keeps the entries already shown (#2997); pinned in JournalDrawer.test.tsx because the e2e lane cannot force a mid-list failure. The same spec holds the drawer's door and every icon around it to the web's accessibility tree (#3009, #2829): with the console watched from the first page, the anonymous /get-started and /login pages (negative controls), the signed-in Journal shelf, the opened Journal drawer, the feedback composer and a new journal page each carry no React Native-only accessibility prop (accessible, accessibilityElementsHidden, importantForAccessibility) as a DOM attribute; the drawer toggle's svg, the Send feedback icon and the page's close X are aria-hidden=\"true\"; and React logs no non-boolean-attribute or unknown-prop complaint about any of them. The one spelling behind it, decorativeHidden(), and the source guard that holds every file to it are pinned in Jest (a11yHidden.test.ts, decorativeHiddenGuard.test.ts).",
+    "description": "A writer can set aside the one-time explanation of where reflections come from without losing the corpus door. A cold reload proves the dismissal persists; the Journal drawer then remains the corpus's sole Journal surface, beside the icon-bearing Photograph a page action, and a fresh undecided account reaches the actual consent screen through a live GET /corpus/voice-readiness decision. The two mounted drawer hosts and the gathering arms -- to the import surface with a vault attached or unknown, and to Where your writing lives with nothing attached (#3017) -- are pinned in the adjacent component suites because the browser starts from only one readiness state. Retrying a failed 'Load older entries' in the same drawer asks again for the missing page and keeps the entries already shown (#2997); pinned in JournalDrawer.test.tsx because the e2e lane cannot force a mid-list failure. The same spec holds the drawer's door and every icon around it to the web's accessibility tree (#3009, #2829): with the console watched from the first page, the anonymous /get-started and /login pages (negative controls), the signed-in Journal shelf, the opened Journal drawer, the feedback composer and a new journal page each carry no React Native-only accessibility prop (accessible, accessibilityElementsHidden, importantForAccessibility) as a DOM attribute; the drawer toggle's svg, the Send feedback icon and the page's close X are aria-hidden=\"true\"; and React logs no non-boolean-attribute or unknown-prop complaint about any of them. The one spelling behind it, decorativeHidden(), and the source guard that holds every file to it are pinned in Jest (a11yHidden.test.ts, decorativeHiddenGuard.test.ts).",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalDrawer.tsx",
       "client": ["corpus"],
@@ -1428,7 +1557,7 @@
   },
   {
     "id": "habits.rescaffold-review-existing-habits",
-    "description": "A user who already has habits opens Energy Scaffolding and is asked about them before anything else. Every habit they own is listed with a tick, ticked; for each ticked one they choose Bring along -- already mastered, tracked on the carryover pages -- or Re-rate, which puts it back in the pool to be rated and slotted into the new energy order with its stored ratings already on the sliders. Unticking one is how a habit is let go of, and it is the only irreversible thing on the step: continuing then names the habits by name and says their check-ins and goals go with them, and cancelling leaves every tick exactly where it was. Brought-along habits never reach the energy, reveal, reorder or template steps and never count against the ten-habit ceiling, so a user with ten habits who brings four along can still add four. Before this the modal opened on a blank page and whatever the user typed was appended beside everything they already had. Uncovered for the same reason as welcome.first-run-walkthrough-to-journal and habits.scaffolding-start-date-anchors-the-program: this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, and every step of this journey is inside a modal. Pinned meanwhile by src/features/Habits/components/__tests__/OnboardingModal.reviewStep.test.tsx, which drives the whole flow through the rendered modal to the plan the save receives, and by src/features/Habits/components/__tests__/onboardingReview.test.ts for the decisions themselves.",
+    "description": "A user who already has habits opens Energy Scaffolding and is asked about them before anything else. Every habit they own is listed with a tick, ticked; for each ticked one they choose Bring along -- already part of their days, kept on the carryover pages -- or Re-rate, which puts it back in the pool to be rated and slotted into the new energy order with its stored ratings already on the sliders. Unticking one is how a habit is let go of, and it is the only irreversible thing on the step: continuing then names the habits by name and says their check-ins and goals go with them, and cancelling leaves every tick exactly where it was. Brought-along habits never reach the energy, reveal, reorder or template steps and never count against the ten-habit ceiling, so a user with ten habits who brings four along can still add four. Before this the modal opened on a blank page and whatever the user typed was appended beside everything they already had. Uncovered for the same reason as welcome.first-run-walkthrough-to-journal and habits.scaffolding-start-date-anchors-the-program: this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, and every step of this journey is inside a modal. Pinned meanwhile by src/features/Habits/components/__tests__/OnboardingModal.reviewStep.test.tsx, which drives the whole flow through the rendered modal to the plan the save receives, and by src/features/Habits/components/__tests__/onboardingReview.test.ts for the decisions themselves.",
     "crosses": {
       "screen": "frontend/src/features/Habits/components/OnboardingModal.tsx",
       "client": ["habits"],
@@ -1476,7 +1605,7 @@
   },
   {
     "id": "vault.connect-your-own",
-    "description": "Someone connects a private vault of their own from Settings (Your corpus, then Where your corpus lives, then the Advanced: connect a vault you run yourself section, which is closed until they open it): the screen reads whether one is attached, they paste an address and a key, the server refuses an address it cannot reach securely and writes no row for it, and a good one comes back connected with no credential on the reply. Both halves are green on their own — the screen's tests mock the client and the router's tests never build a request — so this is the one place they agree on the paths, the verbs, the refusal codes and the write-only credential. It pins four refusals rather than one -- an insecure transport, a destination only a local network can reach, an address that resolves nowhere, and a key no Authorization header could carry -- because the server judges where a URL points as well as how it is shaped, and the screen answers each with its own sentence.",
+    "description": "Someone connects a private vault of their own from Settings (Your corpus, then Where your writing lives, then the Advanced: connect a vault you run yourself section, which is closed until they open it): the screen reads whether one is attached, they paste an address and a key, the server refuses an address it cannot reach securely and writes no row for it, and a good one comes back connected with no credential on the reply. Both halves are green on their own — the screen's tests mock the client and the router's tests never build a request — so this is the one place they agree on the paths, the verbs, the refusal codes and the write-only credential. It pins four refusals rather than one -- an insecure transport, a destination only a local network can reach, an address that resolves nowhere, and a key no Authorization header could carry -- because the server judges where a URL points as well as how it is shaped, and the screen answers each with its own sentence.",
     "crosses": {
       "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
       "client": ["auth", "setTokenGetter", "vault"],
@@ -1488,7 +1617,7 @@
   },
   {
     "id": "vault.disconnect-or-replace-confirmed",
-    "description": "Someone with a vault attached presses Disconnect, or presses Connect with a different address or key (or while the read failed). The card and the form live behind the Advanced section, which opens on first render when a vault of their own is connected, so Disconnect needs no press to find; after a read that failed it stays closed until opened. Either press opens a rendered confirmation, not Alert.alert, which react-native-web ships as an empty method (#2928). Confirming sends DELETE or PUT /vault/connection exactly once; cancelling sends nothing. Only Disconnect is styled destructive. The interim proof is src/features/Settings/__tests__/VaultSettingsScreen.test.tsx; a browser proof needs a VaultSettings web path and a routable vault fake.",
+    "description": "Someone with a vault attached presses Disconnect, or presses Connect with a different address or key (or while the read failed). The card and the form live behind the Advanced section, which opens on first render when a vault of their own is connected, so Disconnect needs no press to find; after a read that failed it stays closed until opened. Either press opens a rendered confirmation, not Alert.alert, which react-native-web ships as an empty method (#2928). Confirming sends DELETE or PUT /vault/connection exactly once; cancelling sends nothing. Only Disconnect is styled destructive. Generic PUT/DELETE now refuse with 409 when this account has a managed binding or an activation whose teardown is not confirmed; neither confirmation abandons a managed allocation (#3049). Backend API regressions cover lifecycle states and handoff during URL validation. The interim UI proof is src/features/Settings/__tests__/VaultSettingsScreen.test.tsx; a browser proof needs a VaultSettings web path and a routable vault fake.",
     "crosses": {
       "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
       "client": ["auth", "setTokenGetter", "vault"],
@@ -1500,7 +1629,7 @@
   },
   {
     "id": "vault.advanced-fold",
-    "description": "Someone opens Where your corpus lives from the Your corpus group in Settings and finds the bring-your-own form folded behind 'Advanced: connect a vault you run yourself' (#3007). The fold says what it is, who it is for and what it is not, links the plain-language guide in docs/your-data.md, and is closed by default -- open on first render only when GET /vault/connection names a vault of their own, so Disconnect is never hidden. It is remembered for the visit only. The managed offer and the read's notices sit outside it, and the feedback line sits after it, so a read that failed is still said while it is closed. The interim proof is src/features/Settings/__tests__/VaultSettingsScreen.test.tsx; a browser proof needs the same VaultSettings web path and routable vault fake as vault.disconnect-or-replace-confirmed.",
+    "description": "Someone opens Where your writing lives from the Your corpus group in Settings and finds the bring-your-own form folded behind 'Advanced: connect a vault you run yourself' (#3007). The fold says what it is, who it is for and what it is not, links the plain-language guide in docs/your-data.md, and is closed by default -- open on first render only when GET /vault/connection names a vault of their own, so Disconnect is never hidden. It is remembered for the visit only. The managed offer and the read's notices sit outside it, and the feedback line sits after it, so a read that failed is still said while it is closed. The interim proof is src/features/Settings/__tests__/VaultSettingsScreen.test.tsx; a browser proof needs the same VaultSettings web path and routable vault fake as vault.disconnect-or-replace-confirmed.",
     "crosses": {
       "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
       "client": ["auth", "setTokenGetter", "vault"],
@@ -1540,15 +1669,15 @@
   },
   {
     "id": "map.stage-persona-is-the-course-archetype",
-    "description": "A traveller reads a stage's free-will archetype -- the persona beside each stage in the Map's left column, and the stage name in the Journal AspectChordControl's label and accessibility label -- and it is the course's own archetype: Purple reads Pleasure Seeker, the name its free-will chapter and the aptitude-stages.md heading use, not the retired name the dataset carried until #2915. Uncovered because today that persona never crosses a seam: it is a client-side copy of coursestage.relationship_to_free_will hardcoded in STAGE_DISPLAY (frontend/src/features/Map/mapLayout.ts), so no browser spec could watch it come from the server. The route, client and table named here are the seam the persona moves onto when #2663 deletes that mirror and reads it from GET /stages, not the path it takes now. Until then it is pinned by frontend/src/features/Map/__tests__/stageCanonDrift.test.ts, which joins every persona to backend/src/curriculum/archetypal_wavelength.json and which backend CI runs through scripts/frontend/cross-boundary-drift.sh, and the dataset itself is held to the vendored course headings by backend/tests/test_vendored_course_copy_pins.py.",
+    "description": "A traveller reads a stage's free-will archetype -- the persona beside each stage in the Map's left column and in its spoken label -- and it is the course's own archetype as the coursestage row holds it: Purple reads Pleasure Seeker, the name its free-will chapter and the aptitude-stages.md heading use. Since #2666 nothing about it is hardcoded client-side: stageService fills the stage store from GET /stages and stageVocabulary.ts derives the persona from relationship_to_free_will, so the covering spec names no persona of its own. It reads the persona the Map shows, rewrites that stage's row out of band with tests.e2e.stage_copy set-field (which reports the value it replaced) and requires the replaced value to be exactly what was on screen, then reloads and requires the left column and the hotspot's aria-label to follow the row to a string the curriculum never held -- an assertion a client answering from its own copy of the seeded words cannot pass. The row is put back before the file ends. The Journal AspectChordControl reads the same persona without a program visit: from the stage store when the Map or Practice filled it, otherwise from GET /stages/correspondence, otherwise the stage colour name; that path is pinned by frontend/src/features/Journal/__tests__/useAspectOptions.test.tsx and JournalEntryScreenChord.test.tsx rather than a browser spec.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
       "client": ["stages"],
       "routes": ["GET /stages"],
       "tables": ["coursestage"]
     },
-    "status": "uncovered",
-    "issue": 2663
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map-stage-persona.browser.e2e.test.ts"
   },
   {
     "id": "journal.higher-self-does-not-repeat-itself",
@@ -1595,15 +1724,22 @@
   },
   {
     "id": "practice.quick-launch-a-saved-journaling-practice",
-    "description": "Someone whose Journaling practice is saved taps one button in the Practice player and lands on a blank journal page with the practice's own length already running; when the page's session ends it is recorded against that selection, and the \"keep this as a practice?\" offer is not put to them again. Uncovered because the one claim this adds over journal.timed-writing-session-becomes-a-practice is the COMPLEMENT of what that spec pins: that spec deliberately stands its account at Beige and proves POST /practice-sessions/ answers 403 stage_locked against a forward-planned Journaling selection at Green, which is why the launch sends nothing there. What is unproven end-to-end is the same request SUCCEEDING once Green has actually opened -- and reaching that state needs backend/tests/e2e/program_anchor.py to move the account's program anchor five stages back and a read of GET /stages/program-calendar to make the record catch up, then its own spec file, its own account via freshLicenseKey(), and e2eLaneGuard registration. Pinned meanwhile on the client side by src/features/Practice/__tests__/PracticeScreenQuickLaunch.test.tsx (the button exists only for a saved Journaling practice, and navigates with the override-aware length and the selection id) and src/features/Journal/__tests__/useQuickLaunchedSession.test.tsx (the finished session is recorded once, for the length actually written, and never sent when the stage is still ahead) -- both of which agree with themselves about a server that is not there.",
+    "description": "Someone whose Journaling practice is saved taps one button in the Practice player and lands on a blank journal page with the practice's own length already running; when the page's session ends it is recorded against that selection, and the \"keep this as a practice?\" offer is not put to them again. This is the complement of journal.timed-writing-session-becomes-a-practice, which stands its account at Beige and pins POST /practice-sessions/ answering 403 stage_locked against a forward-planned Journaling selection at Green: here the same request SUCCEEDS once Green has actually opened. The spec moves the account's program anchor mid-way into Green's calendar window through backend/tests/e2e/program_anchor.py (faking only elapsed time, in the lane database), selects Journaling at Green over the wire, and reloads so the stage store is seeded from GET /stages/program-calendar -- the client decides whether a session is countable from that store, and a store left at stage 1 sends nothing. It then proves: the button is offered by its accessible name with no waiting note; the page opens with the twenty-minute timer already running; a session stopped early posts exactly one POST /practice-sessions/, answered 201, whose window and server-derived length are the minutes written, not the practice's twenty; a second session run to its length on the same page posts exactly once more and draws the session note with the link-a-habit note in the offer's slot and no keep-this offer; and GET /practice-sessions/stats reports exactly those two sessions and their minutes. 'Once' is counted on the wire because the quick-launch POST carries no Idempotency-Key. The browser clock is installed behind the server's so the session's ended_at stays inside the server's one-minute future-skew bound. Client-side halves stay pinned by src/features/Practice/__tests__/PracticeScreenQuickLaunch.test.tsx and src/features/Journal/__tests__/useQuickLaunchedSession.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
-      "client": ["practices", "userPractices", "practiceSessions"],
-      "routes": ["GET /practices/", "GET /user-practices/", "POST /practice-sessions/"],
+      "client": ["practices", "userPractices", "practiceSessions", "stages"],
+      "routes": [
+        "GET /practices/",
+        "GET /user-practices/",
+        "POST /user-practices/",
+        "GET /stages/program-calendar",
+        "POST /practice-sessions/",
+        "GET /practice-sessions/stats"
+      ],
       "tables": ["practice", "userpractice", "practicesession"]
     },
-    "status": "uncovered",
-    "issue": 2734
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-quick-launch-green.browser.e2e.test.ts"
   },
   {
     "id": "journal.set-a-stage-prompt-aside-and-bring-it-back",
@@ -1638,15 +1774,33 @@
   },
   {
     "id": "habits.day-turns-over-on-a-mounted-screen",
-    "description": "A user completes a habit, leaves the app open across their local midnight, and looks again: the habit reads as not-yet-done today, its tier stars return to unlit, and the journal shelf's \"Today's habits\" count is back to zero -- with nothing remounted and no completion rewritten. Returning to the Habits tab or the shelf also re-reads habits from the server rather than showing whatever the store held when the tab was first opened, and so does foregrounding the app onto the tab the user never left -- the half #2764's acceptance criteria missed, since navigation reports no focus for a screen that never lost it (#2847). The same journey covers what that day is measured against: a session resumed from a stored token west of UTC after 17:00 local -- when UTC has turned over and the user's day has not -- shows yesterday evening's completion as yesterday, because the resumed session carries the zone the server has on record instead of running on the UTC default until something refreshes a 30-day token at its half-life. That is the bug as reported: \"I just had to log out and log back in to get my habits to reset for today.\" Uncovered because none of it is reachable from this lane: the rollover is clock-driven and crosses no wire at all -- that is the point of it, since only what is re-derived changes -- and the node environment cannot mount a screen to advance a clock against, the same constraint recorded on welcome.first-run-walkthrough-to-journal. The focus and foreground halves do cross the wire but need a real navigator the user can leave and return to and an app that can be backgrounded; the resume half needs a token already on disk before the process starts. Jest pins every half in process today, against a real NavigationContainer, against fake timers advanced past local midnight, against a captured AppState transition, and -- for the resume -- in src/context/__tests__/ResumedSessionDayBoundary.test.tsx, which joins the real AuthProvider to the real useHabitsSummary at 08:00 in Los Angeles. Covering this needs the browser lane, which can install a fake clock on the mounted app and seed a token before launch. See #2771.",
+    "description": "A user completes a habit, leaves the app open across their local midnight, and looks again: the habit reads as not-yet-done today, its tier stars return to unlit, and the journal shelf's \"Today's habits\" count is back to zero -- with nothing remounted and no completion rewritten. Returning to the Habits tab or the shelf also re-reads habits from the server rather than showing whatever the store held when the tab was first opened, and so does foregrounding the app onto the tab the user never left -- the half #2764's acceptance criteria missed, since navigation reports no focus for a screen that never lost it (#2847). The covering Playwright spec pins the browser to Los Angeles, checks in a revealed habit's stretch tier over POST /goal_completions/, and installs the page clock on the day the server recorded that completion. On a Habits screen at 23:58 the tile reads ACHIEVED TODAY! with met tier stars; three minutes later, on the same page with no reload, it reads neither. The midnight boundary is not purely client-side any more: since #2847 it re-reads GET /habits/ on the focused screen, and the spec answers exactly that one read 404 (not retried, not applied), so the turnover comes from the client re-deriving today from rows it already held rather than from fresh server data. No POST /goal_completions/ crosses the boundary and GET /habits/{id} still carries the original completion on its original local_day. The shelf reads 1/1 done before midnight and 0/1 after while mounted, and each drawer hop costs exactly one paginated GET /habits/: one on arriving at Habits (the arrival is not double-fetched), one on returning to the shelf, one on returning to Habits. A hidden-then-visible visibilitychange -- what react-native-web's AppState reports as background and active -- re-reads the never-left tab exactly once. What the browser cannot isolate is either surface's own day subscription: the boundary read toggles the store's loading slice, which re-renders the shelf and makes the Habits screen swap its grid for a spinner, so the tiles mount afresh whether or not they listen to the day. Both subscriptions stay pinned in Jest (HabitTileDayRollover, useHabitsSummary and ResumedSessionDayBoundary). The resumed-session half is registered separately as habits.resumed-session-reads-its-own-calendar.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits", "goalCompletions"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /habits/",
+        "POST /goal_completions/",
+        "GET /habits/"
+      ],
+      "tables": ["user", "habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-day-rollover.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.resumed-session-reads-its-own-calendar",
+    "description": "A user west of UTC whose device holds a session token but no cached zone -- one that signed in before #2847 cached it -- opens the app late in their evening, when UTC has turned over and their day has not. The resumed session carries the zone the server has on record, fetched by exactly one POST /auth/refresh, so the completion they logged today still reads as today rather than running on the UTC default. That is the bug as reported: \"I just had to log out and log back in to get my habits to reset for today.\" The refresh rotates the token and revokes the one the app's first wave of reads is still carrying; those reads 401 and are retried on the successor through the client's single refresh path, so the count on the wire stays at one and the session stays signed in (#3034). The lane disarms the 1/minute limiter, so the spec asserts the refresh count rather than provoking the 429 a second refresh would earn in production. Pinned in process as well by src/context/__tests__/ResumedSessionDayBoundary.test.tsx (the zone, at 08:00 in Los Angeles) and ResumedSessionRefreshRace.integration.test.tsx (one refresh from every entry point).",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["auth", "habits"],
       "routes": ["POST /auth/refresh", "GET /habits/"],
       "tables": ["user", "habit", "goalcompletion"]
     },
-    "status": "uncovered",
-    "issue": 2771
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-resumed-session.browser.e2e.test.ts"
   },
   {
     "id": "journal.voice-drafts-shelf",
@@ -1724,7 +1878,7 @@
   },
   {
     "id": "design.navigation-owns-screen-title",
-    "description": "Someone using a screen reader opens a screen whose stack header already shows its title -- Settings, Support & care, Voice drafts, Promoted quotes, the beta feedback inbox, Time zone, Export my data, Delete account, Where your corpus lives (the vault screen, #3007) or managed-vault activation -- and hears that title as a heading exactly once (#2962): the stack header is the screen's one heading, and the body paints no second title and adds no second header named by it, visible or not. The covering Playwright spec signs up through the UI and opens each of the ten screens at 390x844 and 1280x720 -- eight the way the text census reaches them, Promoted quotes through the Journal drawer, and the operator inbox through its Settings row -- and counts the elements with role heading whose accessible name is the title, which must be one. Managed-vault activation used to paint a paraphrase of its title (#2995), so there the spec also counts the headings inside the screen body, which must be none. A lane account is never an operator, so the one GET /admin/capabilities answer that shows the inbox row is fulfilled in the browser; the inbox paints the same header either way, and nothing else is stubbed.",
+    "description": "Someone using a screen reader opens a screen whose stack header already shows its title -- Settings, Support & care, Voice drafts, Promoted quotes, the beta feedback inbox, Time zone, Export my data, Delete account, Where your writing lives (the vault screen, #3007) or managed-vault activation -- and hears that title as a heading exactly once (#2962): the stack header is the screen's one heading, and the body paints no second title and adds no second header named by it, visible or not. The covering Playwright spec signs up through the UI and opens each of the ten screens at 390x844 and 1280x720 -- eight the way the text census reaches them, Promoted quotes through the Journal drawer, and the operator inbox through its Settings row -- and counts the elements with role heading whose accessible name is the title, which must be one. Managed-vault activation used to paint a paraphrase of its title (#2995), so there the spec also counts the headings inside the screen body, which must be none. A lane account is never an operator, so the one GET /admin/capabilities answer that shows the inbox row is fulfilled in the browser; the inbox paints the same header either way, and nothing else is stubbed.",
     "crosses": {
       "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
       "client": ["auth"],
@@ -1802,5 +1956,108 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/practice-deep-link.browser.e2e.test.ts"
+  },
+  {
+    "id": "auth.zero-payment-newcomer-core-access",
+    "description": "A newcomer claims a $0 APTITUDE membership license and, with no AI allowance on any axis (BOTMASON_MONTHLY_CAP=0, an empty offering balance, BOTMASON_DAILY_GENERATION_CEILING=0), writes, edits and deletes journal entries, exports everything as JSON and Markdown, creates a habit, logs a practice session and finally deletes the account -- none of it charging the wallet or calling Gumroad, and all of it still working after a refund revokes the entitlement (#1938, B21). Uncovered because the e2e lane's Gumroad stub (backend/tests/e2e/server.py _stub_license_check) replaces verification wholesale with a price-less purchase and the lane's allowance env is lane-wide, so a spec cannot set a zero price or a zero allowance for one journey. Pinned meanwhile by backend/tests/test_free_core_access_invariants.py and test_auth_signup_license.py::test_zero_price_membership_license_creates_exactly_one_account.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/SignupScreen.tsx",
+      "client": ["auth", "journal", "users", "habits"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "GET /users/me/export",
+        "GET /users/me/export/journal.md",
+        "POST /habits/",
+        "DELETE /users/me"
+      ],
+      "tables": ["user", "entitlement", "licensebinding", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 1938
+  },
+  {
+    "id": "habits.reveal-without-course",
+    "description": "A person who takes the habits without the Course still moves through the program cadence (#3071). Before the fix the Course router was the only thing that ever gave an account a calendar anchor, so a habits-only account had no stage-progress row, the server read it as standing on stage 1 forever, and the Purple habit and every ring after it never opened. The habits list read now provisions the anchor itself, with the same ensure_user_progress the Course uses, but only when a laddered habit is still waiting on its ring. The covering Playwright spec pins the browser to UTC, signs up through the UI, seeds a locked Beige and a locked Purple habit over POST /habits/, and opens Habits: Beige is open, Purple shows its locked tile, and a read of the lane database finds a stage-1 row the habits read created. It then rewinds that anchor by Beige's 21-day window through tests.e2e.program_anchor, reloads, and Purple's tile is open. A request guard fails the run on any /course/ call, and the database read runs before the rewind because the rewind arrange provisions a row itself and would otherwise mask the bug. Pinned in process by backend/tests/test_habits_api.py (provisioning, the no-row guards for an unladdered or empty list, and a concurrent first read that leaves one row), by backend/tests/integration/test_habit_reveal_stamp_race.py (two reads forced to race the locked re-read on PostgreSQL, counting every write so each invitation is stamped exactly once; SQLite cannot prove this because FOR UPDATE is a no-op there) and by backend/tests/services/test_habit_auto_reveal_cadence.py (every stage boundary in UTC and America/Los_Angeles across DST, with literal expected stages).",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "stageprogress"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-reveal-without-course.browser.e2e.test.ts"
+  },
+  {
+    "id": "practice.paused-sitting-records-the-full-sitting",
+    "description": "A practitioner starts a timed sitting, pauses it part-way, steps away, resumes and lets it run to its end, then saves it -- and the sitting is recorded as the whole time they practised. The completion window used to restamp its start on every move into running, resume included, so a three-minute sit paused after one minute posted started_at as the last resume and the server counted two minutes. The spec drives the real player in a browser against the real server on Playwright's clock and pins both halves of the seam: the started_at/ended_at the page posts span exactly the practised time (pause excluded), and the duration_minutes the server derives from them matches. Clock-jump clamping, the missed-cue burst and the foreground reconcile are pinned meanwhile by jest (reducer.clock, useRitualEngine.background, ActiveRitualSession.pauseResume, presetLaunchMatrix).",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": ["POST /practice-sessions/"],
+      "tables": ["practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-paused-sitting.browser.e2e.test.ts"
+  },
+  {
+    "id": "practice.every-mode-family-launches-from-the-catalog",
+    "description": "A practitioner picks any seeded practice from the catalog -- each of the eleven engine modes, every stage's canonical preset and the course's own alternatives (Yellow's and Ultraviolet's forty-five-minute alternatives among them) -- and can start it, pause and resume it where the view offers that, finish it and save it. Uncovered in the browser: presetLaunchMatrix.test.tsx launches every seeded preset end to end in jest from a fixture the backend gates equal to PRESET_PRACTICES, and modeParity.test.tsx holds every backend PracticeMode to a picker entry, a configurator form, valid defaults and a session view, but no browser spec yet walks one preset per mode family from the catalog through a real save (#3072 AC19). Stage 10 Clear Light has no alternatives chapter in the course, so it offers only its canonical sit.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/screens/PracticeCatalogScreen.tsx",
+      "client": ["practices", "userPractices", "practiceSessions"],
+      "routes": ["GET /practices/", "POST /user-practices/", "POST /practice-sessions/"],
+      "tables": ["practice", "userpractice", "practicesession"]
+    },
+    "status": "uncovered",
+    "issue": 3072
+  },
+  {
+    "id": "practice.session-returns-from-the-background-calmly",
+    "description": "A practitioner leaves the app mid-sit and comes back after several bells fell due. They hear one bell for where the sitting now is rather than a burst of every bell missed, the display catches up the moment the app is foregrounded, a sitting that ran past its end is recorded as the length planned, the time-only mindful-anchor practices count the minutes spent away, and the metronome dot stands still under Reduce Motion. Uncovered: backgrounding a native app and the OS Reduce Motion setting are not drivable from this repository's browser or node lanes (there is no frontend/ios or frontend/android); pinned meanwhile by useRitualEngine.background, RandomIntervalBellView.background, MindfulAnchorView.engineClock, reducer.clock and MetronomeView.reducedMotion (#3072 AC3-AC5, real-device evidence AC20).",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practiceSessions"],
+      "routes": ["POST /practice-sessions/"],
+      "tables": ["practicesession"]
+    },
+    "status": "uncovered",
+    "issue": 3072
+  },
+  {
+    "id": "account.restore-does-not-resurrect-deleted-data",
+    "description": "Someone deletes their account, or one journal page, and later the operator restores a database backup taken before that deletion. The deleted account must still be unable to sign in, and the deleted page must stay unreadable, unlisted and out of the export, because the operator exported content-free deletion tombstones before the restore and reapplied them (scripts/restore_suppression.py) before cutover. Uncovered as a seam: the hermetic drill in backend/tests/test_restore_suppression.py snapshots and restores a file-backed SQLite database in process and proves both resurrection and its suppression, but no spec restores a real Postgres backup behind the production client, and the live Railway restore drill is still owed (#3063 AC20).",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/DeleteAccountScreen.tsx",
+      "client": ["auth", "setTokenGetter", "journal", "users"],
+      "routes": [
+        "POST /auth/login",
+        "DELETE /users/me",
+        "DELETE /journal/{entry_id}",
+        "GET /journal/"
+      ],
+      "tables": ["user", "journalentry", "accountdeletionaudit", "restoremarker"]
+    },
+    "status": "uncovered",
+    "issue": 3063
+  },
+  {
+    "id": "journal.external-ai-suspended",
+    "description": "While an operator has set PRIVACY_SUSPEND_EXTERNAL_AI during a privacy incident, a writer asks for a resonance pass, a first essay letter, completion detection and a page transcription. Each answers 503 ai_suspended, charges nothing and dials no provider. Journal create, read, edit, export and account deletion keep working, and a cached letter and an intimate entry's care surface are still served (#3075). Uncovered because the e2e lane's provider environment is lane-wide, so a spec cannot flip the switch for one journey, and the client has no copy of its own for this code: the suspended-state wording is the owner's decision. Pinned meanwhile by backend/tests/incident/test_privacy_suspension.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "journal"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/transcribe-page"
+      ],
+      "tables": ["journalentry", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 3075
   }
 ]

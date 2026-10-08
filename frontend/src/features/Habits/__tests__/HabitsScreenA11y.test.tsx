@@ -19,7 +19,6 @@ jest.mock('expo-notifications', () => ({
 jest.mock('../components/AddHabitModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/GoalModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/HabitSettingsModal', () => ({ __esModule: true, default: () => null }));
-jest.mock('../components/MissedDaysModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
@@ -162,7 +161,7 @@ describe('HabitsScreen chrome accessibility', () => {
       const { getByLabelText } = render(<EnergyCTA onOpen={onOpen} onArchive={onArchive} />);
 
       // Labels contain the visible button text (WCAG 2.5.3 Label-in-Name).
-      fireEvent.press(getByLabelText('Perform Energy Scaffolding'));
+      fireEvent.press(getByLabelText('Start Energy Scaffolding'));
       expect(onOpen).toHaveBeenCalledTimes(1);
 
       fireEvent.press(getByLabelText('Archive This energy scaffolding prompt'));

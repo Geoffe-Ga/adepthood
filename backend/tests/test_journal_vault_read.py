@@ -5,7 +5,14 @@ The vault answers this router with a structured
 below also pin the two outcomes that were previously indistinguishable from a
 blank answer: a care escalation, which must reach the caller as adepthood's own
 reviewed care surface rather than as a 502 or as Creek's copy, and an empty
-reflection, which is a legitimate answer that simply defers to the cloud.
+reflection, which is a legitimate answer that settles as a refunded zero-note
+pass.
+
+Every case that connects a vault also binds the caller's boundary to it
+(:func:`_bind_to_vault`), because that -- not the vault client's type -- is what
+routes a pass to the vault (#3061). Under that boundary nothing here is ever
+answered by the app provider: :func:`_fake_cloud_llm` records every call that
+reaches it, and the vault cases assert it recorded none.
 """
 
 from __future__ import annotations
@@ -22,17 +29,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
 from domain.care import build_care_payload
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
     CreekVaultCareEscalationError,
     CreekVaultUnavailableError,
-    HandshakeResult,
-    VaultClassification,
-    VaultIngestRequest,
-    VaultIngestResult,
     VaultPraxisKind,
     VaultPraxisStatus,
     VaultReflection,
@@ -41,10 +44,8 @@ from domain.creek_vault import (
     VaultRelatedEddy,
     VaultRelatedPraxis,
     VaultTierCeiling,
-    VaultUploadRequest,
-    VaultUploadResult,
-    VaultWheelBalance,
 )
+from domain.resonance import NO_NOTES_MESSAGES, NoNotesReason
 from main import app
 from models.marginalia import Marginalia
 from models.user import User
@@ -53,7 +54,13 @@ from scripts.creek_contract_drift import BUNDLE_ROOT
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
 from services.creek_vault_client import HttpCreekVaultClient
+from services.reflection_boundary import REFLECTION_SOURCE_UNAVAILABLE, ReflectionBoundary
 from services.usage import get_monthly_cap
+from tests.support.reflecting_vault import (
+    DEFAULT_REFLECT_CAPABILITIES,
+    ReflectingVaultClient,
+    empty_reflection,
+)
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
 
@@ -71,10 +78,6 @@ _DISTRESS_BODY = "I keep thinking I want to kill myself and end my life tonight.
 _VAULT_URL = "https://vault.example.test"
 _API_KEY = "creek-vault-journal-read-key"  # pragma: allowlist secret
 _CAPABILITIES_PATH = "/v1/capabilities"
-
-_DEFAULT_REFLECT_CAPABILITIES = frozenset(
-    {CreekCapability.JOURNAL, CreekCapability.CLASSIFY, CreekCapability.REFLECT}
-)
 
 
 async def _signup(client: AsyncClient, username: str) -> dict[str, str]:
@@ -141,25 +144,20 @@ _VAULT_EDDY = VaultRelatedEddy(
 )
 
 
-def _empty_reflection() -> VaultReflection:
-    """Build the reflection a vault with nothing to say answers with."""
-    return VaultReflection(
-        status=VaultReflectionStatus.EMPTY,
-        notes=(),
-        essay=None,
-        essay_grounded=False,
-        routed_tier=VaultTierCeiling.PERSONAL,
-    )
+def _fake_cloud_llm(monkeypatch: pytest.MonkeyPatch, *notes: dict[str, str]) -> list[str]:
+    """Patch the app-provider resonance seam to return canned JSON notes; return its call log.
 
-
-def _fake_cloud_llm(monkeypatch: pytest.MonkeyPatch, *notes: dict[str, str]) -> None:
-    """Patch the cloud resonance LLM seam to return canned JSON notes."""
+    Every prompt that reaches the app provider is appended to the returned list,
+    so a vault-bound case can assert the list stayed empty.
+    """
     payload = json.dumps({"notes": list(notes)})
+    calls: list[str] = []
 
     async def _complete(
         prompt: str, history: object, *, system_prompt: object, api_key: object
     ) -> LLMResponse:
-        del prompt, history, system_prompt, api_key
+        del history, system_prompt, api_key
+        calls.append(prompt)
         return LLMResponse(
             text=payload,
             provider="stub",
@@ -169,70 +167,32 @@ def _fake_cloud_llm(monkeypatch: pytest.MonkeyPatch, *notes: dict[str, str]) -> 
         )
 
     monkeypatch.setattr(marginalia_service, "generate_response", _complete)
+    return calls
 
 
-class ReflectingVaultClient:
-    """Fake CreekVaultClient: ingests/classifies for entry creation, scripts reflect."""
+def _bind_to_vault(fake_vault: object) -> None:
+    """Serve ``fake_vault`` and bind the caller's AI operations to it (VAULT_BOUND)."""
+    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    app.dependency_overrides[get_reflection_boundary] = lambda: ReflectionBoundary.VAULT_BOUND
 
-    def __init__(
-        self,
-        *,
-        available: bool = True,
-        capabilities: frozenset[CreekCapability] = _DEFAULT_REFLECT_CAPABILITIES,
-        reflect_result: VaultReflection | None = None,
-        reflect_error: Exception | None = None,
-    ) -> None:
-        """Store the scripted handshake outcome and reflect behavior."""
-        self.ingest_calls: list[VaultIngestRequest] = []
-        self.handshake_calls = 0
-        self.reflect_calls: list[tuple[str, VaultTierCeiling]] = []
-        self._available = available
-        self._capabilities = capabilities
-        self._reflect_result = reflect_result if reflect_result is not None else _empty_reflection()
-        self._reflect_error = reflect_error
 
-    async def handshake(self) -> HandshakeResult:
-        """Record the call and return the scripted availability/capabilities."""
-        self.handshake_calls += 1
-        return HandshakeResult(
-            available=self._available,
-            contract_version=CONTRACT_VERSION,
-            ontology_version="1.0.0",
-            capabilities=self._capabilities,
-            attestation=None,
+async def _assert_refunded(session: AsyncSession, email: str) -> None:
+    """The committed deduction was compensated: wallet untouched, spend+refund audited."""
+    await session.rollback()
+    user = await _read_user(session, email)
+    assert user.monthly_messages_used == 0
+    reasons = (
+        (
+            await session.execute(
+                select(col(WalletAudit.reason))
+                .where(col(WalletAudit.user_id) == user.id)
+                .order_by(col(WalletAudit.id))
+            )
         )
-
-    def is_available(self) -> bool:
-        """Return the scripted availability."""
-        return self._available
-
-    def supports(self, capability: CreekCapability, /) -> bool:
-        """Return whether ``capability`` is in the scripted capability set."""
-        return capability in self._capabilities
-
-    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
-        """Record the request and return an incrementing vault ref (write path)."""
-        self.ingest_calls.append(request)
-        return VaultIngestResult(stored=True, vault_ref=f"vault-ref-{len(self.ingest_calls)}")
-
-    async def upload(self, request: VaultUploadRequest, /) -> VaultUploadResult:
-        """Unused on this path; raises if a test calls it by mistake."""
-        raise NotImplementedError(request)
-
-    async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
-        """Return a fixed classification tag set (write path)."""
-        return VaultClassification(tags=("courage",))
-
-    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
-        """Record the call, then raise the scripted error or return the scripted reflection."""
-        self.reflect_calls.append((body, tier_ceiling))
-        if self._reflect_error is not None:
-            raise self._reflect_error
-        return self._reflect_result
-
-    async def wheel(self) -> VaultWheelBalance:
-        """Return an empty wheel balance (unused by the reflect path)."""
-        return VaultWheelBalance(aspects=())
+        .scalars()
+        .all()
+    )
+    assert list(reasons) == [REASON_SPEND_MONTHLY, REASON_REFUND_FAILED_RESONANCE]
 
 
 class _RecordingTransportHandler:
@@ -264,7 +224,7 @@ class _RecordingTransportHandler:
 async def spied_vault() -> AsyncGenerator[tuple[HttpCreekVaultClient, _RecordingTransportHandler]]:
     """Yield a real HTTP vault client paired with the handler spying on its wire."""
     handler = _RecordingTransportHandler(
-        [capability.value for capability in _DEFAULT_REFLECT_CAPABILITIES]
+        [capability.value for capability in DEFAULT_REFLECT_CAPABILITIES]
     )
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     yield HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http), handler
@@ -330,8 +290,10 @@ async def test_vault_routes_reflection_when_available_and_supports_reflect(
             VaultReflectionNote(kind="theme", quote=_VERBATIM_QUOTE, note=_VAULT_NOTE)
         )
     )
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_routes")
     entry_id = await _create_entry(async_client, headers)
 
@@ -343,6 +305,7 @@ async def test_vault_routes_reflection_when_available_and_supports_reflect(
     assert body["marginalia"][0]["note"] == _VAULT_NOTE
     assert fake_vault.reflect_calls == [(_BODY, VaultTierCeiling.PERSONAL)]
     assert body["remaining_messages"] == get_monthly_cap() - 1
+    assert cloud_calls == []
 
 
 @pytest.mark.asyncio
@@ -358,8 +321,10 @@ async def test_vault_notes_are_anchored_against_the_body_not_trusted(
             ),
         )
     )
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_anchors")
     entry_id = await _create_entry(async_client, headers)
 
@@ -382,16 +347,24 @@ async def test_vault_notes_are_anchored_against_the_body_not_trusted(
     assert note.anchor_start == start
     assert note.anchor_end == start + len(_VERBATIM_QUOTE)
     assert note.anchor_text == _VERBATIM_QUOTE
+    assert cloud_calls == []
 
 
 @pytest.mark.asyncio
-async def test_distress_entry_never_reaches_the_vault(
-    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+async def test_distress_entry_gets_care_alone_and_reaches_no_model(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A distress-flagged entry surfaces care and cloud reflection, never the vault."""
+    """A vault-bound, distress-flagged entry gets care and no reflection from anyone.
+
+    Not the vault -- on distress adepthood does not ask it -- and no longer the
+    app provider in its place either (#3061): the care surface stands alone and
+    the committed charge is refunded.
+    """
     fake_vault = ReflectingVaultClient(reflect_result=_vault_reflection())
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": "kill myself", "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": "kill myself", "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_distress")
     entry_id = await _create_entry(async_client, headers, body=_DISTRESS_BODY)
     # Entry creation already exercises the vault write path (a handshake for
@@ -404,10 +377,11 @@ async def test_distress_entry_never_reaches_the_vault(
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     assert body["care"] is not None
-    assert len(body["marginalia"]) == 1
-    assert body["marginalia"][0]["note"] == _CLOUD_NOTE
+    assert body["marginalia"] == []
     assert fake_vault.reflect_calls == []
     assert fake_vault.handshake_calls == handshakes_after_create
+    assert cloud_calls == []
+    await _assert_refunded(db_session, "vault_read_distress@example.com")
 
 
 @pytest.mark.asyncio
@@ -423,7 +397,7 @@ async def test_intimate_entry_never_reaches_the_vault_reflect_path(
     still pass if a handshake had already gone out.
     """
     client, handler = spied_vault
-    app.dependency_overrides[get_creek_vault_client] = lambda: client
+    _bind_to_vault(client)
     headers = await _signup(async_client, "vault_read_intimate")
     entry_id = await _create_entry(
         async_client, headers, body="A private confession.", classification="intimate"
@@ -442,21 +416,24 @@ async def test_intimate_entry_never_reaches_the_vault_reflect_path(
 @pytest.mark.parametrize(
     ("available", "capabilities"),
     [
-        (False, _DEFAULT_REFLECT_CAPABILITIES),
+        (False, DEFAULT_REFLECT_CAPABILITIES),
         (True, frozenset({CreekCapability.JOURNAL, CreekCapability.CLASSIFY})),
     ],
     ids=["handshake_unavailable", "reflect_unsupported"],
 )
-async def test_no_reflect_capability_falls_back_to_cloud(
+async def test_no_reflect_capability_fails_closed(
     async_client: AsyncClient,
+    db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     available: bool,
     capabilities: frozenset[CreekCapability],
 ) -> None:
-    """No usable vault, or no REFLECT support, keeps today's cloud-only shape."""
+    """No usable vault, or no REFLECT support, is a refunded 503 -- never the app provider."""
     fake_vault = ReflectingVaultClient(available=available, capabilities=capabilities)
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, f"vault_read_nocap_{available}_{len(capabilities)}")
     entry_id = await _create_entry(async_client, headers)
     # Entry creation already calls handshake() once via the vault write path;
@@ -465,53 +442,59 @@ async def test_no_reflect_capability_falls_back_to_cloud(
 
     resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
 
-    assert resp.status_code == HTTPStatus.OK
-    body = resp.json()
-    assert len(body["marginalia"]) == 1
-    assert body["marginalia"][0]["note"] == _CLOUD_NOTE
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert resp.json()["detail"] == REFLECTION_SOURCE_UNAVAILABLE
     assert fake_vault.handshake_calls == handshakes_after_create + 1
     assert fake_vault.reflect_calls == []
+    assert cloud_calls == []
+    await _assert_refunded(
+        db_session, f"vault_read_nocap_{available}_{len(capabilities)}@example.com".lower()
+    )
 
 
 @pytest.mark.asyncio
-async def test_mid_reflect_vault_failure_degrades_to_cloud(
+async def test_mid_reflect_vault_failure_fails_closed(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A vault that advertises REFLECT but raises on the call degrades to the cloud."""
+    """A vault that advertises REFLECT but raises on the call is a refunded 503, not the cloud."""
     fake_vault = ReflectingVaultClient(
         reflect_error=CreekVaultUnavailableError("creek vault call failed: creek.reflect")
     )
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_degrade")
     entry_id = await _create_entry(async_client, headers)
 
     resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
 
-    assert resp.status_code == HTTPStatus.OK
-    body = resp.json()
-    assert len(body["marginalia"]) == 1
-    assert body["marginalia"][0]["note"] == _CLOUD_NOTE
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert resp.json()["detail"] == REFLECTION_SOURCE_UNAVAILABLE
     assert len(fake_vault.reflect_calls) == 1
-    assert body["remaining_messages"] == get_monthly_cap() - 1
+    assert cloud_calls == []
     persisted = (
         await db_session.execute(select(func.count()).select_from(Marginalia))
     ).scalar_one()
-    assert persisted == 1
+    assert persisted == 0
+    await _assert_refunded(db_session, "vault_read_degrade@example.com")
 
 
 @pytest.mark.asyncio
-async def test_empty_vault_reflection_defers_to_the_cloud(
+async def test_empty_vault_reflection_is_refunded_zero_notes(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A vault with nothing to say is a legitimate answer that simply defers to the cloud.
+    """A vault with nothing to say is a legitimate answer: zero notes, explained, uncharged.
 
-    It is not an escalation, not a failure, and not a 502 -- the user gets the
-    cloud's reflection and the pass charges exactly once, as it always did.
+    It is not an escalation, not a failure, and not a 502 -- and it is no longer
+    handed to the cloud to answer instead (#3061). The pass settles like any
+    pass that kept no notes: the server's own explanation and a refund.
     """
-    fake_vault = ReflectingVaultClient(reflect_result=_empty_reflection())
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    fake_vault = ReflectingVaultClient(reflect_result=empty_reflection())
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_empty")
     entry_id = await _create_entry(async_client, headers)
 
@@ -520,8 +503,10 @@ async def test_empty_vault_reflection_defers_to_the_cloud(
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
     assert body["care"] is None
-    assert [note["note"] for note in body["marginalia"]] == [_CLOUD_NOTE]
-    assert body["remaining_messages"] == get_monthly_cap() - 1
+    assert body["marginalia"] == []
+    assert body["no_notes_message"] == NO_NOTES_MESSAGES[NoNotesReason.NOTHING_TO_ADD]
+    assert body["remaining_messages"] == get_monthly_cap()
+    assert cloud_calls == []
 
 
 @pytest.mark.asyncio
@@ -537,8 +522,10 @@ async def test_vault_escalation_returns_adepthoods_own_care_surface(
     it has reviewed itself.
     """
     fake_vault = ReflectingVaultClient(reflect_error=_creek_escalation())
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_escalate")
     entry_id = await _create_entry(async_client, headers)
 
@@ -560,6 +547,7 @@ async def test_vault_escalation_returns_adepthoods_own_care_surface(
         assert text in resp.text
     for text in _creek_care_texts():
         assert text not in resp.text
+    assert cloud_calls == []
 
 
 @pytest.mark.asyncio
@@ -573,8 +561,10 @@ async def test_vault_escalation_never_charges_the_wallet(
     person in acute distress for a reflection they never received.
     """
     fake_vault = ReflectingVaultClient(reflect_error=_creek_escalation())
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_escalate_wallet")
     entry_id = await _create_entry(async_client, headers)
     before = await _read_user(db_session, "vault_read_escalate_wallet@example.com")
@@ -593,6 +583,7 @@ async def test_vault_escalation_never_charges_the_wallet(
         await db_session.execute(select(func.count()).select_from(Marginalia))
     ).scalar_one()
     assert persisted == 0
+    assert cloud_calls == []
 
 
 @pytest.mark.asyncio
@@ -607,8 +598,10 @@ async def test_vault_escalation_refunds_the_committed_charge(
     kept rather than the charge never landing.
     """
     fake_vault = ReflectingVaultClient(reflect_error=_creek_escalation())
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_escalate_audit")
     entry_id = await _create_entry(async_client, headers)
     before = await _read_user(db_session, "vault_read_escalate_audit@example.com")
@@ -640,6 +633,7 @@ async def test_vault_escalation_refunds_the_committed_charge(
         REASON_SPEND_MONTHLY,
         REASON_REFUND_FAILED_RESONANCE,
     ]
+    assert cloud_calls == []
 
 
 @pytest.mark.asyncio
@@ -654,8 +648,10 @@ async def test_vault_escalation_is_not_swallowed_as_a_provider_error(
     instead of a way to reach a human.
     """
     fake_vault = ReflectingVaultClient(reflect_error=_creek_escalation())
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_escalate_not502")
     entry_id = await _create_entry(async_client, headers)
 
@@ -664,6 +660,7 @@ async def test_vault_escalation_is_not_swallowed_as_a_provider_error(
     assert resp.status_code != HTTPStatus.BAD_GATEWAY
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["care"] is not None
+    assert cloud_calls == []
 
 
 @pytest.mark.asyncio
@@ -683,8 +680,10 @@ async def test_vault_related_pages_reach_the_resonance_response(
             related_eddies=(_VAULT_EDDY,),
         )
     )
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_related")
     entry_id = await _create_entry(async_client, headers)
 
@@ -709,6 +708,7 @@ async def test_vault_related_pages_reach_the_resonance_response(
             "formed": _VAULT_EDDY.formed,
         }
     ]
+    assert cloud_calls == []
 
 
 @pytest.mark.asyncio
@@ -719,11 +719,15 @@ async def test_a_cloud_reflection_carries_no_related_pages(
 
     Empty rather than absent: the fields are always present on the response, so a
     client never has to distinguish "this server does not send them" from "this
-    pass surfaced none".
+    pass surfaced none". Pinned to an app-provider-bound caller, the only one
+    a cloud reflection is ever produced for.
     """
     fake_vault = ReflectingVaultClient(available=False, capabilities=frozenset())
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
     app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    app.dependency_overrides[get_reflection_boundary] = lambda: ReflectionBoundary.APP_PROVIDER
     headers = await _signup(async_client, "vault_read_no_related")
     entry_id = await _create_entry(async_client, headers)
 
@@ -734,6 +738,7 @@ async def test_a_cloud_reflection_carries_no_related_pages(
     assert [note["note"] for note in body["marginalia"]] == [_CLOUD_NOTE]
     assert body["related_praxis"] == []
     assert body["related_eddies"] == []
+    assert len(cloud_calls) == 1
 
 
 @pytest.mark.asyncio
@@ -748,8 +753,10 @@ async def test_an_intimate_entry_publishes_empty_related_collections(
             related_eddies=(_VAULT_EDDY,),
         )
     )
-    _fake_cloud_llm(monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE})
-    app.dependency_overrides[get_creek_vault_client] = lambda: fake_vault
+    cloud_calls = _fake_cloud_llm(
+        monkeypatch, {"kind": "theme", "quote": _VERBATIM_QUOTE, "note": _CLOUD_NOTE}
+    )
+    _bind_to_vault(fake_vault)
     headers = await _signup(async_client, "vault_read_intimate_related")
     entry_id = await _create_entry(async_client, headers, classification="intimate")
 
@@ -761,3 +768,4 @@ async def test_an_intimate_entry_publishes_empty_related_collections(
     assert body["related_praxis"] == []
     assert body["related_eddies"] == []
     assert fake_vault.reflect_calls == []
+    assert cloud_calls == []

@@ -87,11 +87,11 @@ describe('provider-managed vault activation choice', () => {
 
     expect(view.getByText(/optional storage/iu)).toBeTruthy();
     expect(view.getByText('Adepthood is complete without a managed vault.')).toBeTruthy();
-    expect(view.getByText(/encrypted with provider-managed keys/u)).toBeTruthy();
-    expect(view.getByText(/operator can access stored bytes/u)).toBeTruthy();
+    expect(view.getByText(/Fly holds the keys/u)).toBeTruthy();
+    expect(view.getByText(/could read what is stored there/u)).toBeTruthy();
     expect(
       view.getByText(
-        /INTIMATE entries stay in Adepthood and are never sent to this managed vault/u,
+        /Entries you mark Intimate stay in Adepthood and are never sent to a managed vault/u,
       ),
     ).toBeTruthy();
     expect(view.queryByTestId('vault-passphrase-input')).toBeNull();
@@ -138,10 +138,8 @@ describe('provider-managed vault activation choice', () => {
     const view = await renderActivation();
 
     fireEvent.press(view.getByTestId('continue-vault-activation'));
-    expect(
-      view.getByText(/Provider-managed keys unlock it after unattended restarts/u),
-    ).toBeTruthy();
-    expect(view.getByText(/will not ask you to create or store unlock material/u)).toBeTruthy();
+    expect(view.getByText(/holds the keys that open it/u)).toBeTruthy();
+    expect(view.getByText(/never be asked to make or keep a key yourself/u)).toBeTruthy();
     expect(mockActivate).not.toHaveBeenCalled();
 
     await act(async () => fireEvent.press(view.getByTestId('activate-private-vault')));
@@ -199,7 +197,7 @@ describe('resumable progress and honest custody', () => {
 
     await act(async () => fireEvent.press(view.getByTestId('retry-vault-activation')));
 
-    expect(view.getByText('The retry did not reach Creek. Try again when ready.')).toBeTruthy();
+    expect(view.getByText('That did not go through. Try again when you are ready.')).toBeTruthy();
     expect(view.getByTestId('retry-vault-activation')).toBeTruthy();
   });
 
@@ -213,14 +211,12 @@ describe('resumable progress and honest custody', () => {
     };
     const view = await renderActivation(failed);
 
-    expect(
-      view.getByText(/remove the failed allocation before creating a fresh one/u),
-    ).toBeTruthy();
+    expect(view.getByText(/has to be cleared away before a fresh one is made/u)).toBeTruthy();
     await act(async () => fireEvent.press(view.getByTestId('recover-vault-activation')));
 
     expect(mockRecover).toHaveBeenCalledTimes(1);
     expect(mockRetry).not.toHaveBeenCalled();
-    expect(view.getByText(/securely removing the failed allocation/u)).toBeTruthy();
+    expect(view.getByText(/Clearing away the vault that did not finish/u)).toBeTruthy();
     expect(view.getByText(/may take up to 24 hours/u)).toBeTruthy();
     expect(view.getByText(/leave this page and return later/u)).toBeTruthy();
     expect(view.getByText(/journal remains available/u)).toBeTruthy();
@@ -237,7 +233,7 @@ describe('resumable progress and honest custody', () => {
 
     const view = await renderActivation(failed);
 
-    expect(view.getByText(/Contact support before trying again/u)).toBeTruthy();
+    expect(view.getByText(/Get in touch with support before trying again/u)).toBeTruthy();
     expect(view.queryByTestId('retry-vault-activation')).toBeNull();
     expect(view.queryByTestId('recover-vault-activation')).toBeNull();
   });
@@ -246,19 +242,35 @@ describe('resumable progress and honest custody', () => {
     const view = await renderActivation(READY);
 
     expect(view.getByText('Your managed vault is ready.')).toBeTruthy();
-    expect(view.getByText(/encrypted with provider-managed keys/u)).toBeTruthy();
-    expect(view.getByText(/operator can access stored bytes/u)).toBeTruthy();
-    expect(view.getByText(/not confidential compute/u)).toBeTruthy();
+    expect(view.getByText(/keys the hosting company \(Fly\) holds/u)).toBeTruthy();
+    expect(view.getByText(/can read what is stored there/u)).toBeTruthy();
+    expect(view.getByText(/not sealed off from the people who run it/u)).toBeTruthy();
     expect(
-      view.getByText(/INTIMATE entries remain in Adepthood and are skipped by the managed vault/u),
+      view.getByText(/Entries you mark Intimate stay in Adepthood and never go there/u),
     ).toBeTruthy();
   });
+
+  it.each(['provider_managed', 'wrapped_artifact_only', null] as const)(
+    'claims storage custody at readiness, never a working model (%s, #3062)',
+    async (custodyMode) => {
+      const view = await renderActivation({ ...READY, custody_mode: custodyMode });
+
+      // A ready vault is storage that answered its health probe; it proves no
+      // inference, so the card may not say anything about a model.
+      const words = within(view.getByTestId('activation-ready'))
+        .getAllByText(/./u)
+        .map((node) => String(node.props.children))
+        .join(' ');
+      expect(words).not.toBe('');
+      expect(words).not.toMatch(/\bmodel\b|\blocal\b|\bAI\b/u);
+    },
+  );
 
   it('does not reinterpret a retired wrapped artifact as user-held custody', async () => {
     const view = await renderActivation({ ...READY, custody_mode: 'wrapped_artifact_only' });
 
-    expect(view.getByText(/old wrapped artifact never controlled Fly storage/u)).toBeTruthy();
-    expect(view.getByText(/no user-held recovery claim applies/u)).toBeTruthy();
+    expect(view.getByText(/set up under an older arrangement/u)).toBeTruthy();
+    expect(view.getByText(/there is no key of yours to recover/u)).toBeTruthy();
   });
 
   it('keeps a failed status read from blocking the journal', async () => {
@@ -276,7 +288,7 @@ const NAV_TITLE = 'Create managed vault';
 /** The paraphrase the body used to paint under it (#2995). */
 const RETIRED_BODY_TITLE = 'Create your managed vault';
 const EYEBROW = 'OPTIONAL STORAGE';
-const LEAD = 'An account-scoped managed cloud vault, activated only when you choose.';
+const LEAD = 'A managed vault in the cloud, just for your account, set up only when you choose.';
 
 describe('PrivateVaultActivationScreen — navigation owns the title (#2962)', () => {
   // Not the consent stage: its primary button is labelled NAV_TITLE, which is

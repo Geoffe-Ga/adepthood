@@ -1,22 +1,44 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { render, fireEvent } from '@testing-library/react-native';
 import React from 'react';
-import { Text, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 
+import { decorativeHidden } from '../../../../components/a11yHidden';
+import { touchTarget } from '../../../../design/tokens';
+import { MODAL_CLOSE_LABEL } from '../modalCloseLabels';
 import ModalHeader from '../ModalHeader';
 
 describe('ModalHeader', () => {
-  it('renders a plain string title and the close glyph', () => {
-    const { getByText } = render(<ModalHeader title="Add Habit" onClose={jest.fn()} />);
+  it('renders a plain string title and the close control', () => {
+    const { getByText, getByRole } = render(<ModalHeader title="Add Habit" onClose={jest.fn()} />);
     expect(getByText('Add Habit')).toBeTruthy();
-    expect(getByText('×')).toBeTruthy();
+    expect(getByRole('button', { name: MODAL_CLOSE_LABEL })).toBeTruthy();
   });
 
   it('calls onClose exactly once when the close button is pressed', () => {
     const onClose = jest.fn();
-    const { getByText } = render(<ModalHeader title="Add Habit" onClose={onClose} />);
-    fireEvent.press(getByText('×'));
+    const { getByRole } = render(<ModalHeader title="Add Habit" onClose={onClose} />);
+    fireEvent.press(getByRole('button', { name: MODAL_CLOSE_LABEL }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes the close control as a named button with a 44dp target and a hidden glyph', () => {
+    const onClose = jest.fn();
+    const { getByRole, queryByRole, getByText } = render(
+      <ModalHeader title="Add Habit" onClose={onClose} closeLabel="Close add habit" />,
+    );
+    const button = getByRole('button', { name: 'Close add habit' });
+    fireEvent.press(button);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    // The caller's label is used verbatim, never alongside the default.
+    expect(queryByRole('button', { name: MODAL_CLOSE_LABEL })).toBeNull();
+
+    const style = StyleSheet.flatten(button.props.style);
+    expect(style.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
+
+    // The glyph is decoration: the button's name is what a reader announces.
+    expect(getByText('×', { includeHiddenElements: true }).props).toMatchObject(decorativeHidden());
   });
 
   it('carries a testID on the close button when provided, and omits it otherwise', () => {

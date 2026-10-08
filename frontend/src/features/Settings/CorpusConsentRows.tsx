@@ -30,7 +30,7 @@ const NOTE_ICON_SIZE = 22;
  * names, with the question asked before a withdrawal deletes anything.
  *
  * Lifted out of ``CorpusConsentScreen`` so the same switches can sit on the
- * Settings hub, under Your corpus, where somebody who has just given their
+ * Settings hub, under Your writing, where somebody who has just given their
  * corpus a vault goes looking for them. One component, mounted in two places,
  * so the two can never disagree on what a switch does or asks.
  *

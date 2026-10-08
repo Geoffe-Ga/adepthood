@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from curriculum.stage_correspondence import stage_correspondence
 from domain.frequencies import (
     FREQUENCY_COLORS,
     FREQUENCY_NAMES,
@@ -118,21 +119,30 @@ def test_the_prompt_is_generated_from_the_vocabulary() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "classification",
+    [JournalClassification.INTIMATE, "intimate", "INTIMATE", "bogus", ""],
+)
 async def test_intimate_content_never_reaches_a_provider(
     monkeypatch: pytest.MonkeyPatch,
+    classification: str,
 ) -> None:
     """The refusal precedes the call, not merely the network.
 
     The fake raises on any invocation, so this fails if the guard is ever moved
     below request construction -- the failure mode where the content has
     already been assembled into a payload and only the send is skipped.
+
+    The plain-``str`` and unknown spellings pin the fail-closed allowlist
+    (#3059): an identity check against the enum member let a ``str``
+    ``"intimate"`` through, and a deny-list let an unknown tier through.
     """
     _forbid_provider(monkeypatch)
 
     with pytest.raises(fc.IntimateContentRefusedError):
         await fc.classify_frequencies(
             "Something I would only write to myself.",
-            classification=JournalClassification.INTIMATE,
+            classification=classification,
         )
 
 
@@ -465,9 +475,12 @@ async def test_no_bound_is_the_default_and_leaves_the_provider_layer_alone(
 # --- the vocabulary is one thing, not three ----------------------------------
 # Aspects of Wholeness == Frequencies == Stages, keyed by colour. NORTH-STAR.md
 # states the identity and graph/ontology-spine.md writes it as an equation per
-# row. These tests hold the vendored table to the curriculum dataset so the two
+# row. These tests hold the vendored table to the curriculum so the two
 # spellings of one ontology cannot drift apart -- which is the whole reason the
-# vendored copy is allowed to exist.
+# vendored copy is allowed to exist. The colour join reads the generated
+# stage_correspondence.json, the canonical source the database is seeded from
+# (#2667); the labelings test still reads the curriculum dataset because it
+# needs the stage ``title``, which the artifact does not carry.
 
 
 def _curriculum_stages() -> list[dict[str, object]]:
@@ -485,13 +498,15 @@ def _curriculum_stages() -> list[dict[str, object]]:
 def test_the_vendored_colours_match_the_curriculum() -> None:
     """Colour is the primary key, so it is the join that must hold exactly.
 
-    If this fails, one of the two spellings of a single ontology has moved and
-    every colour-keyed surface -- content directories, STAGE_COLORS, the habit
-    ring -- is now pointing somewhere the other does not agree with.
+    Held against the generated stage-correspondence artifact, not the
+    ``archetypal_wavelength.json`` mirror, so the table follows the source the
+    ``coursestage`` rows are seeded from. If this fails, one of the two
+    spellings of a single ontology has moved and every colour-keyed surface --
+    content directories, STAGE_COLORS, the habit ring -- is now pointing
+    somewhere the other does not agree with.
     """
     curriculum = {
-        int(str(stage["stage_number"])): stage["spiral_dynamics_color"]
-        for stage in _curriculum_stages()
+        stage.stage_number: stage.spiral_dynamics_color for stage in stage_correspondence().stages
     }
 
     assert curriculum == {int(code.value[1:]): FREQUENCY_COLORS[code] for code in Frequency}
@@ -525,7 +540,7 @@ def test_the_two_labelings_of_a_position_may_differ_but_the_colour_may_not() -> 
     F5      Achievism                   Intellectual Understanding / Achievist
     F6      Pluralism                   Embodied Understanding / Pluralist
     F7      Integration                 Systems Wisdom / Integrative
-    F8      True Self / Transcendence   True Self Connection / Nondual
+    F8      True Self / Transcendence   True Self Connection / True Self Connection
     ======  ==========================  ============================
 
     Those are the same four positions under two vocabularies, not eight

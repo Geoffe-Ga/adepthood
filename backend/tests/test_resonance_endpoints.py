@@ -83,7 +83,8 @@ def _billed_llm(monkeypatch: pytest.MonkeyPatch, *notes: dict[str, str]) -> None
 
     :func:`_fake_llm` answers as the stub, and stub responses are deliberately
     skipped by the usage log — so any assertion about metering made against it
-    would pass for the wrong reason.
+    would pass for the wrong reason. A stub pass is also a demo whose unit is
+    handed back (#3062), so a test about a charge that *stands* answers here.
     """
     payload = json.dumps({"notes": list(notes)})
 
@@ -152,7 +153,7 @@ async def test_resonance_persists_notes_and_charges_one(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A successful pass persists the anchored notes and charges one message."""
-    _fake_llm(
+    _billed_llm(
         monkeypatch,
         {"kind": "symbol", "quote": "the willow bent without breaking", "note": "It holds."},
         {"kind": "theme", "quote": "I walked by the river", "note": "You return to water."},
@@ -464,7 +465,7 @@ async def test_normal_entry_returns_no_care(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A non-distress entry is unchanged: care is None, marginalia intact."""
-    _fake_llm(
+    _billed_llm(
         monkeypatch,
         {"kind": "theme", "quote": "I walked by the river", "note": "You return to water."},
     )
@@ -948,7 +949,7 @@ class TestZeroNotePassIsNeverSilent:
         self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The happy path must be untouched: notes, a charge, and no notice."""
-        _fake_llm(
+        _billed_llm(
             monkeypatch, {"kind": "theme", "quote": "I walked by the river", "note": "Water."}
         )
         headers = await _signup(async_client, "kept")

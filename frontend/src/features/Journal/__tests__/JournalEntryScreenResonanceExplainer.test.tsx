@@ -570,7 +570,7 @@ describe('JournalEntryScreen — a reader who already dismissed it', () => {
 describe('JournalEntryScreen — a stale wallet read is corrected by the pass', () => {
   const fundingFailures: Array<[string, RegExp, RegExp | null]> = [
     ['insufficient_offerings', /BotMason balance has run out/u, null],
-    ['llm_key_required', /deployment needs an API key/u, /balance has run out|monthly reset/u],
+    ['llm_key_required', /needs an API key of your own/u, /balance has run out|monthly reset/u],
   ];
 
   it.each(fundingFailures)(
@@ -775,7 +775,7 @@ const ESSAY_NOTE = {
 describe('JournalEntryScreen — an essay 402 opens the same refill remedy', () => {
   it.each([
     ['insufficient_offerings', /BotMason balance has run out/u],
-    ['llm_key_required', /deployment needs an API key/u],
+    ['llm_key_required', /needs an API key of your own/u],
   ])('closes the note and opens the refill dialog on a 402 %s', async (detail, copy) => {
     mockList.mockResolvedValue({ items: [ESSAY_NOTE] });
     mockEssay.mockRejectedValueOnce(apiError(402, detail));
@@ -848,7 +848,7 @@ describe('JournalEntryScreen — a guardrail refusal is honest and costs nothing
     ],
     [
       'daily_generation_limit_reached',
-      "You've reached today's limit for new readings and letters, and nothing was charged for this request. It resets at midnight UTC.",
+      "You've hit today's limit for new readings and letters, and nothing was charged. A fresh day's worth opens at midnight UTC — that's evening in the Americas.",
     ],
   ])('renders a 429 %s in the announced margin line, not the refill', async (detail, copy) => {
     mockGenerate.mockRejectedValueOnce(apiError(429, detail));

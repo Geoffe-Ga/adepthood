@@ -240,7 +240,7 @@ describe('useHabitActions.logUnit', () => {
 
     expect(showToast).toHaveBeenCalledTimes(1);
     expect(showToast.mock.calls[0]?.[0]).toMatchObject({
-      message: expect.stringMatching(/Low Goal achieved/i) as unknown,
+      message: expect.stringMatching(/Low Goal met/i) as unknown,
     });
   });
 
@@ -475,7 +475,7 @@ describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
     expect(showToast).toHaveBeenCalledTimes(1);
     const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
     expect(toast.color).toBe(colors.secondary);
-    expect(toast.message).not.toMatch(/out of sync/i);
+    expect(toast.message).not.toMatch(/refreshed your habits/i);
     // Nothing is queued, and no futile refresh fires.
     expect(savePendingCheckIn).not.toHaveBeenCalled();
     expect(habitsApi.listAll).not.toHaveBeenCalled();
@@ -496,7 +496,7 @@ describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
     expect(showToast).toHaveBeenCalledTimes(1);
     const toast = showToast.mock.calls[0]?.[0] as { message: string; color?: string };
     expect(toast.message).toMatch(/sample habits/i);
-    expect(toast.message).not.toMatch(/Goal achieved/i);
+    expect(toast.message).not.toMatch(/Goal (met|achieved)/i);
     expect(toast.message).not.toMatch(/sync when you reconnect/i);
     expect(toast.color).toBe(colors.secondary);
   });
@@ -521,7 +521,7 @@ describe('useHabitActions.logUnit on a demo-seed tile while online', () => {
     );
     expect(showToast).toHaveBeenCalledTimes(1);
     expect(showToast.mock.calls[0]?.[0]).toMatchObject({
-      message: expect.stringMatching(/Low Goal achieved/i) as unknown,
+      message: expect.stringMatching(/Low Goal met/i) as unknown,
     });
   });
 });
@@ -612,23 +612,6 @@ describe('useHabitActions.addHabit', () => {
     expect(habitsApi.create).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'Brand New', icon: '🆕' }),
     );
-  });
-});
-
-describe('useHabitActions tz binding for date-shifted mutations', () => {
-  it('forwards the hook tz prop as the third argument to backfillMissedDays', () => {
-    // Spy before render: useMemo captures whatever habitManager.backfillMissedDays
-    // currently is, so the spy must already be in place at capture time.
-    const backfillSpy = jest.spyOn(habitManager, 'backfillMissedDays').mockImplementation(() => {});
-    const { result } = renderActions();
-    const days = [new Date('2025-01-02')];
-
-    act(() => {
-      result.current.actions.backfillMissedDays(1, days);
-    });
-
-    expect(backfillSpy).toHaveBeenCalledWith(1, days, 'UTC');
-    backfillSpy.mockRestore();
   });
 });
 

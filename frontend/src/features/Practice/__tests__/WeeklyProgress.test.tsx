@@ -28,14 +28,14 @@ describe('WeeklyProgress', () => {
   it('shows a helper line counting down remaining practices', () => {
     const { getByTestId } = render(<WeeklyProgress count={3} />);
     expect(getByTestId('weekly-helper').props.children).toBe(
-      '1 more practice to reach your weekly goal.',
+      "1 more practice would fill out the week — if there's room for it.",
     );
   });
 
   it('uses the plural form when more than one practice remains', () => {
     const { getByTestId } = render(<WeeklyProgress count={1} />);
     expect(getByTestId('weekly-helper').props.children).toBe(
-      '3 more practices to reach your weekly goal.',
+      "3 more practices would fill out the week — if there's room for it.",
     );
   });
 
@@ -43,7 +43,7 @@ describe('WeeklyProgress', () => {
     const { getByTestId } = render(<WeeklyProgress count={0} />);
     expect(getByTestId('week-count-text').props.children).toEqual([0, ' of ', 4]);
     expect(getByTestId('weekly-helper').props.children).toBe(
-      'Complete 4 practices this week to reach your goal.',
+      "4 practices make a full week. Start whenever you're ready.",
     );
   });
 

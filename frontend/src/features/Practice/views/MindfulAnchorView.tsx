@@ -4,9 +4,10 @@
  *
  * Unlike the step-based modes there is no `currentStepIndex`: the flow is
  * "Begin → Save", which maps onto the engine `status` transitions
- * `idle → running → complete`. The view owns its option selection and a
- * 1-Hz local elapsed counter (display only — it never mutates engine
- * state); on save it emits a `MindfulAnchorMetadata` payload upward.
+ * `idle → running → complete`. The view owns its option selection and reads
+ * elapsed time from the engine's wall clock (a view-local interval would
+ * stall while the app is backgrounded and undercount the sitting); on save
+ * it emits a `MindfulAnchorMetadata` payload upward.
  *
  * The `min_duration_seconds` floor is a *soft* gate: saving below it pops a
  * confirmation rather than blocking, so a user with a real reason to cut
@@ -24,7 +25,7 @@ import type {
 } from '../engine/types';
 import { MS_PER_SECOND } from '../engine/types';
 
-import { formatTime } from './formatTime';
+import { formatTime, spokenTime } from './formatTime';
 import RitualControlsBar from './RitualControlsBar';
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
@@ -66,38 +67,30 @@ interface AnchorState {
 }
 
 /**
- * Owns the view-local session state: the chosen option, a 1-Hz elapsed
- * counter (display + gate only — it never touches the engine), and the
- * soft-gate confirmation visibility.
+ * Owns the view-local session state: the chosen option and the soft-gate
+ * confirmation visibility. Elapsed seconds come from the engine's wall-clock
+ * `elapsedMs`, so time spent with the app backgrounded is counted.
  */
 function useAnchorState(
   config: MindfulAnchorConfig,
   controls: RitualControls,
-  status: RitualState['status'],
+  state: RitualState,
   onComplete: Props['onComplete'],
 ): AnchorState {
+  const { status } = state;
   const [selectedOptionKey, setSelectedOptionKey] = useState<string | null>(null);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [confirmVisible, setConfirmVisible] = useState(false);
-
-  const tick = useCallback(() => setElapsedSeconds((seconds) => seconds + 1), []);
-
-  useEffect(() => {
-    if (status !== 'running') return undefined;
-    const handle = setInterval(tick, MS_PER_SECOND);
-    return () => clearInterval(handle);
-  }, [status, tick]);
+  const elapsedSeconds = Math.floor(state.elapsedMs / MS_PER_SECOND);
 
   // A return to `idle` means cancel (or a fresh session): wipe local state.
   useEffect(() => {
     if (status !== 'idle') return;
     setSelectedOptionKey(null);
-    setElapsedSeconds(0);
     setConfirmVisible(false);
   }, [status]);
 
   // `elapsedSeconds` is in the dep array, so `commit` always re-binds to the
-  // latest tick — including the seconds that pass while the soft-gate confirm
+  // latest engine tick — the engine keeps running while the soft-gate confirm
   // dialog sits open. The saved `duration_seconds` reflects the moment the
   // user actually confirms, not the moment they first tapped Save.
   const commit = useCallback(() => {
@@ -132,7 +125,7 @@ function useAnchorState(
 const MindfulAnchorView = ({ config, state, controls, onComplete }: Props): React.JSX.Element => {
   const { status } = state;
   const surface = useSessionSurface();
-  const anchor = useAnchorState(config, controls, status, onComplete);
+  const anchor = useAnchorState(config, controls, state, onComplete);
   const beginDisabled = config.require_option_choice && anchor.selectedOptionKey === null;
   return (
     <SessionContainer testID="mindful-anchor-view">
@@ -261,6 +254,8 @@ const ElapsedDisplay = ({ seconds, surface }: ElapsedDisplayProps): React.JSX.El
     <Text
       style={[styles.elapsedTime, { color: surface.text }]}
       testID="mindful-anchor-elapsed-time"
+      accessibilityRole="timer"
+      accessibilityLabel={spokenTime(seconds * MS_PER_SECOND, 'elapsed')}
     >
       {formatTime(seconds * MS_PER_SECOND)}
     </Text>

@@ -141,6 +141,7 @@ from services.account_egress_barrier import ensure_account_live, hold_account
 from services.botmason import LLMCreditExhaustedError
 from services.corpus_consent import ConsentChange, load_consent
 from services.corpus_ingest import INGEST_SOURCE, ingest_journal_entry
+from services.privacy_suspension import external_ai_suspended
 
 logger = logging.getLogger(__name__)
 
@@ -432,6 +433,11 @@ async def _offer_one(session: AsyncSession, *, entry: JournalEntry, user_id: int
         current = await _still_a_candidate(session, entry_id=entry.id, user_id=user_id)
         if current is None:
             return _SKIPPED
+        if external_ai_suspended():
+            # The operator has suspended every cloud call (#3075). The classifier
+            # would degrade that refusal to "unclassified" and the mark below
+            # would demote an entry no provider saw, so stop as a spent balance does.
+            return _STOPPED
         try:
             fragment = await ingest_journal_entry(
                 session, current, timeout_seconds=BACKFILL_ENTRY_SECONDS
@@ -481,7 +487,8 @@ async def _offer_batch(
     the sweep would say less about more. The same break serves a revoked
     permission and an erased account, for the same reason: they are facts about
     the sweep rather than about the entry, and :func:`_offer_one` reports all
-    three by asking it to stop.
+    three by asking it to stop. An operator's ``PRIVACY_SUSPEND_EXTERNAL_AI``
+    is a fourth, and the same kind of fact: a refusal no provider saw (#3075).
     """
     considered = 0
     added = 0

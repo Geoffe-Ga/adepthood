@@ -1,5 +1,6 @@
 /* eslint-env jest */
 /* global describe, it, expect */
+import { hyphenate } from '../../../design/hyphenation';
 import { editorialType, ink, surface, uiType } from '../../../design/tokens';
 import {
   ARROW_LABEL_LADDER,
@@ -11,7 +12,6 @@ import {
   labelCorner,
   noteCorner,
   MAP_ROWS,
-  MAP_TITLE_LINES,
   MIXED_CASE_GLYPH_EM_WIDTH,
   RIGHT_LABEL_MAX_FONT_SIZE,
   RIGHT_LABEL_LADDER,
@@ -22,13 +22,15 @@ import {
   STAGE_PERSONA_LADDER,
   STAGE_PERSONA_MAX_FONT_SIZE,
   STAGE_TEXT_MIN_FONT_SIZE,
-  TITLE_BY_STAGE,
   TITLE_LADDER,
   TITLE_MAX_FONT_SIZE,
   TITLE_MIN_FONT_SIZE,
 } from '../mapLayout';
 import { isLeftReturning, STAGE_COUNT } from '../stageData';
+import { isTitleStage } from '../stageVocabulary';
 import { centerColumnBounds } from '../waveGeometry';
+
+import { GOLDEN_ROWS, GOLDEN_WATERMARKS, goldenStage } from './stageVocabularyGolden';
 
 const HEX_COLOR = /^#[\da-f]{6}$/i;
 const ALL_STAGES = Array.from({ length: STAGE_COUNT }, (_, i) => STAGE_COUNT - i);
@@ -54,76 +56,68 @@ const contrast = (a: string, b: string): number => {
 
 const AA_NORMAL = 4.5;
 
-// Locate a stage's display copy, failing loudly (not with a false-positive
-// undefined) if a stage number is ever missing from STAGE_DISPLAY.
+// A stage's static colours and practice beside the words a seeded server
+// serves for it (the golden), failing loudly if STAGE_DISPLAY lacks the stage.
 const requireDisplay = (stageNumber: number) => {
   const display = STAGE_DISPLAY[stageNumber];
   if (!display) {
     throw new Error(`no STAGE_DISPLAY entry for stage ${stageNumber}`);
   }
-  return display;
+  return { ...display, ...goldenStage(stageNumber) };
 };
 
-// Locate a row by its rightLabel, failing loudly (not with a false-positive
-// undefined) if the expected copy ever moves or is renamed.
+// A golden row as the right column fits it: the served category and the lines
+// ``hyphenate`` breaks it into, failing loudly if the category is unknown.
 const findRowByLabel = (label: string) => {
-  const row = MAP_ROWS.find((r) => r.rightLabel === label);
+  const row = GOLDEN_ROWS.find((r) => r.category === label);
   if (!row) {
-    throw new Error(`no MAP_ROWS entry with rightLabel ${label}`);
+    throw new Error(`no golden row with category ${label}`);
   }
-  return row;
+  return { rightLabel: row.category, rightLabelLines: hyphenate(row.category) };
 };
+
+/** The static fields a stage keeps once its words come from the server (#2666). */
+const STATIC_STAGE_FIELDS = ['leftTextColor', 'practice', 'stageNumber', 'textColor'];
 
 describe('mapLayout', () => {
-  it('defines display copy for every stage', () => {
+  it('keeps only static practice and colour fields for every stage', () => {
     ALL_STAGES.forEach((stageNumber) => {
       const display = STAGE_DISPLAY[stageNumber];
       expect(display).toBeDefined();
+      expect(Object.keys(display ?? {}).sort()).toEqual(STATIC_STAGE_FIELDS);
       expect(display?.stageNumber).toBe(stageNumber);
-      expect(display?.persona).toBeTruthy();
-      expect(display?.descriptor).toBeTruthy();
       expect(display?.practice).toBeTruthy();
       expect(display?.textColor).toMatch(HEX_COLOR);
     });
   });
 
-  it('omits the arrow label only on the two title stages (9 and 10)', () => {
-    const labelled = ALL_STAGES.filter((n) => STAGE_DISPLAY[n]?.arrowLabel !== '');
-    const titleStages = ALL_STAGES.filter((n) => STAGE_DISPLAY[n]?.arrowLabel === '');
-    expect(titleStages.sort((a, b) => a - b)).toEqual([9, 10]);
-    expect(labelled).toHaveLength(STAGE_COUNT - 2);
-  });
-
-  it('covers all ten stages across six rows, top → bottom', () => {
+  it('covers all ten stages across six rows, top → bottom, carrying no label of their own', () => {
     expect(MAP_ROWS).toHaveLength(6);
     const ordered = MAP_ROWS.flatMap((row) => row.stageNumbers);
     expect(ordered).toEqual([10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
-    MAP_ROWS.forEach((row) => expect(row.rightLabel).toBeTruthy());
-  });
-
-  it('exposes the EMPTINESS / UNITY title', () => {
-    expect(MAP_TITLE_LINES).toEqual(['EMPTINESS', 'UNITY']);
+    MAP_ROWS.forEach((row) => expect(Object.keys(row)).toEqual(['stageNumbers']));
   });
 
   it('gives every two-line right-label fallback two hyphenated lines, each within the cell width', () => {
     // Single-line fallbacks (the common case) carry the full, un-truncated
     // word instead: fitRightLabel steps it down the ramp to fit at render
     // time, so they are not bound by the old fixed-width hyphenation budget.
-    MAP_ROWS.forEach((row) => {
-      expect(row.rightLabelLines.length).toBeGreaterThanOrEqual(1);
-      expect(row.rightLabelLines.length).toBeLessThanOrEqual(2);
-      if (row.rightLabelLines.length === 2) {
-        row.rightLabelLines.forEach((line) => {
+    GOLDEN_ROWS.forEach((row) => {
+      const lines = hyphenate(row.category);
+      expect(lines.length).toBeGreaterThanOrEqual(1);
+      expect(lines.length).toBeLessThanOrEqual(2);
+      if (lines.length === 2) {
+        lines.forEach((line) => {
           expect(line.length).toBeLessThanOrEqual(MAX_RIGHT_LABEL_LINE_LENGTH);
         });
       }
     });
   });
 
-  it('rejoins each rightLabelLines back to its rightLabel, ignoring hyphen placement', () => {
-    MAP_ROWS.forEach((row) => {
-      const rejoined = row.rightLabelLines.join('').replaceAll('-', '');
-      expect(rejoined).toBe(row.rightLabel.replaceAll('-', ''));
+  it('rejoins each fallback back to its category, ignoring hyphen placement', () => {
+    GOLDEN_ROWS.forEach((row) => {
+      const rejoined = hyphenate(row.category).join('').replaceAll('-', '');
+      expect(rejoined).toBe(row.category.replaceAll('-', ''));
     });
   });
 
@@ -270,40 +264,54 @@ describe('fittedTitleFontSize', () => {
   const LONGEST_TITLE = 'EMPTINESS';
 
   it('renders at the ceiling before layout reports a width', () => {
-    expect(fittedTitleFontSize(0)).toBe(TITLE_MAX_FONT_SIZE);
+    expect(fittedTitleFontSize(0, GOLDEN_WATERMARKS)).toBe(TITLE_MAX_FONT_SIZE);
+  });
+
+  it('renders at the ceiling before any title stage has loaded', () => {
+    expect(fittedTitleFontSize(10, [])).toBe(TITLE_MAX_FONT_SIZE);
+  });
+
+  it('sizes off the longest line it is given, wherever that line sits', () => {
+    const PHONE_CELL = 142;
+    const size = fittedTitleFontSize(PHONE_CELL, ['EMPTINESS', 'UNITY']);
+    expect(fittedTitleFontSize(PHONE_CELL, ['UNITY', 'EMPTINESS'])).toBe(size);
+    expect(fittedTitleFontSize(PHONE_CELL, ['EMPTINESS'])).toBe(size);
+    expect(fittedTitleFontSize(PHONE_CELL, ['UNITY'])).toBeGreaterThan(size);
   });
 
   it('holds the ceiling wherever the longest title line fits it', () => {
-    expect(fittedTitleFontSize(1000)).toBe(TITLE_MAX_FONT_SIZE);
+    expect(fittedTitleFontSize(1000, GOLDEN_WATERMARKS)).toBe(TITLE_MAX_FONT_SIZE);
   });
 
   it('steps down the ramp at the exact width the longer line stops fitting', () => {
     // EMPTINESS at 20px: 9 * (20 * 0.72 + 1) = 138.6.
     const edge = estimatedWidth(LONGEST_TITLE, editorialType.heading.fontSize);
-    expect(fittedTitleFontSize(edge)).toBe(editorialType.heading.fontSize);
-    expect(fittedTitleFontSize(edge - JUST_UNDER)).toBe(editorialType.body.fontSize);
+    expect(fittedTitleFontSize(edge, GOLDEN_WATERMARKS)).toBe(editorialType.heading.fontSize);
+    expect(fittedTitleFontSize(edge - JUST_UNDER, GOLDEN_WATERMARKS)).toBe(
+      editorialType.body.fontSize,
+    );
   });
 
   it('sizes EMPTINESS and UNITY together, off the longer line, so the watermark shows one size', () => {
     // A phone's center cell: UNITY alone would fit 26, EMPTINESS only 20.
     const PHONE_CELL = 142;
-    expect(fittedTitleFontSize(PHONE_CELL)).toBe(editorialType.heading.fontSize);
-    expect(MAP_TITLE_LINES.map((line) => line.length).sort((a, b) => b - a)[0]).toBe(
+    expect(fittedTitleFontSize(PHONE_CELL, GOLDEN_WATERMARKS)).toBe(editorialType.heading.fontSize);
+    expect(GOLDEN_WATERMARKS.map((line) => line.length).sort((a, b) => b - a)[0]).toBe(
       LONGEST_TITLE.length,
     );
   });
 
   it('keeps every title line inside the cell whenever a step fits', () => {
     for (const width of [100, 120, 140, 160, 200, 400]) {
-      const size = fittedTitleFontSize(width);
-      for (const title of MAP_TITLE_LINES) {
+      const size = fittedTitleFontSize(width, GOLDEN_WATERMARKS);
+      for (const title of GOLDEN_WATERMARKS) {
         expect(estimatedWidth(title, size)).toBeLessThanOrEqual(width);
       }
     }
   });
 
   it('stops at the caption floor rather than leaving the ramp', () => {
-    expect(fittedTitleFontSize(10)).toBe(TITLE_MIN_FONT_SIZE);
+    expect(fittedTitleFontSize(10, GOLDEN_WATERMARKS)).toBe(TITLE_MIN_FONT_SIZE);
   });
 });
 
@@ -312,7 +320,7 @@ describe('currentStageHoldsLensRoom', () => {
     const holding = ALL_STAGES.filter((stage) => currentStageHoldsLensRoom(stage));
     expect(holding).toEqual(ALL_STAGES.filter((stage) => stage !== STAGE_COUNT));
     expect(currentStageHoldsLensRoom(STAGE_COUNT)).toBe(false);
-    expect(TITLE_BY_STAGE[STAGE_COUNT]).toBe(MAP_TITLE_LINES[0]);
+    expect(isTitleStage(STAGE_COUNT)).toBe(true);
   });
 });
 

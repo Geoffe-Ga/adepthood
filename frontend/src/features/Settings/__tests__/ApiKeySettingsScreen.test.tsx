@@ -242,7 +242,7 @@ describe('ApiKeySettingsScreen', () => {
     expect(within(dialog).getByText('Remove API key?')).toBeTruthy();
     expect(
       within(dialog).getByText(
-        'BotMason will fall back to the shared server key (if configured). You can add your own key again at any time.',
+        'Adepthood will use its own shared key instead, if one is set up. You can add your own key again whenever you like.',
       ),
     ).toBeTruthy();
     const buttons = within(dialog).getAllByRole('button');

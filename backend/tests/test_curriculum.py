@@ -86,7 +86,7 @@ _CANONICAL_STAGE_ONTOLOGY: dict[int, dict[str, str]] = {
         "category": "Wisdom",
         "aspect": "True Self Connection",
         "spiral_dynamics_color": "Teal",
-        "growing_up_stage": "Nonduality",
+        "growing_up_stage": "True Self Connection",
         "divine_gender_polarity": "Divine Feminine",
         "relationship_to_free_will": "True Self Embodier",
     },
@@ -170,7 +170,7 @@ def test_stage_curriculum_returns_beige_survival() -> None:
     rising = stage.manifestations[0]
     assert rising.phase == WavelengthPhase.RISING
     assert rising.integrated.name == "Commitment"
-    assert rising.shadow.name == "Over-commitment"
+    assert rising.shadow.name == "Overcommitment"
 
 
 def test_stage_attributes_match_canonical_ontology() -> None:
@@ -195,7 +195,7 @@ def test_manifestation_returns_beige_rising() -> None:
     result = manifestation(1, WavelengthPhase.RISING)
     assert result.phase == WavelengthPhase.RISING
     assert result.integrated.name == "Commitment"
-    assert result.shadow.name == "Over-commitment"
+    assert result.shadow.name == "Overcommitment"
 
 
 def test_stage_curriculum_unknown_stage_number_raises() -> None:
@@ -390,3 +390,46 @@ def test_refresh_doc_documents_the_dataset_and_path() -> None:
     text = (_REPO_ROOT / _refresh_doc()).read_text(encoding="utf-8")
     assert "archetypal_wavelength.json" in text
     assert "Archetypal Wavelength" in text
+
+
+#: The heading of the stage-correspondence runbook in the refresh doc (#2667).
+_RUNBOOK_HEADING = "## Updating stage correspondences"
+
+#: Everything the runbook must name: the re-pin, the regeneration and its gate,
+#: the supersession rules, the reconcile semantics, verification and rollback.
+_RUNBOOK_REQUIREMENTS = (
+    "python -m scripts.sync_content",
+    "CONTENT_VERSION",
+    "python -m scripts.build_stage_correspondence --check",
+    "export_openapi.py --check",
+    "### Supersessions",
+    "stage_correspondence_supersessions.json",
+    "csv_value",
+    "markdown/backup/",
+    "stage_key",
+    "reconciled_at",
+    "overview_url",
+    "GET /stages/correspondence",
+    "Rollback",
+    "docs/adr/0001",
+)
+
+
+def _runbook_section(text: str) -> str:
+    """Return the runbook section of the refresh doc, up to the next ``## `` heading."""
+    assert _RUNBOOK_HEADING in text, f"the refresh doc has no {_RUNBOOK_HEADING!r} section"
+    after = text.split(_RUNBOOK_HEADING, 1)[1]
+    return after.split("\n## ", 1)[0]
+
+
+def test_refresh_doc_carries_the_stage_correspondence_runbook() -> None:
+    """The refresh doc walks a correspondence change from upstream edit to rollback."""
+    section = _runbook_section((_REPO_ROOT / _refresh_doc()).read_text(encoding="utf-8"))
+    missing = [token for token in _RUNBOOK_REQUIREMENTS if token not in section]
+    assert missing == []
+
+
+def test_the_runbook_check_is_scoped_to_its_own_section() -> None:
+    """A token that appears only after the section ends does not satisfy it."""
+    doc = f"{_RUNBOOK_HEADING}\n\nre-pin first.\n\n## Consumers\n\nRollback\n"
+    assert "Rollback" not in _runbook_section(doc)

@@ -76,6 +76,7 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       // streaming / rate limits / network
       'rate_limit_exceeded',
       'llm_provider_error',
+      'reflection_source_unavailable',
       'malformed_stream_frame',
       'incomplete_stream',
       'network_error',
@@ -112,7 +113,7 @@ describe('practice-selection codes (BUG-PRACTICE-012)', () => {
   it('maps stage_locked to actionable copy instead of the generic 403 wall', () => {
     const err = new ApiError(403, 'stage_locked');
     const msg = formatApiError(err);
-    expect(msg).toMatch(/unlock(ed)? this stage/i);
+    expect(msg).toMatch(/this stage hasn't opened yet/i);
     expect(msg).not.toMatch(/don't have access/i);
   });
 
@@ -293,7 +294,7 @@ describe('formatApiError', () => {
 
   it('falls back to status-code copy when detail is unknown and no fallback set', () => {
     const err = new ApiError(503, 'some_unmapped_code');
-    expect(formatApiError(err)).toMatch(/service is temporarily unavailable/i);
+    expect(formatApiError(err)).toMatch(/down for a moment/i);
   });
 
   it('prefers a known code over a status override', () => {
@@ -396,11 +397,10 @@ describe('exhausted provider balance (permanent, not transient)', () => {
   // The copy that must NOT be reused: a permanent billing refusal presented as
   // a connectivity blip sends the reader back to a retry button forever.
   const PROVIDER_TROUBLE_COPY =
-    "BotMason's AI provider is having trouble connecting. Give it a moment and tap retry.";
-  const TRANSIENT_503_COPY =
-    'The service is temporarily unavailable. Give it a moment, then try again.';
+    "BotMason can't reach the AI service it runs on right now. Give it a moment and tap retry.";
+  const TRANSIENT_503_COPY = "We're down for a moment. Give it a minute, then try again.";
   const MONTHLY_ALLOTMENT_COPY =
-    "You've reached this month's free allotment. Add your own API key in Settings, or wait until the next monthly reset.";
+    "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";
 
   // Anything a provider said, or anything that identifies the account or the
   // key, is for the operator's log and never for the reader.
@@ -483,9 +483,12 @@ describe('generation guardrail refusals (#623)', () => {
     expect(formatApiError(daily)).toBe(DAILY_GENERATION_LIMIT_COPY);
   });
 
-  it('says the daily limit resets at midnight UTC', () => {
+  it('says the daily limit resets at midnight UTC, and puts that in evening terms', () => {
     expect(DAILY_GENERATION_LIMIT_COPY).toMatch(/midnight UTC/);
+    expect(DAILY_GENERATION_LIMIT_COPY).toMatch(/evening/i);
     expect(DAILY_GENERATION_LIMIT_COPY).toMatch(/today/i);
+    // A tap is not a "request": the reader never issued one.
+    expect(DAILY_GENERATION_LIMIT_COPY).not.toMatch(/request/i);
   });
 
   it('tells the in-progress writer to ask again once the current one finishes', () => {
@@ -504,10 +507,28 @@ describe('generation guardrail refusals (#623)', () => {
 
   it('leaves the generic per-minute copy unchanged', () => {
     expect(USER_FACING_ERROR_MESSAGES.rate_limit_exceeded).toBe(
-      "That's a lot of requests in a short time. Give it a moment and try again.",
+      "That's a lot all at once. Give it a moment and try again.",
     );
     expect(formatApiError(new ApiError(429, 'rate_limit_exceeded'))).toBe(
       USER_FACING_ERROR_MESSAGES.rate_limit_exceeded,
     );
+  });
+});
+
+describe('vault-bound reflection refusal (#3061)', () => {
+  const copy = formatApiError(new ApiError(503, 'reflection_source_unavailable'));
+
+  it('maps the refusal to its own copy rather than the generic server error', () => {
+    expect(copy).toBe(USER_FACING_ERROR_MESSAGES.reflection_source_unavailable);
+    expect(copy).not.toBe(USER_FACING_ERROR_MESSAGES.llm_provider_error);
+  });
+
+  it('says the pass was not charged and the entry is intact', () => {
+    expect(copy).toMatch(/nothing was charged/);
+    expect(copy).toMatch(/entry is saved/);
+  });
+
+  it('makes no claim about where writing is or is not processed', () => {
+    expect(copy).not.toMatch(/vault|local|device|cloud|never leaves|boundary|private/i);
   });
 });

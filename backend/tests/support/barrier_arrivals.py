@@ -41,7 +41,10 @@ _ACTOR: ContextVar[str | None] = ContextVar("barrier_arrival_actor", default=Non
 #: Upper bound on how long a competing request may take to reach the barrier.
 #: Generous because it is only ever spent in full on failure: a slow runner uses
 #: what it needs, and a request that skips the barrier fails instead of hanging.
-BARRIER_ARRIVAL_TIMEOUT_SECONDS = 5.0
+#: A liveness bound, not the assertion -- :meth:`BarrierArrivals.arrived` answers
+#: ``False`` on expiry whatever its length, so widening it never lets a request
+#: that skips the barrier pass. 5s was tight at load average ~18.
+BARRIER_ARRIVAL_TIMEOUT_SECONDS = 30.0
 
 
 class BarrierArrivals:

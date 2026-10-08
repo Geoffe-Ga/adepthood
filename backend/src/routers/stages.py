@@ -145,7 +145,9 @@ async def _record_visit(session: AsyncSession, user_id: int, tz: str) -> StagePr
     :func:`domain.stage_authority.record_stage_entry` runs: entry into a window
     the calendar has already opened is recorded here, server-side, with nobody
     asking for it. A user with no progress row yet is left alone — these are
-    read endpoints and provisioning a row is the course's job, not the Map's.
+    read endpoints, and provisioning a row is the job of the depths a person can
+    take alone (the course reading, and the habits list when a laddered habit
+    awaits its ring), not the Map's.
     """
     progress = await get_user_progress(session, user_id)
     if progress is None:

@@ -2,7 +2,12 @@ import { describe, expect, it, beforeEach, jest } from '@jest/globals';
 import { act } from '@testing-library/react-native';
 
 import type { Stage, StageProgressRecord } from '../../../../api';
-import { clampProgress, isStageUnlocked } from '../stageService';
+import {
+  BEGIN_AGAIN_FAILED_MESSAGE,
+  MAP_LOAD_FAILED_MESSAGE,
+  clampProgress,
+  isStageUnlocked,
+} from '../stageService';
 
 /** Minimal shape of the GET /stages/program-calendar payload. */
 interface ProgramCalendarPayload {
@@ -138,6 +143,7 @@ describe('stageService', () => {
   });
 
   it('loadStages records an error message on API failure', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     mockList.mockRejectedValueOnce(new Error('Network error'));
 
     const { stageService } = require('../stageService');
@@ -148,9 +154,13 @@ describe('stageService', () => {
     });
 
     const state = useStageStore.getState();
-    expect(state.error).toBe('Network error');
+    // The person reads the Map's own sentence; the raw error text is for the console.
+    expect(state.error).toBe(MAP_LOAD_FAILED_MESSAGE);
+    expect(state.error).not.toContain('Network error');
+    expect(consoleError).toHaveBeenCalledWith('Failed to load stages:', expect.any(Error));
     expect(state.loading).toBe(false);
     expect(state.stages).toHaveLength(0);
+    consoleError.mockRestore();
   });
 
   it('loadStages marks the attempt when the request resolves', async () => {
@@ -583,7 +593,7 @@ describe('stageService', () => {
           name: 'Commitment',
           description: 'A grounded promise to begin showing up.',
         },
-        shadow: { name: 'Over-commitment', description: 'Taking on too much too fast.' },
+        shadow: { name: 'Overcommitment', description: 'Taking on too much too fast.' },
       },
     ];
 
@@ -663,6 +673,7 @@ describe('stageService', () => {
     });
 
     it('routes a failed begin-again to the store error without rejecting', async () => {
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
       mockBeginAgainClient.mockRejectedValueOnce(new Error('boom'));
       const { stageService } = require('../stageService');
       const { useStageStore } = require('../../../../store/useStageStore');
@@ -674,7 +685,10 @@ describe('stageService', () => {
 
       const state = useStageStore.getState();
       expect(typeof state.error).toBe('string');
-      expect(state.error).toBe('boom');
+      expect(state.error).toBe(BEGIN_AGAIN_FAILED_MESSAGE);
+      expect(state.error).not.toContain('boom');
+      expect(consoleError).toHaveBeenCalledWith('Failed to begin again:', expect.any(Error));
+      consoleError.mockRestore();
       // Failure short-circuits: no reload and no cycle bump from a bad response.
       expect(mockList).not.toHaveBeenCalled();
       expect(state.cycleNumber).toBe(1);

@@ -65,7 +65,9 @@ import { isStoredAs, replayReconcilePatch, type SentPage } from './replayReconci
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
+import { isDemoSource, sourceLabel } from './sourceLabel';
 import { describeCardFacts } from './suggestionFacts';
+import { useAspectOptions } from './useAspectOptions';
 import { useEntryLoad } from './useEntryLoad';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
 import { useLinkedHabitCheckOff } from './useLinkedHabitCheckOff';
@@ -121,6 +123,7 @@ import {
   writingField,
   writingFieldFocus,
 } from '@/design/tokens';
+import DepthGate from '@/features/Depth/DepthGate';
 import { useEntrance } from '@/hooks/useEntrance';
 import { useIdle } from '@/hooks/useIdle';
 import { useRestoreFocusOnClose } from '@/hooks/useRestoreFocusOnClose';
@@ -190,7 +193,7 @@ const BLANK_HINT = ' ';
  */
 const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
 const VAULT_WITHDRAWAL_PENDING_HINT =
-  'Intimate here. Creek has not confirmed removal yet — bring your vault online, then choose Intimate again.';
+  'Intimate here. Your vault hasn’t confirmed it dropped its copy yet — once it’s back online, choose Intimate again.';
 
 /**
  * The state the save hint should show while a quote is being folded in.
@@ -2332,6 +2335,9 @@ function EntryTagControls({
   WritingColumnProps,
   'classification' | 'chord' | 'onChangeClassification' | 'onChangeChord' | 'controlsDisabled'
 >) {
+  // The chord's personas come from the server, never from GET /stages, whose
+  // read counts as a program visit (#2666); see useAspectOptions.
+  const aspectOptions = useAspectOptions();
   return (
     <>
       <PrivacyTierControl
@@ -2339,7 +2345,12 @@ function EntryTagControls({
         onChange={onChangeClassification}
         disabled={controlsDisabled}
       />
-      <AspectChordControl value={chord} onChange={onChangeChord} disabled={controlsDisabled} />
+      <AspectChordControl
+        value={chord}
+        onChange={onChangeChord}
+        disabled={controlsDisabled}
+        options={aspectOptions}
+      />
     </>
   );
 }
@@ -2666,6 +2677,29 @@ function NoNotesNotice({ message }: { message: string | null }) {
       testID="journal-resonance-no-notes"
     >
       {message}
+    </Text>
+  );
+}
+
+/**
+ * Which side answered the latest pass, said once for the pass as a whole (#3062).
+ *
+ * Shown when it adds something the notes themselves cannot say: on a demo pass,
+ * so the canned notes are unmistakable before any one is read, and on a pass
+ * that kept no notes, so the writer knows which source had nothing to say.
+ * ``source`` is exactly what the server reported for this pass -- never read
+ * off the vault connection -- and nothing is shown when it reported none.
+ */
+function PassSourceNotice({ source, empty }: { source: string | null; empty: boolean }) {
+  if (source == null || !(empty || isDemoSource(source))) return null;
+  return (
+    <Text
+      style={styles.marginNotice}
+      accessibilityRole="text"
+      accessibilityLiveRegion="polite"
+      testID="resonance-pass-source"
+    >
+      {sourceLabel(source)}
     </Text>
   );
 }
@@ -3644,6 +3678,10 @@ function JournalMargin({
       testID="journal-margin-column"
     >
       <View onLayout={bumpHeadTick} testID="journal-margin-head">
+        <PassSourceNotice
+          source={ctl.resonance.notesSource}
+          empty={ctl.resonance.noNotesMessage != null}
+        />
         <NoNotesNotice message={ctl.resonance.noNotesMessage} />
         <ResonanceMargin error={ctl.resonance.error} />
       </View>
@@ -4415,12 +4453,16 @@ function ResonanceControls({ action }: { action: ResonanceAction }): React.JSX.E
  *
  * The link-a-habit note (#3006) sits beside it and waits for the offer to have
  * been answered, so the two never share a note: the offer while it is
- * unanswered, the pointer to Settings after.
+ * unanswered, the pointer to Settings after. The note points at a habit, so a
+ * declined habits ring never mounts it (#3073); the offer gates its own two
+ * depths.
  */
 const renderSessionOffer = (result: WritingSessionResult): React.ReactNode => (
   <>
     <WritingSessionOffer result={result} />
-    <LinkHabitNudge waitForAnsweredOffer />
+    <DepthGate ring="habits">
+      <LinkHabitNudge waitForAnsweredOffer />
+    </DepthGate>
   </>
 );
 
@@ -4430,7 +4472,11 @@ const renderSessionOffer = (result: WritingSessionResult): React.ReactNode => (
  * linked — a writer who launches a practice may never have been asked (#3006).
  * Module-level for the same stable identity as ``renderSessionOffer``.
  */
-const renderLaunchedSessionNote = (): React.ReactNode => <LinkHabitNudge />;
+const renderLaunchedSessionNote = (): React.ReactNode => (
+  <DepthGate ring="habits">
+    <LinkHabitNudge />
+  </DepthGate>
+);
 
 /** The launch this page was opened with, when it was opened to run a practice. */
 type WritingLaunchParam = NonNullable<RootStackParamList['JournalEntry']>['writingSession'];
@@ -4477,7 +4523,11 @@ function EntryCareSurfaces({ ctl }: { ctl: Controller }): React.JSX.Element {
   return (
     <>
       <CareSupportNote care={ctl.resonance.care} />
-      <ContractionReflectionNote contraction={ctl.resonance.contraction} />
+      {/* Names a thinning habit foundation, so a declined habits ring quiets it
+          here as well as on the server (#3073). */}
+      <DepthGate ring="habits">
+        <ContractionReflectionNote contraction={ctl.resonance.contraction} />
+      </DepthGate>
     </>
   );
 }

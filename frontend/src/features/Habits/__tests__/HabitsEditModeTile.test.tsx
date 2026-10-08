@@ -150,7 +150,6 @@ jest.mock('../components/HabitSettingsModal', () => ({
   __esModule: true,
   default: (props: SettingsModalProps) => mockHabitSettingsModal(props),
 }));
-jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);

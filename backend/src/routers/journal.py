@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import logging
 from collections.abc import Sequence
 from contextlib import suppress
@@ -17,7 +18,11 @@ from sqlmodel import col, select
 
 from bounds import INT32_MAX, MAX_PAGE_OFFSET, MIN_ROW_ID, RowIdPath
 from database import get_session
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import (
+    get_creek_vault_client,
+    get_reflection_boundary,
+    resolved_vault_destination,
+)
 from dependencies.ownership import (
     require_owned_journal_entry,
     resolve_owned_practice_session,
@@ -30,6 +35,8 @@ from domain.creek_vault import (
     CreekVaultCareEscalationError,
     CreekVaultClient,
     CreekVaultPipelineClient,
+    VaultTierCeiling,
+    tier_ceiling_for,
 )
 from domain.dates import (
     MAX_BACKFILL_DAYS,
@@ -37,9 +44,11 @@ from domain.dates import (
     to_user_date_bucket,
     today_in_tz,
 )
+from domain.depth_preferences import DepthRing, load_enabled_rings
 from domain.detection import CompletionDetected, DetectionCandidate, detect_completions
 from domain.detection_facts import DetectionClock
 from domain.practice_resolution import effective_config
+from domain.privacy_tier import admits_egress, egress_eligible_clause
 from domain.reflection_hierarchy import ReflectionLevel
 from domain.resonance import (
     PRIOR_DRAFT_CHARS,
@@ -69,13 +78,14 @@ from models.completion_suggestion import (
 )
 from models.goal import Goal
 from models.habit import Habit
-from models.journal_entry import JournalClassification, JournalEntry, JournalTag
+from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.user import User
 from models.user_practice import UserPractice
 from models.wallet_audit import (
+    REASON_REFUND_DEMO,
     REASON_REFUND_FAILED_ESSAY,
     REASON_REFUND_FAILED_RESONANCE,
     REASON_REFUND_NO_ESSAY,
@@ -103,6 +113,7 @@ from schemas.marginalia import (
     EssayResponse,
     MarginaliaListResponse,
     MarginaliaResponse,
+    PassProvenance,
     RelatedEddyResponse,
     RelatedPraxisResponse,
     ResonanceResponse,
@@ -137,14 +148,23 @@ from services.corpus_ingest import (
     withdraw_journal_entry as withdraw_local_journal_entry,
 )
 from services.corpus_invitation import record_completed_pass
+from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
     VaultRelatedSurfaces,
+    reflection_receipt,
     related_surfaces,
     select_reflection_llm,
 )
-from services.creek_vault_voice_drafts import mirror_voice_draft, retract_voice_draft
-from services.creek_vault_withdraw import withdraw_journal_from_vault
+from services.creek_vault_voice_drafts import (
+    EntryRef,
+    VoiceDraftCopy,
+    mark_entry_retractions_pending,
+    mirror_voice_draft,
+    record_mirror_intent,
+    retract_pending_voice_drafts,
+)
+from services.creek_vault_withdraw import withdraw_journal_copy
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -156,6 +176,15 @@ from services.generation_guardrails import (
     require_generation_minute_available,
 )
 from services.higher_self_grounding import Grounding, gather_grounding
+from services.inference_provenance import (
+    PassReceipts,
+    detection_receipt,
+    is_demo,
+    pass_provenance,
+    source_value,
+    stamp_letter,
+    stamp_note,
+)
 from services.llm_usage import (
     GenerationFeature,
     GenerationKey,
@@ -168,11 +197,23 @@ from services.llm_usage import (
 )
 from services.marginalia import (
     BotmasonResonanceLLM,
+    InferenceReceipt,
     reanchor_entry_marginalia,
     reanchor_entry_promoted_quotes,
     reanchor_entry_suggestions,
+    receipt_since,
 )
 from services.practice_session_idempotency import record_session, recorded_session_id
+from services.privacy_lineage import LineageOperation, observe_entry_lineage
+from services.privacy_suspension import require_external_ai_available
+from services.reflection_boundary import (
+    REFLECTION_SOURCE_UNAVAILABLE,
+    ReflectionBoundary,
+    VaultSourceUnavailableError,
+    VaultSourceUnavailableReason,
+    app_provider_llm,
+    require_app_provider_llm,
+)
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
 from services.voice_draft_privacy import journal_vault_mutations, voice_draft_privacy
@@ -367,6 +408,9 @@ async def _record_vault_outcome(
     """
     if entry.id is None:
         return
+    binding = await _bind_vault_destination(session, entry, vault_client)
+    if binding is _Binding.WITHHOLD:
+        return
     await session.commit()
     outcome = await store_and_classify(
         vault_client,
@@ -375,10 +419,31 @@ async def _record_vault_outcome(
         classification=entry.classification,
         created_at=entry.timestamp,
     )
-    if _apply_vault_outcome(entry, outcome):
+    # Bitwise ``|``, not ``or``: both helpers mutate ``entry`` and must both run.
+    if _apply_vault_outcome(entry, outcome) | _unbind_if_nothing_sent(entry, binding, outcome):
         session.add(entry)
         await session.commit()
         await session.refresh(entry)
+    await _after_vault_write(session, entry, vault_client, outcome)
+
+
+async def _after_vault_write(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultClient,
+    outcome: VaultWriteOutcome,
+) -> None:
+    """Shadow-count a write that dialled, then drive the pipeline after one that stored.
+
+    The shadow (#3059) fires whenever the ingest was dialled: a DEGRADED write
+    -- a lost acknowledgement, or ``stored=False`` -- has still handed the body
+    to the vault. ``_NOTHING_SENT`` is the same predicate that decides whether
+    the staged destination is kept. It commits straight away so nothing is held
+    across what follows; the pipeline runs only on a durable INGESTED write.
+    """
+    if outcome.status not in _NOTHING_SENT:
+        await observe_entry_lineage(session, LineageOperation.VAULT_WRITE, entry)
+        await session.commit()
     if outcome.status is VaultWriteStatus.INGESTED:
         await drive_vault_pipeline(
             session,
@@ -388,38 +453,103 @@ async def _record_vault_outcome(
         )
 
 
-async def _withdraw_remote_journal_copy(
+class _Binding(enum.Enum):
+    """What staging a vault destination decided about one write."""
+
+    WITHHOLD = "withhold"  # an earlier copy is owed to another vault: do not offer
+    UNCHANGED = "unchanged"  # proceed; the recorded destination is already right
+    BOUND = "bound"  # proceed; this write staged a new destination
+
+
+#: Write outcomes that provably dialled no ingest: nothing reached any vault.
+_NOTHING_SENT = frozenset({VaultWriteStatus.SKIPPED_INTIMATE, VaultWriteStatus.UNAVAILABLE})
+
+
+async def _bind_vault_destination(
+    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
+) -> _Binding:
+    """Record which vault is about to be offered this entry, or withhold the offer.
+
+    Staged before the ingest dial (and committed with the caller's pre-dial
+    commit), so a crash or a lost acknowledgement after Creek stores the entry
+    still leaves a durable withdrawal marker bound to that vault. Nothing is
+    staged when nothing can be sent: a local fallback dials nothing, and an
+    Intimate entry is withheld from the wire before any dial. An entry whose
+    earlier copy is owed to a *different* vault keeps that marker and is not
+    offered to the new one: a single marker cannot describe two copies, and
+    the owed one wins.
+
+    The fingerprint comes from the same config read that built the request's
+    client (:func:`resolved_vault_destination`), so a reconnect landing after
+    that read cannot bind this write to a vault it does not dial.
+    """
+    undialled = _binding_without_a_dial(entry, vault_client)
+    if undialled is not None:
+        return undialled
+    destination = await resolved_vault_destination(session, entry.user_id)
+    if entry.vault_destination not in {None, destination}:
+        logger.warning(
+            "journal_vault_write_withheld",
+            extra={"entry_id": entry.id, "reason": "destination_changed"},
+        )
+        return _Binding.WITHHOLD
+    if entry.vault_destination is not None or destination is None:
+        return _Binding.UNCHANGED
+    entry.vault_destination = destination
+    session.add(entry)
+    return _Binding.BOUND
+
+
+def _binding_without_a_dial(entry: JournalEntry, vault_client: CreekVaultClient) -> _Binding | None:
+    """Decide the writes that can send nothing, so they stage nothing; ``None`` otherwise."""
+    if type(vault_client) is LocalFallbackCreekVaultClient:
+        return _Binding.UNCHANGED if entry.vault_destination is None else _Binding.WITHHOLD
+    if tier_ceiling_for(entry.classification) is VaultTierCeiling.INTIMATE:
+        return _Binding.UNCHANGED
+    return None
+
+
+def _unbind_if_nothing_sent(
+    entry: JournalEntry, binding: _Binding, outcome: VaultWriteOutcome
+) -> bool:
+    """Drop a destination this write staged when the write provably sent nothing.
+
+    A handshake that turned the write away, or an Intimate skip, dialled no
+    ingest; leaving the marker would make the entry owe a withdrawal for a
+    copy that does not exist. A degraded ingest *was* dialled and keeps it.
+    """
+    if binding is not _Binding.BOUND or outcome.status not in _NOTHING_SENT:
+        return False
+    entry.vault_destination = None
+    return True
+
+
+async def _withdraw_remote_copies(
     session: AsyncSession,
     entry: JournalEntry,
-    vault_client: CreekVaultClient,
-) -> None:
-    """Clear remote metadata only after Creek confirms the stable id absent.
+    vault_client: CreekVaultPipelineClient,
+) -> bool:
+    """Attempt every owed withdrawal for ``entry``; ``True`` only when all are confirmed.
 
-    ``vault_ref`` is the durable retry marker. A missing ref proves this row has
-    no known remote copy and needs no call; a present one survives every
-    unavailable, unsupported, malformed, or partial outcome. The request
-    session is committed before the HTTP call so no pooled connection rides
-    across Creek latency. Raising a stable 503 is intentional: a privacy change
-    or delete is not complete while the connected vault still may hold it.
+    Both the essay withdrawals and the journal copy are attempted every time,
+    so one failing never hides the other. Each is bound to the destination that
+    received it: a replaced or removed connection leaves the copy pending
+    rather than trusting the new vault's "unknown id, withdrawn". Callers have
+    already committed the stricter local state, so a ``False`` here costs the
+    writer nothing but a stable 503 and a retry.
     """
-    if entry.vault_ref is None:
-        if entry.vault_tags is not None:
-            entry.vault_tags = None
-            session.add(entry)
-            await session.commit()
-            await session.refresh(entry)
-        return
-    entry_id = entry.id
-    if entry_id is None:
-        raise RuntimeError("persisted vault reference requires a journal entry id")
-    await session.commit()
-    if not await withdraw_journal_from_vault(vault_client, entry_id=entry_id):
-        raise service_unavailable("vault_withdrawal_pending")
-    entry.vault_ref = None
-    entry.vault_tags = None
-    session.add(entry)
-    await session.commit()
-    await session.refresh(entry)
+    entry_id = cast("int", entry.id)
+    destination = await resolved_vault_destination(session, entry.user_id)
+    drafts_withdrawn = await retract_pending_voice_drafts(
+        session,
+        vault_client,
+        EntryRef(user_id=entry.user_id, entry_id=entry_id),
+        destination=destination,
+    )
+    journal_withdrawn = await withdraw_journal_copy(
+        session, entry, vault_client, destination=destination
+    )
+    return drafts_withdrawn and journal_withdrawn
 
 
 async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) -> None:
@@ -813,7 +943,7 @@ def _prior_letters_query(user_id: int, exclude_entry_id: int) -> Select[tuple[Ma
     return (
         _expanded_drafts_query(user_id)
         .where(
-            col(JournalEntry.classification) != JournalClassification.INTIMATE,
+            egress_eligible_clause(col(JournalEntry.classification)),
             col(JournalEntry.id) != exclude_entry_id,
         )
         .order_by(col(Marginalia.essay_generated_at).desc(), col(Marginalia.id).desc())
@@ -843,6 +973,7 @@ def _voice_draft(note: Marginalia) -> VoiceDraftResponse:
         anchor_text=note.anchor_text,
         essay=cast("str", note.essay),
         essay_generated_at=cast("datetime", note.essay_generated_at),
+        essay_source=note.essay_source,
     )
 
 
@@ -997,7 +1128,7 @@ async def update_journal_entry(
     """
     reingests = bool(payload.model_fields_set & _REINGEST_FIELDS)
     if not reingests:
-        entry, _previous_classification = await _persist_entry_update(
+        entry = await _persist_entry_update(
             entry_id,
             payload,
             current_user,
@@ -1014,22 +1145,19 @@ async def update_journal_entry(
             journal_vault_mutations.hold(session, entry_id),
         ):
             await ensure_account_live(session, current_user)
-            entry, previous_classification = await _persist_entry_update(
+            entry = await _persist_entry_update(
                 entry_id,
                 payload,
                 current_user,
                 session,
             )
-            if entry.classification == JournalClassification.INTIMATE:
-                await withdraw_local_journal_entry(
+            if not admits_egress(entry.classification):
+                await _apply_intimate_update(
                     session,
-                    user_id=current_user,
-                    entry_id=entry_id,
+                    entry,
+                    vault_client,
+                    chose_intimate="classification" in payload.model_fields_set,
                 )
-                await session.commit()
-                if previous_classification != JournalClassification.INTIMATE:
-                    await _retract_entry_voice_drafts(session, entry, vault_client)
-                await _withdraw_remote_journal_copy(session, entry, vault_client)
             else:
                 await _record_vault_outcome(session, entry, vault_client)
                 await _record_corpus_fragment(session, entry)
@@ -1037,12 +1165,38 @@ async def update_journal_entry(
     return entry
 
 
+async def _apply_intimate_update(
+    session: AsyncSession,
+    entry: JournalEntry,
+    vault_client: CreekVaultPipelineClient,
+    *,
+    chose_intimate: bool,
+) -> None:
+    """Keep an Intimate entry out of the corpus and, when it was chosen, withdraw its copies.
+
+    Every PATCH that sets Intimate -- including a repeat of the same value --
+    owes and retries every withdrawal, so "choose Intimate again" is a real
+    retry. The tier is committed first and never reverted; a 503 reports only
+    that remote cleanup is pending. A body edit or Finish on an entry that is
+    already Intimate never dials: it saves, and any owed withdrawal is left to
+    the background sweep, so a vault that can never confirm (#3060 escalation
+    1) cannot hold the writer's own page hostage.
+    """
+    entry_id = cast("int", entry.id)
+    await withdraw_local_journal_entry(session, user_id=entry.user_id, entry_id=entry_id)
+    if chose_intimate:
+        await mark_entry_retractions_pending(session, user_id=entry.user_id, entry_id=entry_id)
+    await session.commit()
+    if chose_intimate and not await _withdraw_remote_copies(session, entry, vault_client):
+        raise service_unavailable("vault_withdrawal_pending")
+
+
 async def _persist_entry_update(
     entry_id: int,
     payload: JournalEntryUpdate,
     current_user: int,
     session: AsyncSession,
-) -> tuple[JournalEntry, str]:
+) -> JournalEntry:
     """Load, apply, and commit one owned update inside any caller-held privacy lock."""
     result = await session.execute(
         select(JournalEntry).where(
@@ -1055,7 +1209,6 @@ async def _persist_entry_update(
     entry = result.scalars().first()
     if entry is None:
         raise not_found("journal_entry")
-    previous_classification = entry.classification
     await _apply_entry_update(entry, payload, session)
     session.add(entry)
     try:
@@ -1068,47 +1221,7 @@ async def _persist_entry_update(
             raise conflict("reflection_scope_taken") from exc
         raise
     await session.refresh(entry)
-    return entry, previous_classification
-
-
-async def _retract_entry_voice_drafts(
-    session: AsyncSession,
-    entry: JournalEntry,
-    vault_client: CreekVaultPipelineClient,
-) -> bool:
-    """Retract expanded essays and report whether every absence was confirmed.
-
-    The query projects ids only -- never essay text -- and the transaction it
-    opens is committed before the first network call, returning the pooled
-    connection. Each retraction is therefore content-free and cannot roll back
-    the privacy change, which was committed before this helper was reached.
-    A same-value INTIMATE patch never calls this helper, so a failed retraction
-    is not turned into an implicit retry channel. Journal deletion consumes the
-    return value: the shared mutation lock makes that DELETE run after an
-    in-flight draft PUT and retract it, or before a delayed writer that then
-    observes ``deleted_at``; an unconfirmed retraction keeps the row live for an
-    explicit retry.
-    """
-    if entry.id is None:
-        return True
-    result = await session.execute(
-        select(Marginalia.id).where(
-            Marginalia.journal_entry_id == entry.id,
-            Marginalia.user_id == entry.user_id,
-            col(Marginalia.essay).is_not(None),
-        )
-    )
-    marginalia_ids = tuple(result.scalars().all())
-    await session.commit()
-    confirmations = [
-        await retract_voice_draft(
-            vault_client,
-            owner_user_id=entry.user_id,
-            marginalia_id=marginalia_id,
-        )
-        for marginalia_id in marginalia_ids
-    ]
-    return all(confirmations)
+    return entry
 
 
 async def _load_user_entry(
@@ -1156,9 +1269,18 @@ async def _grounding_for(session: AsyncSession, user_id: int, entry_id: int) -> 
 
 
 def _persist_marginalia(
-    session: AsyncSession, entry_id: int, user_id: int, anchored: list[MarginaliaAnchored]
+    session: AsyncSession,
+    entry_id: int,
+    user_id: int,
+    anchored: list[MarginaliaAnchored],
+    *,
+    receipt: InferenceReceipt | None,
 ) -> list[Marginalia]:
-    """Stage one Marginalia row per anchored note (active, no essay yet)."""
+    """Stage one Marginalia row per anchored note (active, no essay yet), stamped with its source.
+
+    ``receipt`` is required by keyword so no writer can stage a note without
+    deciding what it records about who answered (#3062).
+    """
     rows = [
         Marginalia(
             journal_entry_id=entry_id,
@@ -1172,6 +1294,8 @@ def _persist_marginalia(
         )
         for note in anchored
     ]
+    for row in rows:
+        stamp_note(row, receipt)
     session.add_all(rows)
     return rows
 
@@ -1212,8 +1336,11 @@ def _suggestion_from_hit(
 
 @dataclass(frozen=True, slots=True)
 class _DetectionAttempt:
+    """What detection found, whether it returned, and whether it sent anything at all."""
+
     hits: list[CompletionDetected]
     checked: bool
+    dialled: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1262,11 +1389,16 @@ async def _detect_hits_with_status(
     message: str,
     *,
     inputs: DetectionInputs,
-    llm: BotmasonResonanceLLM,
+    llm: BotmasonResonanceLLM | None,
     user_id: int,
     entry_id: int,
 ) -> _DetectionAttempt:
     """Best-effort completion detection against the pre-read candidates.
+
+    ``llm`` is ``None`` when the caller's boundary is vault-bound: a vault has no
+    detection capability, so detection is skipped and reported unchecked rather
+    than sent to the app provider (#3061). This is the one place that decision
+    is read, for both routes that detect.
 
     Runs with no transaction open — the candidates were read and committed
     before the first dial, so the provider round trip holds no pooled
@@ -1277,6 +1409,8 @@ async def _detect_hits_with_status(
     is permanent where a dropped socket is transient, and the account is the
     only thing an operator can act on.
     """
+    if llm is None:
+        return _DetectionAttempt(hits=[], checked=False)
     if not inputs.candidates:
         return _DetectionAttempt(hits=[], checked=True)
     try:
@@ -1288,12 +1422,12 @@ async def _detect_hits_with_status(
             "journal_detection_failed",
             extra={"user_id": user_id, "entry_id": entry_id, "provider": exc.provider},
         )
-        return _DetectionAttempt(hits=[], checked=False)
+        return _DetectionAttempt(hits=[], checked=False, dialled=True)
     except LLMProviderError:
         logger.warning("journal_detection_failed", extra={"user_id": user_id, "entry_id": entry_id})
-        return _DetectionAttempt(hits=[], checked=False)
+        return _DetectionAttempt(hits=[], checked=False, dialled=True)
     _log_detection_checked(hits, user_id=user_id, entry_id=entry_id)
-    return _DetectionAttempt(hits=hits, checked=True)
+    return _DetectionAttempt(hits=hits, checked=True, dialled=True)
 
 
 def _stage_suggestions(
@@ -1306,7 +1440,12 @@ def _stage_suggestions(
 
 
 def _log_resonance_outcome(
-    outcome: MarginaliaOutcome, *, user_id: int, entry_id: int, count: int
+    outcome: MarginaliaOutcome,
+    receipts: PassReceipts,
+    *,
+    user_id: int,
+    entry_id: int,
+    count: int,
 ) -> None:
     """Record what the pass produced and, when nothing survived, that it did not.
 
@@ -1320,12 +1459,15 @@ def _log_resonance_outcome(
 
     Counts and ids only. Never a quote, a note, or any part of the body: the same
     reason the grounding path logs ids and counts, since journal text is
-    encrypted at rest.
+    encrypted at rest. The two sources are closed-vocabulary words (#3062); the
+    self-reported model string is never logged.
     """
     extra: dict[str, object] = {
         "user_id": user_id,
         "entry_id": entry_id,
         "count": count,
+        "notes_source": source_value(receipts.notes),
+        "detection_source": source_value(receipts.detection),
         **outcome.as_log_extra(),
     }
     logger.info("journal_resonance_generated", extra=extra)
@@ -1594,7 +1736,7 @@ async def _withdrawn_under_hold(
     if entry.deleted_at is not None:
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         raise not_found("journal_entry")
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         return True
     return False
@@ -1635,7 +1777,7 @@ async def _body_under_hold(
 
 
 async def _pass_context_under_hold(
-    session: AsyncSession, user_id: int, entry_id: int
+    session: AsyncSession, entry: JournalEntry
 ) -> tuple[Grounding, list[str]]:
     """Gather the other writing a pass carries, under its hold, then release the connection.
 
@@ -1658,11 +1800,16 @@ async def _pass_context_under_hold(
     upload or an import has no entry to re-check at all; the corpus copy the
     mutation withdrew is simply no longer there to retrieve.
 
+    The entry's own folded-quote lineage is observed here too (#3059, shadow
+    only): this is the read of the state that actually egresses.
+
     The commit releases the pooled connection these reads opened, so none is
     held across the dials that follow.
     """
+    user_id, entry_id = entry.user_id, cast("int", entry.id)
     grounding = await _grounding_for(session, user_id, entry_id)
     prior_letters = await _prior_letter_essays(session, user_id=user_id, exclude_entry_id=entry_id)
+    await observe_entry_lineage(session, LineageOperation.RESONANCE, entry)
     await session.commit()
     return grounding, prior_letters
 
@@ -1670,11 +1817,12 @@ async def _pass_context_under_hold(
 async def _care_only_response(
     session: AsyncSession, user_id: int, care: CareResponse
 ) -> ResonanceResponse:
-    """Care surface with no reflection, for the two paths that reach care instead of one.
+    """Care surface with no reflection, for the paths that reach care instead of one.
 
-    Used when an elevated entry's LLM pass fails, and when a connected vault
-    answers with its care escalation. Either way the marginalia charge has
-    has already been settled — by a compensating credit when BotMason paid, or
+    Used when an elevated entry's LLM pass fails, when a connected vault
+    answers with its care escalation, and when a vault-bound entry is flagged
+    locally and so asks no model at all. Every time, the marginalia charge has
+    already been settled — by a compensating credit when BotMason paid, or
     with no wallet work for BYOK — so the fresh read below reports unchanged
     balances. We surface the human + professional pointers regardless, because
     care must never depend on the reflection succeeding (NORTH-STAR §10).
@@ -1691,10 +1839,23 @@ async def _refresh_persisted(
         await session.refresh(row)
 
 
-async def _escalated_care_response(
+@dataclass(frozen=True, slots=True)
+class _CareInstead:
+    """A pass that ended in care rather than a reflection, already settled.
+
+    Returned rather than answered by the helper that decided it, so the handler
+    reads the fresh balances and returns in one place -- with the read on the
+    path that leaves, never on one a static walk could believe continues to a
+    dial.
+    """
+
+    care: CareResponse
+
+
+async def _escalated_care(
     session: AsyncSession, user_id: int, spent: SpendResult | None, trace: _FailedGeneration
-) -> ResonanceResponse:
-    """Answer a vault care escalation with adepthood's own care surface, uncharged.
+) -> _CareInstead:
+    """Settle a vault care escalation and answer it with adepthood's own care surface.
 
     The vault's care guard declined to produce a reflection because the writing
     signalled acute distress, so what the caller gets back is a way to reach a
@@ -1707,14 +1868,15 @@ async def _escalated_care_response(
     no BotMason charge, and the same helper safely performs only its rollback.
 
     The care payload is built fresh rather than threaded in from the handler's own
-    screen, and that is provably right: an entry adepthood flagged locally
-    short-circuits in ``select_reflection_llm`` and never reaches the vault, so
-    ``care`` is always ``None`` on this path. The copy is adepthood's own reviewed
+    screen, and that is provably right: a vault-bound entry adepthood flagged
+    locally is answered with care before the vault is selected, and an
+    app-provider-bound one never selects the vault at all, so ``care`` is always
+    ``None`` on this path. The copy is adepthood's own reviewed
     surface — Creek's reason, message, and resource list are Creek's writing and
     are dropped at the adapter.
     """
     await _refund_failed_pass(session, user_id, spent, trace=trace)
-    return await _care_only_response(session, user_id, _care_surface(build_care_payload()))
+    return _CareInstead(_care_surface(build_care_payload()))
 
 
 async def _resonance_pass_or_care(
@@ -1742,14 +1904,110 @@ async def _resonance_pass_or_care(
 
 
 @dataclass(frozen=True, slots=True)
+class _ReflectionRequest:
+    """One admitted pass's body and the other writing it carries, all read under the hold."""
+
+    entry_id: int
+    message: str
+    classification: str
+    prior: list[str]
+    prior_letters: list[str]
+
+
+def _metered_usage(app_llm: BotmasonResonanceLLM | None) -> Sequence[LLMResponse]:
+    """The live usage list a pass settles with: the app provider's, or nothing.
+
+    Live rather than copied, so a failure settled midway reports every call that
+    had returned. A vault-bound pass dials no app provider and meters nothing.
+    """
+    return () if app_llm is None else app_llm.usage
+
+
+async def _reflection_source(
+    vault_client: CreekVaultClient,
+    app_llm: BotmasonResonanceLLM | None,
+    request: _ReflectionRequest,
+) -> ResonanceLLM:
+    """The one source this pass may be answered by, chosen by the boundary alone.
+
+    The app provider when the boundary allowed one (``app_llm`` present), and
+    then the vault is not even probed. Otherwise the vault, through
+    :func:`select_reflection_llm`, which raises rather than ever answering with
+    anything else.
+    """
+    if app_llm is not None:
+        return app_llm
+    return await select_reflection_llm(
+        vault_client, body=request.message, classification=request.classification
+    )
+
+
+async def _fail_closed_unavailable(
+    context: _ResonancePassContext, *, entry_id: int, reason: VaultSourceUnavailableReason
+) -> HTTPException:
+    """Settle a vault-bound pass its vault could not answer, and name the refusal.
+
+    The committed deduction is refunded (BYOK only rolls back) and the pass
+    settles as failed, exactly as a provider failure does -- but it answers a
+    retryable 503 under its own token rather than the provider's 502, because
+    nothing upstream of a model failed: the one source this writer's pass may
+    use was not there, and no other was asked.
+
+    One WARNING, in a closed vocabulary: ids and this module's own reason word,
+    never the body, a prompt, a key, or anything the vault said.
+    """
+    await _refund_failed_pass(context.session, context.user_id, context.spent, trace=context.trace)
+    logger.warning(
+        REFLECTION_SOURCE_UNAVAILABLE,
+        extra={"user_id": context.user_id, "entry_id": entry_id, "reason": reason.value},
+    )
+    return service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
+
+
+async def _reflect_or_answer(
+    request: _ReflectionRequest,
+    vault_client: CreekVaultClient,
+    app_llm: BotmasonResonanceLLM | None,
+    context: _ResonancePassContext,
+) -> tuple[MarginaliaOutcome, ResonanceLLM] | _CareInstead:
+    """Run the literary pass on its one source, or settle it as care instead.
+
+    Returns the outcome and the source that produced it, or the care surface to
+    answer with when the pass ended in care (already settled). A vault-bound
+    pass whose vault cannot answer raises the settled 503 from
+    :func:`_fail_closed_unavailable`; it is never re-asked of the app provider
+    (#3061).
+    """
+    try:
+        reflection_llm = await _reflection_source(vault_client, app_llm, request)
+        anchored = await _resonance_pass_or_care(
+            request.message, reflection_llm, request.prior, context, request.prior_letters
+        )
+    except CreekVaultCareEscalationError:
+        # The vault's care guard fired: answer with adepthood's own care
+        # surface instead of a reflection, and settle any committed charge.
+        return await _escalated_care(context.session, context.user_id, context.spent, context.trace)
+    except VaultSourceUnavailableError as exc:
+        raise await _fail_closed_unavailable(
+            context, entry_id=request.entry_id, reason=exc.reason
+        ) from None
+    if anchored is None:
+        # The reflection failed but the entry is flagged: surface care anyway.
+        return _CareInstead(cast("CareResponse", context.care))
+    return anchored, reflection_llm
+
+
+@dataclass(frozen=True, slots=True)
 class _PassSettlementInput:
     """Inputs to the post-dial settlement transaction.
 
     Everything here was produced with no transaction open: ``anchored`` by the
     reflection dial and ``hits`` by the detection dial. ``spent`` is the
     server-paid deduction that committed before either, or ``None`` for BYOK.
-    ``llm`` carries the usage the settlement records beside the rows it stages.
+    ``usage`` is every app-provider response the pass metered, recorded beside
+    the rows it stages; it is empty when no app provider was dialled at all.
     ``key`` is the pass's generation, stamped on every usage row it meters.
+    ``receipt`` is which side answered the notes, stamped on every row (#3062).
     """
 
     entry_id: int
@@ -1757,8 +2015,9 @@ class _PassSettlementInput:
     spent: SpendResult | None
     anchored: MarginaliaOutcome
     hits: list[CompletionDetected]
-    llm: BotmasonResonanceLLM
+    usage: Sequence[LLMResponse]
     key: GenerationKey
+    receipt: InferenceReceipt | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1778,10 +2037,11 @@ class _SettledPass:
     wallet: _WalletSnapshot
     no_notes_message: str | None
     reset_date: datetime
+    outcome: GenerationOutcome
 
 
 def _log_settled_pass(
-    prepared: _PassSettlementInput, usage: GenerationUsage, *, refunded_empty: bool
+    prepared: _PassSettlementInput, usage: GenerationUsage, outcome: GenerationOutcome
 ) -> None:
     """Write a committed pass's one settlement line (#623 PR3).
 
@@ -1794,9 +2054,7 @@ def _log_settled_pass(
             user_id=prepared.user_id,
             key=prepared.key,
             bucket=None if prepared.spent is None else prepared.spent.bucket,
-            outcome=(
-                GenerationOutcome.REFUNDED_EMPTY if refunded_empty else GenerationOutcome.KEPT
-            ),
+            outcome=outcome,
             attempts=prepared.anchored.attempts,
             usage=usage,
         )
@@ -1838,12 +2096,22 @@ async def _persist_settle_commit(
             hits=prepared.hits,
         )
         rows = _persist_marginalia(
-            session, prepared.entry_id, prepared.user_id, prepared.anchored.notes
+            session,
+            prepared.entry_id,
+            prepared.user_id,
+            prepared.anchored.notes,
+            receipt=prepared.receipt,
         )
         suggestions = _stage_suggestions(session, prepared.entry_id, prepared.user_id, fresh_hits)
         spent, no_notes_message, refund = await _settle_empty_pass(
             session, prepared.user_id, spent, prepared.anchored
         )
+        outcome = _pass_outcome(no_notes_message, demo=is_demo(prepared.receipt))
+        if outcome is GenerationOutcome.REFUNDED_DEMO and spent is not None:
+            refund = await refund_one_message(
+                session, prepared.user_id, spent, reason=REASON_REFUND_DEMO
+            )
+            spent = refund.balances
         # A completed pass -- notes or a refunded no-notes 200 alike -- is the
         # moment the corpus invitation's cooldown counts (#2407). Staged here so
         # the count lands with this commit and is rolled back with a failure.
@@ -1853,7 +2121,7 @@ async def _persist_settle_commit(
             session,
             user_id=prepared.user_id,
             journal_entry_id=prepared.entry_id,
-            responses=prepared.llm.usage,
+            responses=prepared.usage,
             generation=prepared.key,
         )
         await session.commit()
@@ -1868,11 +2136,11 @@ async def _persist_settle_commit(
                 trace=_FailedGeneration(
                     feature=GenerationFeature.RESONANCE,
                     key=prepared.key,
-                    usage=prepared.llm.usage,
+                    usage=prepared.usage,
                     attempts=prepared.anchored.attempts,
                 ),
             )
-    _log_settled_pass(prepared, usage, refunded_empty=no_notes_message is not None)
+    _log_settled_pass(prepared, usage, outcome)
     return _SettledPass(
         rows=rows,
         suggestions=suggestions,
@@ -1882,7 +2150,21 @@ async def _persist_settle_commit(
         ),
         no_notes_message=no_notes_message,
         reset_date=spent_user.monthly_reset_date,
+        outcome=outcome,
     )
+
+
+def _pass_outcome(no_notes_message: str | None, *, demo: bool) -> GenerationOutcome:
+    """Classify a committed pass: empty, a demo, or kept.
+
+    Empty wins over demo: a stub pass that kept no notes is refunded once, as
+    an empty pass, under the reason the writer is told. A demo that kept notes
+    is delivered but handed back (#3062) -- canned text is never billed as a
+    reflection.
+    """
+    if no_notes_message is not None:
+        return GenerationOutcome.REFUNDED_EMPTY
+    return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
 
 
 # A user with no StageProgress row yet has never reached any stage, so their
@@ -1901,7 +2183,13 @@ async def _contraction_reflection(
     detects a sustained contraction, and — only when flagged — gates the copy by
     the highest stage the user has ever reached. It never writes and never touches
     progression, so it is safe to run on the resonance happy path.
+
+    It names a thinning *habit* foundation, so a user who declined the habits
+    ring is never shown it (#3073): the read-only ring check runs first and
+    short-circuits before any habit signal is gathered.
     """
+    if DepthRing.HABITS not in await load_enabled_rings(session, user_id):
+        return None
     user_timezone = await get_user_timezone(session, user_id)
     aggregates = await gather_contraction_aggregates(session, user_id, user_timezone)
     signal = detect_contraction(aggregates)
@@ -1933,12 +2221,15 @@ class _ResonanceSurfaces:
     off the reflection source rather than re-derived: empty for every pass a
     vault did not answer, which is what a cloud reflection, a degraded vault and
     a vault with no pages all report.
+
+    ``provenance`` is which side answered each operation and who paid (#3062).
     """
 
     care: CareResponse | None
     contraction: ContractionReflectionResponse | None = None
     no_notes_message: str | None = None
     related: VaultRelatedSurfaces = field(default_factory=VaultRelatedSurfaces)
+    provenance: PassProvenance | None = None
 
 
 def _resonance_response(
@@ -1969,6 +2260,7 @@ def _resonance_response(
             RelatedEddyResponse.model_validate(eddy, from_attributes=True)
             for eddy in surfaces.related.eddies
         ],
+        provenance=surfaces.provenance,
     )
 
 
@@ -1997,31 +2289,36 @@ async def _settle_empty_pass(
 
 @dataclass(frozen=True)
 class _ReflectionClients:
-    """The two reflection backends the resonance handler selects between.
+    """The two reflection backends, and the server-derived boundary choosing between them.
 
-    ``api_key`` is the caller's optional BYOK key for the local cloud LLM;
-    ``vault_client`` is the optional Creek Vault client. Bundling the pair into
-    one injected value keeps the handler's dependency signature small while the
-    routing choice between them stays in :func:`select_reflection_llm`.
+    ``api_key`` is the caller's optional BYOK key for the app provider;
+    ``vault_client`` is the optional Creek Vault client; ``boundary`` is which of
+    them this caller's AI operations may use (see
+    :func:`~dependencies.creek_vault.resolve_reflection_boundary`), never taken
+    from the request. Bundling them into one injected value keeps the handler's
+    dependency signature small.
     """
 
     api_key: str | None = field(repr=False)
     vault_client: CreekVaultClient
+    boundary: ReflectionBoundary
 
 
 def _reflection_clients(
     vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
+    boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
     x_llm_api_key: Annotated[
         str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
     ] = None,
 ) -> _ReflectionClients:
-    """Bundle the BYOK key and the vault client for the resonance handler.
+    """Bundle the BYOK key, the vault client and the boundary for the resonance handler.
 
     A thin dependency that resolves both reflection backends together. The nested
-    :func:`get_creek_vault_client` dependency stays independently overridable, so
-    a test can still swap the vault client through ``dependency_overrides``.
+    :func:`get_creek_vault_client` and :func:`get_reflection_boundary`
+    dependencies stay independently overridable, so a test can swap either
+    through ``dependency_overrides``.
     """
-    return _ReflectionClients(api_key=x_llm_api_key, vault_client=vault_client)
+    return _ReflectionClients(api_key=x_llm_api_key, vault_client=vault_client, boundary=boundary)
 
 
 async def _resonance_payment(
@@ -2073,15 +2370,21 @@ async def run_resonance(
     only on this non-intimate happy path — never for an intimate entry, whose
     privacy floor returns above — and never mutates progression.
 
-    When a vault is connected and the entry is neither intimate nor
-    distress-flagged, the reflection routes to that vault's own corpus; otherwise
-    it is generated by the local cloud LLM exactly as before.
+    Which model may answer is decided once, server-side, by the caller's
+    boundary (#3061). With no vault, the app provider answers the reflection and
+    completion detection exactly as before. With a vault -- connected, still
+    provisioning, or currently undialable -- the vault answers the reflection or
+    nothing does: a vault with nothing to say is a refunded zero-note pass, a
+    vault that cannot answer is a refunded, retryable 503
+    ``reflection_source_unavailable``, a locally flagged entry gets the care
+    surface alone, and completion detection is skipped (``checked`` false on the
+    standalone route). None of those reaches the app provider, whatever key the
+    request carries.
 
     The context that accompanies the entry is chosen by
     :func:`~services.higher_self_grounding.gather_grounding` — the account's own
     ontologized corpus where it holds anything, the recency window where it does
-    not. It is gathered on every pass, vault or not: a vault that degrades hands
-    the prompt to the cloud fallback, which is the path this context is for.
+    not. Only the app provider's prompt carries it; a vault builds its own.
 
     A vault may answer that request with its own care escalation, meaning its
     care guard read acute distress in writing adepthood's local screen did not
@@ -2101,14 +2404,41 @@ async def run_resonance(
     # suppresses crisis support (NORTH-STAR §10). An admitted pass re-derives
     # both the body and this screen from the row it re-reads under the hold
     # (#3008); this reading serves only the 422 and intimate fast paths.
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         return await _private_response(session, current_user, _care_response(_care_for(message)))
     # A generation is about to happen: the per-user guardrails (#623) admit it
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
+    require_external_ai_available()
     require_generation_minute_available(current_user)
     async with generation_slot(session, current_user):
         return await _run_admitted_resonance(session, current_user, entry, clients)
+
+
+def _pass_receipts(
+    notes: InferenceReceipt | None,
+    detection_usage: Sequence[LLMResponse],
+    attempt: _DetectionAttempt,
+    *,
+    api_key: str | None,
+) -> PassReceipts:
+    """Gather one pass's receipts: the reflection's, and detection's own (#3062).
+
+    ``detection_usage`` is only the responses metered after the reflection, so
+    the reflection's answer can never be read as detection's.
+    """
+    return PassReceipts(
+        notes=notes,
+        detection=detection_receipt(
+            receipt_since(detection_usage), dialled=attempt.dialled, api_key=api_key
+        ),
+        detection_checked=attempt.checked,
+    )
+
+
+def _charge_kept(spent: SpendResult | None, settled: _SettledPass) -> bool:
+    """Whether the pass's wallet deduction was taken and still stands after settlement."""
+    return spent is not None and settled.outcome is GenerationOutcome.KEPT
 
 
 async def _run_admitted_resonance(
@@ -2136,8 +2466,11 @@ async def _run_admitted_resonance(
     # spend for the slot's rollback to discard.
     consume_generation_minute(current_user)
     detection = await _detection_inputs(session, entry=entry)
-    llm = BotmasonResonanceLLM(byok_key)
-    trace = _FailedGeneration(feature=GenerationFeature.RESONANCE, key=key, usage=llm.usage)
+    # The only app-provider adapter this pass may hold, and none at all when the
+    # caller is vault-bound: a BYOK key pays for a call, it does not consent to one.
+    app_llm = app_provider_llm(clients.boundary, byok_key)
+    usage = _metered_usage(app_llm)
+    trace = _FailedGeneration(feature=GenerationFeature.RESONANCE, key=key, usage=usage)
     # Any deduction is durable: release the pooled connection before waiting.
     await session.commit()
     # The account barrier opens here rather than at the top of the handler: the
@@ -2158,39 +2491,40 @@ async def _run_admitted_resonance(
                 session, current_user, _care_response(_care_for(entry.message))
             )
         message, care = await _body_under_hold(session, entry, spent=spent, trace=trace)
-        grounding, prior_letters = await _pass_context_under_hold(session, current_user, entry_id)
-        reflection_llm = await select_reflection_llm(
+        if app_llm is None and care is not None:
+            # Vault-bound and flagged locally: adepthood's care surface alone. No
+            # vault and no model is asked, and the committed charge is refunded.
+            await _refund_failed_pass(session, current_user, spent, trace=trace)
+            return await _care_only_response(session, current_user, care)
+        grounding, prior_letters = await _pass_context_under_hold(session, entry)
+        reflected = await _reflect_or_answer(
+            _ReflectionRequest(
+                entry_id=entry_id,
+                message=message,
+                classification=entry.classification,
+                prior=list(grounding.bodies),
+                prior_letters=prior_letters,
+            ),
             clients.vault_client,
-            body=message,
-            classification=entry.classification,
-            care_flagged=care is not None,
-            fallback=llm,
+            app_llm,
+            _ResonancePassContext(
+                session=session,
+                care=care,
+                byok=byok_key is not None,
+                user_id=current_user,
+                spent=spent,
+                trace=trace,
+            ),
         )
-        try:
-            anchored = await _resonance_pass_or_care(
-                message,
-                reflection_llm,
-                list(grounding.bodies),
-                _ResonancePassContext(
-                    session=session,
-                    care=care,
-                    byok=byok_key is not None,
-                    user_id=current_user,
-                    spent=spent,
-                    trace=trace,
-                ),
-                prior_letters,
-            )
-        except CreekVaultCareEscalationError:
-            # The vault's care guard fired: answer with adepthood's own care
-            # surface instead of a reflection, and settle any committed charge.
-            return await _escalated_care_response(session, current_user, spent, trace)
-        if anchored is None:
-            # The reflection failed but the entry is flagged: surface care anyway.
-            return await _care_only_response(session, current_user, cast("CareResponse", care))
+        if isinstance(reflected, _CareInstead):
+            return await _care_only_response(session, current_user, reflected.care)
+        anchored, reflection_llm = reflected
+        notes_receipt = reflection_receipt(reflection_llm, usage)
+        detection_mark = len(usage)
         attempt = await _detect_hits_with_status(
-            message, inputs=detection, llm=llm, user_id=current_user, entry_id=entry_id
+            message, inputs=detection, llm=app_llm, user_id=current_user, entry_id=entry_id
         )
+        receipts = _pass_receipts(notes_receipt, usage[detection_mark:], attempt, api_key=byok_key)
         settled = await _persist_settle_commit(
             session,
             _PassSettlementInput(
@@ -2199,13 +2533,14 @@ async def _run_admitted_resonance(
                 spent=spent,
                 anchored=anchored,
                 hits=attempt.hits,
-                llm=llm,
+                usage=usage,
                 key=key,
+                receipt=notes_receipt,
             ),
         )
         await _refresh_persisted(session, settled.rows, settled.suggestions)
     _log_resonance_outcome(
-        anchored, user_id=current_user, entry_id=entry_id, count=len(settled.rows)
+        anchored, receipts, user_id=current_user, entry_id=entry_id, count=len(settled.rows)
     )
     contraction = await _contraction_reflection(session, current_user)
     surfaces = _ResonanceSurfaces(
@@ -2213,6 +2548,9 @@ async def _run_admitted_resonance(
         contraction=contraction,
         no_notes_message=settled.no_notes_message,
         related=related_surfaces(reflection_llm),
+        provenance=pass_provenance(
+            receipts, byok=byok_key is not None, charge_kept=_charge_kept(spent, settled)
+        ),
     )
     return _resonance_response(
         settled.rows, settled.suggestions, settled.wallet, settled.reset_date, surfaces
@@ -2400,7 +2738,7 @@ async def _detect_fresh_suggestions(
     *,
     entry: JournalEntry,
     inputs: DetectionInputs,
-    api_key_header: str | None,
+    caller: _DetectionCaller,
 ) -> CompletionDetectionResponse:
     """Dial without a transaction, then persist a concurrency-safe fresh subset.
 
@@ -2425,14 +2763,22 @@ async def _detect_fresh_suggestions(
     practices, and answers ``checked: false``; a deleted row answers the uniform
     404; otherwise the body dialled is the refreshed one. The re-read commits,
     so no connection is held across the dial (#3008).
+
+    Reached only for an app-provider-bound caller: the route answered a
+    vault-bound one before reading any candidate. The adapter is still taken
+    through :func:`~services.reflection_boundary.require_app_provider_llm`, so
+    losing that check would refuse here rather than dial (#3061).
     """
-    api_key = resolve_chat_api_key(api_key_header)
-    llm = BotmasonResonanceLLM(api_key)
+    llm = require_app_provider_llm(caller.boundary, resolve_chat_api_key(caller.api_key))
     await session.commit()
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
         if await _withdrawn_under_hold(session, entry, spent=None, trace=None):
             return CompletionDetectionResponse(items=[], checked=False)
+        # Shadow only (#3059): the pass will dial. Committed straight away so
+        # the read holds no connection across that dial.
+        await observe_entry_lineage(session, LineageOperation.DETECT, entry)
+        await session.commit()
         return await _detect_and_persist(
             session,
             entry=entry,
@@ -2469,6 +2815,33 @@ async def _detect_and_persist(
     )
 
 
+@dataclass(frozen=True)
+class _DetectionCaller:
+    """Who is asking for standalone detection: their optional BYOK key and their boundary.
+
+    Bundled for the same argument-budget reason as :class:`_ReflectionClients`.
+    ``boundary`` is server-derived, never taken from the request.
+    """
+
+    api_key: str | None = field(repr=False)
+    boundary: ReflectionBoundary
+
+
+def _detection_caller(
+    boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
+) -> _DetectionCaller:
+    """Bundle the BYOK header and the caller's boundary for the detection handler.
+
+    The header is carried unvalidated: it is resolved only once the route knows
+    it is going to dial, so a vault-bound caller or an entry with nothing new to
+    offer never needs a key.
+    """
+    return _DetectionCaller(api_key=x_llm_api_key, boundary=boundary)
+
+
 @router.post("/{entry_id}/suggestions/detect", response_model=CompletionDetectionResponse)
 @limiter.limit("10/minute")
 async def detect_entry_suggestions(
@@ -2476,9 +2849,7 @@ async def detect_entry_suggestions(
     entry_id: RowIdPath,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_llm_api_key: Annotated[
-        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
-    ] = None,
+    caller: Annotated[_DetectionCaller, Depends(_detection_caller)],
 ) -> CompletionDetectionResponse:
     """Check an entry for completed habits independently of literary resonance.
 
@@ -2490,6 +2861,10 @@ async def detect_entry_suggestions(
 
     The INTIMATE check here is only the cheap fast path: the authoritative
     floor is re-read under the account hold, just before the dial (#3008).
+
+    A vault-bound caller answers ``checked: false`` before any candidate is
+    read: a vault has no detection capability, and the app provider is not
+    theirs to be sent to (#3061).
     """
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
@@ -2498,7 +2873,10 @@ async def detect_entry_suggestions(
     # before any candidate or provider work. The body actually dialled is
     # re-derived from the row re-read under the hold.
     _sanitize_message(entry.message)
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
+        return CompletionDetectionResponse(items=[], checked=False)
+    if caller.boundary is ReflectionBoundary.VAULT_BOUND:
+        await session.commit()
         return CompletionDetectionResponse(items=[], checked=False)
 
     inputs = await _detection_inputs(session, entry=entry)
@@ -2508,11 +2886,12 @@ async def detect_entry_suggestions(
         # empty candidate set is a completed check, not a provider failure.
         await session.commit()
         return CompletionDetectionResponse(items=[], checked=True)
+    require_external_ai_available()
     return await _detect_fresh_suggestions(
         session,
         entry=entry,
         inputs=inputs,
-        api_key_header=x_llm_api_key,
+        caller=caller,
     )
 
 
@@ -2975,8 +3354,9 @@ async def _expand_essay(
     # Decided from the *persisted* classification, before the LLM is constructed.
     # Read again inside the barrier below, because this reading can go stale
     # while the request waits for it — see ``_cache_and_mirror_essay``.
-    if entry.classification == JournalClassification.INTIMATE:
+    if not admits_egress(entry.classification):
         return note
+    require_external_ai_available()
     _require_price_acknowledged(clients)
     # A first letter is about to be asked for: the per-user guardrails (#623)
     # admit it only now, after the cached, intimate, 404 and 409 exits above.
@@ -3054,8 +3434,11 @@ async def _cache_and_mirror_essay(
             # purchase -- no charge, no dial, no overwrite (#623).
             _log_essay_cache_hit(note, _CACHE_HIT_IN_BARRIER)
             return note
-        if entry.deleted_at is not None or entry.classification == JournalClassification.INTIMATE:
+        if entry.deleted_at is not None or not admits_egress(entry.classification):
             return note
+        # Shadow only (#3059). ``_cache_essay`` commits before it dials, so this
+        # read is released with its own before anything leaves the process.
+        await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
         cached = await _cache_essay(
             session, note, _sanitize_message(entry.message), clients.api_key
         )
@@ -3085,9 +3468,12 @@ async def _mirror_cached_essay(
     Serialize the final liveness/tier read and mirror: an already-completed
     deletion skips; an INTIMATE transition is refused by ``mirror_voice_draft``;
     and if this PUT linearized first, the competing mutation waits and retracts
-    it. The request transaction is committed before Creek I/O; PostgreSQL holds
-    the cross-worker lock on a non-pooled, dedicated connection rather than
-    consuming the application pool. Account outermost, entry innermost -- the
+    it. The content-free intent row -- bound to the destination being dialled --
+    is committed before the PUT, so even a lost acknowledgement leaves the
+    withdrawal that mutation owes on record. The request transaction is
+    committed before Creek I/O; PostgreSQL holds the cross-worker lock on a
+    non-pooled, dedicated connection rather than consuming the application
+    pool. Account outermost, entry innermost -- the
     fixed nesting everywhere the two meet.
     """
     async with (
@@ -3099,12 +3485,33 @@ async def _mirror_cached_essay(
         await session.commit()
         if entry.deleted_at is not None:
             return cached
+        marginalia_id = cast("int", cached.id)
+        destination = await resolved_vault_destination(session, entry.user_id)
+
+        async def _record_intent() -> bool:
+            recorded = await record_mirror_intent(
+                session,
+                user_id=entry.user_id,
+                entry_id=cast("int", entry.id),
+                marginalia_id=marginalia_id,
+                destination=destination,
+            )
+            if recorded:
+                # Shadow only (#3059): the mirror was admitted and its PUT is
+                # next. Committed so no connection is held across that PUT.
+                await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
+                await session.commit()
+            return recorded
+
         await mirror_voice_draft(
             clients.vault_client,
-            owner_user_id=entry.user_id,
-            marginalia_id=cast("int", cached.id),
-            essay=essay,
-            classification=entry.classification,
+            VoiceDraftCopy(
+                owner_user_id=entry.user_id,
+                marginalia_id=marginalia_id,
+                essay=essay,
+                classification=entry.classification,
+            ),
+            record_intent=_record_intent,
         )
     return cached
 
@@ -3308,10 +3715,36 @@ async def _settle_essay(
             extra={"user_id": note.user_id, "id": note.id},
         )
         return
+    outcome = await _keep_letter(session, note, essay, receipt_since(llm.usage), charge)
+    _log_settled_essay(note, charge, usage, outcome)
+
+
+async def _keep_letter(
+    session: AsyncSession,
+    note: Marginalia,
+    essay: str,
+    receipt: InferenceReceipt | None,
+    charge: _EssayCharge,
+) -> GenerationOutcome:
+    """Cache the letter with its source; hand a demo letter's unit back in the same commit.
+
+    The letter's source is stamped beside the letter itself, so the two can
+    never be committed apart. A stub letter is still cached -- the writer asked
+    for it and sees it labelled as a demo -- but it is never billed (#3062).
+    Returns the outcome the settlement line reports.
+    """
     note.essay = essay
     note.essay_generated_at = datetime.now(UTC)
+    stamp_letter(note, receipt)
+    demo = is_demo(receipt)
+    refund = None
+    if demo and charge.spent is not None:
+        refund = await refund_one_message(
+            session, note.user_id, charge.spent, reason=REASON_REFUND_DEMO
+        )
     await session.commit()
-    _log_settled_essay(note, charge, usage, GenerationOutcome.KEPT)
+    log_committed_refund(refund)
+    return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -3325,10 +3758,12 @@ async def delete_journal_entry(
 
     Stamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.
     This preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the
-    usage audit trail is never orphaned, and allows recovery within the
-    configurable retention window.  Soft-deleted rows are invisible to all
-    read paths (list, get, ``load_recent_conversation``) which filter
-    ``deleted_at IS NULL``.
+    usage audit trail is never orphaned.  Soft-deleted rows are invisible to
+    all read paths (list, get, ``load_recent_conversation``) which filter
+    ``deleted_at IS NULL``, and no recovery path is exposed.  There is no
+    automatic retention window: the row and its derivatives (margin notes,
+    promoted quotes, completion suggestions) persist until account deletion
+    or an operator purge (#3063; see ``domain.retention``).
     """
     entry_id = cast("int", entry.id)
     # The ownership dependency's read opened a transaction. End it before
@@ -3351,11 +3786,10 @@ async def delete_journal_entry(
             user_id=current_user,
             entry_id=entry_id,
         )
+        await mark_entry_retractions_pending(session, user_id=current_user, entry_id=entry_id)
         await session.commit()
-        drafts_withdrawn = await _retract_entry_voice_drafts(session, current, vault_client)
-        if not drafts_withdrawn:
+        if not await _withdraw_remote_copies(session, current, vault_client):
             raise service_unavailable("vault_withdrawal_pending")
-        await _withdraw_remote_journal_copy(session, current, vault_client)
         current.deleted_at = datetime.now(UTC)
         session.add(current)
         await session.commit()

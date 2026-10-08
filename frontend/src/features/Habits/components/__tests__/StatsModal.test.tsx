@@ -53,11 +53,17 @@ jest.mock('../../HabitUtils', () => ({
     completionRate: api.completion_rate,
     completionDates: api.completion_dates,
   })),
+  formatStreakCount:
+    jest.requireActual<typeof HabitUtilsModule>('../../HabitUtils').formatStreakCount,
+  streakPeriodKind:
+    jest.requireActual<typeof HabitUtilsModule>('../../HabitUtils').streakPeriodKind,
 }));
 
 // Import after mocks
 import { habits as habitsApi } from '../../../../api';
 import type { Habit, HabitStatsData } from '../../Habits.types';
+import type * as HabitUtilsModule from '../../HabitUtils';
+import { STATS_CLOSE_LABEL } from '../modalCloseLabels';
 import { StatsModal } from '../StatsModal';
 
 const mockGetStats = habitsApi.getStats as jest.MockedFunction<typeof habitsApi.getStats>;
@@ -144,12 +150,12 @@ describe('StatsModal', () => {
   it('calls onClose when close button is pressed', async () => {
     const onClose = jest.fn() as any;
 
-    const { getByText } = render(
+    const { getByRole } = render(
       <StatsModal visible={true} habit={baseHabit} stats={localStats} onClose={onClose} />,
     );
 
-    fireEvent.press(getByText('×'));
-    expect(onClose).toHaveBeenCalled();
+    fireEvent.press(getByRole('button', { name: STATS_CLOSE_LABEL }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('switches between tabs', async () => {

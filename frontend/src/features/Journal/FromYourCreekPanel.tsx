@@ -51,6 +51,14 @@ const MONTHS = [
 /** Keep enough of the journal page visible to make collapse an obvious choice. */
 const MAX_EXPANDED_VIEWPORT_RATIO = 0.6;
 
+/**
+ * Section headings. Praxis and Eddies are the vault's own words for these
+ * pages, so each heading keeps the name and says in plain words what it is —
+ * a bare term would ask the writer to already know the vocabulary.
+ */
+const PRAXIS_HEADING = "Praxis — what you're putting into practice";
+const EDDIES_HEADING = 'Eddies — where your writing keeps circling';
+
 /** The vault's lifecycle language, softened where an internal status is terse. */
 function statusLabel(status: RelatedPraxisStatus): string {
   return status === 'released' ? 'set down' : status;
@@ -65,7 +73,7 @@ function formedMonth(formed: string): string | null {
 }
 
 function eddyCaption(eddy: RelatedEddy): string {
-  const noun = eddy.fragment_count === 1 ? 'fragment' : 'fragments';
+  const noun = eddy.fragment_count === 1 ? 'piece of your writing' : 'pieces of your writing';
   const month = formedMonth(eddy.formed);
   return `${eddy.fragment_count} ${noun}${month == null ? '' : ` since ${month}`}`;
 }
@@ -81,7 +89,7 @@ function PraxisPages({ items }: { items: RelatedPraxis[] }): React.JSX.Element |
   if (items.length === 0) return null;
   return (
     <View style={styles.section} testID="from-your-creek-praxis">
-      <Text style={styles.sectionHeading}>Praxis</Text>
+      <Text style={styles.sectionHeading}>{PRAXIS_HEADING}</Text>
       {items.map((item, index) => (
         <View
           key={`${item.title}-${index}`}
@@ -105,7 +113,7 @@ function EddyPages({ items }: { items: RelatedEddy[] }): React.JSX.Element | nul
   if (items.length === 0) return null;
   return (
     <View style={styles.section} testID="from-your-creek-eddies">
-      <Text style={styles.sectionHeading}>Eddies</Text>
+      <Text style={styles.sectionHeading}>{EDDIES_HEADING}</Text>
       {items.map((item, index) => {
         const caption = eddyCaption(item);
         const accessibilityLabel = [item.title, item.description, caption]

@@ -14,6 +14,15 @@ success. Evidence references are closed kind/time/hash objects; the referenced
 artifacts must be sanitized separately before capture. A passed record also
 embeds Creek's versioned, sanitized provider-pilot prerequisite verbatim.
 
+Schema v3 adds the ``serving_receipts`` check and two revision coordinates,
+``backend_served_release`` and ``frontend_served_release``: the builds that
+actually answered during the run, as sampled from the operator-only
+``GET /admin/serving-receipt``. A passed record must show both serving exactly
+``adepthood_sha``, with no mixed-version or legacy-receipt response, a ready
+egress barrier and rollout, and no local-model or attestation claim. The
+counts and states are operator observations backed by hashed evidence
+references, like every other check; the validator never reads a receipt.
+
 Usage::
 
     cd backend
@@ -41,7 +50,7 @@ from typing import Final, TypeGuard, cast
 EXIT_PASSED = 0
 EXIT_INCOMPLETE = 1
 EXIT_INVALID = 2
-SCHEMA_VERSION: Final[int] = 2
+SCHEMA_VERSION: Final[int] = 3
 ZERO_OBSERVED: Final[int] = 0
 
 REQUIRED_CHECKS: tuple[str, ...] = (
@@ -59,6 +68,7 @@ REQUIRED_CHECKS: tuple[str, ...] = (
     "confirmed_idempotent_teardown",
     "fleet_disable_and_cost_reconciliation",
     "exact_main_gates",
+    "serving_receipts",
 )
 
 # Machine-checkable observations that distinguish a real acceptance pass from a
@@ -173,6 +183,21 @@ PASS_FACTS: dict[str, dict[str, object]] = {
         "deployment_verification_green": True,
         "unexplained_product_skips": 0,
     },
+    # Schema v3 (#2871 addendum): the builds that actually answered during the
+    # run. These are operator observations of ``GET /admin/serving-receipt``
+    # samples, hashed into ``evidence_refs`` -- the validator never sees a
+    # receipt. ``local_model_claim`` is pinned to ``unknown`` until a model
+    # digest and inference probe exist (B05/B07, schema v4).
+    "serving_receipts": {
+        "backend_receipt_present": True,
+        "frontend_receipt_present": True,
+        "mixed_release_responses": ZERO_OBSERVED,
+        "legacy_receipt_responses": ZERO_OBSERVED,
+        "egress_barrier_state": "ready",
+        "managed_vault_rollout_state": "ready",
+        "attested_confidential_reported": False,
+        "local_model_claim": "unknown",
+    },
 }
 
 _ROOT_FIELDS = frozenset(
@@ -199,7 +224,13 @@ _REVISION_FIELDS = frozenset(
         "creek_fleet_schedule_revision",
         "provisioning_contract",
         "vault_contract",
+        "backend_served_release",
+        "frontend_served_release",
     }
+)
+_SERVED_RELEASE_FIELDS: Final[tuple[str, str]] = (
+    "backend_served_release",
+    "frontend_served_release",
 )
 _CLAIM_FIELDS = frozenset({"custody_mode", "attested_confidential"})
 _CHECK_FIELDS = frozenset({"outcome", "evidence_refs", "facts"})
@@ -502,8 +533,31 @@ def _revisions_are_valid(revisions: Mapping[object, object], *, passed: bool) ->
         _matches(values["creek_fleet_schedule_revision"], _SHA_RE),
         _matches(values["provisioning_contract"], _SEMVER_RE),
         _matches(values["vault_contract"], _SEMVER_RE),
+        _served_releases_bind(values, passed=passed),
     )
     return all(checks)
+
+
+def _served_releases_bind(values: Mapping[str, object], *, passed: bool) -> bool:
+    """Bind each served release to the recorded Adepthood commit.
+
+    A passed record requires both the backend and the frontend to have served
+    exactly ``adepthood_sha``. A record that did not pass may name the SHA that
+    actually answered (drift is the finding) or leave it null, but never a
+    free-form label such as ``unknown``.
+    """
+    accepts = _is_bound_release if passed else _is_recorded_release
+    return all(accepts(values[field], values["adepthood_sha"]) for field in _SERVED_RELEASE_FIELDS)
+
+
+def _is_bound_release(value: object, adepthood_sha: object) -> bool:
+    """Require an exact commit SHA identical to the recorded Adepthood commit."""
+    return _matches(value, _SHA_RE) and value == adepthood_sha
+
+
+def _is_recorded_release(value: object, _adepthood_sha: object) -> bool:
+    """Allow an unrecorded (null) release or the exact SHA that actually answered."""
+    return value is None or _matches(value, _SHA_RE)
 
 
 def _matches(value: object, pattern: re.Pattern[str]) -> bool:

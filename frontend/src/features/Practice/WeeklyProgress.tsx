@@ -18,10 +18,10 @@ function helperText(completed: number): string {
   if (completed >= WEEKLY_TARGET) return 'Weekly goal reached — nicely done.';
   const remaining = WEEKLY_TARGET - completed;
   if (completed === 0) {
-    return `Complete ${WEEKLY_TARGET} practices this week to reach your goal.`;
+    return `${WEEKLY_TARGET} practices make a full week. Start whenever you're ready.`;
   }
   const sessionWord = remaining === 1 ? 'practice' : 'practices';
-  return `${remaining} more ${sessionWord} to reach your weekly goal.`;
+  return `${remaining} more ${sessionWord} would fill out the week — if there's room for it.`;
 }
 
 const WeeklyProgress: React.FC<WeeklyProgressProps> = ({ count }) => {

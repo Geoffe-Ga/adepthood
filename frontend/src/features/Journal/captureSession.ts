@@ -79,4 +79,4 @@ export function canAddPages(pages: readonly CapturePage[]): boolean {
 }
 
 /** Warm, declinable copy shown once a session is full — save and start another. */
-export const capReachedCopy = `Sessions hold up to ${MAX_PAGES_PER_SESSION} pages — save this entry and start another for more.`;
+export const capReachedCopy = `You can add up to ${MAX_PAGES_PER_SESSION} pages at a time — save this entry and start another for more.`;

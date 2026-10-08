@@ -28,8 +28,8 @@ const LEAD =
 
 /** What the archive deliberately does not carry, in the app's own words. */
 const NOT_INCLUDED = [
-  'Your password, sign-in links, and the key to a Creek Vault you connected — a working credential does not belong in a file on a laptop.',
-  'Records the app kept about your usage: sign-in attempts, AI metering, wallet accounting.',
+  'Your password, sign-in links, and the key to any vault you connected — a working key does not belong in a file on a laptop.',
+  'Notes the app kept about your use of it: sign-in attempts, what each AI request cost, and the running tally of your allowance.',
   'The shared course, which is not yours to take. Practices you contributed are yours, and are included.',
 ];
 
@@ -138,7 +138,7 @@ export default function ExportDataScreen(): React.JSX.Element {
       </Text>
       <ExportButton
         label="Everything (JSON)"
-        description="Every entry, habit, goal, practice, reflection and corpus fragment, in a format that can be read back in."
+        description="Every entry, habit, goal, practice, reflection and sorted passage, in a form that can be read back in."
         busy={state.running === 'json'}
         disabled={busy}
         onPress={exportJson}

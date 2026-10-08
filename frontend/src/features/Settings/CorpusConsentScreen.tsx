@@ -22,7 +22,7 @@ import { ink, rhythm } from '@/design/tokens';
 
 /**
  * "Writing reflections can draw on" — the full account of what sorting does,
- * over the same switches the Settings hub shows under Your corpus.
+ * over the same switches the Settings hub shows under Your writing.
  *
  * The screen exists because the decision was reachable only over HTTP: the
  * endpoints shipped with the writer, defaulting to off, so every real account's

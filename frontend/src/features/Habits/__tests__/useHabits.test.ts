@@ -12,7 +12,6 @@ jest.mock('../../../api', () => ({
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
     getStats: jest.fn(() => Promise.resolve({})),
-    clearCompletions: jest.fn(() => Promise.resolve()),
   },
   goalCompletions: {
     create: jest.fn(() => Promise.resolve({})),
@@ -133,8 +132,6 @@ describe('useHabits', () => {
     expect(typeof result.current.actions.updateHabit).toBe('function');
     expect(typeof result.current.actions.deleteHabit).toBe('function');
     expect(typeof result.current.actions.saveHabitOrder).toBe('function');
-    expect(typeof result.current.actions.backfillMissedDays).toBe('function');
-    expect(typeof result.current.actions.setNewStartDate).toBe('function');
     expect(typeof result.current.actions.onboardingSave).toBe('function');
     expect(typeof result.current.actions.iconPress).toBe('function');
     expect(typeof result.current.actions.emojiSelect).toBe('function');
@@ -240,23 +237,5 @@ describe('useHabits', () => {
     });
     expect(result.current.habits[0]!.name).toBe('Second');
     expect(result.current.habits[1]!.name).toBe('First');
-  });
-
-  it('setNewStartDate resets habit completions and streak', () => {
-    const habit = makeHabit({
-      streak: 10,
-      completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-    });
-    const { result } = renderHook(() => useHabits());
-
-    act(() => result.current.setHabitsForTesting([habit]));
-
-    const newDate = new Date('2025-06-01');
-    act(() => result.current.actions.setNewStartDate(1, newDate));
-
-    const updated = result.current.habits.find((h) => h.id === 1);
-    expect(updated?.streak).toBe(0);
-    expect(updated?.completions).toEqual([]);
-    expect(updated?.start_date).toEqual(newDate);
   });
 });

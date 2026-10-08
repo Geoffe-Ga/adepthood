@@ -88,7 +88,6 @@ jest.mock('react-native-safe-area-context', () => {
 
 jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);
-jest.mock('../components/MissedDaysModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/StatsModal', () => ({
@@ -320,7 +319,7 @@ describe('HabitsScreen responsive layout', () => {
     });
 
     const texts = testRenderer.root.findAllByType(Text).map((t: any) => t.props.children);
-    expect(texts).not.toContain('Perform Energy Scaffolding');
+    expect(texts).not.toContain('Start Energy Scaffolding');
     expect(texts).toContain('Energy Scaffolding button moved to menu.');
 
     renderer.act(() => {

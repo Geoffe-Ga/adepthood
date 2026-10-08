@@ -57,7 +57,7 @@ const NARROW_VIEWPORT = { width: 390, height: 844 };
 const SMALL_VIEWPORT = { width: 320, height: 568 };
 /** The common compact Android phone -- the other width the header must stay tidy at. */
 const COMPACT_VIEWPORT = { width: 360, height: 640 };
-const CTA_NAME = 'Perform Energy Scaffolding';
+const CTA_NAME = 'Start Energy Scaffolding';
 
 /**
  * A full page of habits: `HABITS_PER_PAGE` is `MAX_HABITS` (10), so this fills

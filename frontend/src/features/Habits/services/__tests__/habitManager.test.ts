@@ -19,7 +19,6 @@ jest.mock('../../../../api', () => ({
     create: jest.fn(() => Promise.resolve({})),
     update: jest.fn(() => Promise.resolve({})),
     delete: jest.fn(() => Promise.resolve({})),
-    clearCompletions: jest.fn(() => Promise.resolve({})),
     getStats: jest.fn(() => Promise.resolve({})),
     updateGoalUnits: jest.fn(() => Promise.resolve([])),
   },
@@ -46,6 +45,23 @@ jest.mock('../../../../storage/habitStorage', () => ({
   clearDroppedCheckIns: jest.fn(() => Promise.resolve(undefined)),
 }));
 
+// A stateful in-memory stand-in for the replay head's out-of-band retry record
+// (#2473). Stateful rather than a bare ``jest.fn`` so a test can seed the record
+// one replay pass would have left and read back what the next pass wrote.
+let mockReplayState: unknown = null;
+
+jest.mock('../../../../storage/checkInReplayState', () => ({
+  loadCheckInReplayState: jest.fn(() => Promise.resolve(mockReplayState)),
+  saveCheckInReplayState: jest.fn((state: unknown) => {
+    mockReplayState = state;
+    return Promise.resolve(undefined);
+  }),
+  clearCheckInReplayState: jest.fn(() => {
+    mockReplayState = null;
+    return Promise.resolve(undefined);
+  }),
+}));
+
 jest.mock('../../hooks/useHabitNotifications', () => ({
   updateHabitNotifications: jest.fn(() => Promise.resolve([])),
   cancelForHabit: jest.fn(() => Promise.resolve(undefined)),
@@ -68,6 +84,7 @@ import type * as ApiModule from '../../../../api';
 import type { CheckInResult } from '../../../../api';
 import {
   ApiError,
+  ApiTimeoutError,
   ApiValidationError,
   habits as habitsApi,
   goalCompletions as goalCompletionsApi,
@@ -102,6 +119,7 @@ import {
 } from '../../HabitUtils';
 import { cancelForHabit } from '../../hooks/useHabitNotifications';
 import { applyGoalUpdate, habitManager } from '../habitManager';
+import { MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS, checkInIdentity } from '../replayPolicy';
 
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
   id: 1,
@@ -2783,7 +2801,7 @@ describe('habitManager', () => {
       const toast = habitManager.buildLogUnitToast(ctx);
 
       expect(toast).not.toBeNull();
-      expect(toast!.message).toMatch(/Low Goal achieved/i);
+      expect(toast!.message).toMatch(/Low Goal met/i);
     });
 
     it('buildLogUnitToast returns a confirmation toast when no milestone fires', () => {
@@ -2909,295 +2927,6 @@ describe('habitManager', () => {
       } finally {
         jest.useRealTimers();
       }
-    });
-  });
-
-  describe('backfillMissedDays', () => {
-    it('adds backfill completions and bumps the streak', () => {
-      useHabitStore.setState({ habits: [makeHabit({ streak: 2 })] });
-
-      habitManager.backfillMissedDays(1, [new Date('2025-01-02'), new Date('2025-01-03')]);
-
-      const habit = useHabitStore.getState().habits[0]!;
-      expect(habit.streak).toBe(4);
-      expect(habit.completions).toHaveLength(2);
-      // #783: must persist or the backfill is lost on the next cold rehydrate.
-      expect(saveHabits).toHaveBeenLastCalledWith([expect.objectContaining({ streak: 4 })]);
-    });
-
-    // The bug this whole suite pins: a backfill that only ever touches the
-    // Zustand store is silently erased the moment loadHabits() re-fetches,
-    // because handleApiSuccess trusts the server as the source of truth.
-    it('survives the next loadHabits reload once the completions are posted', async () => {
-      const habit = makeHabit({ id: 1, streak: 0 });
-      useHabitStore.setState({ habits: [habit] });
-      // Fixed, unambiguously-past calendar days — no system-time anchor needed.
-      const dayOne = new Date('2020-06-10T00:00:00.000Z');
-      const dayTwo = new Date('2020-06-11T00:00:00.000Z');
-
-      // Stand in for the server: what it returns is only what actually got
-      // posted, so a fix that forgets the POST reloads back to nothing.
-      (habitsApi.listAll as jest.Mock).mockImplementationOnce(() => {
-        const posted = (goalCompletionsApi.create as jest.Mock).mock.calls.map(
-          (call) => call[0] as { completed_on?: string },
-        );
-        return Promise.resolve([
-          {
-            id: 1,
-            name: habit.name,
-            icon: habit.icon,
-            start_date: '2020-01-01',
-            energy_cost: 1,
-            energy_return: 2,
-            stage: 'Beige',
-            streak: posted.length,
-            milestone_notifications: false,
-            revealed: true,
-            goals: [
-              {
-                ...freshServerGoal(1, 'Low', 'low', 1),
-                completions: posted.map((p, i) => ({
-                  id: i + 1,
-                  timestamp: `${p.completed_on ?? '2020-06-12'}T00:00:00.000Z`,
-                  completed_units: 1,
-                })),
-              },
-              freshServerGoal(2, 'Clear', 'clear', 2),
-              freshServerGoal(3, 'Stretch', 'stretch', 3),
-            ],
-          },
-        ] as never);
-      });
-
-      habitManager.backfillMissedDays(1, [dayOne, dayTwo], 'UTC');
-      // Flush the fire-and-forget POST fan-out before reloading.
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      await habitManager.loadHabits('UTC');
-
-      const reloaded = useHabitStore.getState().habits.find((h) => h.id === 1)!;
-      const dayKeys = (reloaded.completions ?? []).map((c) => dayKeyInTZ(c.timestamp, 'UTC'));
-      expect(dayKeys).toEqual(expect.arrayContaining(['2020-06-10', '2020-06-11']));
-    });
-
-    it('POSTs one completion per missed day against the low-tier goal', async () => {
-      useHabitStore.setState({ habits: [makeHabit({ id: 1, streak: 0 })] });
-      const dayOne = new Date('2020-06-10T00:00:00.000Z');
-      const dayTwo = new Date('2020-06-11T00:00:00.000Z');
-
-      habitManager.backfillMissedDays(1, [dayOne, dayTwo], 'UTC');
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(2);
-      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
-        goal_id: 1,
-        did_complete: true,
-        completed_on: '2020-06-10',
-      });
-      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
-        goal_id: 1,
-        did_complete: true,
-        completed_on: '2020-06-11',
-      });
-    });
-
-    it('buckets completed_on using the supplied IANA zone, not UTC', async () => {
-      useHabitStore.setState({ habits: [makeHabit({ id: 1, streak: 0 })] });
-      const day = new Date('2020-06-10T03:00:00.000Z');
-      const expectedAnchorageKey = dayKeyInTZ(day, 'America/Anchorage');
-      // Sanity check the fixture actually straddles the UTC/Anchorage
-      // boundary — otherwise the assertion below would pass by accident.
-      expect(expectedAnchorageKey).not.toBe(dayKeyInTZ(day, 'UTC'));
-
-      habitManager.backfillMissedDays(1, [day], 'America/Anchorage');
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      expect(goalCompletionsApi.create).toHaveBeenCalledWith({
-        goal_id: 1,
-        did_complete: true,
-        completed_on: expectedAnchorageKey,
-      });
-    });
-
-    it('rolls back the store and disk, and alerts the user, when a completion POST rejects', async () => {
-      const habit = makeHabit({ id: 1, streak: 2, completions: [] });
-      const prev = [habit];
-      useHabitStore.setState({ habits: prev });
-      (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
-
-      habitManager.backfillMissedDays(1, [new Date('2025-01-02'), new Date('2025-01-03')], 'UTC');
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const rolledBack = useHabitStore.getState().habits[0]!;
-      expect(rolledBack.streak).toBe(2);
-      expect(rolledBack.completions).toHaveLength(0);
-      expect(saveHabits).toHaveBeenLastCalledWith(prev);
-      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
-      expect(Alert.alert).toHaveBeenCalled();
-    });
-
-    it('skips the network call but still applies the optimistic update when the low goal has no id', async () => {
-      const habit = makeHabit({ streak: 1 });
-      habit.goals = habit.goals.map((g) => (g.tier === 'low' ? { ...g, id: undefined } : g));
-      useHabitStore.setState({ habits: [habit] });
-
-      habitManager.backfillMissedDays(1, [new Date('2025-01-02')], 'UTC');
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const updated = useHabitStore.getState().habits[0]!;
-      expect(updated.streak).toBe(2);
-      expect(updated.completions).toHaveLength(1);
-      expect(saveHabits).toHaveBeenLastCalledWith([expect.objectContaining({ streak: 2 })]);
-      expect(goalCompletionsApi.create).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('setNewStartDate', () => {
-    it('resets streak and completions when the start date changes, and PUTs it', async () => {
-      const habit = makeHabit({
-        streak: 10,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      useHabitStore.setState({ habits: [habit] });
-
-      const newDate = new Date('2025-06-01');
-      habitManager.setNewStartDate(1, newDate);
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const updated = useHabitStore.getState().habits[0]!;
-      expect(updated.streak).toBe(0);
-      expect(updated.completions).toEqual([]);
-      expect(updated.start_date).toEqual(newDate);
-      // #783: must persist or the reset start date is lost on the next rehydrate.
-      expect(saveHabits).toHaveBeenLastCalledWith([
-        expect.objectContaining({ start_date: newDate }),
-      ]);
-      // Must reach the server too — otherwise the next loadHabits() GET
-      // returns the stale start_date and silently reverts the reset.
-      expect(habitsApi.update).toHaveBeenCalledWith(
-        1,
-        expect.objectContaining({ start_date: '2025-06-01' }),
-      );
-      // The PUT alone does not delete completion rows server-side; clearing
-      // them is a separate call so the reset survives the next refetch.
-      expect(habitsApi.clearCompletions).toHaveBeenCalledWith(1);
-    });
-
-    it('reflects a cleared server state on the next loadHabits refetch, with no resurrected rows', async () => {
-      const habit = makeHabit({
-        id: 1,
-        streak: 10,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      useHabitStore.setState({ habits: [habit] });
-      // Stand in for the server: the refetch only comes back cleared if the
-      // clear-completions call actually reached it, so a fix that forgets
-      // the DELETE reloads pre-reset rows straight back.
-      (habitsApi.listAll as jest.Mock).mockImplementationOnce(() => {
-        const cleared = (habitsApi.clearCompletions as jest.Mock).mock.calls.length > 0;
-        return Promise.resolve([
-          {
-            id: 1,
-            name: habit.name,
-            icon: habit.icon,
-            start_date: '2025-06-01',
-            energy_cost: 1,
-            energy_return: 2,
-            stage: 'Beige',
-            streak: cleared ? 0 : 10,
-            milestone_notifications: false,
-            revealed: true,
-            goals: [
-              {
-                ...freshServerGoal(1, 'Low', 'low', 1),
-                completions: cleared
-                  ? []
-                  : [{ id: 1, timestamp: '2025-05-01T00:00:00.000Z', completed_units: 1 }],
-              },
-              { ...freshServerGoal(2, 'Clear', 'clear', 2), completions: [] },
-              { ...freshServerGoal(3, 'Stretch', 'stretch', 3), completions: [] },
-            ],
-          },
-        ] as never);
-      });
-
-      habitManager.setNewStartDate(1, new Date('2025-06-01'));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      await habitManager.loadHabits('UTC');
-
-      const reloaded = useHabitStore.getState().habits.find((h) => h.id === 1)!;
-      expect(reloaded.streak).toBe(0);
-      expect(reloaded.completions).toEqual([]);
-    });
-
-    it('keeps the durably-saved start date and only warns when clearCompletions rejects', async () => {
-      const habit = makeHabit({
-        id: 1,
-        streak: 10,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      const prev = [habit];
-      useHabitStore.setState({ habits: prev });
-      (habitsApi.clearCompletions as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
-
-      habitManager.setNewStartDate(1, new Date('2025-06-01'));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      // The PUT resolved, so the new start date is already durable server-side.
-      // A failed clear must not roll the store back to the stale start date;
-      // the optimistic reset holds and the user is told the clear failed.
-      const after = useHabitStore.getState().habits[0]!;
-      expect(after.streak).toBe(0);
-      expect(after.completions).toEqual([]);
-      expect(saveHabits).not.toHaveBeenLastCalledWith(prev);
-      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
-      expect(Alert.alert).toHaveBeenCalledWith(
-        "Couldn't sync",
-        expect.stringContaining('old check-ins'),
-      );
-    });
-
-    it('skips both network calls for an id-less habit but still applies the optimistic reset', async () => {
-      const habit = makeHabit({
-        id: 0,
-        streak: 5,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      useHabitStore.setState({ habits: [habit] });
-
-      habitManager.setNewStartDate(0, new Date('2025-06-01'));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const updated = useHabitStore.getState().habits[0]!;
-      expect(updated.streak).toBe(0);
-      expect(updated.completions).toEqual([]);
-      expect(habitsApi.update).not.toHaveBeenCalled();
-      expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
-    });
-
-    it('rolls back the store and disk, and alerts the user, when the start-date PUT rejects', async () => {
-      const habit = makeHabit({
-        streak: 10,
-        completions: [{ id: 'c-1', timestamp: new Date(), completed_units: 1 }],
-      });
-      const prev = [habit];
-      useHabitStore.setState({ habits: prev });
-      (habitsApi.update as jest.Mock).mockRejectedValueOnce(new Error('boom') as never);
-
-      habitManager.setNewStartDate(1, new Date('2025-06-01'));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-
-      const rolledBack = useHabitStore.getState().habits[0]!;
-      expect(rolledBack.streak).toBe(10);
-      expect(rolledBack.completions).toHaveLength(1);
-      expect(saveHabits).toHaveBeenLastCalledWith(prev);
-      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
-      expect(Alert.alert).toHaveBeenCalled();
     });
   });
 
@@ -4162,7 +3891,7 @@ describe('habitManager', () => {
 
       const toast = habitManager.buildLogUnitToast(ctx);
 
-      expect(toast.message).toMatch(/Clear Goal achieved/i);
+      expect(toast.message).toMatch(/Clear Goal met/i);
     });
 
     it('returns the Stretch Goal milestone toast when the log crosses the stretch threshold', () => {
@@ -4178,6 +3907,67 @@ describe('habitManager', () => {
       const toast = habitManager.buildLogUnitToast(ctx);
 
       expect(toast.message).toMatch(/Stretch Goal achieved/i);
+    });
+
+    it('celebrates a weekly tier when the log completes it across the week, not only today', () => {
+      // Wednesday; one session already logged on Monday of the same ISO week.
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-03-11T12:00:00Z'));
+      try {
+        const weeklyHabit = makeHabit({
+          completions: [
+            {
+              id: 'monday',
+              timestamp: new Date('2026-03-09T12:00:00Z'),
+              local_day: '2026-03-09',
+              completed_units: 1,
+            },
+          ],
+        });
+        weeklyHabit.goals = weeklyHabit.goals.map((g) => ({ ...g, frequency_unit: 'per_week' }));
+        useHabitStore.setState({ habits: [weeklyHabit] });
+        const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+        const toast = habitManager.buildLogUnitToast(ctx);
+
+        // Monday + today = 2 of the clear tier's 2 this week.
+        expect(toast.message).toMatch(/Clear Goal met/i);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('celebrates a monthly tier when the log completes it across the month', () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-03-20T12:00:00Z'));
+      try {
+        const monthlyHabit = makeHabit({
+          completions: [
+            {
+              id: 'early-march',
+              timestamp: new Date('2026-03-02T12:00:00Z'),
+              local_day: '2026-03-02',
+              completed_units: 1,
+            },
+            {
+              id: 'last-month',
+              timestamp: new Date('2026-02-27T12:00:00Z'),
+              local_day: '2026-02-27',
+              completed_units: 5,
+            },
+          ],
+        });
+        monthlyHabit.goals = monthlyHabit.goals.map((g) => ({ ...g, frequency_unit: 'per_month' }));
+        useHabitStore.setState({ habits: [monthlyHabit] });
+        const ctx = habitManager.prepareLogUnit(1, 1, 'UTC')!;
+
+        const toast = habitManager.buildLogUnitToast(ctx);
+
+        // 2 March sessions meet the clear tier; February's 5 do not count.
+        expect(toast.message).toMatch(/Clear Goal met/i);
+      } finally {
+        jest.useRealTimers();
+      }
     });
 
     it('falls back to the confirmation toast for a subtractive goal even when a threshold is crossed', () => {
@@ -4748,57 +4538,6 @@ describe('habitManager', () => {
       });
     });
 
-    describe('setNewStartDate', () => {
-      const NEW_START = new Date('2026-03-01T00:00:00Z');
-
-      const withHistory = (habit: Habit): Habit => ({
-        ...habit,
-        streak: 5,
-        completions: [{ timestamp: new Date('2025-02-01T00:00:00Z'), completed_units: 1 }],
-      });
-
-      it('resets a demo tile locally without a PUT and without clearing server check-ins', async () => {
-        useHabitStore.setState({ habits: [withHistory(demoTile())] });
-
-        habitManager.setNewStartDate(DEMO_TILE_ID, NEW_START);
-        await settle();
-
-        expect(habitsApi.update).not.toHaveBeenCalled();
-        expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.streak).toBe(0);
-        expect(stored.completions).toEqual([]);
-      });
-
-      it('resets a pre-sync added habit locally without a PUT and without clearing check-ins', async () => {
-        useHabitStore.setState({ habits: [withHistory(makeSyntheticHabit())] });
-
-        habitManager.setNewStartDate(SYNTHETIC_HABIT_ID, NEW_START);
-        await settle();
-
-        expect(habitsApi.update).not.toHaveBeenCalled();
-        expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.streak).toBe(0);
-        expect(stored.completions).toEqual([]);
-      });
-
-      it('PUTs then clears check-ins only for the server-backed row', async () => {
-        useHabitStore.setState({ habits: [demoTile(), withHistory(makeServerHabit())] });
-
-        habitManager.setNewStartDate(SERVER_HABIT_ID, NEW_START);
-        await settle();
-
-        expect(habitsApi.update).toHaveBeenCalledTimes(1);
-        expect(habitsApi.update).toHaveBeenCalledWith(
-          SERVER_HABIT_ID,
-          expect.objectContaining({ start_date: '2026-03-01' }),
-        );
-        expect(habitsApi.clearCompletions).toHaveBeenCalledTimes(1);
-        expect(habitsApi.clearCompletions).toHaveBeenCalledWith(SERVER_HABIT_ID);
-      });
-    });
-
     describe('updateGoalUnits', () => {
       const MINUTES = ['minutes', 'minutes', 'minutes'];
 
@@ -4934,45 +4673,6 @@ describe('habitManager', () => {
       });
     });
 
-    describe('backfillMissedDays', () => {
-      const MISSED_DAY = new Date('2025-06-01T12:00:00Z');
-
-      it('keeps a demo tile backfill local and posts no completions', () => {
-        useHabitStore.setState({ habits: [demoTile()] });
-
-        habitManager.backfillMissedDays(DEMO_TILE_ID, [MISSED_DAY], 'UTC');
-
-        expect(goalCompletionsApi.create).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.completions).toHaveLength(1);
-        expect(stored.streak).toBe(1);
-      });
-
-      it('keeps a pre-sync added habit backfill local and posts no completions', () => {
-        useHabitStore.setState({ habits: [makeSyntheticHabit()] });
-
-        habitManager.backfillMissedDays(SYNTHETIC_HABIT_ID, [MISSED_DAY], 'UTC');
-
-        expect(goalCompletionsApi.create).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.completions).toHaveLength(1);
-        expect(stored.streak).toBe(1);
-      });
-
-      it('posts one completion against the low goal of the server-backed row', () => {
-        useHabitStore.setState({ habits: [demoTile(), makeServerHabit()] });
-
-        habitManager.backfillMissedDays(SERVER_HABIT_ID, [MISSED_DAY], 'UTC');
-
-        expect(goalCompletionsApi.create).toHaveBeenCalledTimes(1);
-        expect(goalCompletionsApi.create).toHaveBeenCalledWith({
-          goal_id: SERVER_GOAL_IDS[0],
-          did_complete: true,
-          completed_on: '2025-06-01',
-        });
-      });
-    });
-
     describe('syncRevealState', () => {
       it('unlocks a pre-sync added habit locally without PUTting its negative id', () => {
         useHabitStore.setState({ habits: [makeSyntheticHabit({ revealed: false })] });
@@ -5021,8 +4721,6 @@ describe('habitManager', () => {
     });
 
     describe('an onboarding scaffold row whose positive ids this device minted', () => {
-      const NEW_START = new Date('2026-03-01T00:00:00Z');
-      const MISSED_DAY = new Date('2025-06-01T12:00:00Z');
       const MINUTES_UNIT = 'minutes';
       const ALL_MINUTES = [MINUTES_UNIT, MINUTES_UNIT, MINUTES_UNIT];
       const NEW_TARGET = 42;
@@ -5049,26 +4747,6 @@ describe('habitManager', () => {
 
         expect(habitsApi.delete).toHaveBeenCalledTimes(1);
         expect(habitsApi.delete).toHaveBeenCalledWith(SERVER_HABIT_ID);
-      });
-
-      it('resets the start date locally without a PUT and without clearing check-ins', async () => {
-        useHabitStore.setState({
-          habits: [
-            makeScaffoldHabit({
-              streak: 5,
-              completions: [{ timestamp: new Date('2025-02-01T00:00:00Z'), completed_units: 1 }],
-            }),
-          ],
-        });
-
-        habitManager.setNewStartDate(SCAFFOLD_HABIT_ID, NEW_START);
-        await settle();
-
-        expect(habitsApi.update).not.toHaveBeenCalled();
-        expect(habitsApi.clearCompletions).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.streak).toBe(0);
-        expect(stored.completions).toEqual([]);
       });
 
       it('renames locally without PUTting its device-minted id', async () => {
@@ -5132,17 +4810,6 @@ describe('habitManager', () => {
         const stored = useHabitStore.getState().habits;
         expect(stored.map((h) => h.name)).toEqual(['Second', 'First']);
         expect(stored.map((h) => h.sort_order)).toEqual([0, 1]);
-      });
-
-      it("keeps a backfill locally and posts no completion against a stranger's goal", () => {
-        useHabitStore.setState({ habits: [makeScaffoldHabit()] });
-
-        habitManager.backfillMissedDays(SCAFFOLD_HABIT_ID, [MISSED_DAY], 'UTC');
-
-        expect(goalCompletionsApi.create).not.toHaveBeenCalled();
-        const stored = useHabitStore.getState().habits[0]!;
-        expect(stored.completions).toHaveLength(1);
-        expect(stored.streak).toBe(1);
       });
 
       it("rejects a unit log instead of posting it against the caller's real goal", async () => {
@@ -5549,6 +5216,290 @@ describe('habitManager', () => {
 
       expect(clearPendingCheckIns).not.toHaveBeenCalled();
       expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[2]!]);
+    });
+
+    // #2473: an unclassified status that keeps recurring must not wedge the
+    // queue forever, but neither an offline spell nor an outage may ever count
+    // toward giving up on a check-in the user really made.
+    describe('bounded give-up on a recurring unclassified rejection (#2473)', () => {
+      const NOW = Date.parse('2025-06-01T12:00:00.000Z');
+      const iso = (ms: number): string => new Date(ms).toISOString();
+
+      interface SeededState {
+        identity: string;
+        attempts: number;
+        first_rejected_at: string;
+        last_status: number;
+      }
+
+      const seedState = (
+        head: QueuedCheckIn,
+        attempts: number,
+        ageMs: number,
+        lastStatus = 500,
+      ): SeededState => {
+        const state = {
+          identity: checkInIdentity(head),
+          attempts,
+          first_rejected_at: iso(NOW - ageMs),
+          last_status: lastStatus,
+        };
+        mockReplayState = state;
+        return state;
+      };
+
+      const rejectOnce = (err: unknown): void => {
+        (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(err as never);
+      };
+
+      beforeEach(() => {
+        mockReplayState = null;
+        jest.spyOn(Date, 'now').mockReturnValue(NOW);
+      });
+
+      it('gives up on an unclassified rejection that has recurred past the attempt cap and age floor, quarantining it and draining the queue behind it', async () => {
+        const head = queued(121, '2025-04-01');
+        const pending = [head, queued(122, '2025-04-02')];
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS + 1);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay(pending);
+
+        expect(postedGoalIds()).toEqual([121, 122]);
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect(recordDroppedCheckIn).toHaveBeenCalledWith(
+          expect.objectContaining({
+            goal_id: 121,
+            status: 500,
+            reason: 'gave_up',
+            dropped_at: expect.any(String),
+          }),
+        );
+        const warnMock = console.warn as unknown as jest.Mock;
+        const logged = warnMock.mock.calls
+          .map((call) => (call as unknown[]).map((arg) => String(arg)).join(' '))
+          .join('\n');
+        expect(logged).toContain('121');
+        expect(logged).toContain('500');
+        expect(clearPendingCheckIns).toHaveBeenCalled();
+        expect(replacePendingCheckIns).not.toHaveBeenCalled();
+        expect(mockReplayState).toBeNull();
+      });
+
+      // The whole record, not a subset: every field the quarantine carries is
+      // the user's own check-in, and a field silently lost is a report the
+      // user can no longer act on.
+      const signedEntry = (goalId: number) => ({
+        goal_id: goalId,
+        did_complete: true,
+        completed_units: 2,
+        operation_id: `op-${goalId}`,
+        timestamp: '2025-04-01T00:00:00Z',
+        completed_on: '2025-04-01',
+      });
+
+      it('quarantines a given-up signed entry with every field it was queued with', async () => {
+        const head = signedEntry(131);
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect((recordDroppedCheckIn as jest.Mock).mock.calls[0]![0]).toStrictEqual({
+          ...head,
+          status: 500,
+          dropped_at: expect.any(String),
+          reason: 'gave_up',
+        });
+      });
+
+      it('quarantines a permanently rejected signed entry with every field it was queued with', async () => {
+        const head = signedEntry(132);
+        rejectOnce(new ApiError(404, 'goal_not_found'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect((recordDroppedCheckIn as jest.Mock).mock.calls[0]![0]).toStrictEqual({
+          ...head,
+          status: 404,
+          dropped_at: expect.any(String),
+          reason: 'rejected',
+        });
+      });
+
+      it('forgets the given-up entry even when the drain then stops behind it', async () => {
+        const head = queued(125, '2025-04-01');
+        const pending = [head, queued(126, '2025-04-02')];
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS);
+        rejectOnce(new ApiError(500, 'server_error'));
+        rejectOnce(new ApiError(503, 'unavailable'));
+
+        await replay(pending);
+
+        expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[1]!]);
+        // The record named a check-in that has left the queue; it leaves too.
+        expect(mockReplayState).toBeNull();
+      });
+
+      it.each([
+        ['a fetch TypeError', () => new TypeError('Network request failed')],
+        ['a client timeout', () => new ApiTimeoutError('/goal_completions/', 1000)],
+        ['an offline fast-fail', () => new ApiError(0, 'network_error')],
+      ])(
+        'never counts or drops on %s, however many times replay runs',
+        async (_label, makeError) => {
+          const head = queued(131, '2025-04-01');
+          const pending = [head, queued(132, '2025-04-02')];
+          const seed = seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS * 2);
+          const REPLAY_PASSES = 3;
+
+          for (let pass = 0; pass < REPLAY_PASSES; pass += 1) {
+            rejectOnce(makeError());
+            await replay(pending);
+          }
+
+          const calls = (replacePendingCheckIns as jest.Mock).mock.calls;
+          expect(calls).toHaveLength(REPLAY_PASSES);
+          for (const call of calls) expect(call[0]).toEqual(pending);
+          expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+          expect(mockReplayState).toStrictEqual(seed);
+        },
+      );
+
+      it.each([401, 408, 429, 502, 503, 504])(
+        'treats a %i as an availability or auth signal that never counts',
+        async (status) => {
+          const head = queued(141, '2025-04-01');
+          const pending = [head, queued(142, '2025-04-02')];
+          const seed = seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS * 2);
+          rejectOnce(new ApiError(status, 'unavailable'));
+
+          await replay(pending);
+
+          expect(replacePendingCheckIns).toHaveBeenCalledWith(pending);
+          expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+          expect(mockReplayState).toStrictEqual(seed);
+        },
+      );
+
+      it('starts counting a legacy entry with no retry record without dropping it', async () => {
+        const pending = [queued(151, '2025-04-01'), queued(152, '2025-04-02')];
+        rejectOnce(new ApiError(451, 'unavailable_for_legal_reasons'));
+
+        await replay(pending);
+
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([pending[0]!, pending[1]!]);
+        expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+        expect(mockReplayState).toEqual({
+          identity: checkInIdentity(pending[0]!),
+          attempts: 1,
+          first_rejected_at: iso(NOW),
+          last_status: 451,
+        });
+      });
+
+      it('keeps a head that reached the cap but is younger than the age floor', async () => {
+        const head = queued(161, '2025-04-01');
+        const pending = [head, queued(162, '2025-04-02')];
+        const seed = seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS - 1);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay(pending);
+
+        expect(postedGoalIds()).toEqual([161]);
+        expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+        expect(replacePendingCheckIns).toHaveBeenCalledWith(pending);
+        expect(mockReplayState).toEqual({
+          ...seed,
+          attempts: MAX_CHECK_IN_REPLAY_ATTEMPTS,
+          first_rejected_at: seed.first_rejected_at,
+        });
+      });
+
+      it('keeps a head that is old enough but has failed only once before', async () => {
+        const head = queued(171, '2025-04-01');
+        const seed = seedState(head, 1, MIN_POISON_AGE_MS * 10);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([head]);
+        expect(mockReplayState).toEqual({ ...seed, attempts: 2 });
+      });
+
+      it('restarts the count when the record names an entry that is no longer the head', async () => {
+        const head = queued(181, '2025-04-01');
+        seedState(queued(180, '2025-03-01'), MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS * 2);
+        rejectOnce(new ApiError(500, 'server_error'));
+
+        await replay([head]);
+
+        expect(recordDroppedCheckIn).not.toHaveBeenCalled();
+        expect(replacePendingCheckIns).toHaveBeenCalledWith([head]);
+        expect(mockReplayState).toEqual({
+          identity: checkInIdentity(head),
+          attempts: 1,
+          first_rejected_at: iso(NOW),
+          last_status: 500,
+        });
+      });
+
+      it.each([400, 403, 404, 409, 422])(
+        'still drops a permanent %i on its first failure, as a plain rejection',
+        async (status) => {
+          const head = queued(191, '2025-04-01');
+          seedState(head, 0, 0);
+          rejectOnce(new ApiError(status, 'rejected'));
+
+          await replay([head, queued(192, '2025-04-02')]);
+
+          expect(postedGoalIds()).toEqual([191, 192]);
+          expect(recordDroppedCheckIn).toHaveBeenCalledWith(
+            expect.objectContaining({ goal_id: 191, status, reason: 'rejected' }),
+          );
+          expect(clearPendingCheckIns).toHaveBeenCalled();
+        },
+      );
+
+      it('never sends the retry bookkeeping in the replayed request body', async () => {
+        const head = { ...queued(201, '2025-04-01'), completed_on: '2025-04-01' };
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, 0);
+
+        await replay([head]);
+
+        const [body] = (goalCompletionsApi.create as jest.Mock).mock.calls[0] as unknown[];
+        expect(body).toStrictEqual({
+          goal_id: 201,
+          did_complete: true,
+          completed_on: '2025-04-01',
+        });
+        expect(mockReplayState).toBeNull();
+      });
+
+      it('publishes a given-up check-in to the notice store', async () => {
+        const head = queued(211, '2025-04-01');
+        seedState(head, MAX_CHECK_IN_REPLAY_ATTEMPTS - 1, MIN_POISON_AGE_MS);
+        rejectOnce(new ApiError(500, 'server_error'));
+        (loadDroppedCheckIns as jest.Mock).mockResolvedValueOnce([
+          {
+            ...head,
+            status: 500,
+            dropped_at: iso(NOW),
+            reason: 'gave_up',
+          },
+        ] as never);
+        droppedStore().getState().reset();
+
+        await replay([head]);
+
+        const { entries } = droppedStore().getState();
+        expect(entries).toHaveLength(1);
+        expect(entries[0]!.goal_id).toBe(211);
+      });
     });
   });
 });

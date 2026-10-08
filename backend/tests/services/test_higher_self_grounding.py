@@ -563,6 +563,22 @@ async def test_the_corpus_path_stays_within_its_statement_budget(
 
 
 @pytest.mark.asyncio
+async def test_the_corpus_path_from_journal_entries_stays_within_its_statement_budget(
+    db_session: AsyncSession,
+) -> None:
+    """Fragments that name their source entries pay for one lineage read, not one per fragment."""
+    await _seed_stage_position(db_session, stage_number=5, code=Frequency.F5)
+    for index in range(10):
+        await _write_entry(db_session, f"entry {index}", entry_id=index + 1)
+        await _store_fragment(db_session, f"fragment {index}", source_entry_id=index + 1, F5=0.5)
+
+    with _counting_statements() as statements:
+        await gather_grounding(db_session, user_id=_OWNER, exclude_entry_id=_ENTRY_UNDER_REFLECTION)
+
+    assert len(statements) <= GROUNDING_STATEMENT_BUDGET, statements
+
+
+@pytest.mark.asyncio
 async def test_the_fallback_path_stays_within_its_statement_budget(
     db_session: AsyncSession,
 ) -> None:

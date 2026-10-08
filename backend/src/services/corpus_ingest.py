@@ -104,6 +104,7 @@ from services.frequency_classification import (
     IntimateContentRefusedError,
     classify_frequencies,
 )
+from services.privacy_lineage import LineageOperation, observe_entry_lineage
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +370,10 @@ async def ingest_journal_entry(
         # off anything a client sent.
         _log_outcome(entry.user_id, entry_id, "withdrawn", removed)
         return None
+    # Shadow only (#3059): consent is granted and the entry is live, so its body
+    # is about to go to the classifier. ``_classify_and_record`` commits before
+    # it dials, so this read is released with the rest.
+    await observe_entry_lineage(session, LineageOperation.CORPUS_INGEST, entry)
     result = await ingest_content(
         session,
         user_id=entry.user_id,

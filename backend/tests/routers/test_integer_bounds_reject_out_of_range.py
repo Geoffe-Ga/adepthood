@@ -313,6 +313,21 @@ async def test_energy_cleanup_ceiling_sits_below_the_timedelta_limit(
 
 
 @pytest.mark.asyncio
+async def test_journal_purge_window_past_the_timedelta_limit_is_rejected(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The soft-deleted entry purge refuses an inexpressible window rather than crashing."""
+    headers, _ = await _signup(async_client, "purge-timedelta")
+    await _promote_to_admin(db_session, "purge-timedelta@example.com")
+    resp = await async_client.post(
+        "/admin/maintenance/journal-entries",
+        params={"older_than_days": _TIMEDELTA_MAX_DAYS},
+        headers=headers,
+    )
+    _assert_bound_rejection(resp, ["query", "older_than_days"])
+
+
+@pytest.mark.asyncio
 async def test_stage_number_past_the_curriculum_is_rejected(async_client: AsyncClient) -> None:
     """A stage beyond the ten the program has is a rejection, not a lookup miss.
 

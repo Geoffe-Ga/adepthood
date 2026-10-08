@@ -70,7 +70,7 @@ export const FEEDBACK_OUTCOME_COPY: Readonly<Record<FeedbackFailureKind, string>
     "You've sent several reports in a short time. Your report is saved here — please send it again later.",
   invalid:
     "Part of this report couldn't be accepted. Your draft is still here — check it and send again.",
-  session: 'Your session has ended, so this report was not sent. Sign in again to send feedback.',
+  session: 'You have been signed out, so this report was not sent. Sign in again to send it.',
 };
 
 export const FEEDBACK_SUCCESS_COPY = {

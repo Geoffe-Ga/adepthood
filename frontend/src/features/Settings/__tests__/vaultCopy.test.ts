@@ -34,7 +34,7 @@ const {
 } = vaultCopy;
 
 /** The plain name the hub row, the screen and the stack header all share (#3007). */
-const PLAIN_NAME = 'Where your corpus lives';
+const PLAIN_NAME = 'Where your writing lives';
 
 /** The deck that describes a vault. Swept by the full technical ban. */
 const PROMISE_KEYS = [
@@ -73,6 +73,7 @@ const FORM_KEYS = [
   'VAULT_DISCONNECTING_BUTTON',
   'VAULT_CONNECTED_LABEL',
   'VAULT_NONE_CONNECTED',
+  'VAULT_MANAGED_CONNECTED',
   'VAULT_CONNECTION_UNKNOWN',
   'VAULT_STATUS_CONNECTED',
   'VAULT_STATUS_DISCONNECTED',
@@ -207,13 +208,13 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_WHAT_IT_IS describes a vault in plain, non-technical terms', () => {
     expect(vaultCopy.VAULT_WHAT_IT_IS).toBe(
-      'A vault holds an account-scoped copy of what you write. You can connect one you run or ask Adepthood to manage one. A managed vault is readable by privileged operators, and neither kind receives Intimate entries.',
+      'A vault holds a copy of what you write, kept for your account alone. You can connect one you run or ask Adepthood to manage one. The people who run a managed vault can read what is in it, and neither kind ever receives Intimate entries.',
     );
   });
 
   it('VAULT_FLOOR states the app is complete without a vault', () => {
     expect(VAULT_FLOOR).toBe(
-      'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional account-scoped copy of your entries; it does not turn sorting on, which stays a separate choice.',
+      'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice.',
     );
   });
 
@@ -235,7 +236,7 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_SORTING_CHOICE says a vault is not the yes, and where the yes lives', () => {
     expect(VAULT_SORTING_CHOICE).toBe(
-      'Creating a vault does not turn sorting on; that stays a separate choice, a switch under Your corpus in Settings.',
+      'Creating a vault does not turn sorting on; that stays a separate choice, a switch under Your writing in Settings.',
     );
     // The switches sit in the hub group, beside the vault row (not behind a sub-screen).
     expect(VAULT_SORTING_CHOICE).toContain(CORPUS_GROUP_TITLE);

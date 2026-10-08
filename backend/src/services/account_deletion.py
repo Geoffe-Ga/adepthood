@@ -194,7 +194,7 @@ async def _clear_references(session: AsyncSession, table: Table, account: Accoun
         )
 
 
-def _require_total_policy() -> None:
+def require_total_policy() -> None:
     """Refuse to erase anything while the policy has a hole in it."""
     gaps = policy_gaps(SQLModel.metadata)
     if gaps:
@@ -266,7 +266,7 @@ async def delete_account(
     barrier, so a write that was already in flight finishes before this runs or
     finds the account gone and sends nothing.
     """
-    _require_total_policy()
+    require_total_policy()
     # Before the sweep, so other accounts' reports that were duplicates of this
     # account's record their unlink rather than silently losing it.
     await detach_from_doomed_reports(

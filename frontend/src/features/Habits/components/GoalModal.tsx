@@ -54,6 +54,7 @@ import {
 
 import ConfirmDialog from './ConfirmDialog';
 import HabitEmojiPicker from './HabitEmojiPicker';
+import { GOAL_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
 
 /** Height of the goal progress bar; tier star markers are centered on it. */
@@ -350,6 +351,7 @@ const LogUnitSection = ({
         value={logAmount}
         onChangeText={setLogAmount}
         keyboardType="numeric"
+        testID="goal-log-amount"
       />
       <Button label="Log Units" onPress={onLog} testID="goal-log-units" />
     </View>
@@ -1151,7 +1153,7 @@ const GoalModalHeader = ({
   onToggleEdit,
 }: GoalModalHeaderProps) => (
   <>
-    <ModalHeader title={habit.name} onClose={onClose}>
+    <ModalHeader title={habit.name} onClose={onClose} closeLabel={GOAL_CLOSE_LABEL}>
       <EditToggleButton isEditing={isEditing} onToggle={onToggleEdit} />
       <TouchableOpacity
         testID="goal-modal-icon-button"

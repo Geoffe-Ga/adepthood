@@ -25,20 +25,20 @@ names drift between contexts — F3 is "Self-Love / Power" upstream, ``aspect``
 "Self-Love" plus ``title`` "Power" in ``archetypal_wavelength.json``, and the
 composite is literally those two joined — but the colour does not.
 
-======  ============  ============================  ==================  ==================
-Code    Colour        Aspect                        Title               Mode
-======  ============  ============================  ==================  ==================
-F1      Beige         Agency                        Survival            Inhabit (Do)
-F2      Purple        Receptivity                   Magick              Inhabit (Feel)
-F3      Red           Self-Love                     Power               Express (Do)
-F4      Blue          Community Love                Conformity          Express (Feel)
-F5      Orange        Intellectual Understanding    Achievist           Collaborate (Do)
-F6      Green         Embodied Understanding        Pluralist           Collaborate (Feel)
-F7      Yellow        Systems Wisdom                Integrative         Integrate (Do)
-F8      Teal          True Self Connection          Nondual             Integrate (Feel)
-F9      Ultraviolet   Unity                         Effortless Being    Absorb (Do/Feel)
-F10     Clear Light   Emptiness                     Pure Awareness      Be (Both/Neither)
-======  ============  ============================  ==================  ==================
+======  ============  ============================  ====================  ==================
+Code    Colour        Aspect                        Title                 Mode
+======  ============  ============================  ====================  ==================
+F1      Beige         Agency                        Survival              Inhabit (Do)
+F2      Purple        Receptivity                   Magick                Inhabit (Feel)
+F3      Red           Self-Love                     Power                 Express (Do)
+F4      Blue          Community Love                Conformity            Express (Feel)
+F5      Orange        Intellectual Understanding    Achievist             Collaborate (Do)
+F6      Green         Embodied Understanding        Pluralist             Collaborate (Feel)
+F7      Yellow        Systems Wisdom                Integrative           Integrate (Do)
+F8      Teal          True Self Connection          True Self Connection  Integrate (Feel)
+F9      Ultraviolet   Unity                         Effortless Being      Absorb (Do/Feel)
+F10     Clear Light   Emptiness                     Pure Awareness        Be (Both/Neither)
+======  ============  ============================  ====================  ==================
 
 **There are exactly ten, and more than ten still means these ten.** The habits
 surface lets someone carry more than ten rings; those repeat the same Beige to

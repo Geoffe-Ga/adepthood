@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 
 from models.llm_usage_log import LLMUsageLog
 from models.wallet_audit import (
+    REASON_REFUND_DEMO,
     REASON_REFUND_FAILED_ESSAY,
     REASON_REFUND_FAILED_RESONANCE,
     REASON_REFUND_NO_ESSAY,
@@ -91,13 +92,15 @@ class GenerationOutcome(StrEnum):
     after its deduction committed (a provider error, a withdrawn entry, a care
     escalation, a failed write); a BYOK failure carries the same outcome with
     ``charged=False`` and no refund. ``refused`` -- an essay whose completion
-    was not a letter.
+    was not a letter. ``refunded_demo`` -- a generation the stub provider
+    answered: a labelled demo, delivered and handed back (#3062).
     """
 
     KEPT = "kept"
     REFUNDED_EMPTY = "refunded_empty"
     REFUNDED_FAILED = "refunded_failed"
     REFUSED = "refused"
+    REFUNDED_DEMO = "refunded_demo"
 
 
 #: The outcome each generation refund reason settles as. Derived from the audit
@@ -107,6 +110,7 @@ OUTCOME_FOR_REFUND_REASON: Mapping[str, GenerationOutcome] = {
     REASON_REFUND_FAILED_RESONANCE: GenerationOutcome.REFUNDED_FAILED,
     REASON_REFUND_FAILED_ESSAY: GenerationOutcome.REFUNDED_FAILED,
     REASON_REFUND_NO_ESSAY: GenerationOutcome.REFUSED,
+    REASON_REFUND_DEMO: GenerationOutcome.REFUNDED_DEMO,
 }
 
 

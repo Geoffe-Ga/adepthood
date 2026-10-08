@@ -14,7 +14,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import Select, event, func, text
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql import ClauseElement
 from sqlmodel import col, select
 
@@ -563,7 +563,7 @@ async def test_get_habits_reports_subtractive_streak_from_start_date(
 
     The check-in path (``POST /goal_completions``) and the list path
     (``GET /habits``) build the ``SubtractiveContext`` through two
-    separate helpers -- ``_subtractive_context_for_goal`` queries the
+    separate helpers -- ``_streak_contexts_for_habit`` queries the
     DB directly, while ``_populate_streak`` reads the eager-loaded
     ``habit.goals`` relationship.  Per the PR #379 review, only the
     former was HTTP-covered; this test closes the loop on the second
@@ -1512,6 +1512,167 @@ async def test_list_leaves_an_already_over_revealed_row_open_and_relockable(
     assert _revealed_by_name(after_relock.json())["Legacy ring"] is False
     await db_session.refresh(legacy)
     assert legacy.auto_revealed_at == stored_marker
+
+
+# Issue #3071: the habits read is a depth a person can use alone (NORTH-STAR:18),
+# so it must give the calendar an anchor without the Course ever being opened.
+# Before the fix the only provisioner was the Course router, so for a
+# habits-only account ``open_through(None)`` answered stage 1 forever and the
+# Purple ring and every ring after it never opened. The 21-day backdate is a
+# literal on purpose: it is Beige's window, and a reshaped schedule should fail
+# here rather than move the test with it.
+_BEIGE_WINDOW_DAYS = 21
+
+
+async def _post_beige_and_purple(client: AsyncClient, headers: dict[str, str]) -> None:
+    """Create a locked Beige and a locked Purple habit, the way onboarding lays them."""
+    for name, stage, slot in (("Beige ring", "Beige", 1), ("Purple ring", "Purple", 2)):
+        created = await client.post(
+            "/habits/",
+            json=sample_payload(name=name, stage=stage, revealed=False, sort_order=slot),
+            headers=headers,
+        )
+        assert created.status_code == HTTPStatus.OK
+
+
+async def _progress_rows(session: AsyncSession, user_id: int | None = None) -> list[StageProgress]:
+    """Read ``StageProgress`` rows, optionally for one user."""
+    statement = select(StageProgress)
+    if user_id is not None:
+        statement = statement.where(StageProgress.user_id == user_id)
+    result = await session.execute(statement)
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_list_provisions_calendar_anchor_for_user_who_never_opened_course(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A habits-only account gets a server anchor, and Purple opens 21 days on.
+
+    No ``/course/*`` route is called anywhere in this test. The second read is
+    the proof that the anchor is load-bearing rather than decorative: with the
+    row backdated by Beige's window, the calendar stands in Purple and the
+    Purple habit opens on the very next list read.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "habits_only_anchor")
+    await _post_beige_and_purple(async_client, headers)
+
+    first = await async_client.get("/habits/", headers=headers)
+
+    assert first.status_code == HTTPStatus.OK
+    assert _revealed_by_name(first.json()) == {"Beige ring": True, "Purple ring": False}
+    rows = await _progress_rows(db_session, user_id)
+    assert len(rows) == 1
+    (progress,) = rows
+    assert progress.program_started_at is not None
+    assert progress.current_stage == 1
+
+    progress.program_started_at = datetime.now(UTC) - timedelta(days=_BEIGE_WINDOW_DAYS)
+    db_session.add(progress)
+    await db_session.commit()
+
+    second = await async_client.get("/habits/", headers=headers)
+
+    assert second.status_code == HTTPStatus.OK
+    assert _revealed_by_name(second.json()) == {"Beige ring": True, "Purple ring": True}
+
+
+@pytest.mark.asyncio
+async def test_list_without_laddered_habits_creates_no_progress_row(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A habit off the ladder has no rung to wait for, so the read stamps no anchor.
+
+    The anchor is provisioned only on behalf of a laddered habit whose
+    invitation is still pending (AC2). The unladdered habit is asserted
+    revealed in the same response, so the absent row is a refusal the pass
+    made, not a pass that never ran.
+    """
+    headers, user_id = await _signup_with_user_id(async_client, "unladdered_no_anchor")
+    past = today_in_tz("UTC") - timedelta(days=_LONG_PAST_DAYS)
+    created = await async_client.post(
+        "/habits/",
+        json=sample_payload(name="Off ladder", stage="", start_date=past.isoformat()),
+        headers=headers,
+    )
+    assert created.status_code == HTTPStatus.OK
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert _revealed_by_name(listed.json()) == {"Off ladder": True}
+    assert await _progress_rows(db_session, user_id) == []
+
+
+@pytest.mark.asyncio
+async def test_list_with_no_habits_creates_no_progress_row(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An empty habits read leaves the account with no calendar anchor."""
+    headers, user_id = await _signup_with_user_id(async_client, "no_habits_no_anchor")
+
+    listed = await async_client.get("/habits/", headers=headers)
+
+    assert listed.status_code == HTTPStatus.OK
+    assert listed.json() == []
+    assert await _progress_rows(db_session, user_id) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("disable_rate_limit")
+async def test_concurrent_first_reads_provision_one_anchor(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Racing first reads leave exactly one calendar anchor, and it paces the reveal.
+
+    The first gathered pair races the provisioning SAVEPOINT in
+    ``ensure_user_progress``; the losing read must re-read the winner's row
+    rather than fail or insert a second one. The second pair, after a 21-day
+    rewind, shows that single row is the anchor both reads go on to use.
+
+    This proves the anchor, not the stamp. ``FOR UPDATE`` is a no-op on SQLite,
+    so nothing here can show that an invitation is written only once -- two
+    racing SQLite sessions may both stamp it. That AC8 claim is proved where the
+    row lock is real: ``tests/integration/test_habit_reveal_stamp_race.py``
+    counts every write the reveal pass makes under a forced interleaving on
+    PostgreSQL.
+    """
+    signup = await concurrent_async_client.post(
+        "/auth/signup",
+        json={
+            "email": "habits_only_race@example.com",
+            "password": "securepassword123",  # pragma: allowlist secret
+        },
+    )
+    assert signup.status_code == HTTPStatus.OK
+    headers = {"Authorization": f"Bearer {signup.json()['token']}"}
+    user_id = signup.json()["user_id"]
+    await _post_beige_and_purple(concurrent_async_client, headers)
+
+    first_pair = await asyncio.gather(
+        *[concurrent_async_client.get("/habits/", headers=headers) for _ in range(2)]
+    )
+
+    assert [r.status_code for r in first_pair] == [HTTPStatus.OK, HTTPStatus.OK]
+    async with concurrent_session_factory() as session:
+        rows = await _progress_rows(session, user_id)
+        assert len(rows) == 1
+        (progress,) = rows
+        progress.program_started_at = datetime.now(UTC) - timedelta(days=_BEIGE_WINDOW_DAYS)
+        session.add(progress)
+        await session.commit()
+
+    second_pair = await asyncio.gather(
+        *[concurrent_async_client.get("/habits/", headers=headers) for _ in range(2)]
+    )
+
+    assert [r.status_code for r in second_pair] == [HTTPStatus.OK, HTTPStatus.OK]
+    third = await concurrent_async_client.get("/habits/", headers=headers)
+    assert _revealed_by_name(third.json()) == {"Beige ring": True, "Purple ring": True}
+    async with concurrent_session_factory() as session:
+        assert len(await _progress_rows(session, user_id)) == 1
 
 
 @pytest.mark.asyncio

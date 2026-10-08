@@ -25,9 +25,13 @@ export const RESONANCE_EXPLAINER_TITLE = 'Before the reading';
 /**
  * What a pass does, and everything that leaves the device to do it (#2998).
  *
- * The copy states the most a pass can send, because a connected vault that
- * degrades hands the full prompt to the cloud and completion detection always
- * goes to the cloud. That maximum is:
+ * The copy states the most a pass can send to the app's AI model provider,
+ * which is what a writer with no connected vault always gets. (Since #3061 a
+ * writer whose vault is connected is never re-routed there: a vault that cannot
+ * answer, and completion detection, fail closed rather than fall back. This
+ * comment records that; the copy below deliberately makes no claim about it --
+ * any wording about where a vault-bound pass is processed is the owner's.)
+ * That maximum is:
  *
  * - the entry itself (`build_prompt`'s `<entry>`);
  * - up to three other pieces of the writer's own writing (`<prior>`), chosen
@@ -44,7 +48,7 @@ export const RESONANCE_EXPLAINER_TITLE = 'Before the reading';
 export const RESONANCE_EXPLAINER_WHAT =
   'Resonance reads this entry and leaves margin notes beside the passages it responds to. To do that, the text of this entry, up to three other pieces of your own writing, short excerpts of your earlier letters, and the names and units of your habits and practices are sent to an AI model.';
 
-const ADD_KEY = 'Add your own API key in Settings to bill that key instead.';
+const ADD_KEY = 'Add your own API key in Settings and it pays instead.';
 
 /** What a resonance pass is called in its price line. */
 const READING = 'reading';

@@ -4,12 +4,15 @@ The seam now hands back a structured :class:`~domain.creek_vault.VaultReflection
 rather than a string, so the six reflection outcomes stay distinguishable all the
 way to the consumer: an empty answer is a legitimate answer, a schema failure is
 observable apart from vault absence, and a care escalation is not a degrade at
-all. The strict marginalia JSON the cloud contract expects is built here, at the
+all. None of them is ever answered by anything but the vault (#3061): the seam
+holds no other source, so a failure raises rather than falling back. The strict
+marginalia JSON the app provider's contract expects is built here, at the
 ``ResonanceLLM`` seam that owns it, rather than in the transport adapter.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from collections.abc import AsyncGenerator, Sequence
@@ -52,6 +55,10 @@ from services.creek_vault_reflect import (
     VaultResonanceLLM,
     related_surfaces,
     select_reflection_llm,
+)
+from services.reflection_boundary import (
+    VaultSourceUnavailableError,
+    VaultSourceUnavailableReason,
 )
 from tests.vault_client_doubles import NoPipelineVaultDouble
 
@@ -104,7 +111,7 @@ def _reflection(
 # One compiled page of each kind, as the adapter hands them across the seam. Both
 # are sentinels rather than plausible prose: every assertion below is about
 # whether they travelled, so a value that could be mistaken for something the
-# fallback produced would weaken the test.
+# app provider produced would weaken the test.
 _PRAXIS = VaultRelatedPraxis(
     title="Rest before the collapse",
     praxis_type=VaultPraxisKind.PRACTICE,
@@ -181,10 +188,10 @@ class RecordingVaultClient(NoPipelineVaultDouble):
         raise NotImplementedError
 
 
-class RecordingFallbackLLM:
-    """A stub ``ResonanceLLM`` that records every prompt it is given."""
+class RecordingAppProviderLLM:
+    """A stub non-vault ``ResonanceLLM`` that records every prompt it is given."""
 
-    def __init__(self, result: str = "fallback reflection") -> None:
+    def __init__(self, result: str = "app provider reflection") -> None:
         """Store the sentinel completion text and start an empty prompt log."""
         self.prompts: list[str] = []
         self._result = result
@@ -267,23 +274,20 @@ async def spied_clients() -> AsyncGenerator[_SpiedClientFactory, None]:
 
 @pytest.mark.asyncio
 async def test_ok_reflection_reaches_marginalia_as_the_strict_json_contract() -> None:
-    """A vault's own notes anchor as marginalia through the canonical mapping, no fallback.
+    """A vault's own notes anchor as marginalia through the canonical mapping.
 
     This is the acceptance criterion the whole seam exists for: notes computed in
     the user's own enclave reach their Higher Self, in their own words, without a
     cloud call. The two quotes are verbatim substrings of the body, so they anchor
     for real rather than being paraphrases the resonance pass would drop.
     """
-    fallback = RecordingFallbackLLM()
     client = RecordingVaultClient(
         reflect_result=_reflection(
             _note("connection", _LOOP_RIVER_QUOTE, _RIVER_NOTE),
             _note("theme", _LOOP_STALL_QUOTE, _STALL_NOTE),
         )
     )
-    llm = VaultResonanceLLM(
-        client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=fallback
-    )
+    llm = VaultResonanceLLM(client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL)
 
     anchored = await generate_marginalia(_LOOP_BODY, llm=llm)
 
@@ -291,7 +295,6 @@ async def test_ok_reflection_reaches_marginalia_as_the_strict_json_contract() ->
         ("connection", _LOOP_RIVER_QUOTE, _RIVER_NOTE),
         ("theme", _LOOP_STALL_QUOTE, _STALL_NOTE),
     ]
-    assert fallback.prompts == []
     assert client.reflect_calls == [(_LOOP_BODY, VaultTierCeiling.PERSONAL)]
 
 
@@ -306,17 +309,13 @@ async def test_the_marginalia_contract_is_built_at_this_seam_not_in_the_adapter(
     client = RecordingVaultClient(
         reflect_result=_reflection(_note("connection", _LOOP_RIVER_QUOTE, _RIVER_NOTE))
     )
-    fallback = RecordingFallbackLLM()
-    adapter = VaultResonanceLLM(
-        client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=fallback
-    )
+    adapter = VaultResonanceLLM(client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL)
 
     completion = await adapter.complete("this prompt is never sent to the vault")
 
     assert json.loads(completion) == {
         "notes": [{"kind": "connection", "quote": _LOOP_RIVER_QUOTE, "note": _RIVER_NOTE}]
     }
-    assert fallback.prompts == []
 
 
 @pytest.mark.parametrize(
@@ -327,28 +326,27 @@ async def test_the_marginalia_contract_is_built_at_this_seam_not_in_the_adapter(
     ],
 )
 @pytest.mark.asyncio
-async def test_empty_and_noteless_reflections_defer_silently(
+async def test_empty_and_noteless_reflections_answer_zero_notes_silently(
     reflection: VaultReflection,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A vault with nothing to say defers to the cloud without recording a degrade.
+    """A vault with nothing to say answers an empty notes list, and records no degrade.
 
     Both of these are the vault answering successfully, so recording a failure
     would train an operator to ignore the one signal that means something. The
-    prompt is passed through verbatim, since the fallback's contract is the
-    ordinary prompt-in/completion-out seam.
+    answer is a real zero-note contract rather than a deferral (#3061): there is
+    no other source behind this seam to defer to, and the resonance pass settles
+    it as a pass that kept no notes, with its own explanation and a refund.
     """
     caplog.set_level(logging.DEBUG)
     client = RecordingVaultClient(reflect_result=reflection)
-    fallback = RecordingFallbackLLM("fallback text")
-    adapter = VaultResonanceLLM(
-        client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=fallback
-    )
+    adapter = VaultResonanceLLM(client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL)
 
     result = await adapter.complete("the exact prompt")
+    anchored = await generate_marginalia(_BODY, llm=adapter)
 
-    assert result == "fallback text"
-    assert fallback.prompts == ["the exact prompt"]
+    assert json.loads(result) == {"notes": []}
+    assert anchored.notes == []
     assert _degrade_records(caplog) == []
 
 
@@ -400,7 +398,7 @@ async def test_empty_and_noteless_reflections_defer_silently(
     ],
 )
 @pytest.mark.asyncio
-async def test_vault_errors_defer_and_are_logged_with_distinct_reasons(
+async def test_vault_errors_raise_unavailable_and_are_logged_with_distinct_reasons(
     error: Exception,
     reason: VaultReadDegradeReason,
     code: VaultErrorCode | None,
@@ -408,22 +406,21 @@ async def test_vault_errors_defer_and_are_logged_with_distinct_reasons(
 ) -> None:
     """Every vault failure looks the same to the user and different to an operator.
 
-    A read degrade is invisible by design -- the cloud answers instead -- so this
-    record is the only place anyone can see one happen, and a shared reason would
-    make a vault bug worth reporting upstream indistinguishable from
-    infrastructure worth restoring. That is the defect this pins closed.
+    The user sees one retryable "unavailable" whatever went wrong -- never another
+    model's answer in the vault's place (#3061) -- so this record is the only
+    place anyone can tell the failures apart, and a shared reason would make a
+    vault bug worth reporting upstream indistinguishable from infrastructure
+    worth restoring. That is the defect this pins closed.
     """
     caplog.set_level(logging.DEBUG)
     client = RecordingVaultClient(reflect_error=error)
-    fallback = RecordingFallbackLLM("fallback text")
-    adapter = VaultResonanceLLM(
-        client, body=_BODY, tier_ceiling=VaultTierCeiling.OPEN, fallback=fallback
-    )
+    adapter = VaultResonanceLLM(client, body=_BODY, tier_ceiling=VaultTierCeiling.OPEN)
 
-    result = await adapter.complete("the exact prompt")
+    with pytest.raises(VaultSourceUnavailableError) as raised:
+        await adapter.complete("the exact prompt")
 
-    assert result == "fallback text"
-    assert fallback.prompts == ["the exact prompt"]
+    assert raised.value.reason is VaultSourceUnavailableReason.VAULT_ERROR
+    assert raised.value.__cause__ is None
     records = _degrade_records(caplog)
     assert len(records) == 1
     assert records[0].levelno == logging.WARNING
@@ -455,9 +452,9 @@ async def test_the_six_degrade_signatures_are_pairwise_distinct(
             RecordingVaultClient(reflect_error=error),
             body=_BODY,
             tier_ceiling=VaultTierCeiling.OPEN,
-            fallback=RecordingFallbackLLM(),
         )
-        await adapter.complete("a prompt")
+        with pytest.raises(VaultSourceUnavailableError):
+            await adapter.complete("a prompt")
 
     signatures = [_degrade_signature(record) for record in _degrade_records(caplog)]
     assert len(signatures) == len(errors)
@@ -469,19 +466,14 @@ async def test_escalation_propagates_out_of_complete() -> None:
     """A care escalation is never swallowed into cloud prose -- it leaves the seam.
 
     Falling back here would answer a person in acute distress with exactly the
-    model prose Creek's care guard refused to generate, so the fallback must not
-    be reached at all.
+    model prose Creek's care guard refused to generate. It is not turned into an
+    "unavailable" either: the router answers it with adepthood's care surface.
     """
     client = RecordingVaultClient(reflect_error=CreekVaultCareEscalationError())
-    fallback = RecordingFallbackLLM()
-    adapter = VaultResonanceLLM(
-        client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=fallback
-    )
+    adapter = VaultResonanceLLM(client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL)
 
     with pytest.raises(CreekVaultCareEscalationError):
         await adapter.complete("the exact prompt")
-
-    assert fallback.prompts == []
 
 
 @pytest.mark.asyncio
@@ -501,10 +493,7 @@ async def test_essay_never_reaches_the_marginalia_contract(
             essay=_SENTINEL_ESSAY,
         )
     )
-    fallback = RecordingFallbackLLM()
-    adapter = VaultResonanceLLM(
-        client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=fallback
-    )
+    adapter = VaultResonanceLLM(client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL)
 
     completion = await adapter.complete("a prompt")
     anchored = await generate_marginalia(_LOOP_BODY, llm=adapter)
@@ -520,64 +509,65 @@ async def test_essay_never_reaches_the_marginalia_contract(
     assert _SENTINEL_ESSAY not in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_care_gate_short_circuits_before_any_transport_call(
-    spied_clients: _SpiedClientFactory,
-) -> None:
-    """A care-flagged entry puts nothing on the wire, asserted at the transport itself.
+def test_neither_seam_entry_can_be_handed_another_source() -> None:
+    """No ``fallback`` and no care flag: a vault-then-app-provider composite is not expressible.
 
-    On distress adepthood does not ask the vault, and the guarantee that matters
-    is the byte count rather than the call count: a spy on the client's own
-    methods would still pass if the handshake had already left the process.
+    The care gate moved to the router, which answers a locally flagged
+    vault-bound entry with care before this seam is reached (asserted at the
+    route, with no vault and no model call). What stays here is the structural
+    half: neither entry point accepts another source, so no future caller can
+    reintroduce the silent fallback by passing one (#3061).
     """
-    client = spied_clients([CreekCapability.REFLECT.value])
-    fallback = RecordingFallbackLLM()
+    adapter_params = inspect.signature(VaultResonanceLLM.__init__).parameters
+    select_params = inspect.signature(select_reflection_llm).parameters
 
-    result = await select_reflection_llm(
-        client, body=_BODY, classification="personal", care_flagged=True, fallback=fallback
-    )
-
-    assert result is fallback
-    assert spied_clients.handlers[-1].requests == []
+    assert "fallback" not in adapter_params
+    assert "fallback" not in select_params
+    assert "care_flagged" not in select_params
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("classification", ["not_a_real_tier", "intimate", "INTIMATE", ""])
 async def test_unknown_classification_short_circuits_before_any_transport_call(
     spied_clients: _SpiedClientFactory,
+    classification: str,
 ) -> None:
-    """An unrecognized classification fails closed at the transport, never widening a tier."""
+    """A tier outside the egress allowlist fails closed at the transport, never widening a tier.
+
+    ``intimate`` is included (#3059): it resolves to a real vault ceiling, so
+    only the egress predicate -- not the ceiling map -- keeps this seam from
+    handshaking for it.
+    """
     client = spied_clients([CreekCapability.REFLECT.value])
-    fallback = RecordingFallbackLLM()
 
-    result = await select_reflection_llm(
-        client, body=_BODY, classification="not_a_real_tier", care_flagged=False, fallback=fallback
-    )
+    with pytest.raises(VaultSourceUnavailableError) as raised:
+        await select_reflection_llm(client, body=_BODY, classification=classification)
 
-    assert result is fallback
+    assert raised.value.reason is VaultSourceUnavailableReason.UNKNOWN_TIER
     assert spied_clients.handlers[-1].requests == []
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("available", "capabilities"),
+    ("available", "capabilities", "reason"),
     [
-        (False, frozenset({CreekCapability.REFLECT})),
-        (True, frozenset()),
+        (False, frozenset({CreekCapability.REFLECT}), VaultSourceUnavailableReason.UNAVAILABLE),
+        (True, frozenset(), VaultSourceUnavailableReason.CAPABILITY_MISSING),
     ],
     ids=["handshake_unavailable", "reflect_unsupported"],
 )
-async def test_select_reflection_llm_falls_back_when_not_reflect_ready(
-    available: bool, capabilities: frozenset[CreekCapability]
+async def test_select_reflection_llm_raises_when_not_reflect_ready(
+    available: bool,
+    capabilities: frozenset[CreekCapability],
+    reason: VaultSourceUnavailableReason,
 ) -> None:
-    """An unavailable vault, or one that never advertises REFLECT, falls back."""
+    """An unavailable vault, or one that never advertises REFLECT, raises with its own reason."""
     client = RecordingVaultClient(available=available, capabilities=capabilities)
-    fallback = RecordingFallbackLLM()
 
-    result = await select_reflection_llm(
-        client, body=_BODY, classification="personal", care_flagged=False, fallback=fallback
-    )
+    with pytest.raises(VaultSourceUnavailableError) as raised:
+        await select_reflection_llm(client, body=_BODY, classification="personal")
 
-    assert result is fallback
+    assert raised.value.reason is reason
     assert client.handshake_calls == 1
     assert client.reflect_calls == []
 
@@ -597,10 +587,9 @@ async def test_select_reflection_llm_returns_vault_adapter_with_resolved_tier(
     client = RecordingVaultClient(
         reflect_result=_reflection(_note("theme", _LOOP_STALL_QUOTE, _STALL_NOTE))
     )
-    fallback = RecordingFallbackLLM()
 
     result: ResonanceLLM = await select_reflection_llm(
-        client, body=_BODY, classification=classification, care_flagged=False, fallback=fallback
+        client, body=_BODY, classification=classification
     )
 
     assert isinstance(result, VaultResonanceLLM)
@@ -631,7 +620,6 @@ async def test_related_pages_of_a_rendered_reflection_reach_the_consumer() -> No
         client,
         body=_LOOP_BODY,
         tier_ceiling=VaultTierCeiling.PERSONAL,
-        fallback=RecordingFallbackLLM(),
     )
 
     completion = await adapter.complete("any prompt")
@@ -658,19 +646,17 @@ async def test_related_pages_of_a_rendered_reflection_reach_the_consumer() -> No
     ],
 )
 @pytest.mark.asyncio
-async def test_a_deferred_reflection_surfaces_no_related_pages(
+async def test_a_zero_note_reflection_surfaces_no_related_pages(
     reflection: VaultReflection,
 ) -> None:
-    """Pages never surface beside a reflection the writer is not reading.
+    """Pages never surface beside a pass that kept no notes.
 
-    Both cases fall back to the cloud, so what lands in the margin is the cloud's
-    answer -- and pages presented as related to *it* would be relating the user's
-    own corpus to prose their vault never wrote.
+    Both cases settle as a pass with nothing in the margin, and pages presented
+    as related to *that* would be relating the user's own corpus to nothing their
+    vault said.
     """
     client = RecordingVaultClient(reflect_result=reflection)
-    adapter = VaultResonanceLLM(
-        client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=RecordingFallbackLLM()
-    )
+    adapter = VaultResonanceLLM(client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL)
 
     await adapter.complete("any prompt")
 
@@ -681,11 +667,10 @@ async def test_a_deferred_reflection_surfaces_no_related_pages(
 async def test_a_degraded_vault_surfaces_no_related_pages() -> None:
     """A vault that failed mid-call surfaced nothing, so neither does the seam."""
     client = RecordingVaultClient(reflect_error=CreekVaultUnavailableError("vault is down"))
-    adapter = VaultResonanceLLM(
-        client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=RecordingFallbackLLM()
-    )
+    adapter = VaultResonanceLLM(client, body=_BODY, tier_ceiling=VaultTierCeiling.PERSONAL)
 
-    await adapter.complete("any prompt")
+    with pytest.raises(VaultSourceUnavailableError):
+        await adapter.complete("any prompt")
 
     assert related_surfaces(adapter) == VaultRelatedSurfaces()
 
@@ -697,7 +682,7 @@ def test_a_cloud_llm_surfaces_no_related_pages() -> None:
     ``ResonanceLLM`` ``select_reflection_llm`` chose, and making it branch on the
     concrete type would put that knowledge in two places.
     """
-    assert related_surfaces(RecordingFallbackLLM()) == VaultRelatedSurfaces()
+    assert related_surfaces(RecordingAppProviderLLM()) == VaultRelatedSurfaces()
 
 
 def test_nothing_surfaces_before_the_reflection_is_asked_for() -> None:
@@ -706,7 +691,6 @@ def test_nothing_surfaces_before_the_reflection_is_asked_for() -> None:
         RecordingVaultClient(),
         body=_BODY,
         tier_ceiling=VaultTierCeiling.PERSONAL,
-        fallback=RecordingFallbackLLM(),
     )
 
     assert related_surfaces(adapter) == VaultRelatedSurfaces()
@@ -744,10 +728,7 @@ async def test_prior_letters_never_cross_the_vault_seam() -> None:
     client = RecordingVaultClient(
         reflect_result=_reflection(_note("connection", _LOOP_RIVER_QUOTE, _RIVER_NOTE))
     )
-    fallback = RecordingFallbackLLM()
-    adapter = VaultResonanceLLM(
-        client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL, fallback=fallback
-    )
+    adapter = VaultResonanceLLM(client, body=_LOOP_BODY, tier_ceiling=VaultTierCeiling.PERSONAL)
 
     completion = await adapter.complete(
         f"<prior_letters>\n{_PRIOR_LETTER_SENTINEL}\n</prior_letters>"
@@ -759,4 +740,3 @@ async def test_prior_letters_never_cross_the_vault_seam() -> None:
     assert all(_PRIOR_LETTER_SENTINEL not in body for body, _ in client.reflect_calls), (
         "a prior letter crossed into the vault request"
     )
-    assert fallback.prompts == [], "the vault answered; the cloud fallback must not have run"

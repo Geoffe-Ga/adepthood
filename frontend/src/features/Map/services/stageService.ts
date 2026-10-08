@@ -9,11 +9,23 @@
 
 import { stages as stagesApi } from '../../../api';
 import type { Stage } from '../../../api';
+import { formatApiError } from '../../../api/errorMessages';
 import { STAGE_COLORS, STAGE_ORDER } from '../../../design/tokens';
 import { FULLY_COMPLETE } from '../../../domain/stageProgression';
 import { useStageStore } from '../../../store/useStageStore';
 import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
+
+/**
+ * What the Map says when the stages did not arrive and the error carries
+ * nothing more specific. The raw error text goes to the console, never to
+ * the screen — a person reading the Map should meet a sentence, not a
+ * status line.
+ */
+export const MAP_LOAD_FAILED_MESSAGE = "The map didn't come through this time.";
+
+/** The same, for a fresh cycle that could not be opened. */
+export const BEGIN_AGAIN_FAILED_MESSAGE = "Beginning again didn't go through this time.";
 
 /**
  * Clamp a backend-supplied progress fraction into ``[0, 1]`` (BUG-FE-MAP-003).
@@ -137,7 +149,8 @@ export const stageService = {
       useStageStore.getState().setStages(sorted.map(toStageData));
     } catch (err) {
       if (isStale(generation)) return;
-      const message = err instanceof Error ? err.message : 'Failed to load stages';
+      console.error('Failed to load stages:', err);
+      const message = formatApiError(err, { fallback: MAP_LOAD_FAILED_MESSAGE });
       useStageStore.getState().setError(message);
       useStageStore.getState().setLoading(false);
       return;
@@ -163,7 +176,8 @@ export const stageService = {
       useStageStore.getState().setCycleNumber(record.cycle_number);
     } catch (err) {
       if (isStale(generation)) return;
-      const message = err instanceof Error ? err.message : 'Failed to begin again';
+      console.error('Failed to begin again:', err);
+      const message = formatApiError(err, { fallback: BEGIN_AGAIN_FAILED_MESSAGE });
       useStageStore.getState().setError(message);
       return;
     }

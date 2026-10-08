@@ -7,6 +7,7 @@ import type { AddHabitInput } from '../Habits.types';
 
 import { EnergyCostReturnEditor } from './EnergyCostReturnEditor';
 import HabitEmojiPicker from './HabitEmojiPicker';
+import { ADD_HABIT_CLOSE_LABEL } from './modalCloseLabels';
 import ModalHeader from './ModalHeader';
 
 interface AddHabitModalProps {
@@ -129,6 +130,16 @@ const useAddHabitForm = (visible: boolean): AddHabitFormState => {
   };
 };
 
+/** The sheet's header: its title and its named close button. */
+const AddHabitHeader = ({ onClose }: { onClose: () => void }) => (
+  <ModalHeader
+    title="Add Habit"
+    onClose={onClose}
+    closeLabel={ADD_HABIT_CLOSE_LABEL}
+    closeTestID="add-habit-close"
+  />
+);
+
 export const AddHabitModal = ({ visible, onClose, onAdd }: AddHabitModalProps) => {
   const f = useAddHabitForm(visible);
   const [saving, setSaving] = useState(false);
@@ -166,7 +177,7 @@ export const AddHabitModal = ({ visible, onClose, onAdd }: AddHabitModalProps) =
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
         <View style={styles.settingsModalContent} testID="add-habit-modal">
-          <ModalHeader title="Add Habit" onClose={onClose} closeTestID="add-habit-close" />
+          <AddHabitHeader onClose={onClose} />
           <NameRow name={f.name} setName={f.setName} />
           <IconRow
             icon={f.icon}

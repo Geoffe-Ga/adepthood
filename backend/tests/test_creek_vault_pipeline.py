@@ -76,6 +76,7 @@ from services.creek_vault_telemetry import (
     reset_vault_telemetry_for_tests,
     vault_outcome_counts,
 )
+from services.privacy_suspension import VAULT_SEND_SUSPEND_ENV_VAR
 
 _VAULT_URL = "https://vault.example.test"
 _API_KEY = "test-key"  # pragma: allowlist secret
@@ -640,6 +641,94 @@ async def test_a_terminal_failed_job_is_readmitted_with_bounded_backoff(
     ]
     assert rows[0].attempt_count == 2
     assert (rows[0].fragments_seen, rows[0].fragments_touched) == (12, 10)
+
+
+@pytest.mark.asyncio
+async def test_a_suspension_arriving_before_a_retry_ends_the_run_failed(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retry the vault-send switch refused never left the process (#3075).
+
+    The first admission's job fails, and the operator suspends vault sends
+    before the readmission. The readmission is refused locally, and the only
+    earlier attempt is provably over (its job definitively failed), so no
+    attempt can have landed: the run closes FAILED at once, with no further
+    attempt and no further wire request.
+    """
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR, raising=False)
+    recorder = _DurableJobRecorder(fail_first_classification_job=True)
+
+    def _suspend_on_first_poll(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith(_JOBS_PREFIX):
+            monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+        return recorder(request)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_suspend_on_first_poll))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+    recorder.requests.clear()
+
+    await drive_vault_pipeline(
+        db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+    )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert recorder.classification_submissions == 1
+    assert recorder.paths.count(_CLASSIFICATIONS_PATH) == 1
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome, row.attempt_count) for row in rows] == [
+        ("classify", VaultPipelineOutcome.FAILED, 2)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_resumed_unanswered_run_under_suspension_stays_ambiguous(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A suspension proves only that *its* attempt never left the process (#3075).
+
+    The row's earlier attempt went out and was never answered, so it may have
+    landed. The suspended retry sends nothing and ends the run, but must keep
+    that uncertainty: AMBIGUOUS, never FAILED, which would understate exposure.
+    """
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+    recorder = _DurableJobRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    db_session.add(
+        VaultPipelineRun(
+            user_id=_OWNER,
+            stage="classify",
+            trigger=VaultPipelineTrigger.JOURNAL_WRITE.value,
+            outcome=VaultPipelineOutcome.ATTEMPTED.value,
+            job_id=None,
+            attempt_count=1,
+            fragments_seen=0,
+            fragments_touched=0,
+            fragments_lost=0,
+        )
+    )
+    await db_session.commit()
+
+    async def _resolve(_session: AsyncSession, user_id: int) -> HttpCreekVaultClient:
+        assert user_id == _OWNER
+        return client
+
+    await pipeline.resume_vault_pipeline_runs(_test_session_factory(db_session), _resolve)
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert _CLASSIFICATIONS_PATH not in recorder.paths
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome, row.attempt_count) for row in rows] == [
+        ("classify", VaultPipelineOutcome.AMBIGUOUS, 2)
+    ]
 
 
 @pytest.mark.asyncio
@@ -2450,6 +2539,39 @@ async def test_a_classification_missing_a_required_field_is_a_payload_error(
 
     rows = await _rows(db_session)
     assert [row.outcome for row in rows] == [VaultPipelineOutcome.FAILED]
+
+
+@pytest.mark.asyncio
+async def test_a_stage_refused_by_the_operator_suspension_is_failed_not_ambiguous(
+    db_session: AsyncSession,
+    http_clients: Callable[[_Recorder], httpx.AsyncClient],
+    handshaken: Callable[[_Recorder, httpx.AsyncClient], Any],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A send the vault-send switch refused never left the process (#3075).
+
+    So it is a definitive refusal, recorded FAILED on its first attempt and not
+    retried, never AMBIGUOUS ("may have landed"), which would be false.
+    """
+    recorder = _Recorder()
+    client = await handshaken(recorder, http_clients(recorder))
+    recorder.requests.clear()
+    monkeypatch.setenv(VAULT_SEND_SUSPEND_ENV_VAR, "true")
+
+    with caplog.at_level("INFO"):
+        await drive_vault_pipeline(
+            db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
+
+    rows = await _rows(db_session)
+    assert [row.outcome for row in rows] == [VaultPipelineOutcome.FAILED]
+    assert rows[0].attempt_count == 1
+    assert recorder.requests == []
+    assert any(
+        record.getMessage() == "creek vault pipeline stage suspended by operator"
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio

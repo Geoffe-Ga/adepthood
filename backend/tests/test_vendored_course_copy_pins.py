@@ -84,13 +84,16 @@ _SUPERSEDABLE_FIELDS = frozenset(
 _SUPERSESSION_KEYS = frozenset({"stage_number", "field", "value"})
 
 #: The ratified supersessions recorded today: stage 4's aspect and stage 8's
-#: color, aspect and free-will archetype (December 2025).
+#: color, aspect and free-will archetype (December 2025), plus stage 8's
+#: Growing Up stage, which follows the True Self framing rather than the
+#: CSV's "Nonduality" (2026-10).
 _EXPECTED_SUPERSESSIONS = frozenset(
     {
         (4, "aspect"),
         (8, "spiral_dynamics_color"),
         (8, "aspect"),
         (8, _FREE_WILL_FIELD),
+        (8, "growing_up_stage"),
     },
 )
 
