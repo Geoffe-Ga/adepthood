@@ -186,6 +186,7 @@ from services.inference_provenance import (
 from services.journal_vault_withdrawal import withdraw_owed_copies
 from services.journal_withdrawal_obligation import (
     complete_confirmed_delete,
+    deletion_in_progress_clause,
     erase_here,
     owe_pending_delete,
     refuse_if_deletion_pending,
@@ -912,7 +913,7 @@ def _prior_letters_query(user_id: int, exclude_entry_id: int) -> Select[tuple[Ma
     asserts that inheritance per clause, so it stays structural rather than
     coincidental.
 
-    Exactly three predicates are added here, and the first is the reason this
+    Exactly four predicates are added here, and the first is the reason this
     function exists at all:
 
     * ``classification != INTIMATE``. The listing predicate deliberately
@@ -931,6 +932,8 @@ def _prior_letters_query(user_id: int, exclude_entry_id: int) -> Select[tuple[Ma
       repetitive case on the essay route. That is a deliberate narrowing (one
       predicate, no ``| None`` branch, strictly less egress); a follow-up may
       widen it on purpose.
+    * No open ``pending_delete`` obligation on the parent page (#3098): a
+      page whose deletion is in progress is going, and its letters with it.
     * Newest first, bounded by ``PRIOR_DRAFT_LIMIT`` -- the same constant that
       bounds the prompt-side slice in ``domain.resonance._prior_letters_parts``,
       so what is fetched and what is sent cannot drift apart.
@@ -939,6 +942,7 @@ def _prior_letters_query(user_id: int, exclude_entry_id: int) -> Select[tuple[Ma
         _expanded_drafts_query(user_id)
         .where(
             egress_eligible_clause(col(JournalEntry.classification)),
+            ~deletion_in_progress_clause(col(JournalEntry.id)),
             col(JournalEntry.id) != exclude_entry_id,
         )
         .order_by(col(Marginalia.essay_generated_at).desc(), col(Marginalia.id).desc())
