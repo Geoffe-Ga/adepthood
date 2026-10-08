@@ -372,8 +372,6 @@ def test_companion_and_authority_cues_are_advisory_not_blocking(letter: str, rul
         "It may help to start reducing your dose.",
         "Maybe try reducing your dose.",
         "Maybe try going off your meds for a week.",
-        "Quitting the sertraline could feel freeing.",
-        "Cutting back on your pills might help.",
         "You don't need your antidepressants anymore.",
         "You are clearly depressed.",
         "You're probably bipolar.",
@@ -461,6 +459,17 @@ def test_echoing_the_writers_own_mood_word_is_advisory(letter: str) -> None:
     """Calling the writer what they called themselves goes to review; it is not a diagnosis."""
     entry = "I'm depressed and tired. The river was loud."
     score = _scored(_sample(entry, letter=letter))
+    assert RuleId.MEDICAL_CUE in score.advisory
+    assert RuleId.MEDICAL_DIRECTIVE not in score.rule_ids
+
+
+@pytest.mark.parametrize(
+    "letter",
+    ["Quitting the sertraline could feel freeing.", "Cutting back on your pills might help."],
+)
+def test_sentence_initial_gerund_with_a_suggesting_predicate_is_advisory(letter: str) -> None:
+    """A gerund subject is not an imperative (round 3); a suggesting predicate is reviewed."""
+    score = _scored(_sample(_RIVER, letter=letter))
     assert RuleId.MEDICAL_CUE in score.advisory
     assert RuleId.MEDICAL_DIRECTIVE not in score.rule_ids
 

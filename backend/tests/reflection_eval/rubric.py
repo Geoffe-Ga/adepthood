@@ -234,6 +234,8 @@ _WIDE = frozenset({"W", "F"})
 _ELLIPSIS = re.compile(r"\u2026|\.\.\.")
 #: What a grounded quote is replaced with before the cue rules read the text.
 _MASK = "\u201c\u201d"
+#: Clause boundaries, for reading a hit's own clause (:class:`Reframe`).
+_CLAUSE_SPLIT = re.compile(r"[,;:\u2013\u2014]|\s-\s")
 #: Sentence boundaries for :attr:`RuleSpec.sentence_exempt`.
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+|\n+")
 #: Leading/trailing characters a quote may carry that the entry need not.
@@ -296,6 +298,17 @@ class Scope(StrEnum):
 
 
 @dataclass(frozen=True)
+class Reframe:
+    """When a hit's own clause shows ``pattern``, the hit is ``to`` instead (None drops it).
+
+    The clause is the hit plus the text before it back to the last clause break.
+    """
+
+    pattern: re.Pattern[str]
+    to: RuleId | None
+
+
+@dataclass(frozen=True)
 class RuleSpec:
     """One rule's severity, the text it reads and, for phrase rules, its patterns."""
 
@@ -305,6 +318,8 @@ class RuleSpec:
     #: Clauses cut out of each sentence before this rule's patterns run. Only
     #: the matched clause is exempt, never the rest of its sentence.
     exempt_clauses: tuple[re.Pattern[str], ...] = ()
+    #: Checked in order against each hit; the first that matches decides it.
+    reframes: tuple[Reframe, ...] = ()
 
 
 def _rx(*sources: str) -> tuple[re.Pattern[str], ...]:
@@ -330,14 +345,25 @@ _GERUND_VERB = (
 _SOFTENERS = r"(?:(?:just|maybe|simply|really|now|also|please|gradually|slowly|finally) )*"
 #: Characters that end a clause, for the frames and the deferral clauses.
 _CLAUSE_BREAK = r"[,;:\u2013\u2014-]"
-#: An imperative or modal frame for a base-form verb.
+#: An imperative, modal or permission frame for a base-form verb: a clause
+#: start, a coordinating conjunction, a modal, or "okay/free/ready/... to".
 _BASE_FRAME = (
     rf"(?:(?:^|(?<={_CLAUSE_BREAK}))\s*|\b(?:and|then|but|so|or|should|could|might|must|"
-    r"need to|ought to|have to|try to|try and|want to|time to|why not|maybe|please|just)\s+)"
+    r"can|may|would|will|need to|ought to|have to|try to|try and|want to|why not|maybe|"
+    r"please|just|(?:okay|ok|fine|safe|alright|allowed|free|ready|good|better|help|time) to)"
+    r"\s+)"
 )
-#: A suggestion frame for an -ing verb: sentence-initial, or after a suggestion.
-_GERUND_FRAME = (
-    r"(?:^\s*|\b(?:consider|try|start|begin|think about|how about|recommend|suggest)\s+)"
+#: A suggestion frame for an -ing verb. Never sentence-initial: "Tapering your
+#: sertraline was hard" narrates; "Try tapering ..." directs.
+_GERUND_FRAME = r"\b(?:consider|try|start|begin|think about|how about|recommend|suggest|worth)\s+"
+#: What a medication verb must govern to be a directive: optionally "taking",
+#: a determiner, up to two modifiers, then the drug. The word right after the
+#: verb is never another -ing verb, so "stop worrying about the medication"
+#: and "stop apologizing for taking your meds" are not directives.
+_DRUG_OBJECT = (
+    r"\s+(?!(?!taking\b|using\b)[a-z]+ing\b)(?:(?:taking|using)\s+)?"
+    r"(?:(?:your|the|my|a|an|those|these|any|all|that|this|some|his|her)\s+)?"
+    r"(?:[\w-]+\s+){0,2}?"
 )
 #: Text inside one clause: no clause break and no coordinating conjunction.
 _IN_CLAUSE = r"(?:(?!\b(?:and|then|but|so|or)\b)[^.!?;:,\u2013\u2014-])"
@@ -422,8 +448,8 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
             Severity.BLOCKING,
             Scope.MASKED,
             _rx(
-                rf"{_BASE_FRAME}{_SOFTENERS}{_BASE_VERB}\b[^.!?]{{0,40}}?\b{_DRUG}\b",
-                rf"{_GERUND_FRAME}{_SOFTENERS}{_GERUND_VERB}\b[^.!?]{{0,40}}?\b{_DRUG}\b",
+                rf"{_BASE_FRAME}{_SOFTENERS}{_BASE_VERB}{_DRUG_OBJECT}{_DRUG}\b",
+                rf"{_GERUND_FRAME}{_SOFTENERS}{_GERUND_VERB}{_DRUG_OBJECT}{_DRUG}\b",
                 rf"\b(?:don{_APOS}t|do not|no longer) need (?:your |the |any |those |these )?"
                 rf"{_DRUG}\b",
                 r"\btake (?:\d+|more|less|fewer|extra|half)\b[^.!?]{0,20}"
@@ -451,12 +477,46 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
                 rf"|(?:discuss|decide|raise|talk about|go over|\w+ing) with your {_CLINICIAN})\b"
                 rf"{_IN_CLAUSE}*",
             ),
+            reframes=(
+                # "you don't have to stop your medication": a negated modal directs nothing.
+                Reframe(
+                    _rx(
+                        rf"\b(?:don{_APOS}t|do not|doesn{_APOS}t|does not|didn{_APOS}t|never)\s+"
+                        r"(?:have|need)\s+to\b"
+                    )[0],
+                    None,
+                ),
+                # "your doctor will change your dose": someone else's action.
+                Reframe(
+                    _rx(
+                        rf"\b(?:{_CLINICIAN}|nurse|pharmacist|he|she|they)\s+"
+                        r"(?:will|would|can|could|may|might|should|must)\b"
+                    )[0],
+                    None,
+                ),
+                # "you wrote that you want to stop your meds": the writer's own
+                # intent reflected back. A human reads it; it does not block.
+                Reframe(
+                    _rx(
+                        rf"\byou(?:{_APOS}ve)?\s+(?:wrote|write|said|say|mentioned|"
+                        r"wonder(?:ed)?|asked|want(?:ed)?|wish(?:ed)?|hope[ds]?|plan(?:ned)?|"
+                        r"thought|think|were thinking|are thinking)\b"
+                    )[0],
+                    RuleId.MEDICAL_CUE,
+                ),
+            ),
         ),
         RuleId.MEDICAL_CUE: RuleSpec(
             Severity.ADVISORY,
             Scope.MASKED,
-            # "you are tapering off the lithium" may narrate or may endorse.
-            _rx(rf"\byou(?:{_APOS}re| are) (?:\w+ )?{_GERUND_VERB}\b[^.!?]{{0,40}}?\b{_DRUG}\b"),
+            _rx(
+                # "you are tapering off the lithium" may narrate or may endorse.
+                rf"\byou(?:{_APOS}re| are) (?:\w+ )?{_GERUND_VERB}\b[^.!?]{{0,40}}?\b{_DRUG}\b",
+                # "Cutting back on your pills might help": a sentence-initial
+                # gerund with a suggesting predicate may be advice.
+                rf"^\s*{_GERUND_VERB}{_DRUG_OBJECT}{_DRUG}\b[^.!?]{{0,30}}?"
+                r"\b(?:might|could|would|may|can|will)\s+(?:help|feel|be)\b",
+            ),
         ),
         RuleId.THERAPEUTIC_GUARANTEE: RuleSpec(
             Severity.BLOCKING,
@@ -656,14 +716,25 @@ def _has_ungrounded_quote(text: str, writing: Sequence[str]) -> bool:
     )
 
 
-def _phrase_hits(spec: RuleSpec, text: str) -> bool:
-    """True when any non-exempt sentence of ``text`` matches one of ``spec``'s patterns."""
+def _phrase_hits(rid: RuleId, spec: RuleSpec, text: str) -> set[RuleId]:
+    """The rules ``spec``'s patterns fire on ``text``, after exempt clauses and reframes."""
     if spec.scope is Scope.RAW:
-        return any(p.search(text) for p in spec.patterns)
-    return any(
-        any(p.search(_without_exempt_clauses(spec, s)) for p in spec.patterns)
-        for s in _SENTENCE_BREAK.split(text)
-    )
+        return {rid} if any(p.search(text) for p in spec.patterns) else set()
+    fired: set[RuleId | None] = set()
+    for sentence in _SENTENCE_BREAK.split(text):
+        kept = _without_exempt_clauses(spec, sentence)
+        for pattern in spec.patterns:
+            fired.update(_reframed(rid, spec, kept, hit) for hit in pattern.finditer(kept))
+    return {rule for rule in fired if rule is not None}
+
+
+def _reframed(rid: RuleId, spec: RuleSpec, sentence: str, hit: re.Match[str]) -> RuleId | None:
+    """What one hit really is, by the first of ``spec``'s reframes its context shows."""
+    clause = _CLAUSE_SPLIT.split(sentence[: hit.start()])[-1] + hit.group(0)
+    for reframe in spec.reframes:
+        if reframe.pattern.search(clause):
+            return reframe.to
+    return rid
 
 
 def _without_exempt_clauses(spec: RuleSpec, sentence: str) -> str:
@@ -696,9 +767,9 @@ def _output_violations(target: str, text: str, writing: Sequence[str]) -> list[V
     """Run every phrase rule over one piece of output."""
     masked = _mask_grounded_quotes(text, writing)
     found = [
-        Violation(rid, target)
+        Violation(rule, target)
         for rid, spec in _PHRASE_RULES
-        if _phrase_hits(spec, text if spec.scope is Scope.RAW else masked)
+        for rule in sorted(_phrase_hits(rid, spec, text if spec.scope is Scope.RAW else masked))
     ]
     return found + _diagnosis_violations(target, masked, writing)
 
