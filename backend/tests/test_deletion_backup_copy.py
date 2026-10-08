@@ -34,6 +34,29 @@ _DELETE_ACCOUNT_SCREEN = (
     _REPO_ROOT / "frontend" / "src" / "features" / "Settings" / "DeleteAccountScreen.tsx"
 )
 
+# The frontend's copy of the bound, and the Jest suite that pins the screen's
+# copy against it, so a frontend-only PR is held to the same rules (#3115).
+_FRONTEND_BACKUP_SCHEDULE: Final = (
+    _REPO_ROOT / "frontend" / "src" / "constants" / "backupSchedule.ts"
+)
+_FRONTEND_COPY_TEST: Final = (
+    _REPO_ROOT
+    / "frontend"
+    / "src"
+    / "features"
+    / "Settings"
+    / "__tests__"
+    / "DeleteAccountScreenBackupCopy.test.tsx"
+)
+_FRONTEND_BOUND_DECLARATION: Final = re.compile(
+    r"^export const OLDEST_LIVE_BACKUP_DAYS = (\d+);$", re.MULTILINE
+)
+_FRONTEND_PINNED_LITERAL: Final = re.compile(
+    r"^const PINNED_OLDEST_LIVE_BACKUP_DAYS = (\d+);$", re.MULTILINE
+)
+# How the screen interpolates the frontend constant into its copy.
+_FRONTEND_BOUND_PLACEHOLDER: Final = "${OLDEST_LIVE_BACKUP_DAYS}"
+
 # Every surface that tells a person what deleting their account reaches.
 _DELETION_SURFACES: Final[tuple[Path, ...]] = (
     _PRIVACY_POLICY,
@@ -69,9 +92,55 @@ _OVERCLAIMS: Final[tuple[str, ...]] = (
 )
 
 
+def _frontend_literal(document: Path, declaration: re.Pattern[str]) -> int:
+    """Return the one integer ``declaration`` captures in a frontend file."""
+    found = declaration.findall(document.read_text(encoding="utf-8"))
+    assert len(found) == 1, f"{document.name}: expected one {declaration.pattern!r}, got {found}"
+    return int(found[0])
+
+
 def _prose(document: Path) -> str:
-    """Return one document as lowercase prose with its line wrapping collapsed."""
-    return " ".join(document.read_text(encoding="utf-8").lower().split())
+    """Return one document as lowercase prose with its line wrapping collapsed.
+
+    The delete-account screen interpolates the frontend's copy of the bound;
+    the number that constant holds (pinned below to the backend's) is put in
+    its place, so the screen is read as it renders.
+    """
+    text = document.read_text(encoding="utf-8")
+    if _FRONTEND_BOUND_PLACEHOLDER in text:
+        bound = _frontend_literal(_FRONTEND_BACKUP_SCHEDULE, _FRONTEND_BOUND_DECLARATION)
+        text = text.replace(_FRONTEND_BOUND_PLACEHOLDER, str(bound))
+    return " ".join(text.lower().split())
+
+
+def test_frontend_bound_is_the_backend_bound() -> None:
+    """The frontend constant and its Jest pin both hold ``OLDEST_LIVE_BACKUP_DAYS``.
+
+    The screen renders the frontend constant; the Jest suite pins that constant
+    to a literal. Both are read here and held to the backend figure, so a
+    change on either side alone fails a suite.
+    """
+    declared = _frontend_literal(_FRONTEND_BACKUP_SCHEDULE, _FRONTEND_BOUND_DECLARATION)
+    pinned = _frontend_literal(_FRONTEND_COPY_TEST, _FRONTEND_PINNED_LITERAL)
+
+    assert declared == OLDEST_LIVE_BACKUP_DAYS
+    assert pinned == OLDEST_LIVE_BACKUP_DAYS
+
+
+def test_the_screen_renders_the_shared_bound_not_a_transcribed_one() -> None:
+    """The screen's copy takes the number from the shared constant, never a literal."""
+    source = _DELETE_ACCOUNT_SCREEN.read_text(encoding="utf-8")
+
+    assert f"about {_FRONTEND_BOUND_PLACEHOLDER} days" in source
+    assert f"{OLDEST_LIVE_BACKUP_DAYS} days" not in source
+
+
+def test_the_frontend_suite_bans_every_overclaim() -> None:
+    """The Jest suite's overclaim ban lists each phrase this one does."""
+    jest_suite = _FRONTEND_COPY_TEST.read_text(encoding="utf-8")
+
+    missing = [claim for claim in _OVERCLAIMS if f"'{claim}'" not in jest_suite]
+    assert not missing, f"{_FRONTEND_COPY_TEST.name} does not ban {missing}"
 
 
 def _unframed_bound_offsets(copy: str) -> list[int]:
