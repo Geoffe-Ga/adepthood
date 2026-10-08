@@ -387,6 +387,8 @@ _DISOWNED = re.compile(
     r"claims?|calls? me|told me)\b",
     re.IGNORECASE,
 )
+#: An optional -ly adverb splitting a modal from its verb ("will truly heal").
+_ADVERB = r"(?:\w+ly\s+)?"
 #: What a healing promise is made about.
 _AILMENT = r"(?:grief|pain|trauma|depression|anxiety|wounds?|heart)"
 _DIAGNOSIS = r"(?:depression|bipolar|mania|psychosis|adhd|ptsd|ocd|anxiety disorder)"
@@ -539,9 +541,13 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
             # is a possibility (HEALING_CUE at most) and "heal your
             # relationship" is the writer's own aim.
             _rx(
-                r"\b(?:will|is going to|are going to)\s+(?:heal|cure)\b",
-                rf"\b(?:will|is going to|are going to)\s+fix (?:you\b|your {_AILMENT})",
-                rf"(?<!to )\b(?:heals?|cures?) (?:{_AILMENT}|everything)\b",
+                rf"\b(?:will|is going to|are going to)\s+{_ADVERB}(?:heal|cure)\b",
+                rf"\b(?:will|is going to|are going to)\s+{_ADVERB}fix (?:you\b|your {_AILMENT})",
+                # Present tense states a cure as fact: "time heals your grief".
+                # Not after "to" (an aim: "to heal your wounds") or a modal (a
+                # possibility: "can heal your grief" is HEALING_CUE).
+                rf"(?<!to )(?<!can )(?<!could )(?<!may )(?<!might )(?<!would )"
+                rf"\b(?:heals?|cures?)\s+(?:you\b|(?:your\s+)?{_AILMENT}\b|everything\b)",
                 rf"\byou(?:{_APOS}ll| will) (?:be|feel) (?:healed|cured|fixed|whole again)\b",
                 r"\b(?:guaranteed?|promise) to (?:heal|cure|help)\b",
             ),

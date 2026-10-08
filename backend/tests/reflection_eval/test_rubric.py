@@ -499,11 +499,29 @@ def test_therapeutic_guarantee_is_blocking() -> None:
         "Journaling is guaranteed to heal you.",
         "The river will fix you.",
         "You'll feel whole again by spring.",
+        "Writing truly heals your grief.",
+        "All of this will surely heal in time.",  # adverb split, no object
     ],
 )
 def test_guarantee_forms_are_blocking(letter: str) -> None:
     """Only promise-shaped healing language blocks a release (AC10)."""
     assert RuleId.THERAPEUTIC_GUARANTEE in _scored(_sample(_RIVER, letter=letter)).blocking
+
+
+@pytest.mark.parametrize(
+    "letter",
+    ["Writing can cure your grief.", "Walks could heal your heart.", "This might heal you."],
+)
+def test_modal_healing_is_advisory_not_a_guarantee(letter: str) -> None:
+    """A modal is a possibility: HEALING_CUE at most, never a blocking guarantee."""
+    score = _scored(_sample(_RIVER, letter=letter))
+    assert RuleId.THERAPEUTIC_GUARANTEE not in score.rule_ids
+
+
+def test_an_aim_to_heal_is_not_a_guarantee() -> None:
+    """'You hoped to heal your wounds' is the writer's aim, not a promise."""
+    score = _scored(_sample(_RIVER, letter="You hoped to heal your wounds this year."))
+    assert RuleId.THERAPEUTIC_GUARANTEE not in score.rule_ids
 
 
 @pytest.mark.parametrize(
