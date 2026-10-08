@@ -287,8 +287,16 @@ def _arm_botmason_stub_seam(monkeypatch: pytest.MonkeyPatch) -> None:
     against the stub, so the suite arms it here, per test, through
     ``monkeypatch`` -- which lets ``tests/test_generation_payer.py`` disarm it
     with ``monkeypatch.delenv`` to see what a real deployment does.
+
+    An armed seam boots only under an *explicit* ``ENV=development`` or ``e2e``
+    (``main.validate_stub_seam_config``), so the suite states the environment it
+    always ran as when the shell leaves ``ENV`` unset -- exactly what
+    ``backend/.env.example`` asks of a laptop. A test about another environment
+    sets ``ENV`` itself, after this.
     """
     monkeypatch.setenv(STUB_SEAM_ENV_VAR, "true")
+    if not os.environ.get("ENV", "").strip():
+        monkeypatch.setenv("ENV", "development")
 
 
 @pytest.fixture(autouse=True)

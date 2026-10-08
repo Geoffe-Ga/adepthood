@@ -164,19 +164,33 @@ def _deploy_environment(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) ->
         {"ENV": "production"},
         {"ENV": "Production "},
         {"ENV": "staging"},
+        {"ENV": "prod"},
+        {},
         {"RAILWAY_ENVIRONMENT_NAME": "production"},
         {"ENV": "development", "RAILWAY_ENVIRONMENT_NAME": "production"},
+        {"RAILWAY_ENVIRONMENT_NAME": "staging"},
+        {"RAILWAY_ENVIRONMENT_NAME": "staging", "ENV": "development"},
+        {"RAILWAY_ENVIRONMENT_NAME": "staging", "RAILWAY_PROJECT_ID": "proj"},
+        {"RAILWAY_ENVIRONMENT": "pr-42"},
+        {"ENV": "e2e", "RAILWAY_ENVIRONMENT": "pr-42"},
         {"RAILWAY_PROJECT_ID": "proj"},
-        {"ENV": "prod"},
+        {"ENV": "development", "RAILWAY_SERVICE_ID": "svc"},
     ],
     ids=[
         "env-production",
         "env-production-unnormalised",
         "staging",
+        "env-typo",
+        "env-unset-non-railway-host",
         "railway-production-env-unset",
         "railway-production-env-development",
+        "railway-staging-env-unset",
+        "railway-staging-env-development",
+        "railway-staging-with-marker",
+        "railway-preview-env-unset",
+        "railway-preview-env-e2e",
         "platform-marker-without-a-name",
-        "env-typo",
+        "platform-marker-env-development",
     ],
 )
 def test_a_deployed_boot_refuses_an_armed_stub_seam(
@@ -184,9 +198,10 @@ def test_a_deployed_boot_refuses_an_armed_stub_seam(
 ) -> None:
     """Anywhere but a laptop or the e2e lane, an armed seam would serve canned text: refuse.
 
-    Production is judged by the repo's fail-shut predicate
-    (``journal_encryption.production_in_force``), and the seam is allowed only
-    in the two environments that need it, so staging and a typo refuse too.
+    Fails closed: the seam needs ``ENV`` set explicitly to ``development`` or
+    ``e2e`` (an unset ``ENV`` cannot tell a laptop from an unlabelled host), and
+    any platform environment-name or marker variable means a deploy, whatever
+    its value -- staging, a preview, or production.
     """
     _deploy_environment(monkeypatch, env)
     monkeypatch.setenv(botmason.STUB_SEAM_ENV_VAR, "true")
@@ -200,16 +215,18 @@ def test_a_deployed_boot_refuses_an_armed_stub_seam(
     [
         ({"ENV": "production"}, None),
         ({"RAILWAY_ENVIRONMENT_NAME": "production"}, None),
-        ({}, "true"),
+        ({}, None),
         ({"ENV": "development"}, "true"),
         ({"ENV": "e2e"}, "true"),
+        ({"ENV": " Development "}, "true"),
     ],
     ids=[
         "production-unarmed",
         "railway-unarmed",
-        "default-armed",
+        "env-unset-unarmed",
         "development-armed",
         "e2e-armed",
+        "development-unnormalised-armed",
     ],
 )
 def test_boot_passes_without_the_seam_or_where_the_seam_belongs(

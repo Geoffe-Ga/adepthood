@@ -623,10 +623,10 @@ def validate_app_base_url_config() -> None:
     raise RuntimeError(_unusable_web_origin_message(origin))
 
 
-#: The only environments an armed stub seam may boot in: a laptop (the default)
-#: and the end-to-end lane. Everything else is, or may be, in front of people.
-_DEFAULT_ENVIRONMENT = "development"
-_STUB_SEAM_ENVIRONMENTS = frozenset({_DEFAULT_ENVIRONMENT, "e2e"})
+#: The only ``ENV`` values an armed stub seam may boot under, and only when set
+#: explicitly: a laptop and the end-to-end lane. Everything else is, or may be,
+#: in front of people.
+_STUB_SEAM_ENVIRONMENTS = frozenset({"development", "e2e"})
 
 
 def validate_stub_seam_config() -> None:
@@ -638,16 +638,24 @@ def validate_stub_seam_config() -> None:
     way to reach it; a deployed process with that armed would hand canned text
     to real people, which is exactly what #3096 forbids.
 
-    Fails closed: an armed seam may boot only where it belongs -- ``ENV`` of
-    ``development`` (the default) or ``e2e`` -- and never where
-    :func:`services.journal_encryption.production_in_force` judges the process
-    production. A Railway production with ``ENV`` unset, a staging deploy and a
-    mistyped ``ENV`` all refuse.
+    Fails closed: an armed seam boots only with ``ENV`` set *explicitly* to
+    ``development`` or ``e2e`` -- an unset ``ENV`` cannot tell a laptop from an
+    unlabelled host -- and only off-platform: any of
+    :data:`~services.journal_encryption.PLATFORM_ENVIRONMENT_NAME_ENV_VARS` or
+    :data:`~services.journal_encryption.PLATFORM_MARKER_ENV_VARS` present, whatever
+    its value, means a deploy (production, staging or a preview), so it refuses.
     """
     if not stub_seam_armed():
         return
-    environment = os.getenv("ENV", _DEFAULT_ENVIRONMENT).strip().lower()
-    if environment in _STUB_SEAM_ENVIRONMENTS and not journal_encryption.production_in_force():
+    environment = os.getenv("ENV", "").strip().lower()
+    on_a_platform = any(
+        os.getenv(name, "").strip()
+        for name in (
+            *journal_encryption.PLATFORM_ENVIRONMENT_NAME_ENV_VARS,
+            *journal_encryption.PLATFORM_MARKER_ENV_VARS,
+        )
+    )
+    if environment in _STUB_SEAM_ENVIRONMENTS and not on_a_platform:
         return
     msg = (
         f"{STUB_SEAM_ENV_VAR} is armed, which lets the canned BotMason stub answer "
