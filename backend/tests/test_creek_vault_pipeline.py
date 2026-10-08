@@ -190,6 +190,15 @@ class _Recorder:
         ]
 
 
+# A trickling answer takes this long, far beyond every budget the trickle
+# tests set; a run that was not cut short therefore takes at least this long.
+_TRICKLE_SECONDS = 3.0
+# A run that was cut short finishes well under the trickle. The gap between
+# the two absorbs scheduler delay on a loaded machine without letting an
+# uncut run pass.
+_CUT_RUN_CEILING_SECONDS = 2.0
+
+
 class _SlowRecorder:
     """An async handler that answers only after ``delay`` seconds have really passed.
 
@@ -2860,7 +2869,7 @@ async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
     budget = 0.2
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", budget)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
-    slow = _SlowRecorder(delay=0.5, slow_link=VaultLinkStage.TEMPORAL.value)
+    slow = _SlowRecorder(delay=_TRICKLE_SECONDS, slow_link=VaultLinkStage.TEMPORAL.value)
     http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
@@ -2878,7 +2887,7 @@ async def test_a_journal_save_is_bounded_by_a_wall_clock_not_by_a_read_phase(
     await _wait_for_background_pipeline()
     await http.aclose()
 
-    assert elapsed < 0.45
+    assert elapsed < _CUT_RUN_CEILING_SECONDS
     # Non-vacuous: the bound cut a call short rather than declining to make one.
     assert any(
         request.url.path == _LINKS_PATH
@@ -2902,7 +2911,7 @@ async def test_an_import_cuts_a_trickling_clustering_rung_at_its_own_budget(
     monkeypatch.setattr(pipeline, "_DEEP_RUN_BUDGET_SECONDS", 0.3)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
     monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
-    slow = _SlowRecorder(delay=0.5, slow_link=VaultLinkStage.EDDIES.value)
+    slow = _SlowRecorder(delay=_TRICKLE_SECONDS, slow_link=VaultLinkStage.EDDIES.value)
     http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
@@ -2915,7 +2924,7 @@ async def test_an_import_cuts_a_trickling_clustering_rung_at_its_own_budget(
     await _wait_for_background_pipeline()
     await http.aclose()
 
-    assert elapsed < 0.45
+    assert elapsed < _CUT_RUN_CEILING_SECONDS
     assert any(
         request.url.path == _LINKS_PATH
         and json.loads(request.content)["method"] == VaultLinkStage.EDDIES.value
@@ -2937,7 +2946,7 @@ async def test_a_trickling_job_submit_is_bounded_by_the_adapter_deadline(
     """
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.2)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.05)
-    slow = _SlowRecorder(delay=0.5)
+    slow = _SlowRecorder(delay=_TRICKLE_SECONDS)
     http = httpx.AsyncClient(transport=httpx.MockTransport(slow))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
@@ -2950,7 +2959,7 @@ async def test_a_trickling_job_submit_is_bounded_by_the_adapter_deadline(
     elapsed = time.monotonic() - started
     await http.aclose()
 
-    assert elapsed < 0.45
+    assert elapsed < _CUT_RUN_CEILING_SECONDS
     assert any(request.url.path == _CLASSIFICATIONS_PATH for request in slow.requests)
 
 
