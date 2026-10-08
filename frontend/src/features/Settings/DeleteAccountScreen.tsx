@@ -25,11 +25,11 @@ import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
  * journal-first product's promise that the writing is theirs.
  *
  * Two things this screen refuses to do. It does not soften: deletion from the
- * live service is immediate and cannot be undone, and says so before the button is
- * pressable, along with how long backups taken before it survive. And it
- * does not overclaim: what survives — the anonymous catalogue contribution,
- * the purchase receipt, a Creek Vault the app cannot reach — is listed beside
- * what goes, because a promise of total erasure that is not quite true is
+ * live service is immediate and cannot be undone, and it says so before the
+ * button is pressable, along with how long a backup taken beforehand may still
+ * hold a copy. And it does not overclaim: what survives — the anonymous
+ * catalogue contribution, the purchase receipt, a Creek Vault the app cannot
+ * reach — is listed beside what goes, because a promise of total erasure that is not quite true is
  * worse than an accurate one.
  */
 
