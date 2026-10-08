@@ -827,6 +827,29 @@ describe('a page whose deletion is in progress, and a copy in another vault (#30
     expect(screen.queryByTestId('journal-save-retry')).toBeNull();
   });
 
+  it('Finish on a page being deleted says why, settles, and never retries the 409', async () => {
+    const screen = await openLoaded();
+    mockUpdate.mockRejectedValue(DELETION_PENDING);
+
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await settle();
+
+    expect(hint(screen)).toMatch(/set to be deleted, so it can’t be edited/);
+    const finishError = screen.getByTestId('journal-finish-error').props.children as string;
+    expect(finishError).toMatch(/set to be deleted/);
+    expect(finishError).not.toMatch(/Check your connection|still saving/);
+    expect(screen.queryByTestId('journal-save-retry')).toBeNull();
+
+    const sent = mockUpdate.mock.calls.length;
+    await net.emit(false);
+    await net.emit(true);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(AUTOSAVE_MS * 10);
+    });
+    await settle();
+    expect(mockUpdate.mock.calls.length).toBe(sent);
+  });
+
   it('reverts a refused tier change and says why', async () => {
     const screen = await openLoaded({ classification: 'personal' });
     mockUpdate.mockRejectedValueOnce(DELETION_PENDING);

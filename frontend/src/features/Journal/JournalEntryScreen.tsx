@@ -1028,6 +1028,18 @@ type RunFinish = (_title: string, _body: string) => Promise<FinishedEntry>;
  * keystroke during the write cannot lose it; a success also settles the body,
  * whose full text the Finish write carried.
  */
+/**
+ * Record a Finish that failed. A page being deleted refuses Finish like every
+ * edit (#3098): no retry can land it, so its lane settles and the hint names
+ * the reason. Any other failure stays owed for Retry.
+ */
+function settleFailedFinish(error: unknown, reporter: SaveReporter, isCurrent: boolean): void {
+  const deleting = isDeletionPending(error);
+  if (deleting) reporter.succeed('finish');
+  else reporter.fail({ lane: 'finish' });
+  if (isCurrent) reporter.publish(deleting ? 'deletionPending' : 'idle');
+}
+
 function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFinish {
   const writeRefs = useWriteRefs(refs);
   const { entryUnsettledRef, ctxRef, inFlightRef, timerRef, generationRef, durableTextRef } = refs;
@@ -1060,8 +1072,7 @@ function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFin
         if (generationRef.current === generation) reporter.publish('saved');
         return finished;
       } catch (error) {
-        reporter.fail({ lane: 'finish' });
-        if (generationRef.current === generation) reporter.publish('idle');
+        settleFailedFinish(error, reporter, generationRef.current === generation);
         throw error;
       } finally {
         if (inFlightRef.current === shadow) inFlightRef.current = null;
@@ -3196,8 +3207,8 @@ function useEditGate({ status, setStatus, finish, body, navigation, onConfirmEdi
       await finish();
       setStatus('finished');
       setEditing(false);
-    } catch {
-      setFinishError(FINISH_ERROR_MESSAGE);
+    } catch (error) {
+      setFinishError(isDeletionPending(error) ? DELETION_PENDING_HINT : FINISH_ERROR_MESSAGE);
     } finally {
       setFinishing(false);
     }
