@@ -66,6 +66,12 @@ const PLACE: Readonly<Record<CopyLocation, string>> = {
   disconnected_vault: 'the Creek vault you disconnected',
 };
 
+/**
+ * Said when "delete here only" finds the page already deleted (the background
+ * finished it). Claims nothing about the vault copy: a 404 cannot tell.
+ */
+export const ALREADY_DELETED_NOTICE = 'This page was already deleted.';
+
 /** The receipt after deleting here only: plain, and never "withdrawn" unless confirmed. */
 export function erasureReceiptNotice(receipt: JournalErasureReceipt): string {
   if (receipt.remote_copy === 'confirmed_absent') {

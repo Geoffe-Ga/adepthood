@@ -16,6 +16,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 
 import {
+  ALREADY_DELETED_NOTICE,
   WITHDRAWAL_PENDING_LOCATIONS,
   deleteEntryFailureNotice,
   erasureReceiptNotice,
@@ -162,7 +163,15 @@ function eraseHereOnly(choice: UnreachableCopy, ctx: RemovalContext): void {
     current: ctx.itemsRef.current,
     setItems: ctx.setItems,
     removeRemote: async (entryId) => {
-      ctx.setReceipt(erasureReceiptNotice(await journal.eraseLocally(entryId)));
+      try {
+        ctx.setReceipt(erasureReceiptNotice(await journal.eraseLocally(entryId)));
+      } catch (err: unknown) {
+        // The background sweep finished this deletion while the choice was
+        // open. The page is gone, which is what was asked; a 404 cannot say
+        // what the vault did, so the notice claims nothing about the copy.
+        if (!isAlreadyDeleted(err)) throw err;
+        ctx.setReceipt(ALREADY_DELETED_NOTICE);
+      }
     },
     reinsert: reinsertNewestFirst,
     onError: (detail) => {

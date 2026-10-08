@@ -332,6 +332,24 @@ describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
     expect(queryByTestId('journal-erasure-receipt')).toBeNull();
   });
 
+  it('treats "delete here only" after the background already finished as done', async () => {
+    mockEraseLocally.mockRejectedValue({ status: 404, detail: 'journal_entry_not_found' });
+    const { getByTestId, queryByTestId, findByTestId } = await refusedWith(
+      'vault_withdrawal_previous_vault',
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-erase'));
+    });
+
+    await waitFor(() => expect(queryByTestId('journal-shelf-card-2')).toBeNull());
+    expect(queryByTestId('journal-delete-error')).toBeNull();
+    const receipt = (await findByTestId('journal-erasure-receipt')).props.children as string;
+    expect(receipt).toMatch(/already deleted/i);
+    // A 404 cannot say what the vault did, so nothing is claimed about the copy.
+    expect(receipt).not.toMatch(/withdrawn|confirmed|is gone/i);
+  });
+
   it('offers no choice for an ordinary failure', async () => {
     mockDelete.mockRejectedValue(new Error('network down'));
     const { getByTestId, findByTestId, queryByTestId } = await shelfWithDeleteRequested();
