@@ -52,6 +52,7 @@ from rate_limit import (  # noqa: E402
     reset_invalid_license_attempts,
 )
 from schemas.gumroad import GumroadPurchase  # noqa: E402
+from services.botmason import STUB_SEAM_ENV_VAR  # noqa: E402
 
 # The default signup license gate stubbed into every test that does not opt into
 # the real gate (via the ``real_license_gate`` marker). Feature-specific tests in
@@ -274,6 +275,28 @@ def _reset_rate_limiter() -> Generator[None, None, None]:
     limiter.reset()
     reset_invalid_license_attempts()
     reset_ambient_limit()
+
+
+@pytest.fixture(autouse=True)
+def _arm_botmason_stub_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Arm the canned BotMason stub for the suite, as the explicit test seam it now is.
+
+    Since #3096 the stub answers nothing on its own: a deployment with no real
+    provider refuses every request that carries no personal key. Hundreds of
+    route tests walk the resonance, letter, detection and transcription paths
+    against the stub, so the suite arms it here, per test, through
+    ``monkeypatch`` -- which lets ``tests/test_generation_payer.py`` disarm it
+    with ``monkeypatch.delenv`` to see what a real deployment does.
+
+    An armed seam boots only under an *explicit* ``ENV=development`` or ``e2e``
+    (``main.validate_stub_seam_config``), so the suite states the environment it
+    always ran as when the shell leaves ``ENV`` unset -- exactly what
+    ``backend/.env.example`` asks of a laptop. A test about another environment
+    sets ``ENV`` itself, after this.
+    """
+    monkeypatch.setenv(STUB_SEAM_ENV_VAR, "true")
+    if not os.environ.get("ENV", "").strip():
+        monkeypatch.setenv("ENV", "development")
 
 
 @pytest.fixture(autouse=True)

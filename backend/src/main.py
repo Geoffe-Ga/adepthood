@@ -90,7 +90,7 @@ from seed_stages import seed_stages
 from sentry import init_error_monitoring, shutdown_error_monitoring
 from services import app_links, email, journal_encryption
 from services.account_egress_barrier import load_egress_barrier_rollout, rollout_for
-from services.botmason import get_provider
+from services.botmason import STUB_SEAM_ENV_VAR, get_provider, stub_seam_armed
 from services.content_repository import (
     ContentRepositoryError,
     content_version_info,
@@ -623,6 +623,50 @@ def validate_app_base_url_config() -> None:
     raise RuntimeError(_unusable_web_origin_message(origin))
 
 
+#: The only ``ENV`` values an armed stub seam may boot under, and only when set
+#: explicitly: a laptop and the end-to-end lane. Everything else is, or may be,
+#: in front of people.
+_STUB_SEAM_ENVIRONMENTS = frozenset({"development", "e2e"})
+
+
+def validate_stub_seam_config() -> None:
+    """Refuse a deployed boot while the canned-stub test seam is armed (#3096).
+
+    The stub answers a request with a few text-replaced sentences presented as a
+    reflection, letter or page. It exists for the backend suite and the
+    end-to-end lane, and :data:`~services.botmason.STUB_SEAM_ENV_VAR` is the only
+    way to reach it; a deployed process with that armed would hand canned text
+    to real people, which is exactly what #3096 forbids.
+
+    Fails closed: an armed seam boots only with ``ENV`` set *explicitly* to
+    ``development`` or ``e2e`` -- an unset ``ENV`` cannot tell a laptop from an
+    unlabelled host -- and only off-platform: any of
+    :data:`~services.journal_encryption.PLATFORM_ENVIRONMENT_NAME_ENV_VARS` or
+    :data:`~services.journal_encryption.PLATFORM_MARKER_ENV_VARS` present, whatever
+    its value, means a deploy (production, staging or a preview), so it refuses.
+    """
+    if not stub_seam_armed():
+        return
+    environment = os.getenv("ENV", "").strip().lower()
+    on_a_platform = any(
+        os.getenv(name, "").strip()
+        for name in (
+            *journal_encryption.PLATFORM_ENVIRONMENT_NAME_ENV_VARS,
+            *journal_encryption.PLATFORM_MARKER_ENV_VARS,
+        )
+    )
+    if environment in _STUB_SEAM_ENVIRONMENTS and not on_a_platform:
+        return
+    msg = (
+        f"{STUB_SEAM_ENV_VAR} is armed, which lets the canned BotMason stub answer "
+        "real requests with text-replaced sentences instead of refusing them. It is "
+        "a test seam for the backend suite and the end-to-end lane. Unset "
+        f"{STUB_SEAM_ENV_VAR} to boot; configure BOTMASON_PROVIDER and LLM_API_KEY, "
+        "or rely on writers' own keys, if this deployment is meant to generate."
+    )
+    raise RuntimeError(msg)
+
+
 def validate_provider_probe_config() -> None:
     """Refuse a production boot while the provider probe is armed.
 
@@ -973,16 +1017,19 @@ def _log_egress_barrier_rollout() -> None:
 def _log_botmason_provider() -> None:
     """Report the active LLM provider at boot (issue #402).
 
-    Stub-in-production must be an explicit, visible choice — a deploy that
-    forgot ``BOTMASON_PROVIDER``/``LLM_API_KEY`` would otherwise silently
-    serve canned chat responses to real users.
+    Stub-in-production must be an explicit, visible choice. It no longer serves
+    canned text (#3096): every request without a writer's own key is refused
+    with 402 ``llm_key_required``, so a deploy that forgot
+    ``BOTMASON_PROVIDER``/``LLM_API_KEY`` turns credit-funded features off
+    rather than faking them -- and says so here.
     """
     provider = get_provider()
     logger.info("botmason_provider provider=%s", provider)
     if provider == "stub" and os.getenv("ENV", "development") == "production":
         logger.error(
-            "botmason_stub_in_production: BOTMASON_PROVIDER is 'stub' — real "
-            "users will get canned responses. Set BOTMASON_PROVIDER and "
+            "botmason_stub_in_production: BOTMASON_PROVIDER is 'stub' — every "
+            "AI request without the writer's own API key is refused (402 "
+            "llm_key_required), credits included. Set BOTMASON_PROVIDER and "
             "LLM_API_KEY (see backend/.env.example) if this is unintentional."
         )
 
@@ -1109,6 +1156,11 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # A managed vault is optional, so an incomplete pilot never takes down the
     # journal. Say the exact operator state once and fail new activation closed.
     validate_managed_vault_rollout_config()
+
+    # The same shape as the provider probe, for the canned stub: a seam that
+    # answers real people with text-replaced sentences never goes live (#3096).
+    # Last of the refusals, so each earlier one still names its own problem.
+    validate_stub_seam_config()
 
     # A model import proves what this process expects, not what its database
     # actually contains. Refuse before seeding and before the lifespan yields so
