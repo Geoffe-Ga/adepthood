@@ -808,25 +808,40 @@ async def _finish_obligation(
     target = attempt.target
     entry = await _entry_row(session, target)
     if owed.state == _PENDING_DELETE and entry is not None:
-        journal_withdrawn = await withdraw_journal_copy(
-            session, entry, client, destination=attempt.destination
+        confirmed = await _finish_pending_delete(session, client, attempt, entry, moment=moment)
+    else:
+        confirmed = await withdraw_unconfirmed_copy(
+            session,
+            entry,
+            client,
+            binding=CopyBinding(
+                entry_id=target.entry_id, recorded=owed.recorded, current=attempt.destination
+            ),
         )
-        if not (journal_withdrawn and attempt.drafts_withdrawn):
-            return False
-        if entry.deleted_at is None:
-            entry.deleted_at = moment
-            session.add(entry)
-    elif not await withdraw_unconfirmed_copy(
-        session,
-        entry,
-        client,
-        binding=CopyBinding(
-            entry_id=target.entry_id, recorded=owed.recorded, current=attempt.destination
-        ),
-    ):
+    if not confirmed:
         return False
     await settle_confirmed(session, user_id=target.user_id, entry_id=target.entry_id)
     await session.commit()
+    return True
+
+
+async def _finish_pending_delete(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    attempt: _JournalAttempt,
+    entry: JournalEntry,
+    *,
+    moment: datetime,
+) -> bool:
+    """Withdraw a live page's copy and, once nothing is owed, stamp the asked-for deletion."""
+    journal_withdrawn = await withdraw_journal_copy(
+        session, entry, client, destination=attempt.destination
+    )
+    if not (journal_withdrawn and attempt.drafts_withdrawn):
+        return False
+    if entry.deleted_at is None:
+        entry.deleted_at = moment
+        session.add(entry)
     return True
 
 

@@ -28,13 +28,15 @@ from models.journal_withdrawal_obligation import (
     JournalWithdrawalState,
 )
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
+from services.creek_vault_client import LocalFallbackCreekVaultClient
 
 _LOGGER = logging.getLogger(__name__)
 
 OBLIGATION_TRANSITION_EVENT: Final = "journal withdrawal obligation transition"
+ERASED_UNCONFIRMED_EVENT: Final = "journal entry erased with unconfirmed vault copy"
 
-#: The only ``extra`` keys an obligation record may carry: ids and closed codes.
-OBLIGATION_LOG_EXTRAS: Final = frozenset({"entry_id", "from_state", "to_state"})
+#: The only ``extra`` keys a record from this module may carry: ids and closed codes.
+OBLIGATION_LOG_EXTRAS: Final = frozenset({"entry_id", "from_state", "to_state", "reason"})
 
 _NO_STATE: Final = "none"
 _CONFIRMED: Final = JournalWithdrawalState.CONFIRMED.value
@@ -184,3 +186,107 @@ async def copy_location(
     if any(recorded not in {None, destination} for recorded in owed):
         return CopyLocation.PREVIOUS_VAULT
     return CopyLocation.CONNECTED_VAULT
+
+
+async def locate_owed_copy(
+    session: AsyncSession, entry: JournalEntry, destination: str | None, client: object
+) -> CopyLocation:
+    """Where ``entry``'s unconfirmed copies live, relative to what this request can dial.
+
+    No vault is connected only when there is no destination *and* the request
+    resolved the local fallback, which dials nothing.
+    """
+    connected = destination is not None or type(client) is not LocalFallbackCreekVaultClient
+    return await copy_location(session, entry, destination, vault_connected=connected)
+
+
+async def owe_pending_delete(session: AsyncSession, entry: JournalEntry) -> None:
+    """Record, durably, that this page's deletion waits only on its vault (#3098). Commits.
+
+    Committed before the 503 so the background sweep can finish both the
+    withdrawal and the ``deleted_at`` stamp for any classification, without
+    the writer having to ask again. The page stays live until then.
+    """
+    await record_obligation(
+        session,
+        user_id=entry.user_id,
+        entry_id=_entry_id(entry),
+        state=JournalWithdrawalState.PENDING_DELETE,
+        destination=entry.vault_destination,
+    )
+    await session.commit()
+
+
+async def complete_confirmed_delete(session: AsyncSession, entry: JournalEntry) -> None:
+    """Stamp a deletion whose every copy was confirmed absent; settle its obligation. Commits."""
+    entry.deleted_at = _utcnow()
+    session.add(entry)
+    await settle_confirmed(session, user_id=entry.user_id, entry_id=_entry_id(entry))
+    await session.commit()
+
+
+async def erase_with_unconfirmed_copy(
+    session: AsyncSession,
+    entry: JournalEntry,
+    *,
+    destination: str | None,
+    location: CopyLocation,
+) -> None:
+    """Erase the page here and keep a content-free ``unconfirmed`` obligation (#3094). Commits.
+
+    Called only after the vault holding the copy could not confirm it absent.
+    The obligation is bound to the vault the copy was recorded to -- or, for a
+    legacy copy that recorded none, to the vault connected now (``destination``),
+    the same guess its ordinary withdrawal already makes -- so only that vault's
+    later confirmation can clear it. A page whose own copy is already gone owes
+    only its essays, whose obligations are already durable; its journal
+    obligation, if an earlier DELETE left one, is settled.
+    """
+    entry_id = _entry_id(entry)
+    entry.deleted_at = _utcnow()
+    session.add(entry)
+    if entry.vault_ref is not None or entry.vault_destination is not None:
+        await record_obligation(
+            session,
+            user_id=entry.user_id,
+            entry_id=entry_id,
+            state=JournalWithdrawalState.UNCONFIRMED,
+            destination=entry.vault_destination or destination,
+        )
+    else:
+        await settle_confirmed(session, user_id=entry.user_id, entry_id=entry_id)
+    await session.commit()
+    _LOGGER.warning(
+        ERASED_UNCONFIRMED_EVENT, extra={"entry_id": entry_id, "reason": location.value}
+    )
+
+
+def _entry_id(entry: JournalEntry) -> int:
+    if entry.id is None:
+        raise RuntimeError("a persisted journal entry is required")
+    return entry.id
+
+
+async def withdrawal_pending_detail(
+    session: AsyncSession, entry: JournalEntry, destination: str | None, client: object
+) -> str:
+    """The stable 503 detail for an unconfirmed withdrawal, naming where the copy lives.
+
+    ``vault_withdrawal_pending`` when the connected vault simply has not
+    confirmed; ``vault_withdrawal_previous_vault`` or
+    ``vault_withdrawal_disconnected_vault`` when the copy is in a vault this
+    account is no longer connected to (#3094). Relational and content-free: no
+    URL, fingerprint or text. Commits its read.
+    """
+    location = await locate_owed_copy(session, entry, destination, client)
+    await session.commit()
+    return WITHDRAWAL_PENDING_DETAILS[location]
+
+
+async def erase_here(
+    session: AsyncSession, entry: JournalEntry, destination: str | None, client: object
+) -> CopyLocation:
+    """Locate the unconfirmed copy, erase the page here, and return the location. Commits."""
+    location = await locate_owed_copy(session, entry, destination, client)
+    await erase_with_unconfirmed_copy(session, entry, destination=destination, location=location)
+    return location

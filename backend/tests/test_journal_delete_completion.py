@@ -34,7 +34,10 @@ from services.creek_vault_voice_drafts import (
     JournalRetrySchedule,
     resume_voice_draft_retractions,
 )
-from services.journal_withdrawal_obligation import OBLIGATION_LOG_EXTRAS
+from services.journal_withdrawal_obligation import (
+    OBLIGATION_LOG_EXTRAS,
+    OBLIGATION_TRANSITION_EVENT,
+)
 from services.user_vault_config import store_vault_config
 from tests.test_voice_draft_retraction_recovery import _DraftVault as DraftVault
 
@@ -296,7 +299,11 @@ async def test_pending_delete_telemetry_is_content_free(
     await _sweep(db_session, DraftVault(), _T0, destination=destination)
 
     records = [record for record in caplog.records if record.name in watched]
-    transitions = [r for r in records if r.name == obligation_module.__name__]
+    transitions = [
+        r
+        for r in records
+        if r.name == obligation_module.__name__ and r.getMessage() == OBLIGATION_TRANSITION_EVENT
+    ]
     assert {(r.__dict__["from_state"], r.__dict__["to_state"]) for r in transitions} >= {
         ("none", "pending_delete"),
         ("pending_delete", "confirmed"),

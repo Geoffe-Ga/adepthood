@@ -35,7 +35,11 @@ from services.creek_vault_voice_drafts import (
     JournalRetrySchedule,
     resume_voice_draft_retractions,
 )
-from services.journal_withdrawal_obligation import OBLIGATION_LOG_EXTRAS
+from services.journal_withdrawal_obligation import (
+    ERASED_UNCONFIRMED_EVENT,
+    OBLIGATION_LOG_EXTRAS,
+    OBLIGATION_TRANSITION_EVENT,
+)
 from services.user_vault_config import clear_vault_config, store_vault_config
 from tests.test_voice_draft_retraction_recovery import _DraftVault as DraftVault
 
@@ -387,11 +391,14 @@ async def test_erase_telemetry_is_content_free(
 
     await async_client.post(f"/journal/{entry_id}/erase-locally", headers=headers)
 
-    transitions = [r for r in caplog.records if r.name == obligation_module.__name__]
+    ours = [r for r in caplog.records if r.name == obligation_module.__name__]
+    transitions = [r for r in ours if r.getMessage() == OBLIGATION_TRANSITION_EVENT]
     assert {(r.__dict__["from_state"], r.__dict__["to_state"]) for r in transitions} == {
         ("none", "unconfirmed")
     }
-    for record in transitions:
+    erased = [r for r in ours if r.getMessage() == ERASED_UNCONFIRMED_EVENT]
+    assert [r.__dict__["reason"] for r in erased] == ["previous_vault"]
+    for record in ours:
         assert set(record.__dict__) - _STANDARD_RECORD_KEYS <= OBLIGATION_LOG_EXTRAS
     forbidden = (_BODY, _TITLE, "SENTINEL", "https://", "vault-a", "vault-b", _KEY_A, _KEY_B)
     for record in caplog.records:

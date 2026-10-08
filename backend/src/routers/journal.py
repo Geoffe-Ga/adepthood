@@ -79,7 +79,6 @@ from models.completion_suggestion import (
 from models.goal import Goal
 from models.habit import Habit
 from models.journal_entry import JournalEntry, JournalTag
-from models.journal_withdrawal_obligation import JournalWithdrawalState
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -159,14 +158,11 @@ from services.creek_vault_reflect import (
     select_reflection_llm,
 )
 from services.creek_vault_voice_drafts import (
-    EntryRef,
     VoiceDraftCopy,
     mark_entry_retractions_pending,
     mirror_voice_draft,
     record_mirror_intent,
-    retract_pending_voice_drafts,
 )
-from services.creek_vault_withdraw import withdraw_journal_copy
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -187,12 +183,12 @@ from services.inference_provenance import (
     stamp_letter,
     stamp_note,
 )
+from services.journal_vault_withdrawal import withdraw_owed_copies
 from services.journal_withdrawal_obligation import (
-    WITHDRAWAL_PENDING_DETAILS,
-    CopyLocation,
-    copy_location,
-    record_obligation,
-    settle_confirmed,
+    complete_confirmed_delete,
+    erase_here,
+    owe_pending_delete,
+    withdrawal_pending_detail,
 )
 from services.llm_usage import (
     GenerationFeature,
@@ -534,57 +530,20 @@ def _unbind_if_nothing_sent(
 
 
 async def _withdraw_remote_copies(
-    session: AsyncSession,
-    entry: JournalEntry,
-    vault_client: CreekVaultPipelineClient,
+    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultPipelineClient
 ) -> bool:
-    """Attempt every owed withdrawal for ``entry``; ``True`` only when all are confirmed.
-
-    Both the essay withdrawals and the journal copy are attempted every time,
-    so one failing never hides the other. Each is bound to the destination that
-    received it: a replaced or removed connection leaves the copy pending
-    rather than trusting the new vault's "unknown id, withdrawn". Callers have
-    already committed the stricter local state, so a ``False`` here costs the
-    writer nothing but a stable 503 and a retry.
-    """
-    entry_id = cast("int", entry.id)
+    """Attempt every owed withdrawal against the vault this request resolved."""
     destination = await resolved_vault_destination(session, entry.user_id)
-    drafts_withdrawn = await retract_pending_voice_drafts(
-        session,
-        vault_client,
-        EntryRef(user_id=entry.user_id, entry_id=entry_id),
-        destination=destination,
-    )
-    journal_withdrawn = await withdraw_journal_copy(
-        session, entry, vault_client, destination=destination
-    )
-    return drafts_withdrawn and journal_withdrawn
-
-
-async def _locate_owed_copy(
-    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
-) -> CopyLocation:
-    """Where ``entry``'s unconfirmed copies live, relative to what this request can dial."""
-    destination = await resolved_vault_destination(session, entry.user_id)
-    connected = destination is not None or type(vault_client) is not LocalFallbackCreekVaultClient
-    return await copy_location(session, entry, destination, vault_connected=connected)
+    return await withdraw_owed_copies(session, entry, vault_client, destination=destination)
 
 
 async def _withdrawal_pending(
     session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
 ) -> HTTPException:
-    """The stable 503 for an unconfirmed withdrawal, naming where the copy lives (#3094).
-
-    ``vault_withdrawal_pending`` when the connected vault simply has not
-    confirmed; ``vault_withdrawal_previous_vault`` or
-    ``vault_withdrawal_disconnected_vault`` when the copy is in a vault this
-    account is no longer connected to, so the writer can reconnect it first --
-    or erase the page here with ``POST /journal/{id}/erase-locally``. The
-    location is relational and content-free: no URL, fingerprint or text.
-    """
-    location = await _locate_owed_copy(session, entry, vault_client)
-    await session.commit()
-    return service_unavailable(WITHDRAWAL_PENDING_DETAILS[location])
+    """The stable 503 for an unconfirmed withdrawal, naming where the copy lives (#3094)."""
+    destination = await resolved_vault_destination(session, entry.user_id)
+    detail = await withdrawal_pending_detail(session, entry, destination, vault_client)
+    return service_unavailable(detail)
 
 
 async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) -> None:
@@ -3782,42 +3741,21 @@ async def _keep_letter(
     return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
 
 
-async def _erase_with_unconfirmed_copy(
-    session: AsyncSession, entry: JournalEntry, vault_client: CreekVaultClient
-) -> JournalErasureReceipt:
-    """Erase the page here and keep a content-free ``unconfirmed`` obligation (#3094).
+async def _begin_deletion(session: AsyncSession, entry_id: int, current_user: int) -> JournalEntry:
+    """Load the caller's page under its locks and withdraw everything local first.
 
-    Called only after the vault holding the copy could not confirm it absent.
-    The obligation is bound to the vault the copy was recorded to -- or, for a
-    legacy copy that recorded none, to the vault connected now, the same guess
-    its ordinary withdrawal already makes -- so only that vault's later
-    confirmation can clear it. A page whose own copy is already gone owes only
-    its essays, whose obligations are already durable; its journal obligation,
-    if an earlier DELETE left one, is settled.
+    The local corpus stops circulating the entry as soon as deletion is
+    requested, and every essay offer becomes an owed withdrawal. The row itself
+    stays live, with its remote handle intact, until the caller decides.
     """
-    entry_id = cast("int", entry.id)
-    destination = await resolved_vault_destination(session, entry.user_id)
-    location = await _locate_owed_copy(session, entry, vault_client)
-    entry.deleted_at = datetime.now(UTC)
-    session.add(entry)
-    if entry.vault_ref is not None or entry.vault_destination is not None:
-        await record_obligation(
-            session,
-            user_id=entry.user_id,
-            entry_id=entry_id,
-            state=JournalWithdrawalState.UNCONFIRMED,
-            destination=entry.vault_destination or destination,
-        )
-    else:
-        await settle_confirmed(session, user_id=entry.user_id, entry_id=entry_id)
+    await ensure_account_live(session, current_user)
+    current = await _load_user_entry(session, entry_id, current_user)
+    if current is None or current.sender != "user":
+        raise not_found("journal_entry")
+    await withdraw_local_journal_entry(session, user_id=current_user, entry_id=entry_id)
+    await mark_entry_retractions_pending(session, user_id=current_user, entry_id=entry_id)
     await session.commit()
-    logger.warning(
-        "journal_entry_erased_with_unconfirmed_copy",
-        extra={"entry_id": entry_id, "reason": location.value},
-    )
-    return JournalErasureReceipt(
-        entry_id=entry_id, remote_copy="unconfirmed", copy_location=location.value
-    )
+    return current
 
 
 @router.post("/{entry_id}/erase-locally", response_model=JournalErasureReceipt)
@@ -3829,17 +3767,14 @@ async def erase_journal_entry_locally(
 ) -> JournalErasureReceipt:
     """Delete a page here even though its vault copy cannot be confirmed gone (#3094).
 
-    The "I can't reach it" path behind a DELETE that answered
-    ``vault_withdrawal_previous_vault`` (or any other withdrawal 503), so a
-    writer is never stuck behind a vault they no longer have. Reconnect-first
-    still holds: every owed withdrawal is attempted exactly as DELETE attempts
-    it, and a confirmation makes this an ordinary deletion. Otherwise the page
-    is erased here -- gone from read, list and export -- and a content-free
+    The "I can't reach it" path behind a withdrawal 503, so a writer is never
+    stuck behind a vault they no longer have. Reconnect-first still holds:
+    every owed withdrawal is attempted exactly as DELETE attempts it, and a
+    confirmation makes this an ordinary deletion. Otherwise the page is erased
+    here -- gone from read, list and export -- and a content-free
     ``unconfirmed`` obligation remembers that a copy may remain; reconnecting
-    that vault later lets the background sweep confirm and clear it.
-
-    The receipt is closed and content-free, and never says "withdrawn" for a
-    copy nobody confirmed.
+    that vault later lets the background sweep confirm and clear it. The
+    receipt never says "withdrawn" for a copy nobody confirmed.
     """
     entry_id = cast("int", entry.id)
     await session.commit()
@@ -3847,43 +3782,17 @@ async def erase_journal_entry_locally(
         hold_account(session, current_user),
         journal_vault_mutations.hold(session, entry_id),
     ):
-        await ensure_account_live(session, current_user)
-        current = await _load_user_entry(session, entry_id, current_user)
-        if current is None or current.sender != "user":
-            raise not_found("journal_entry")
-        await withdraw_local_journal_entry(session, user_id=current_user, entry_id=entry_id)
-        await mark_entry_retractions_pending(session, user_id=current_user, entry_id=entry_id)
-        await session.commit()
-        if not await _withdraw_remote_copies(session, current, vault_client):
-            return await _erase_with_unconfirmed_copy(session, current, vault_client)
-        current.deleted_at = datetime.now(UTC)
-        session.add(current)
-        await settle_confirmed(session, user_id=current_user, entry_id=entry_id)
-        await session.commit()
-    logger.info(
-        "journal_entry_soft_deleted",
-        extra={"user_id": current_user, "entry_id": entry_id},
-    )
+        current = await _begin_deletion(session, entry_id, current_user)
+        if await _withdraw_remote_copies(session, current, vault_client):
+            await complete_confirmed_delete(session, current)
+            return JournalErasureReceipt(
+                entry_id=entry_id, remote_copy="confirmed_absent", copy_location=None
+            )
+        destination = await resolved_vault_destination(session, current_user)
+        location = await erase_here(session, current, destination, vault_client)
     return JournalErasureReceipt(
-        entry_id=entry_id, remote_copy="confirmed_absent", copy_location=None
+        entry_id=entry_id, remote_copy="unconfirmed", copy_location=location.value
     )
-
-
-async def _owe_pending_delete(session: AsyncSession, entry: JournalEntry) -> None:
-    """Record, durably, that this page's deletion waits only on its vault (#3098).
-
-    Committed before the 503 so the background sweep can finish both the
-    withdrawal and the ``deleted_at`` stamp for any classification, without
-    the writer having to ask again. The page stays live until then.
-    """
-    await record_obligation(
-        session,
-        user_id=entry.user_id,
-        entry_id=cast("int", entry.id),
-        state=JournalWithdrawalState.PENDING_DELETE,
-        destination=entry.vault_destination,
-    )
-    await session.commit()
 
 
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -3918,27 +3827,11 @@ async def delete_journal_entry(
         hold_account(session, current_user),
         journal_vault_mutations.hold(session, entry_id),
     ):
-        await ensure_account_live(session, current_user)
-        current = await _load_user_entry(session, entry_id, current_user)
-        if current is None or current.sender != "user":
-            raise not_found("journal_entry")
-        # The local corpus stops circulating the entry as soon as deletion is
-        # requested. The row itself remains live, with its remote handle intact,
-        # until Creek confirms absence so the identical DELETE stays retryable.
-        await withdraw_local_journal_entry(
-            session,
-            user_id=current_user,
-            entry_id=entry_id,
-        )
-        await mark_entry_retractions_pending(session, user_id=current_user, entry_id=entry_id)
-        await session.commit()
+        current = await _begin_deletion(session, entry_id, current_user)
         if not await _withdraw_remote_copies(session, current, vault_client):
-            await _owe_pending_delete(session, current)
+            await owe_pending_delete(session, current)
             raise await _withdrawal_pending(session, current, vault_client)
-        current.deleted_at = datetime.now(UTC)
-        session.add(current)
-        await settle_confirmed(session, user_id=current_user, entry_id=entry_id)
-        await session.commit()
+        await complete_confirmed_delete(session, current)
     logger.info(
         "journal_entry_soft_deleted",
         extra={"user_id": current_user, "entry_id": entry_id},
