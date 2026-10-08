@@ -582,6 +582,13 @@ def unratified_rules() -> tuple[str, ...]:
     return tuple(name for name, rule in _rules_with_nested() if not rule.ratified)
 
 
+def _quietly_longer(rule: RetentionRule, proposal: RetentionProposal) -> bool:
+    """Whether ``proposal`` lengthens the rule's known window without saying so."""
+    if rule.days is None or proposal.exceeds_today:
+        return False
+    return proposal.days > rule.days
+
+
 def _proposal_finding(name: str, rule: RetentionRule) -> str | None:
     """How one rule's proposal is missing, stale, or quietly longer than today."""
     proposal = rule.proposal
@@ -589,7 +596,7 @@ def _proposal_finding(name: str, rule: RetentionRule) -> str | None:
         return None if rule.ratified else f"{name} is unratified but carries no proposal"
     if rule.ratified:
         return f"{name} is ratified but still carries a proposal"
-    if rule.days is not None and proposal.days > rule.days and not proposal.exceeds_today:
+    if _quietly_longer(rule, proposal):
         return (
             f"{name}: the proposed {proposal.days} days is longer than today's "
             f"{rule.days}-day window and does not say so (exceeds_today)"

@@ -327,12 +327,17 @@ def _lengthens(today: Deadline, proposed: ProposedDeadline) -> bool:
     return False
 
 
+def _missing_proposal(store: Store) -> list[str]:
+    """A finding when a store owes a proposal (undecided deadline or backup leg)."""
+    owed = isinstance(store.deadline, Unknown) or store.key in _BACKUP_KEYS
+    return [f"store {store.key!r} has an undecided deadline but no proposal"] if owed else []
+
+
 def _proposal_findings(store: Store) -> list[str]:
     """Findings for a store's proposal: missing where owed, or quietly longer."""
     proposal = store.proposal
     if proposal is None:
-        owed = isinstance(store.deadline, Unknown) or store.key in _BACKUP_KEYS
-        return [f"store {store.key!r} has an undecided deadline but no proposal"] if owed else []
+        return _missing_proposal(store)
     findings: list[str] = []
     if not proposal.rationale.strip():
         findings.append(f"store {store.key!r} proposal states no rationale")
