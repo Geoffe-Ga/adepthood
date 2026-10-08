@@ -56,6 +56,7 @@ const SEAM_SEPARATOR = '\n';
 export const TERMINAL_ERROR_KINDS: ReadonlySet<TranscriptionErrorKind> =
   new Set<TranscriptionErrorKind>([
     'model_lacks_vision',
+    'key_required',
     'credit_exhausted',
     'service_credit_exhausted',
   ]);

@@ -52,15 +52,15 @@ function RefillMessage({
   if (reason === 'key_required') {
     return (
       <Text style={styles.body}>
-        Resonance needs an API key of your own before it can read this entry. You can add one in
-        Settings.
+        Resonance needs an API key of your own before it can read this entry, so nothing was
+        charged. You can add one in Settings.
       </Text>
     );
   }
   return (
     <Text style={styles.body}>
-      Your BotMason balance has run out. Add your own API key and it pays for the reading instead.{' '}
-      {resetCopy}
+      Your BotMason balance has run out, so nothing was charged. Add your own API key and it pays
+      for the reading instead, or add more BotMason credits. {resetCopy}
     </Text>
   );
 }

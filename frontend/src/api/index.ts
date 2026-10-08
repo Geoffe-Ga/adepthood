@@ -268,6 +268,9 @@ export type TranscriptionErrorKind =
   | 'no_text_found'
   | 'transcription_refused'
   | 'wallet_exhausted'
+  // No personal key, on a server with nothing credits could buy (#3096): only a
+  // key of the writer's own can read the page, so it is terminal until one is added.
+  | 'key_required'
   // A spent *provider* balance, which `wallet_exhausted` (our own monthly
   // metering) is not: its remedy is the API key, not the next monthly reset.
   // Split by whose key it was, because that decides who can act.
@@ -1841,8 +1844,9 @@ interface TranscribeDetailRule {
 const TRANSCRIBE_DETAIL_RULES: Record<number, TranscribeDetailRule> = {
   [TRANSCRIBE_PAYMENT_REQUIRED]: {
     kinds: {
-      // Keyless BYOK is a client misconfiguration, NOT a spent wallet.
-      llm_key_required: 'unknown',
+      // No personal key and nothing on the server to pay with: NOT a spent
+      // wallet, and not a blip either -- the remedy is a key (#3096).
+      llm_key_required: 'key_required',
       llm_credit_exhausted: 'credit_exhausted',
     },
     fallback: 'wallet_exhausted',
@@ -2069,7 +2073,7 @@ export const journal = {
    * must not resend on transient failure without user intent. Supports BYOK via
    * the optional api key. PRIVACY: the image payload is never logged, and a
    * {@link TranscriptionError} message never carries it. A 402 disambiguates a
-   * spent wallet (`wallet_exhausted`) from a missing BYOK key (`unknown`).
+   * spent wallet (`wallet_exhausted`) from a missing key (`key_required`).
    */
   async transcribePage(
     { imageBase64, mediaType }: { imageBase64: string; mediaType: MediaType },
