@@ -6,8 +6,10 @@
  *
  * `buildEvent` writes every key of a client crash report by hand. Each key is
  * either disclosed in the policy, under the words below, or is report
- * bookkeeping that says nothing about the person. A key added to `buildEvent`
- * without a line in the policy fails here; so does a policy that stops naming
+ * bookkeeping that says nothing about the person. That holds one level down
+ * too: the exception entry's fields and each context's fields are pinned the
+ * same way. A key added to `buildEvent`, at the top or inside one of those
+ * objects, without a line in the policy fails here; so does a policy that stops naming
  * a field the app still sends, or that drops the line about the device's
  * network address.
  *
@@ -38,6 +40,43 @@ const DISCLOSED_CONTEXTS: Record<string, string> = {
 
 /** Keys every Sentry event carries that describe the report, not the person. */
 const BOOKKEEPING_KEYS = ['event_id', 'timestamp', 'platform', 'level'];
+
+/**
+ * An object nested in the report, and how each of its keys is accounted for:
+ * disclosed under the policy's words, or bookkeeping that names no one.
+ */
+interface NestedShape {
+  pick: (event: Record<string, unknown>) => unknown;
+  disclosed: Record<string, string>;
+  bookkeeping: string[];
+}
+
+/** Every object `buildEvent` nests, field for field. */
+const NESTED_SHAPES: Record<string, NestedShape> = {
+  exception: {
+    pick: (event) => event.exception,
+    disclosed: {},
+    bookkeeping: ['values'],
+  },
+  'exception.values[0]': {
+    pick: (event) => (event.exception as { values: unknown[] }).values[0],
+    disclosed: { type: "the error's type", value: 'message is withheld' },
+    bookkeeping: [],
+  },
+  'contexts.react': {
+    pick: (event) => (event.contexts as Record<string, unknown>).react,
+    disclosed: { componentStack: 'component stack' },
+    bookkeeping: [],
+  },
+  'contexts.errorBoundary': {
+    pick: (event) => (event.contexts as Record<string, unknown>).errorBoundary,
+    disclosed: {
+      boundary: 'which error screen caught it',
+      name: 'which error screen caught it',
+    },
+    bookkeeping: [],
+  },
+};
 
 function normalise(text: string): string {
   return text.toLowerCase().replace(/[*`]/g, '').split(/\s+/).join(' ');
@@ -84,6 +123,20 @@ describe('privacy policy vs the client crash report', () => {
 
     expect(Object.keys(contexts).sort()).toEqual(Object.keys(DISCLOSED_CONTEXTS).sort());
   });
+
+  it.each(Object.entries(NESTED_SHAPES))(
+    'every field of %s is either disclosed or bookkeeping',
+    (_where, { pick, disclosed, bookkeeping }) => {
+      const nested = pick(fullEvent()) as Record<string, unknown>;
+
+      expect(Object.keys(nested).sort()).toEqual(
+        [...Object.keys(disclosed), ...bookkeeping].sort(),
+      );
+      for (const words of Object.values(disclosed)) {
+        expect(sentryParagraphs).toContain(words);
+      }
+    },
+  );
 
   it('the policy names each disclosed field the app sends from the device', () => {
     for (const words of [
