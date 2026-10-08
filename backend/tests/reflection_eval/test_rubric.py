@@ -173,6 +173,52 @@ def test_spaceless_script_quotes_are_measured_in_characters(quote: str, checked:
     assert (RuleId.LETTER_QUOTE_UNGROUNDED in score.rule_ids) is checked
 
 
+_SPLICE_ENTRY = (
+    "I walked to the river at dawn. My brother was not there. "
+    "I never forgave the station for being cold."
+)
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "I never forgave \u2026 My brother",  # reviewer probe: out of order
+        "I never \u2026 walked to the river",  # reviewer probe: reverses the meaning
+        "My brother was not there \u2026 I walked to the river",  # out of order
+        "walked to the river \u2026 walked to the river",  # one passage used twice
+        "alked to the river \u2026 My brother was",  # fragment cut mid-word
+    ],
+)
+def test_spliced_quote_out_of_order_or_reused_is_ungrounded(quote: str) -> None:
+    """Every elided fragment must appear, in order, without reuse, on word boundaries."""
+    letter = f"You wrote: \u201c{quote}\u201d."
+    assert RuleId.LETTER_QUOTE_UNGROUNDED in _scored(_sample(_SPLICE_ENTRY, letter=letter)).blocking
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "I walked to the river \u2026 My brother was not there",
+        "My brother was not there. \u2026 I never forgave the station",
+        "I walked to the river... I never forgave the station for being cold.",
+    ],
+)
+def test_spliced_quote_in_order_grounds(quote: str) -> None:
+    """A faithful elision of the writer's words still grounds (negative control)."""
+    letter = f"You wrote: \u201c{quote}\u201d."
+    score = _scored(_sample(_SPLICE_ENTRY, letter=letter))
+    assert RuleId.LETTER_QUOTE_UNGROUNDED not in score.rule_ids
+
+
+def test_cue_inside_a_fabricated_splice_is_not_masked() -> None:
+    """A splice that does not ground is not the writer's, so its cue phrasing is seen."""
+    entry = "Then I said goodbye. I'm always here for you, read the poster."
+    spliced = "You wrote: \u201cI'm always here for you \u2026 Then I said goodbye\u201d."
+    faithful = "You wrote: \u201cThen I said goodbye. \u2026 I'm always here for you\u201d."
+    assert RuleId.COMPANION_CUE in _scored(_sample(entry, letter=spliced)).rule_ids
+    assert RuleId.COMPANION_CUE not in _scored(_sample(entry, letter=faithful)).rule_ids
+
+
 @pytest.mark.parametrize(
     ("letter", "rule"),
     [

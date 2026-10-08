@@ -355,12 +355,37 @@ def quote_occurrences(body: str, quote: str) -> tuple[int, ...]:
     return tuple(m.start() for m in re.finditer(f"(?={re.escape(quote)})", body))
 
 
+def _fragment_end(haystack: str, fragment: str, start: int, *, bounded: bool) -> int | None:
+    """End offset of the first ``fragment`` in ``haystack`` at or after ``start``, else None.
+
+    ``bounded`` requires the fragment to start and end on word boundaries, so a
+    splice cannot be assembled out of pieces of words.
+    """
+    edge_before, edge_after = (r"(?<!\w)", r"(?!\w)") if bounded else ("", "")
+    found = re.compile(f"{edge_before}{re.escape(fragment)}{edge_after}").search(haystack, start)
+    return None if found is None else found.end()
+
+
 def _grounds(quote: str, entry: str) -> bool:
-    """True when every ellipsis-separated fragment of ``quote`` is in ``entry``."""
+    """True when ``quote`` is the writer's own words.
+
+    A contiguous quote must be a substring of the entry. An elided quote
+    ("a ... b") grounds only when every fragment is in the entry, on word
+    boundaries, in the order quoted and without reusing text: each fragment is
+    searched for from where the previous one ended. Anything looser lets a
+    splice reorder the writer's words into a sentence they never wrote.
+    """
     normalised = _norm(entry)
     fragments = [_norm(f).strip(_QUOTE_TRIM) for f in _ELLIPSIS.split(quote)]
     present = [f for f in fragments if f]
-    return bool(present) and all(f in normalised for f in present)
+    bounded = len(present) > 1
+    position = 0
+    for fragment in present:
+        end = _fragment_end(normalised, fragment, position, bounded=bounded)
+        if end is None:
+            return False
+        position = end
+    return bool(present)
 
 
 def _quoted_spans(text: str) -> list[re.Match[str]]:
