@@ -223,6 +223,17 @@ then, with your writing encrypted in it as it is in the database. No backup is
 edited to remove one account. On that schedule, the last copy holding your
 data ages out within about 97 days of your deletion.
 
+If the operator ever has to restore the database from a backup taken before
+you deleted, that backup still holds your account, so a restore could bring
+your data back. The restore procedure has a step that re-applies deletions
+made since the backup before the service goes back online, but that step is
+still a draft and relies on a record of deletions whose keeping is not yet
+settled. <!-- DRAFT for owner (#3063 AC17): once tombstone custody is decided
+and the "Suppress resurrected deletions" step in DEPLOYMENT.md is ratified,
+replace this paragraph with: "If we ever have to restore from a backup,
+we re-apply deletions made since that backup before the service goes back
+online." -->
+
 ### If you use a Creek Vault
 
 For a vault provisioned by Adepthood, deleting your account submits an
