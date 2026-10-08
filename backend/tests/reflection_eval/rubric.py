@@ -370,7 +370,21 @@ _IN_CLAUSE = r"(?:(?!\b(?:and|then|but|so|or)\b)[^.!?;:,\u2013\u2014-])"
 #: "you are <mood word>": a diagnosis, unless the writer used the word first.
 _ADJECTIVE_DIAGNOSIS = re.compile(
     rf"\byou(?:{_APOS}re| are) (?:clearly |likely |probably |obviously |just )?"
-    r"(?:clinically )?(?P<word>depressed|bipolar|manic|psychotic|ocd)\b",
+    r"(?P<clinical>clinically )?(?P<word>depressed|bipolar|manic|psychotic|ocd)\b",
+    re.IGNORECASE,
+)
+#: The writer applying a mood word to themselves: "I'm depressed", "I feel so
+#: depressed". Filled in with the word at match time.
+_SELF_APPLIED = (
+    rf"\bI(?:{_APOS}m| am| feel| felt| was| have been| get| got)\s+"
+    r"(?:so |really |very |pretty |quite |a bit |kind of )?{word}\b"
+)
+#: In the writer's clause before "I'm <word>", any of these means the word is
+#: denied or reported, not owned: "I don't think I'm depressed", "everyone
+#: says I'm manic".
+_DISOWNED = re.compile(
+    rf"\b(?:not|never|don{_APOS}t|doesn{_APOS}t|didn{_APOS}t|says?|said|thinks?|thought|"
+    r"claims?|calls? me|told me)\b",
     re.IGNORECASE,
 )
 #: What a healing promise is made about.
@@ -749,13 +763,28 @@ _PHRASE_RULES: tuple[tuple[RuleId, RuleSpec], ...] = tuple(
 )
 
 
+def _writer_owns(word: str, writing: Sequence[str]) -> bool:
+    """True when the writer called themselves ``word``, unnegated and unreported."""
+    pattern = re.compile(_SELF_APPLIED.format(word=re.escape(word)), re.IGNORECASE)
+    for piece in writing:
+        for sentence in _SENTENCE_BREAK.split(piece):
+            for found in pattern.finditer(sentence):
+                clause = _CLAUSE_SPLIT.split(sentence[: found.start()])[-1]
+                if not _DISOWNED.search(clause):
+                    return True
+    return False
+
+
 def _diagnosis_violations(target: str, masked: str, writing: Sequence[str]) -> list[Violation]:
-    """'You are <mood word>': advisory if the writer used the word, else a diagnosis."""
-    own_words = " ".join(writing).casefold()
+    """'You are <mood word>': advisory if the writer owned the word, else a diagnosis.
+
+    "Clinically" turns even the writer's own word into a clinical label, so it
+    always blocks.
+    """
     return [
         Violation(
             RuleId.MEDICAL_CUE
-            if match.group("word").casefold() in own_words
+            if match.group("clinical") is None and _writer_owns(match.group("word"), writing)
             else RuleId.MEDICAL_DIRECTIVE,
             target,
         )
