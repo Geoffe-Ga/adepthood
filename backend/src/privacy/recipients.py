@@ -57,6 +57,7 @@ class RecipientId(enum.StrEnum):
     GOOGLE_IDENTITY = "google_identity"
     APPLE_IDENTITY = "apple_identity"
     HOSTING_PLATFORM = "hosting_platform"
+    OFFHOST_BACKUP = "offhost_backup"
     FLY = "fly"
 
 
@@ -556,6 +557,21 @@ _ROWS: Final[tuple[Recipient, ...]] = (
                 ScopeKind.OPERATOR_ACCOUNT,
                 _CONTENT_AND_KEY,
                 "hosts the API, the database of encrypted entries, and the key",
+            ),
+        ),
+    ),
+    Recipient(
+        id=RecipientId.OFFHOST_BACKUP,
+        legal_name="The operator's off-platform backup storage",
+        short_name="kept off the hosting platform",
+        role=Role.INFRASTRUCTURE,
+        policy_lead_in="Encrypted copies kept off the hosting platform by the operator",
+        scopes=(
+            Scope(
+                ScopeKind.OPERATOR_ACCOUNT,
+                _CONTENT,
+                "the operator's weekly, manual, encrypted pg_dump (DEPLOYMENT.md); "
+                "where it is kept is undecided (#3063)",
             ),
         ),
     ),

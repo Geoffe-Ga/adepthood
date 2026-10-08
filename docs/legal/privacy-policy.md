@@ -283,6 +283,12 @@ your writing from the host any more than it does from the operator. Any
 platform backups of the database are held by Railway too ("Deleting your
 account" below says how long they are kept).
 
+**Encrypted copies kept off the hosting platform by the operator**, on our
+backup schedule. Once a week the operator copies the whole database,
+encrypts the copy, and keeps it somewhere other than Railway, so the service
+can be recovered if the platform is lost. Where those copies are kept is not
+yet settled. "Deleting your account" below says how long they are kept.
+
 **Fly.io**, only if Adepthood activated a managed vault for you. Fly hosts
 that vault, and as the vault paragraph above says, Fly and privileged
 Adepthood or Creek operators can access what it stores.

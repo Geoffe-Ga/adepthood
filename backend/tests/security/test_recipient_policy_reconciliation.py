@@ -24,6 +24,7 @@ import pytest
 from privacy.recipients import RECIPIENTS, RecipientId
 
 POLICY_PATH = Path(__file__).resolve().parents[3] / "docs" / "legal" / "privacy-policy.md"
+YOUR_DATA_PATH = Path(__file__).resolve().parents[3] / "docs" / "your-data.md"
 SECTION_HEADING = "## Who else receives your data"
 
 EXPECTED_LEAD_INS = frozenset(
@@ -37,6 +38,7 @@ EXPECTED_LEAD_INS = frozenset(
         "Sentry",
         "An email relay (Resend, or the deployment's own mail server)",
         "Google and Apple",
+        "Encrypted copies kept off the hosting platform by the operator",
     }
 )
 
@@ -51,6 +53,7 @@ NAMED_SINCE_B01 = frozenset(
         RecipientId.GOOGLE_IDENTITY,
         RecipientId.APPLE_IDENTITY,
         RecipientId.RESEND,
+        RecipientId.OFFHOST_BACKUP,
     }
 )
 
@@ -114,3 +117,12 @@ def test_once_undisclosed_recipient_is_named_in_its_own_lead_in(
     assert row.policy_lead_in is not None
     assert row.policy_lead_in in policy_lead_ins
     assert name in row.policy_lead_in.casefold()
+
+
+def test_your_data_names_the_off_platform_backup_holder() -> None:
+    """Your data says the policy names every party, so its own list includes the backups too."""
+    your_data = " ".join(YOUR_DATA_PATH.read_text(encoding="utf-8").lower().split())
+    name = RECIPIENTS[RecipientId.OFFHOST_BACKUP].short_name.casefold()
+
+    assert "names every party" in your_data
+    assert name in your_data
