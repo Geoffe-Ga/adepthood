@@ -850,6 +850,23 @@ describe('a page whose deletion is in progress, and a copy in another vault (#30
     expect(mockUpdate.mock.calls.length).toBe(sent);
   });
 
+  it('settles the Finish lane on a 409, so no Retry ever re-sends that Finish', async () => {
+    const screen = await openLoaded();
+    mockUpdate.mockRejectedValueOnce(DELETION_PENDING);
+    fireEvent.press(screen.getByTestId('journal-finish-button'));
+    await settle();
+
+    // A later write that lands drops the transient hint; any lane still owed
+    // would now surface as the save-error hint and its Retry button.
+    await typeBody(screen, 'A line typed after the refusal.');
+
+    expect(hint(screen)).toBe('Saved');
+    expect(screen.queryByTestId('journal-save-retry')).toBeNull();
+    expect(
+      mockUpdate.mock.calls.filter(([, patch]) => (patch as { status?: string }).status),
+    ).toHaveLength(1);
+  });
+
   it('reverts a refused tier change and says why', async () => {
     const screen = await openLoaded({ classification: 'personal' });
     mockUpdate.mockRejectedValueOnce(DELETION_PENDING);
