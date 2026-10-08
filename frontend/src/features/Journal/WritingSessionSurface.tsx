@@ -99,6 +99,7 @@ function WritingSessionSurface({
   deps,
 }: WritingSessionSurfaceProps): React.JSX.Element {
   const [note, setNote] = useState<StandingNote | null>(null);
+  const [timerFloating, setTimerFloating] = useState(false);
   const dismiss = useCallback(() => setNote(null), []);
   // Held through a ref so ``record`` keeps one identity for the life of the
   // mount: it is the ticking timer's ``onComplete``, and a consumer that
@@ -114,7 +115,11 @@ function WritingSessionSurface({
   return (
     <>
       {note === null ? null : (
-        <WritingSessionBanner result={note.result} onDismiss={dismiss}>
+        <WritingSessionBanner
+          result={note.result}
+          onDismiss={dismiss}
+          clearsFloatingTimer={timerFloating}
+        >
           {renderOffer === undefined ? null : (
             <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
           )}
@@ -124,6 +129,7 @@ function WritingSessionSurface({
         initialMinutes={initialMinutes}
         autoStart={autoStart}
         onComplete={record}
+        onFloatingChange={setTimerFloating}
         deps={deps}
       />
     </>

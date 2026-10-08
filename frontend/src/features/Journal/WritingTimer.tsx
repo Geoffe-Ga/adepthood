@@ -93,6 +93,8 @@ export interface WritingTimerProps {
   autoStart?: boolean;
   /** Called once per finished session, however the session ended. */
   onComplete: (result: WritingSessionResult) => void;
+  /** Reports whether sibling content must clear the timer's floating rail. */
+  onFloatingChange?: (_floating: boolean) => void;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
@@ -506,17 +508,30 @@ function TimerMount({
   );
 }
 
+/** Keep sibling clearance aligned with the timer's current mount strategy. */
+function useTimerPlacement(
+  compact: boolean,
+  status: EngineStatus,
+  viewportWidth: number,
+  onFloatingChange: WritingTimerProps['onFloatingChange'],
+): boolean {
+  const floats = compact || status !== 'idle';
+  useEffect(() => onFloatingChange?.(floats), [floats, onFloatingChange]);
+  return compact && viewportWidth >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
+}
+
 function WritingTimer({
   initialMinutes = DEFAULT_WRITING_MINUTES,
   autoStart = false,
   onComplete,
+  onFloatingChange,
   deps = NO_DEPS,
 }: WritingTimerProps): React.JSX.Element {
   const viewportWidth = useWindowDimensions().width;
   const [minutes, setMinutes] = useState(initialMinutes);
   const [state, controls] = useRitualEngine(useWritingConfig(minutes), deps);
   const { compact, collapse, expand } = useCompactPill(state.status);
-  const docked = compact && viewportWidth >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
+  const docked = useTimerPlacement(compact, state.status, viewportWidth, onFloatingChange);
   const statusRef = useRef(state.status);
   statusRef.current = state.status;
   const view = describeTimer({

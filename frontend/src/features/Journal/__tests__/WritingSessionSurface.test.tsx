@@ -2,7 +2,9 @@
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
+import { RESONANCE_BUTTON_CLEARANCE } from '../JournalEntry.styles';
 import { DEFAULT_WRITING_MINUTES } from '../writingSession';
 import WritingSessionSurface from '../WritingSessionSurface';
 
@@ -87,6 +89,25 @@ describe('WritingSessionSurface', () => {
     expect(getByTestId('writing-timer-readout').props.children).toBe('20:00');
     expect(queryByTestId('writing-timer-start')).toBeNull();
     expect(queryByTestId('writing-timer-compact')).not.toBeNull();
+  });
+
+  it('drops floating-only banner clearance when the idle timer is expanded into flow', () => {
+    const { getByTestId } = renderSurface();
+
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+
+    const floatingMargin = StyleSheet.flatten(
+      getByTestId('writing-session-banner').props.style,
+    ).marginBottom;
+    expect(floatingMargin).toBeGreaterThanOrEqual(RESONANCE_BUTTON_CLEARANCE);
+
+    fireEvent.press(getByTestId('writing-timer-compact'));
+
+    const inFlowMargin = StyleSheet.flatten(
+      getByTestId('writing-session-banner').props.style,
+    ).marginBottom;
+    expect(inFlowMargin).toBeLessThan(RESONANCE_BUTTON_CLEARANCE);
   });
 
   it('replaces an earlier note rather than stacking a second one', () => {

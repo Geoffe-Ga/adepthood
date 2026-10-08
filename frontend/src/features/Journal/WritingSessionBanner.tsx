@@ -67,18 +67,25 @@ export function useFocusBannerClose(): () => void {
 export interface WritingSessionBannerProps {
   result: WritingSessionResult;
   onDismiss: () => void;
+  /** Whether the timer occupies its floating rail beneath this note. */
+  clearsFloatingTimer?: boolean;
   children?: React.ReactNode;
 }
 
 function WritingSessionBanner({
   result,
   onDismiss,
+  clearsFloatingTimer = true,
   children,
 }: WritingSessionBannerProps): React.JSX.Element {
   const closeRef = useRef<View>(null);
   const focusClose = useCallback(() => moveAccessibilityFocus(closeRef.current), []);
   return (
-    <View style={styles.banner} accessibilityLiveRegion="polite" testID="writing-session-banner">
+    <View
+      style={[styles.banner, clearsFloatingTimer && styles.bannerWithFloatingTimer]}
+      accessibilityLiveRegion="polite"
+      testID="writing-session-banner"
+    >
       <Text style={styles.summary}>{writingSessionSummary(result.elapsedMinutes)}</Text>
       <FocusCloseContext.Provider value={focusClose}>{children}</FocusCloseContext.Provider>
       <TouchableOpacity
@@ -100,22 +107,24 @@ const styles = StyleSheet.create({
   /**
    * Warm paper tone in the page's own margin rhythm — a note, not an alert.
    *
-   * The bottom margin is load-bearing, not rhythm: this is an in-flow box at
-   * the foot of the same column the timer floats over, at the timer's own
-   * offset, so without it the timer pill paints across the Close target the
-   * writer is meant to use to put the note away — and across whatever a later
-   * lane hangs in the children slot beneath the text.
+   * While the timer floats, the larger bottom margin is load-bearing rather
+   * than rhythm: without it the pill paints across the Close target and any
+   * offer in the children slot. Once the idle timer expands back into flow,
+   * only the ordinary note-to-control rhythm remains.
    */
   banner: {
     marginHorizontal: journalSheet.deskPaddingH,
     marginTop: spacing(1),
-    marginBottom: RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT,
+    marginBottom: spacing(1),
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
     backgroundColor: colors.paper.background,
     borderRadius: BORDER_RADIUS.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.sheetEdge,
+  },
+  bannerWithFloatingTimer: {
+    marginBottom: RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT,
   },
   summary: {
     ...editorialType.note,
