@@ -731,11 +731,10 @@ async def _log_backlog(session: AsyncSession, moment: datetime) -> None:
 
 @dataclass(frozen=True)
 class _JournalAttempt:
-    """One entry's journal-copy retry: whose it is, where it may go, and what else is owed."""
+    """One entry's journal-copy retry: whose it is, and which vault it may be confirmed by."""
 
     target: EntryRef
     destination: str | None
-    drafts_withdrawn: bool
 
 
 async def _retry_journal_copy(
@@ -904,16 +903,15 @@ async def _resume_entry(session: AsyncSession, sweep: _SweepPass, target: EntryR
             await ensure_account_live(session, target.user_id)
             client = await sweep.resolve_client(session, target.user_id)
             destination = await sweep.resolve_destination(session, target.user_id)
-            drafts_withdrawn = await retract_pending_voice_drafts(
+            # Every owed essay withdrawal for this entry, whatever owes it (an
+            # Intimate retry, a page erased here, a deletion in progress). A
+            # deletion in progress re-runs this itself after marking any late
+            # essays, and stamps only on that second answer.
+            await retract_pending_voice_drafts(
                 session, client, target, destination=destination, due_by=sweep.moment
             )
             await _retry_journal_copy(
-                session,
-                client,
-                sweep,
-                _JournalAttempt(
-                    target=target, destination=destination, drafts_withdrawn=drafts_withdrawn
-                ),
+                session, client, sweep, _JournalAttempt(target=target, destination=destination)
             )
     except HTTPException:
         _LOGGER.info(_SWEEP_SKIPPED_EVENT, extra={"reason": "account_unavailable"})

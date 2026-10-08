@@ -458,7 +458,13 @@ async def test_sweep_marks_an_essay_mirrored_after_the_503_and_waits_for_it(
 async def test_sweep_never_settles_while_an_essay_withdrawal_is_still_owed(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Journal copy confirmed but an essay refused: no stamp, obligation stays pending_delete."""
+    """Journal copy confirmed but an essay refused: no stamp, obligation stays pending_delete.
+
+    Pins that the stamp requires the essays' answer, not only the journal
+    copy's: dropping the essay condition from ``_finish_pending_delete``
+    (stamping on ``journal_withdrawn`` alone) turns this red, because the
+    refusing vault confirms the journal copy on every pass.
+    """
     headers, user_id, entry_id, destination = await _mirrored_entry(
         async_client, db_session, "in_progress_owed_essay", JournalClassification.PERSONAL
     )
