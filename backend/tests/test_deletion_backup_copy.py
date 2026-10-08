@@ -45,8 +45,11 @@ _DELETION_SURFACES: Final[tuple[Path, ...]] = (
 # The two documents that spell the schedule out leg by leg.
 _SCHEDULE_DOCUMENTS: Final[tuple[Path, ...]] = (_PRIVACY_POLICY, _YOUR_DATA)
 
-# Words that present the bound as the schedule's, not as a guarantee.
-_SCHEDULE_FRAMING: Final = "backup schedule"
+# Words that present the bound as the schedule's, not as a guarantee. One of
+# them must govern each statement of the bound: same sentence, and no further
+# back than :data:`_FRAMING_WINDOW_CHARS`.
+_SCHEDULE_FRAMINGS: Final[tuple[str, ...]] = ("on our backup schedule", "on that schedule")
+_FRAMING_WINDOW_CHARS: Final = 160
 # The off-platform leg is the operator's manual work, and the copy says so.
 _MANUAL_LEG: Final = "by the operator by hand"
 
@@ -59,12 +62,44 @@ _OVERCLAIMS: Final[tuple[str, ...]] = (
     "nothing left to restore",
     "each is deleted when its retention runs out",
     "is gone within about",
+    "we guarantee",
+    "guaranteed",
+    "is deleted within",
+    "are deleted within",
 )
 
 
 def _prose(document: Path) -> str:
     """Return one document as lowercase prose with its line wrapping collapsed."""
     return " ".join(document.read_text(encoding="utf-8").lower().split())
+
+
+def _unframed_bound_offsets(copy: str) -> list[int]:
+    """Offsets of each statement of the bound that no schedule phrase governs.
+
+    A phrase governs the bound when it sits in the same sentence, before it,
+    within :data:`_FRAMING_WINDOW_CHARS` -- so a schedule phrase elsewhere in
+    the document cannot vouch for a sentence that states the bound as fact.
+    """
+    bound = f"about {OLDEST_LIVE_BACKUP_DAYS} days"
+    offsets = [match.start() for match in re.finditer(re.escape(bound), copy)]
+    unframed: list[int] = []
+    for offset in offsets:
+        window = copy[max(0, offset - _FRAMING_WINDOW_CHARS) : offset]
+        sentence = window[window.rfind(". ") + 1 :]
+        if not any(phrase in sentence for phrase in _SCHEDULE_FRAMINGS):
+            unframed.append(offset)
+    return unframed
+
+
+def test_a_bound_far_from_its_schedule_phrase_is_unframed() -> None:
+    """The window check is local: a framing in another sentence does not count."""
+    bound = f"about {OLDEST_LIVE_BACKUP_DAYS} days"
+    framed = f"on our backup schedule, backups age out within {bound}."
+    elsewhere = f"on our backup schedule, we copy weekly. backups are gone in {bound}."
+
+    assert _unframed_bound_offsets(framed) == []
+    assert len(_unframed_bound_offsets(elsewhere)) == 1
 
 
 @pytest.mark.parametrize("surface", _DELETION_SURFACES, ids=lambda path: path.name)
@@ -76,7 +111,8 @@ def test_deletion_copy_names_the_backup_bound_as_a_schedule(surface: Path) -> No
         f"{surface.name} does not say backups age out within about "
         f"{OLDEST_LIVE_BACKUP_DAYS} days (domain.retention_stores.OLDEST_LIVE_BACKUP_DAYS)"
     )
-    assert _SCHEDULE_FRAMING in copy, f"{surface.name} states the bound as a guarantee"
+    unframed = _unframed_bound_offsets(copy)
+    assert not unframed, f"{surface.name} states the bound as a guarantee at {unframed}"
 
 
 @pytest.mark.parametrize("surface", _DELETION_SURFACES, ids=lambda path: path.name)
