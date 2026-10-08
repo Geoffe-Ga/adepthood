@@ -122,18 +122,15 @@ by shape and never by key, which is what lets a spec prove a press actually
 reached a provider instead of a wallet that never moved because nothing was ever
 charged.
 
-`BOTMASON_PROVIDER` stays unset, so every other journey still runs the stub. Two
-things reach the fake at all: a request carrying a BYOK key (whose prefix selects
-its own provider, which is what the 402 half is _about_), and a request whose
-prompt carries the `BOTMASON_PROVIDER_PROBE_TOKEN` marker. The probe is the only
-way a pass paid for by the _server's_ key can reach a provider on a
-stub-configured deployment, which is the 503 half. It is off unless configured,
-consulted only when no real provider is configured — so no text in a request can
-redirect a deployment that already dials OpenAI or Anthropic — and
-`main.validate_provider_probe_config` refuses a production boot while it is
-armed, on the same terms as the capture email backend below. The privacy floor is
-asserted with all of it live: an intimate page carrying the marker, on a server
-whose own key is armed, still reaches no provider at all.
+`BOTMASON_PROVIDER` stays unset, so every other journey still runs the stub. One
+thing reaches the fake at all: a request carrying a BYOK key, whose prefix selects
+its own provider, which is what the 402 half is _about_. Since ADR 0009 phase (a)
+(#3067) the server's own key never pays for a writer's page and the provider probe
+is retired, so the lane still sets `LLM_API_KEY` (the spent Anthropic account) and
+`BOTMASON_PROVIDER_PROBE_TOKEN` only to prove that nothing reads them: a keyless
+page carrying the old probe marker reaches no provider. The privacy floor is
+asserted the same way: an intimate page carrying the marker still reaches no
+provider at all.
 
 That journey also reads `walletaudit` out of band, through
 `backend/tests/e2e/wallet_audit.py`. The table has no API by design (it is a

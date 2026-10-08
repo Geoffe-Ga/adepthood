@@ -23,17 +23,18 @@ export interface LaneState {
    * They are credentials for a loopback process and nothing else, and they are
    * the arrangement itself: `spentOpenaiKey` is the caller's own spent account
    * (402), `throttledOpenaiKey` is a genuine rate limit that must still retry,
-   * and the server's own `LLM_API_KEY` is the spent Anthropic account (503).
+   * and the server's own `LLM_API_KEY` is the spent Anthropic account, which
+   * the server no longer reads (ADR 0009 phase (a), #3067).
    */
   spentOpenaiKey: string;
   throttledOpenaiKey: string;
   /**
-   * The token that sends one marked prompt past the stub to a real provider.
+   * The retired provider-probe token, still armed on the lane's server.
    *
-   * A journey needing the server's *own* key to be refused has no other way to
-   * reach a provider: a BYOK header would make it the caller's key by
-   * definition, which is the other half of the split. See
-   * `backend/src/services/provider_probe.py`.
+   * Before ADR 0009 phase (a) a keyless page carrying `<token>:<provider>` was
+   * sent to that provider on the server's own key. Nothing reads it now; a
+   * journey writes the marker into a keyless page to prove no provider is
+   * reached.
    */
   providerProbeToken: string;
   /** Process group leader of the loopback fake serving Creek's `/v1` surface. */
