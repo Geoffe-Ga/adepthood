@@ -86,8 +86,14 @@ def _scripted(case: EvalCase, letter: str) -> ScriptedResonanceLLM:
 
 @pytest.fixture
 def stub_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the in-process stub as the configured provider, with no key anywhere."""
+    """Pin the in-process stub as the configured provider, with no key anywhere.
+
+    ``BOTMASON_STUB_SEAM`` and ``ENV=development`` are what the test-only stub
+    seam (#3096) requires; setting them is harmless before that gate lands.
+    """
     monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
+    monkeypatch.setenv("BOTMASON_STUB_SEAM", "true")
+    monkeypatch.setenv("ENV", "development")
     monkeypatch.delenv("LLM_API_KEY", raising=False)
 
 
