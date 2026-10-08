@@ -375,8 +375,9 @@ def _apply_vault_outcome(entry: JournalEntry, outcome: VaultWriteOutcome) -> boo
     - ``SKIPPED_INTIMATE`` leaves a prior ref untouched. That ref is the durable
       proof that a remote copy still needs withdrawal; only Creek's confirmed,
       content-free destructive inverse may clear it.
-    - ``DEGRADED`` / ``UNAVAILABLE`` are transient, so any existing ref is kept
-      untouched rather than dropped on a passing network blip.
+    - ``DEGRADED`` / ``UNAVAILABLE`` / ``SUSPENDED`` are transient, so any
+      existing ref is kept untouched rather than dropped on a passing network
+      blip or an operator's temporary suspension.
     """
     if outcome.status is VaultWriteStatus.INGESTED:
         entry.vault_ref = outcome.vault_ref
@@ -475,8 +476,16 @@ class _Binding(enum.Enum):
     BOUND = "bound"  # proceed; this write staged a new destination
 
 
-#: Write outcomes that provably dialled no ingest: nothing reached any vault.
-_NOTHING_SENT = frozenset({VaultWriteStatus.SKIPPED_INTIMATE, VaultWriteStatus.UNAVAILABLE})
+#: Write outcomes that provably dialled no ingest: nothing reached any vault. A
+#: SUSPENDED write was refused by the operator switch before the wire (#3107);
+#: DEGRADED is absent because its ingest was dialled and may have landed.
+_NOTHING_SENT = frozenset(
+    {
+        VaultWriteStatus.SKIPPED_INTIMATE,
+        VaultWriteStatus.UNAVAILABLE,
+        VaultWriteStatus.SUSPENDED,
+    }
+)
 
 
 async def _bind_vault_destination(
@@ -528,9 +537,10 @@ def _unbind_if_nothing_sent(
 ) -> bool:
     """Drop a destination this write staged when the write provably sent nothing.
 
-    A handshake that turned the write away, or an Intimate skip, dialled no
-    ingest; leaving the marker would make the entry owe a withdrawal for a
-    copy that does not exist. A degraded ingest *was* dialled and keeps it.
+    A handshake that turned the write away, an Intimate skip, or an ingest the
+    operator's vault-send suspension refused before the wire (#3107) sent no
+    body; leaving the marker would make the entry owe a withdrawal for a copy
+    that does not exist. A degraded ingest *was* dialled and keeps it.
     """
     if binding is not _Binding.BOUND or outcome.status not in _NOTHING_SENT:
         return False

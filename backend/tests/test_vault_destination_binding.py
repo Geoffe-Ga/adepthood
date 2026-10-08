@@ -33,11 +33,13 @@ from domain.creek_vault import (
     CreekVaultUnavailableError,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     VaultVoiceDraftDeleteResult,
 )
 from main import app
 from models.journal_entry import VAULT_DESTINATION_WIDTH, JournalEntry
+from models.journal_withdrawal_obligation import JournalWithdrawalObligation
 from models.marginalia import Marginalia, MarginaliaKind
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
 from routers import journal as journal_router
@@ -46,7 +48,13 @@ from services import creek_vault_withdraw as withdraw_module
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import record_mirror_intent
 from services.creek_vault_write import VaultWriteOutcome
+from services.privacy_suspension import VAULT_SEND_SUSPEND_ENV_VAR, vault_send_suspended
 from services.user_vault_config import clear_vault_config, store_vault_config
+from tests.incident.test_privacy_suspension import (
+    _VaultRecorder,
+    handshaken_vault,
+    suspend_vault,
+)
 from tests.test_journal_vault_write import SequencedVaultClient
 
 _PASSWORD = "secret12345"  # pragma: allowlist secret
@@ -639,3 +647,150 @@ async def test_resolved_destination_is_scoped_to_the_resolved_account(
     assert await resolved_vault_destination(
         db_session, second_user
     ) == await vault_destination_fingerprint(db_session, second_user)
+
+
+async def _obligations(session: AsyncSession, entry_id: int) -> list[JournalWithdrawalObligation]:
+    result = await session.execute(
+        select(JournalWithdrawalObligation).where(
+            col(JournalWithdrawalObligation.journal_entry_id) == entry_id
+        )
+    )
+    rows = list(result.scalars().all())
+    await session.commit()
+    return rows
+
+
+@pytest.mark.parametrize(
+    ("ingest_error", "sent"),
+    [
+        pytest.param(VaultSendSuspendedError(), False, id="suspended"),
+        pytest.param(CreekVaultUnavailableError("synthetic lost answer"), True, id="degraded"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_only_a_send_that_may_have_left_binds_a_withdrawal(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    ingest_error: Exception,
+    *,
+    sent: bool,
+) -> None:
+    """An operator-suspended send owes nothing; a degraded one still owes its withdrawal (#3107).
+
+    The suspension is refused at the adapter before the wire, so the staged
+    destination is dropped and a later deletion -- even with the vault gone --
+    completes at once with no obligation. A genuinely degraded send may have
+    landed, so it keeps its marker and its deletion stays owed.
+    """
+    headers, user_id = await _signup(async_client, f"dest_suspended_{sent}")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    destination_a = await vault_destination_fingerprint(db_session, user_id)
+    vault = SequencedVaultClient(ingest_error=ingest_error)
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    entry_id = await _create_public_entry(async_client, headers)
+
+    assert len(vault.ingest_calls) == 1
+    bound = (await _entry(db_session, entry_id)).vault_destination
+    assert bound == (destination_a if sent else None)
+
+    await clear_vault_config(db_session, user_id)
+    deleted = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert vault.withdraw_calls == []
+    if sent:
+        assert deleted.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+        assert [row.destination for row in await _obligations(db_session, entry_id)] == [
+            destination_a
+        ]
+    else:
+        assert deleted.status_code == HTTPStatus.NO_CONTENT
+        assert await _obligations(db_session, entry_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_send_binds_nothing_until_resumed(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Through the real adapter: no PUT and no binding under the switch; the next real send binds.
+
+    The destination is still staged before the dial (so a lost answer after
+    resume stays withdrawable); it is only dropped when the adapter proves
+    the suspended dial never left.
+    """
+    headers, user_id = await _signup(async_client, "dest_suspended_resumed")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    destination_a = await vault_destination_fingerprint(db_session, user_id)
+    recorder = _VaultRecorder()
+    vault = await handshaken_vault(recorder)
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+
+    suspend_vault(monkeypatch)
+    entry_id = await _create_public_entry(async_client, headers)
+
+    assert "PUT" not in recorder.methods()
+    assert (await _entry(db_session, entry_id)).vault_destination is None
+
+    monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR)
+    edited = await async_client.patch(
+        f"/journal/{entry_id}", json={"message": "Written after the switch."}, headers=headers
+    )
+
+    assert edited.status_code == HTTPStatus.OK
+    assert recorder.methods().count("PUT") == 1
+    assert (await _entry(db_session, entry_id)).vault_destination == destination_a
+
+
+class _SwitchAwareVault(SequencedVaultClient):
+    """Stores like a real vault, but refuses the ingest the way the adapter does under the switch.
+
+    The adapter's request site checks ``vault_send_suspended()`` before the
+    wire; this double does the same, so ``ingest_calls`` holds only sends that
+    actually left.
+    """
+
+    async def ingest(self, request: VaultIngestRequest, /) -> VaultIngestResult:
+        if vault_send_suspended():
+            raise VaultSendSuspendedError
+        return await super().ingest(request)
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_edit_of_a_sent_entry_keeps_owing_its_copy(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A copy that really reached the vault is still owed after a suspended edit (#3107).
+
+    Only the binding *this* write staged may be dropped on SUSPENDED; the
+    marker and ref of an earlier, real send survive, and its deletion stays
+    owed to the vault that holds it.
+    """
+    monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR, raising=False)
+    headers, user_id = await _signup(async_client, "dest_suspended_bound")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    destination_a = await vault_destination_fingerprint(db_session, user_id)
+    vault = _SwitchAwareVault()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    entry_id = await _create_public_entry(async_client, headers)
+
+    sent = await _entry(db_session, entry_id)
+    assert len(vault.ingest_calls) == 1
+    assert sent.vault_destination == destination_a
+    assert sent.vault_ref == "vault-ref-1"
+
+    suspend_vault(monkeypatch)
+    edited = await async_client.patch(
+        f"/journal/{entry_id}", json={"message": "Edited under the switch."}, headers=headers
+    )
+
+    assert edited.status_code == HTTPStatus.OK
+    assert len(vault.ingest_calls) == 1, "the suspended edit must not send"
+    kept = await _entry(db_session, entry_id)
+    assert kept.vault_destination == destination_a
+    assert kept.vault_ref == "vault-ref-1"
+
+    await clear_vault_config(db_session, user_id)
+    deleted = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert deleted.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert vault.withdraw_calls == []
+    assert [row.destination for row in await _obligations(db_session, entry_id)] == [destination_a]
