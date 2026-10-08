@@ -320,7 +320,6 @@ def test_companion_and_authority_cues_are_advisory_not_blocking(letter: str, rul
         "Maybe try reducing your dose.",
         "Maybe try going off your meds for a week.",
         "Quitting the sertraline could feel freeing.",
-        "You are tapering off the lithium, and that is right.",
         "Cutting back on your pills might help.",
         "You don't need your antidepressants anymore.",
         "You are clearly depressed.",
@@ -334,6 +333,16 @@ def test_companion_and_authority_cues_are_advisory_not_blocking(letter: str, rul
         "Stop your meds, then talk to your doctor about it.",
         "Talk to your doctor about it, but stop your meds now.",
         "Stop your meds, but that is for you and your doctor.",
+        # Review round 2: a deferral clause must not swallow a directive joined to it.
+        "Check with your doctor first and then stop your meds.",
+        "Talk to your doctor about it tomorrow and halve your dose tonight.",
+        "Check with your prescriber first and then stop the meds anyway.",
+        "Ask your doctor about it and quit the pills tonight.",
+        "Talk to your doctor before anything else and stop taking your medication now.",
+        "Check with your doctor first and then stop taking lithium.",
+        "Talk to your doctor about it and quit your meds tonight.",
+        "Ask your doctor before Friday and stop your pills today.",
+        "Stop your meds now - the timing is for you and your doctor.",
     ],
 )
 def test_medication_directive_is_blocking(letter: str) -> None:
@@ -351,11 +360,63 @@ def test_medication_directive_is_blocking(letter: str) -> None:
         "Whether to keep taking it is a choice between you and your psychiatrist.",
         "Check with your prescriber about reducing your dose.",
         "Changing your dose is a decision for you and your prescriber.",
+        # Review round 2: more ways of handing the decision to the prescriber.
+        "Whether to change your dose is up to you and your prescriber.",
+        "Whether to change your medication is up to you and your prescriber.",
+        "Any change to your medication is something to discuss with your doctor.",
+        "Stopping is your and your doctor's call.",
+        "Reducing the dose is worth deciding with your doctor.",
     ],
 )
 def test_medication_deferral_passes(letter: str) -> None:
     """Deferring medication to the prescriber -- MEDICATION_GUARDRAIL's intent -- is clean (AC9)."""
     assert RuleId.MEDICAL_DIRECTIVE not in _scored(_sample(_RIVER, letter=letter)).rule_ids
+
+
+@pytest.mark.parametrize(
+    "letter",
+    [
+        # Review round 2: past or progressive narration of the writer's own history.
+        "Your doctor reduced your dose last month, and you noticed the fog lifting.",
+        "Since you started tapering your sertraline, mornings feel thinner.",
+        "You keep going back to the river, then going off to the pills drawer.",
+        "Since you stopped the sertraline, your sleep has shifted, and you are noticing it.",
+        "Your doctor lowered your dose and the mornings changed.",
+        "You noticed that since you reduced your dose, mornings feel heavier.",
+        "You wrote that you stopped your meds last spring, and the river helped.",
+        "Your doctor reduced your dose in March, you wrote, and the mornings shifted.",
+        "Your doctor changed your medication in the spring.",
+        "Your doctor will change your dose in March, you wrote.",
+        "Each spring you and the season change your meds together, you wrote.",
+    ],
+)
+def test_medication_narration_is_not_a_directive(letter: str) -> None:
+    """Reflecting what already happened directs nothing; only imperative or modal frames do."""
+    score = _scored(_sample(_RIVER, letter=letter))
+    assert {RuleId.MEDICAL_DIRECTIVE, RuleId.MEDICAL_CUE}.isdisjoint(score.rule_ids)
+
+
+@pytest.mark.parametrize(
+    "letter",
+    [
+        "You wrote that you are depressed and tired.",  # review round 2 probe
+        "You're depressed about the river, you said.",  # review round 2 probe
+        "You are clearly depressed.",  # the writer's own word, qualified
+    ],
+)
+def test_echoing_the_writers_own_mood_word_is_advisory(letter: str) -> None:
+    """Calling the writer what they called themselves goes to review; it is not a diagnosis."""
+    entry = "I'm depressed and tired. The river was loud."
+    score = _scored(_sample(entry, letter=letter))
+    assert RuleId.MEDICAL_CUE in score.advisory
+    assert RuleId.MEDICAL_DIRECTIVE not in score.rule_ids
+
+
+def test_progressive_endorsement_of_a_medication_change_is_advisory() -> None:
+    """'You are tapering off X, and that is right' may endorse or may narrate: a human decides."""
+    score = _scored(_sample(_RIVER, letter="You are tapering off the lithium, and that is right."))
+    assert RuleId.MEDICAL_CUE in score.advisory
+    assert RuleId.MEDICAL_DIRECTIVE not in score.rule_ids
 
 
 def test_therapeutic_guarantee_is_blocking() -> None:
