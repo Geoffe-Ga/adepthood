@@ -18,12 +18,13 @@ import logging
 from datetime import UTC, datetime
 from typing import Final
 
+from fastapi import HTTPException
 from sqlalchemy import ColumnElement
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 from sqlmodel import col, select
 
-from errors import conflict
+from errors import conflict, not_found
 from models.journal_entry import JournalEntry
 from models.journal_withdrawal_obligation import (
     OPEN_STATES,
@@ -308,9 +309,19 @@ async def refuse_if_deletion_pending(session: AsyncSession, entry: JournalEntry)
     re-ingest into the corpus or the vault, no new derived writing. Retrying
     the DELETE (or taking ``erase-locally``) stays open. Reads only.
     """
-    row = await open_obligation(session, user_id=entry.user_id, entry_id=_entry_id(entry))
-    if row is not None and row.state == JournalWithdrawalState.PENDING_DELETE.value:
+    if await deletion_in_progress(session, entry):
         raise conflict(DELETION_PENDING_DETAIL)
+
+
+async def deletion_in_progress(session: AsyncSession, entry: JournalEntry) -> bool:
+    """Whether ``entry`` has an open ``pending_delete`` obligation. Reads only; no commit.
+
+    The one question every re-read under the account barrier asks next to
+    ``deleted_at``: a DELETE that won the barrier while a pass waited may have
+    left the page live but going (#3098 review).
+    """
+    row = await open_obligation(session, user_id=entry.user_id, entry_id=_entry_id(entry))
+    return row is not None and row.state == JournalWithdrawalState.PENDING_DELETE.value
 
 
 def deletion_in_progress_clause(
@@ -332,3 +343,20 @@ def deletion_in_progress_clause(
         )
         .exists()
     )
+
+
+async def withdrawal_refusal(session: AsyncSession, entry: JournalEntry) -> HTTPException | None:
+    """Re-read ``entry`` under the caller's hold; the refusal it now earns, if any. Commits.
+
+    The shared re-check for every pass that waited for the account barrier: a
+    row deleted meanwhile earns the uniform 404, and a row whose DELETE won the
+    barrier but could not reach its vault -- a deletion in progress (#3098) --
+    earns 409 ``journal_entry_deletion_pending``. ``None`` means still live.
+    The commit releases the pooled connection before anything is dialled.
+    """
+    await session.refresh(entry)
+    going = await deletion_in_progress(session, entry)
+    await session.commit()
+    if entry.deleted_at is not None:
+        return not_found("journal_entry")
+    return conflict(DELETION_PENDING_DETAIL) if going else None

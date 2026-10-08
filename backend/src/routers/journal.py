@@ -183,7 +183,7 @@ from services.inference_provenance import (
     stamp_letter,
     stamp_note,
 )
-from services.journal_vault_withdrawal import withdraw_owed_copies
+from services.journal_vault_withdrawal import begin_deletion, withdraw_owed_copies
 from services.journal_withdrawal_obligation import (
     complete_confirmed_delete,
     deletion_in_progress_clause,
@@ -191,6 +191,7 @@ from services.journal_withdrawal_obligation import (
     owe_pending_delete,
     refuse_if_deletion_pending,
     withdrawal_pending_detail,
+    withdrawal_refusal,
 )
 from services.llm_usage import (
     GenerationFeature,
@@ -1708,7 +1709,9 @@ async def _withdrawn_under_hold(
     same reason (#623).
 
     * A row deleted while the pass waited is gone, not private: any committed
-      BotMason unit is refunded and the caller gets the uniform 404.
+      BotMason unit is refunded and the caller gets the uniform 404. A row
+      whose DELETE won the barrier but could not reach its vault is a deletion
+      in progress (#3098): refunded the same way, answered 409.
     * A row now ``intimate`` stops the whole pass: no vault, no cloud
       reflection, no completion detection. Any committed unit is refunded and
       this returns ``True``, so the caller answers with
@@ -1731,11 +1734,10 @@ async def _withdrawn_under_hold(
     after the refresh, or the refund's own rollback and commit -- so nothing
     is held across the dials that follow.
     """
-    await session.refresh(entry)
-    await session.commit()
-    if entry.deleted_at is not None:
+    refusal = await withdrawal_refusal(session, entry)
+    if refusal is not None:
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
-        raise not_found("journal_entry")
+        raise refusal
     if not admits_egress(entry.classification):
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         return True
@@ -3428,9 +3430,10 @@ async def _cache_and_mirror_essay(
     await session.commit()
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
-        await session.refresh(entry)
         await session.refresh(note)
-        await session.commit()
+        refusal = await withdrawal_refusal(session, entry)
+        if refusal is not None and entry.deleted_at is None:
+            raise refusal
         if note.essay is not None:
             # A concurrent first ask for this note won the barrier and cached
             # its letter while this one waited: a cached reopen, not a second
@@ -3484,9 +3487,7 @@ async def _mirror_cached_essay(
         voice_draft_privacy.hold(session, cast("int", entry.id)),
     ):
         await ensure_account_live(session, entry.user_id)
-        await session.refresh(entry)
-        await session.commit()
-        if entry.deleted_at is not None:
+        if await withdrawal_refusal(session, entry) is not None:
             return cached
         marginalia_id = cast("int", cached.id)
         destination = await resolved_vault_destination(session, entry.user_id)
@@ -3750,23 +3751,6 @@ async def _keep_letter(
     return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
 
 
-async def _begin_deletion(session: AsyncSession, entry_id: int, current_user: int) -> JournalEntry:
-    """Load the caller's page under its locks and withdraw everything local first.
-
-    The local corpus stops circulating the entry as soon as deletion is
-    requested, and every essay offer becomes an owed withdrawal. The row itself
-    stays live, with its remote handle intact, until the caller decides.
-    """
-    await ensure_account_live(session, current_user)
-    current = await _load_user_entry(session, entry_id, current_user)
-    if current is None or current.sender != "user":
-        raise not_found("journal_entry")
-    await withdraw_local_journal_entry(session, user_id=current_user, entry_id=entry_id)
-    await mark_entry_retractions_pending(session, user_id=current_user, entry_id=entry_id)
-    await session.commit()
-    return current
-
-
 @router.post("/{entry_id}/erase-locally", response_model=JournalErasureReceipt)
 async def erase_journal_entry_locally(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -3791,7 +3775,7 @@ async def erase_journal_entry_locally(
         hold_account(session, current_user),
         journal_vault_mutations.hold(session, entry_id),
     ):
-        current = await _begin_deletion(session, entry_id, current_user)
+        current = await begin_deletion(session, entry_id=entry_id, user_id=current_user)
         if await _withdraw_remote_copies(session, current, vault_client):
             await complete_confirmed_delete(session, current)
             return JournalErasureReceipt(
@@ -3836,7 +3820,7 @@ async def delete_journal_entry(
         hold_account(session, current_user),
         journal_vault_mutations.hold(session, entry_id),
     ):
-        current = await _begin_deletion(session, entry_id, current_user)
+        current = await begin_deletion(session, entry_id=entry_id, user_id=current_user)
         if not await _withdraw_remote_copies(session, current, vault_client):
             await owe_pending_delete(session, current)
             raise await _withdrawal_pending(session, current, vault_client)
