@@ -270,6 +270,54 @@ def test_exactly_the_pinned_columns_are_encrypted() -> None:
     assert _encrypted_columns() == _ENCRYPTED_COLUMNS
 
 
+# Columns derived from a person's writing that the schema stores in the clear,
+# each mapped to the words the policy discloses it under. The owner chose to
+# disclose rather than encrypt these (#3058 AC5, B01). The list is kept by
+# hand: the test holds each listed column to the schema (still plaintext) and
+# to the policy (still named), and does not discover a derived column nobody
+# has added here.
+_DERIVED_PLAINTEXT_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "corpusfragment.embedding": "**embeddings**",
+        "corpusfragment.frequency_weights": "**frequency weights**",
+        "corpusfragment.overall_confidence": "overall confidence",
+        "journalentry.vault_tags": "**vault tags**",
+        "completionsuggestion.completed_units": "**detected amounts and dates**",
+        "completionsuggestion.completed_on": "**detected amounts and dates**",
+        "completionsuggestion.anchor_start": "where in the entry",
+        "completionsuggestion.anchor_end": "where in the entry",
+    }
+)
+
+# The broad claim the policy made before it named those columns. True of the
+# prose derived from an entry; false of the numbers and labels derived from it.
+_RETIRED_DERIVED_CLAIMS: Final[tuple[str, ...]] = (
+    "and so is everything derived from it",
+    "there is no version of this service that quietly stores your writing",
+)
+
+
+def test_the_policy_discloses_the_derived_data_it_stores_unencrypted() -> None:
+    """Each listed derived column stays unencrypted in the schema and named in the policy.
+
+    Each is something about a person's writing rather than the writing itself,
+    and each is plaintext in the schema, so the policy may neither call
+    everything derived from an entry encrypted nor leave these unnamed.
+    """
+    prose = _prose(_PRIVACY_POLICY)
+    encrypted = _encrypted_columns()
+
+    still_encrypted = sorted(set(_DERIVED_PLAINTEXT_DISCLOSURES) & encrypted)
+    assert not still_encrypted, f"now encrypted; narrow the disclosure: {still_encrypted}"
+    undisclosed = sorted(
+        column for column, name in _DERIVED_PLAINTEXT_DISCLOSURES.items() if name not in prose
+    )
+    assert not undisclosed, f"the policy does not name these derived columns: {undisclosed}"
+    assert "stored unencrypted" in prose
+    restated = [claim for claim in _RETIRED_DERIVED_CLAIMS if claim in prose]
+    assert not restated, f"the policy still claims all derived data is encrypted: {restated}"
+
+
 # The one sentence in the policy that lists what is *not* encrypted, identified
 # by the phrase it ends on. Everything it names must genuinely be plaintext, and
 # nothing it names may be a column the schema encrypts -- the two halves of
@@ -513,6 +561,86 @@ def test_the_error_monitor_never_receives_a_journal_body() -> None:
 def test_the_policy_says_monitoring_is_deployment_configured() -> None:
     """The policy names monitoring as optional, which the DSN gate makes true."""
     assert "sentry" in _read(_PRIVACY_POLICY)
+
+
+# The policy paragraph describing the error monitor, from its lead-in to the
+# next party's.
+_SENTRY_PARAGRAPH_OPENING: Final[str] = "**sentry**, if"
+_SENTRY_PARAGRAPH_CLOSING: Final[str] = "**an email relay"
+
+# What the paragraph said while the scrubber subtracted fields from the vendor's
+# event and truncated the message (#3079 replaced that with a rebuild from an
+# allowlist that never copies the message). Any of these back would describe a
+# report the code no longer sends.
+_RETIRED_SENTRY_CLAIMS: Final[tuple[str, ...]] = (
+    "type and message and stack",
+    "over-long exception message is truncated",
+    "each is closed twice",
+)
+
+# The location fields a reported frame keeps, and the policy's words for them.
+_FRAME_FIELD_WORDS: Final[Mapping[str, str]] = MappingProxyType(
+    {"filename": "file", "function": "function", "lineno": "line"}
+)
+
+
+def _field(node: object, name: str) -> object:
+    """Return ``node[name]``, asserting ``node`` is a mapping that has it."""
+    assert isinstance(node, dict), node
+    return node[name]
+
+
+def _only_item(node: object) -> dict[str, object]:
+    """Return the single mapping in a one-element list."""
+    assert isinstance(node, list), node
+    assert len(node) == 1, node
+    item = node[0]
+    assert isinstance(item, dict), item
+    return item
+
+
+def test_the_policy_describes_the_error_report_the_scrubber_builds() -> None:
+    """The Sentry paragraph describes the rebuilt event: no message, location-only frames.
+
+    Re-derived by running ``scrub_event`` over an event carrying a message,
+    frame source and frame locals: the message is replaced and each frame keeps
+    only its location, which is what the paragraph now tells a reader.
+    """
+    policy = _prose(_PRIVACY_POLICY)
+    start = policy.index(_SENTRY_PARAGRAPH_OPENING)
+    paragraph = policy[start : policy.index(_SENTRY_PARAGRAPH_CLOSING, start)]
+    event: dict[str, object] = {
+        "exception": {
+            "values": [
+                {
+                    "type": "RuntimeError",
+                    "value": _SENTINEL_BODY,
+                    "stacktrace": {
+                        "frames": [
+                            {
+                                "filename": "routers/journal.py",
+                                "function": "create_entry",
+                                "lineno": 1,
+                                "context_line": _SENTINEL_BODY,
+                                "vars": {"body": _SENTINEL_BODY},
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+
+    entry = _only_item(_field(_field(scrub_event(event, {}), "exception"), "values"))
+    frame = _only_item(_field(_field(entry, "stacktrace"), "frames"))
+
+    assert entry["value"] != _SENTINEL_BODY
+    assert set(frame) == set(_FRAME_FIELD_WORDS)
+    assert "message is never sent" in paragraph
+    for word in _FRAME_FIELD_WORDS.values():
+        assert word in paragraph, f"the Sentry paragraph no longer names a frame's {word}"
+    restated = [claim for claim in _RETIRED_SENTRY_CLAIMS if claim in paragraph]
+    assert not restated, f"the Sentry paragraph still describes the retired scrubber: {restated}"
 
 
 @pytest.mark.asyncio

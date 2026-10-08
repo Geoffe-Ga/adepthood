@@ -1,3 +1,4 @@
+import { ShieldCheck } from 'lucide-react-native';
 import React, { useCallback, useMemo, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
@@ -15,6 +16,14 @@ import ConfirmDialog from '../Habits/components/ConfirmDialog';
 
 import { BYOK_DETAIL_DISCLOSURE } from './byokDisclosure';
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
+import {
+  LOCAL_MODEL_OFF_NOTE,
+  LOCAL_MODEL_ON_NOTE,
+  LOCAL_MODEL_SAVE_FAILED,
+  LOCAL_MODEL_SWITCH_DESCRIPTION,
+  LOCAL_MODEL_SWITCH_LABEL,
+  LOCAL_MODEL_UNAVAILABLE_NOTE,
+} from './localModelCopy';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import {
   SETTINGS_BUTTON_PADDING,
@@ -22,11 +31,17 @@ import {
   settingsFormStyles,
   settingsFormType,
 } from './shared/settingsFormLayout';
+import { SETTINGS_ROW_TEXT_INSET, SettingsSwitchRow } from './shared/SettingsSwitchRow';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import type { ApiKeyClearResult, ApiKeySaveResult } from '@/context/ApiKeyContext';
+import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
+import type {
+  ApiKeyClearResult,
+  ApiKeySaveResult,
+  LocalModelSaveResult,
+} from '@/context/ApiKeyContext';
 import { useApiKey } from '@/context/ApiKeyContext';
 import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -39,6 +54,11 @@ import type { RootStackParamList } from '@/navigation/RootStack';
  * LLM routes via the ``X-LLM-API-Key`` header (issue #185). The backend passes
  * it to the provider without persisting, logging, or echoing it; reveal toggles
  * only show the masked-by-default value locally in this screen.
+ *
+ * Above the key sits a disabled preview of Adepthood's planned self-hosted
+ * model. The release gate stays closed until that backend provider exists;
+ * until then, the key area remains live and requests continue through the
+ * person's key or the shared provider exactly as the disclosure says.
  */
 
 const MAX_KEY_LENGTH = 256;
@@ -132,6 +152,7 @@ const StoredKeyCard = ({
 interface KeyInputRowProps {
   draft: string;
   reveal: boolean;
+  disabled: boolean;
   onChangeText: (_v: string) => void;
   onToggleReveal: () => void;
 }
@@ -139,6 +160,7 @@ interface KeyInputRowProps {
 const KeyInputRow = ({
   draft,
   reveal,
+  disabled,
   onChangeText,
   onToggleReveal,
 }: KeyInputRowProps): React.JSX.Element => (
@@ -151,13 +173,17 @@ const KeyInputRow = ({
       autoCapitalize="none"
       autoCorrect={false}
       secureTextEntry={!reveal}
+      editable={!disabled}
+      accessibilityState={{ disabled }}
       testID="api-key-input"
     />
     <TouchableOpacity
       onPress={onToggleReveal}
       style={styles.revealButton}
+      disabled={disabled}
       testID="reveal-toggle"
       accessibilityLabel={reveal ? 'Hide API key' : 'Show API key'}
+      accessibilityState={{ disabled }}
     >
       <Text style={styles.revealButtonText}>{reveal ? 'Hide' : 'Show'}</Text>
     </TouchableOpacity>
@@ -213,7 +239,12 @@ const RemoveKeyDialog = ({
   />
 );
 
-interface ScreenBodyProps {
+interface LocalModelChoiceProps {
+  localModel: boolean;
+  onToggleLocalModel: (_next: boolean) => void;
+}
+
+interface ScreenBodyProps extends LocalModelChoiceProps {
   apiKey: string | null;
   draft: string;
   reveal: boolean;
@@ -229,22 +260,62 @@ interface ScreenBodyProps {
   onOpenTimezone?: () => void;
 }
 
-const ScreenIntro = ({ apiKey }: { apiKey: string | null }): React.JSX.Element => {
+const ignoreUnavailableModelToggle = (): void => undefined;
+
+/** The gated switch, and under it which path requests actually take right now. */
+const LocalModelChoice = ({
+  localModel,
+  onToggleLocalModel,
+}: LocalModelChoiceProps): React.JSX.Element => {
   const face = settingsFormType(useWindowDimensions().width);
   return (
-    <>
-      <Text style={[face.title, settingsFormStyles.title]} accessibilityRole="header">
-        BotMason API Key
+    <View style={styles.localModel} testID="local-model-choice">
+      <SettingsSwitchRow
+        icon={ShieldCheck}
+        label={LOCAL_MODEL_SWITCH_LABEL}
+        description={LOCAL_MODEL_SWITCH_DESCRIPTION}
+        value={LOCAL_MODEL_AVAILABLE && localModel}
+        onValueChange={LOCAL_MODEL_AVAILABLE ? onToggleLocalModel : ignoreUnavailableModelToggle}
+        disabled={!LOCAL_MODEL_AVAILABLE}
+        testID="local-model"
+      />
+      <Text style={[face.cardLabel, styles.localModelNote]} testID="local-model-note">
+        {LOCAL_MODEL_AVAILABLE
+          ? localModel
+            ? LOCAL_MODEL_ON_NOTE
+            : LOCAL_MODEL_OFF_NOTE
+          : LOCAL_MODEL_UNAVAILABLE_NOTE}
       </Text>
-      <Text style={settingsFormStyles.body}>{BYOK_DETAIL_DISCLOSURE}</Text>
-      {!apiKey && (
-        <Text style={styles.hint} testID="no-key-hint">
-          No key saved yet. BotMason will use the shared server key if one is configured.
-        </Text>
-      )}
-    </>
+    </View>
   );
 };
+
+const ScreenTitle = (): React.JSX.Element => {
+  const face = settingsFormType(useWindowDimensions().width);
+  return (
+    <Text style={[face.title, settingsFormStyles.title]} accessibilityRole="header">
+      BotMason API Key
+    </Text>
+  );
+};
+
+interface KeyDisclosureProps {
+  apiKey: string | null;
+  /** While Adepthood's own model is chosen, "no key" needs no explaining: the note above said what is in use. */
+  localModel: boolean;
+}
+
+/** Where a key travels, and what it means to have none; part of the key area. */
+const KeyDisclosure = ({ apiKey, localModel }: KeyDisclosureProps): React.JSX.Element => (
+  <>
+    <Text style={settingsFormStyles.body}>{BYOK_DETAIL_DISCLOSURE}</Text>
+    {!apiKey && !localModel && (
+      <Text style={styles.hint} testID="no-key-hint">
+        No key saved yet. BotMason will use the shared server key if one is configured.
+      </Text>
+    )}
+  </>
+);
 
 const ProviderDirectory = (): React.JSX.Element => (
   <View style={styles.providerSection} testID="provider-directory">
@@ -278,31 +349,36 @@ const DetectedProvider = ({ draft }: { draft: string }): React.JSX.Element | nul
   );
 };
 
-const ScreenFooter = ({
+const SaveKeyButton = ({
   submitting,
+  disabled,
   onSave,
+}: {
+  submitting: boolean;
+  disabled: boolean;
+  onSave: () => void;
+}): React.JSX.Element => (
+  <TouchableOpacity
+    onPress={onSave}
+    style={settingsFormStyles.primaryButton}
+    disabled={submitting || disabled}
+    testID="save-key-button"
+    accessibilityLabel="Save API key"
+    accessibilityRole="button"
+    accessibilityState={{ disabled: submitting || disabled, busy: submitting }}
+  >
+    <Text style={settingsFormStyles.primaryButtonText}>{submitting ? 'Saving…' : 'Save key'}</Text>
+  </TouchableOpacity>
+);
+
+const ScreenFooter = ({
   onBack,
   onOpenTimezone,
 }: {
-  submitting: boolean;
-  onSave: () => void;
   onBack?: () => void;
   onOpenTimezone?: () => void;
 }): React.JSX.Element => (
   <>
-    <TouchableOpacity
-      onPress={onSave}
-      style={settingsFormStyles.primaryButton}
-      disabled={submitting}
-      testID="save-key-button"
-      accessibilityLabel="Save API key"
-      accessibilityRole="button"
-      accessibilityState={{ disabled: submitting, busy: submitting }}
-    >
-      <Text style={settingsFormStyles.primaryButtonText}>
-        {submitting ? 'Saving…' : 'Save key'}
-      </Text>
-    </TouchableOpacity>
     {onOpenTimezone && (
       <TouchableOpacity
         onPress={onOpenTimezone}
@@ -327,45 +403,67 @@ const ScreenFooter = ({
   </>
 );
 
+type KeyAreaProps = Omit<ScreenBodyProps, 'storageWarning' | 'onBack' | 'onOpenTimezone'>;
+
+/**
+ * Everything about the key itself. Greyed and inert while Adepthood's own
+ * model is chosen: the switch above is the one way back in, so nothing in
+ * here can be tapped into a half-state.
+ */
+const KeyArea = (props: KeyAreaProps): React.JSX.Element => {
+  const { apiKey, localModel, submitting } = props;
+  const inert = localModel;
+  return (
+    <View
+      style={inert ? styles.keyAreaInert : null}
+      pointerEvents={inert ? 'none' : 'auto'}
+      accessibilityState={{ disabled: inert }}
+      testID="api-key-area"
+    >
+      <KeyDisclosure apiKey={apiKey} localModel={localModel} />
+      <ProviderDirectory />
+      {apiKey && (
+        <StoredKeyCard
+          apiKey={apiKey}
+          disabled={submitting || inert}
+          onRequestRemove={props.onRequestRemove}
+        />
+      )}
+      <Text style={settingsFormStyles.inputLabel}>{apiKey ? 'Replace key' : 'Add your key'}</Text>
+      <KeyInputRow
+        draft={props.draft}
+        reveal={props.reveal}
+        disabled={inert}
+        onChangeText={props.onChangeDraft}
+        onToggleReveal={props.onToggleReveal}
+      />
+      <DetectedProvider draft={props.draft} />
+      <SettingsFeedbackBanner idPrefix="api-key" error={props.error} status={props.status} />
+      <SaveKeyButton submitting={submitting} disabled={inert} onSave={props.onSave} />
+    </View>
+  );
+};
+
 const ScreenBody = ({
-  apiKey,
-  draft,
-  reveal,
-  submitting,
-  error,
-  status,
   storageWarning,
-  onChangeDraft,
-  onToggleReveal,
-  onRequestRemove,
-  onSave,
   onBack,
   onOpenTimezone,
-}: ScreenBodyProps): React.JSX.Element => (
-  <>
-    <ScreenIntro apiKey={apiKey} />
-    <SettingsFeedbackBanner idPrefix="api-key-storage" error={storageWarning} status={null} />
-    <ProviderDirectory />
-    {apiKey && (
-      <StoredKeyCard apiKey={apiKey} disabled={submitting} onRequestRemove={onRequestRemove} />
-    )}
-    <Text style={settingsFormStyles.inputLabel}>{apiKey ? 'Replace key' : 'Add your key'}</Text>
-    <KeyInputRow
-      draft={draft}
-      reveal={reveal}
-      onChangeText={onChangeDraft}
-      onToggleReveal={onToggleReveal}
-    />
-    <DetectedProvider draft={draft} />
-    <SettingsFeedbackBanner idPrefix="api-key" error={error} status={status} />
-    <ScreenFooter
-      submitting={submitting}
-      onSave={onSave}
-      onBack={onBack}
-      onOpenTimezone={onOpenTimezone}
-    />
-  </>
-);
+  ...keyArea
+}: ScreenBodyProps): React.JSX.Element => {
+  const activeLocalModel = LOCAL_MODEL_AVAILABLE && keyArea.localModel;
+  return (
+    <>
+      <ScreenTitle />
+      <SettingsFeedbackBanner idPrefix="api-key-storage" error={storageWarning} status={null} />
+      <LocalModelChoice
+        localModel={keyArea.localModel}
+        onToggleLocalModel={keyArea.onToggleLocalModel}
+      />
+      <KeyArea {...keyArea} localModel={activeLocalModel} />
+      <ScreenFooter onBack={onBack} onOpenTimezone={onOpenTimezone} />
+    </>
+  );
+};
 
 function useSaveKeyHandler(
   form: SettingsFormState,
@@ -410,6 +508,39 @@ function useClearKeyHandler(
   return useSettingsSubmit(form, { validate, perform, onError });
 }
 
+/**
+ * Flip the model choice. Applied at once; if the device could not keep it, the
+ * form says so in its own banner rather than pretending it will outlive the app.
+ */
+function useLocalModelToggle(
+  form: SettingsFormState,
+  setLocalModel: (_value: boolean) => Promise<LocalModelSaveResult>,
+): (_next: boolean) => void {
+  const { setError, setStatus } = form;
+  return useCallback(
+    (next: boolean) => {
+      setStatus(null);
+      void setLocalModel(next).then((result) => {
+        setError(result.persisted ? null : LOCAL_MODEL_SAVE_FAILED);
+      });
+    },
+    [setError, setLocalModel, setStatus],
+  );
+}
+
+/** Typing into the key field clears whatever the last submit said. */
+function useDraftChange(form: SettingsFormState): (_value: string) => void {
+  const { setDraft, setError, setStatus } = form;
+  return useCallback(
+    (value: string) => {
+      setDraft(value);
+      setError(null);
+      setStatus(null);
+    },
+    [setDraft, setError, setStatus],
+  );
+}
+
 function useScreenNavHandlers(navigation: Props['navigation']): {
   onBack?: () => void;
   onOpenTimezone?: () => void;
@@ -426,23 +557,16 @@ function useScreenNavHandlers(navigation: Props['navigation']): {
 }
 
 export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.JSX.Element {
-  const { apiKey, isLoading, loadError, saveApiKey, clearApiKey } = useApiKey();
+  const { apiKey, isLoading, loadError, saveApiKey, clearApiKey, localModel, setLocalModel } =
+    useApiKey();
   const storageWarning = loadError ? SECURE_STORAGE_WARNING : null;
   const form = useSettingsFormState('');
   const [reveal, setReveal] = useState(false);
   const handleSave = useSaveKeyHandler(form, setReveal, saveApiKey);
   const performClear = useClearKeyHandler(form, clearApiKey);
   const removeConfirmation = useRemoveConfirmation(performClear);
-
-  const { setDraft, setError, setStatus } = form;
-  const onChangeDraft = useCallback(
-    (value: string) => {
-      setDraft(value);
-      setError(null);
-      setStatus(null);
-    },
-    [setDraft, setError, setStatus],
-  );
+  const onToggleLocalModel = useLocalModelToggle(form, setLocalModel);
+  const onChangeDraft = useDraftChange(form);
   const toggleReveal = useCallback(() => setReveal((prev) => !prev), [setReveal]);
   const { onBack, onOpenTimezone } = useScreenNavHandlers(navigation);
 
@@ -464,6 +588,8 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
         error={form.error}
         status={form.status}
         storageWarning={storageWarning}
+        localModel={localModel}
+        onToggleLocalModel={onToggleLocalModel}
         onChangeDraft={onChangeDraft}
         onToggleReveal={toggleReveal}
         onRequestRemove={removeConfirmation.request}
@@ -477,6 +603,8 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
 }
 
 const PROVIDER_HINT_MARGIN_TOP = 2;
+/** The key area while Adepthood's own model is chosen: legible, plainly inert. */
+const KEY_AREA_INERT_OPACITY = 0.45;
 
 const styles = StyleSheet.create({
   loadingContainer: {
@@ -552,6 +680,10 @@ const styles = StyleSheet.create({
   providerName: { fontSize: 15, fontWeight: '600', color: ink.primary },
   providerHint: { fontSize: 13, color: ink.soft, marginTop: PROVIDER_HINT_MARGIN_TOP },
   detected: { color: colors.successText, marginBottom: SPACING.md, fontSize: 13 },
+  localModel: { marginBottom: SPACING.xl },
+  /** Ink and spacing only: the face is ``settingsFormType(width).cardLabel`` (the ramp caption). */
+  localModelNote: { color: ink.soft, marginTop: SPACING.sm, marginLeft: SETTINGS_ROW_TEXT_INSET },
+  keyAreaInert: { opacity: KEY_AREA_INERT_OPACITY },
 });
 
 export { styles as apiKeySettingsStyles };

@@ -5,8 +5,10 @@ import React from 'react';
 import { Text } from 'react-native';
 
 import * as apiModule from '@/api';
+import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
+import * as localModelStorage from '@/storage/localModelStorage';
 
 jest.mock('@/api', () => ({
   setLlmApiKeyGetter: jest.fn(),
@@ -19,8 +21,14 @@ jest.mock('@/storage/llmKeyStorage', () => ({
   clearLlmApiKey: jest.fn(() => Promise.resolve()),
 }));
 
+jest.mock('@/storage/localModelStorage', () => ({
+  loadLocalModelPreferred: jest.fn(() => Promise.resolve(null)),
+  saveLocalModelPreferred: jest.fn(() => Promise.resolve(true)),
+}));
+
 const mockApi = apiModule as jest.Mocked<typeof apiModule>;
 const mockStorage = llmKeyStorage as jest.Mocked<typeof llmKeyStorage>;
+const mockLocalModel = localModelStorage as jest.Mocked<typeof localModelStorage>;
 
 function TestConsumer({
   onValue,
@@ -35,6 +43,8 @@ function TestConsumer({
 beforeEach(() => {
   jest.clearAllMocks();
   mockStorage.loadLlmApiKey.mockResolvedValue(null);
+  mockLocalModel.loadLocalModelPreferred.mockResolvedValue(null);
+  mockLocalModel.saveLocalModelPreferred.mockResolvedValue(true);
 });
 
 describe('ApiKeyProvider', () => {
@@ -295,5 +305,68 @@ describe('ApiKeyProvider', () => {
     expect(ctx!.apiKey).toBeNull();
     expect(result).toEqual({ cleared: false });
     warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adepthood's own model stays unavailable until a real self-hosted provider exists.
+// ---------------------------------------------------------------------------
+
+describe('ApiKeyProvider — the local-model choice', () => {
+  type Ctx = ReturnType<typeof useApiKey>;
+
+  function mount(): { ctx: () => Ctx; getter: () => (() => string | null) | null } {
+    let latest: Ctx | null = null;
+    render(
+      <ApiKeyProvider>
+        <TestConsumer
+          onValue={(v) => {
+            latest = v;
+          }}
+        />
+      </ApiKeyProvider>,
+    );
+    return {
+      ctx: () => latest!,
+      getter: () => mockApi.setLlmApiKeyGetter.mock.calls[0]?.[0] ?? null,
+    };
+  }
+
+  test('is off by default on a device with no stored choice, so the key is sent as before', async () => {
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
+    const { ctx, getter } = mount();
+
+    await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
+    expect(ctx().localModel).toBe(false);
+    expect(getter()?.()).toBe('sk-alpha');
+  });
+
+  test('ignores a stale stored choice while the provider is unavailable', async () => {
+    expect(LOCAL_MODEL_AVAILABLE).toBe(false);
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
+    mockLocalModel.loadLocalModelPreferred.mockResolvedValueOnce(true);
+    const { ctx, getter } = mount();
+
+    await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
+    expect(ctx().localModel).toBe(false);
+    expect(getter()?.()).toBe('sk-alpha');
+    expect(mockLocalModel.loadLocalModelPreferred).not.toHaveBeenCalled();
+    expect(mockStorage.clearLlmApiKey).not.toHaveBeenCalled();
+  });
+
+  test('refuses programmatic activation while unavailable and keeps sending the key', async () => {
+    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
+    const { ctx, getter } = mount();
+    await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
+
+    let result: { persisted: boolean } | undefined;
+    await act(async () => {
+      result = await ctx().setLocalModel(true);
+    });
+
+    expect(result).toEqual({ persisted: false });
+    expect(ctx().localModel).toBe(false);
+    expect(getter()?.()).toBe('sk-alpha');
+    expect(mockLocalModel.saveLocalModelPreferred).not.toHaveBeenCalled();
   });
 });

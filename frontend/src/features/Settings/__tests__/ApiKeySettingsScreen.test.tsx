@@ -10,7 +10,13 @@ import ApiKeySettingsScreen, {
 } from '../ApiKeySettingsScreen';
 import { BYOK_DETAIL_DISCLOSURE } from '../byokDisclosure';
 import { BYOK_PROVIDERS, providerForKey } from '../byokProviders';
+import {
+  LOCAL_MODEL_SWITCH_DESCRIPTION,
+  LOCAL_MODEL_SWITCH_LABEL,
+  LOCAL_MODEL_UNAVAILABLE_NOTE,
+} from '../localModelCopy';
 
+import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
 import { useApiKey } from '@/context/ApiKeyContext';
 import habitStyles from '@/features/Habits/Habits.styles';
 
@@ -29,6 +35,8 @@ function setApiKeyState(partial: Partial<ReturnType<typeof useApiKey>>) {
     loadError: null,
     saveApiKey: jest.fn(() => Promise.resolve({ persisted: true })),
     clearApiKey: jest.fn(() => Promise.resolve({ cleared: true })),
+    localModel: false,
+    setLocalModel: jest.fn(() => Promise.resolve({ persisted: true })),
   };
   const value = { ...base, ...partial } as ReturnType<typeof useApiKey>;
   mockUseApiKey.mockReturnValue(value);
@@ -415,5 +423,86 @@ describe('ApiKeySettingsScreen', () => {
     expect(queryByTestId('api-key-status')).toBeNull();
     expect(queryByTestId('api-key-error')).toBeNull();
     expect(getByTestId('api-key-input').props.value).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adepthood's own model: visible as coming soon, but inert until the provider exists.
+// ---------------------------------------------------------------------------
+
+describe('ApiKeySettingsScreen — the local-model switch', () => {
+  const disabledOf = (node: { props: { accessibilityState?: { disabled?: boolean } } }) =>
+    node.props.accessibilityState?.disabled;
+
+  test('sits above the key as an unavailable coming-soon choice', () => {
+    expect(LOCAL_MODEL_AVAILABLE).toBe(false);
+    setApiKeyState({});
+    const { getByTestId, getByText, toJSON } = render(<ApiKeySettingsScreen />);
+
+    const toggle = getByTestId('local-model-switch');
+    expect(toggle.props.accessibilityRole).toBe('switch');
+    expect(toggle.props.accessibilityLabel).toBe(LOCAL_MODEL_SWITCH_LABEL);
+    expect(toggle.props.value).toBe(false);
+    expect(disabledOf(toggle)).toBe(true);
+    expect(getByText(LOCAL_MODEL_SWITCH_DESCRIPTION)).toBeTruthy();
+    expect(getByTestId('local-model-note').props.children).toBe(LOCAL_MODEL_UNAVAILABLE_NOTE);
+
+    const tree = JSON.stringify(toJSON());
+    expect(tree.indexOf('local-model-choice')).toBeLessThan(tree.indexOf('api-key-area'));
+  });
+
+  test('does not make present-tense routing or privacy promises while unavailable', () => {
+    expect(LOCAL_MODEL_SWITCH_LABEL).toMatch(/coming soon/i);
+    expect(LOCAL_MODEL_SWITCH_DESCRIPTION).toMatch(/plans to offer/i);
+    expect(LOCAL_MODEL_SWITCH_DESCRIPTION).toMatch(/not available yet/i);
+    expect(LOCAL_MODEL_SWITCH_DESCRIPTION).toMatch(/open-source/);
+    expect(LOCAL_MODEL_SWITCH_DESCRIPTION).toMatch(/servers Adepthood operates/);
+    expect(LOCAL_MODEL_SWITCH_DESCRIPTION).not.toMatch(
+      /does not read|does not train|builds no profile/i,
+    );
+  });
+
+  test('off, the key area is live: the input takes text and Save is enabled', () => {
+    setApiKeyState({});
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+
+    expect(getByTestId('api-key-input').props.editable).toBe(true);
+    expect(disabledOf(getByTestId('save-key-button'))).toBe(false);
+    expect(disabledOf(getByTestId('api-key-area'))).toBe(false);
+    expect(getByTestId('api-key-area').props.pointerEvents).toBe('auto');
+  });
+
+  test('a stale true preference cannot grey the key area or claim the model is active', () => {
+    setApiKeyState({ localModel: true, apiKey: VALID_KEY });
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+
+    expect(getByTestId('local-model-switch').props.value).toBe(false);
+    expect(disabledOf(getByTestId('local-model-switch'))).toBe(true);
+    expect(getByTestId('local-model-note').props.children).toBe(LOCAL_MODEL_UNAVAILABLE_NOTE);
+    const area = getByTestId('api-key-area');
+    expect(disabledOf(area)).toBe(false);
+    expect(area.props.pointerEvents).toBe('auto');
+    expect(getByTestId('api-key-input').props.editable).toBe(true);
+    expect(disabledOf(getByTestId('reveal-toggle'))).toBe(false);
+    expect(disabledOf(getByTestId('save-key-button'))).toBe(false);
+    expect(disabledOf(getByTestId('remove-key-button'))).toBe(false);
+    expect(getByTestId('stored-key-card')).toBeTruthy();
+  });
+
+  test('a stale true preference still explains the shared provider when no key is saved', () => {
+    setApiKeyState({ localModel: true, apiKey: null });
+    const { getByTestId, getByText } = render(<ApiKeySettingsScreen />);
+
+    expect(getByTestId('no-key-hint')).toBeTruthy();
+    expect(getByText(BYOK_DETAIL_DISCLOSURE)).toBeTruthy();
+  });
+
+  test('the unavailable switch cannot hand a choice to the context', () => {
+    const state = setApiKeyState({});
+    const { getByTestId } = render(<ApiKeySettingsScreen />);
+
+    fireEvent(getByTestId('local-model-switch'), 'valueChange', true);
+
+    expect(state.setLocalModel).not.toHaveBeenCalled();
   });
 });
