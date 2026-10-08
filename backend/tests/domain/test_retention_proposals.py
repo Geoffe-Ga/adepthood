@@ -26,10 +26,14 @@ These tests hold three properties:
 from __future__ import annotations
 
 import ast
+import importlib.abc
+import importlib.util
 import inspect
 import re
+import sys
 from dataclasses import replace
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from sqlmodel import SQLModel
@@ -38,11 +42,14 @@ from domain import retention, retention_stores
 from domain.retention import (
     ENTRY_PURGE_BLOCKERS,
     NEVER_ELIGIBLE_STATES,
+    REDACT_INSTEAD_OF_DELETE,
     RETENTION,
     ProposalClock,
     RetentionProposal,
     RetentionRule,
     TodayComparison,
+    fixed_days,
+    implied_comparison,
     proposal_findings,
     proposed,
     retention_report,
@@ -68,7 +75,7 @@ from domain.retention_stores import (
 )
 from models.journal_withdrawal_obligation import OPEN_STATES
 from models.restore_marker import RestoreState
-from models.vault_activation import VaultActivationState
+from models.vault_activation import TEARDOWN_STATES, VaultActivationState
 from models.voice_draft_retraction import VoiceDraftRetractionState
 from routers.admin import cleanup_energy_plans, purge_journal_entries
 from services.energy import ENERGY_PLAN_RETENTION_DAYS
@@ -312,6 +319,102 @@ def test_a_proposal_longer_than_a_known_window_must_say_so(
     assert proposal_findings() == ()
 
 
+def test_an_after_erasure_clock_on_a_windowed_table_is_longer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Energy plans have a 30-day window, but a clock from erasure outlives the account.
+
+    energyplan is erased with its account (an ERASE table that is not
+    'until account deletion'), so 7 days after erasure is longer than today
+    whatever the window says.
+    """
+    after_erasure = replace(
+        _proposal("energyplan"), clock=ProposalClock.AFTER_ACCOUNT_DELETION, trigger="erasure"
+    )
+    _with_proposal(monkeypatch, "energyplan", after_erasure)
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert "energyplan" in findings[0]
+    assert "longer" in findings[0]
+
+    declared = replace(after_erasure, compared_to_today=TodayComparison.LONGER)
+    _with_proposal(monkeypatch, "energyplan", declared)
+    assert proposal_findings() == ()
+
+
+def test_an_after_erasure_clock_on_a_soft_deleted_entry_is_longer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ERASE-disposition branch: a sweep with no window on an erased table."""
+    entry = RETENTION["journalentry"]
+    nested = entry.soft_deleted
+    assert nested is not None
+    assert nested.proposal is not None
+    after_erasure = replace(nested.proposal, clock=ProposalClock.AFTER_ACCOUNT_DELETION)
+    patched = dict(RETENTION)
+    patched["journalentry"] = replace(entry, soft_deleted=replace(nested, proposal=after_erasure))
+    monkeypatch.setattr(retention, "RETENTION", patched)
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert "journalentry (soft-deleted)" in findings[0]
+    assert "longer" in findings[0]
+
+
+def test_a_proposal_on_another_clock_than_the_window_cannot_be_compared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A creation-keyed window and an event-keyed proposal are not comparable numbers."""
+    other_clock = replace(_proposal("energyplan"), clock=ProposalClock.ROW_EVENT)
+    assert (
+        implied_comparison("energyplan", RETENTION["energyplan"], other_clock)
+        is TodayComparison.UNKNOWN
+    )
+    _with_proposal(monkeypatch, "energyplan", other_clock)
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert "unknown" in findings[0]
+
+
+def test_a_ratified_obligation_rule_must_keep_its_exemption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ratifying the 30-day proposal as a plain fixed_days rule would expire open rows."""
+    plain = fixed_days(
+        _proposal("journalwithdrawalobligation").days,
+        trigger="vault confirmation",
+        rationale="ratified",
+        ratified=True,
+    )
+    monkeypatch.setattr(retention, "RETENTION", {"journalwithdrawalobligation": plain})
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert "pending_delete" in findings[0]
+
+    kept = replace(plain, exempt_states=NEVER_ELIGIBLE_STATES["journalwithdrawalobligation"])
+    monkeypatch.setattr(retention, "RETENTION", {"journalwithdrawalobligation": kept})
+    assert proposal_findings() == ()
+
+
+def test_a_ratified_sale_rule_must_keep_its_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ratifying the sale proposal as row deletion would drop the receipt itself."""
+    plain = fixed_days(
+        _proposal("gumroadsale").days, trigger="anonymisation", rationale="r", ratified=True
+    )
+    monkeypatch.setattr(retention, "RETENTION", {"gumroadsale": plain})
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert "redact" in findings[0]
+
+    kept = replace(plain, redact_columns=REDACT_INSTEAD_OF_DELETE["gumroadsale"])
+    monkeypatch.setattr(retention, "RETENTION", {"gumroadsale": kept})
+    assert proposal_findings() == ()
+
+
+def test_the_sale_proposal_redacts_exactly_the_required_columns() -> None:
+    """The proposal and the table-level constraint name the same columns."""
+    assert _proposal("gumroadsale").redact_columns == REDACT_INSTEAD_OF_DELETE["gumroadsale"]
+
+
 def test_a_ratified_rule_cannot_keep_a_proposal(monkeypatch: pytest.MonkeyPatch) -> None:
     """Ratifying means the proposal became the rule; a leftover one is reported."""
     ratified = replace(RETENTION["gumroadsale"], ratified=True)
@@ -379,10 +482,11 @@ def test_never_eligible_states_match_the_models() -> None:
             for state in VoiceDraftRetractionState
             if state.value not in blocker.cleared_states
         ),
-        "vaultteardownreceipt": frozenset(
-            {VaultActivationState.DELETING.value, VaultActivationState.FAILED.value}
-        ),
-        "restoremarker": frozenset({RestoreState.IN_PROGRESS.value}),
+        # Every teardown state but the confirmed one, and every restore state
+        # but the finished one: a new state in either lifecycle forces a decision.
+        "vaultteardownreceipt": frozenset(TEARDOWN_STATES) - {VaultActivationState.DELETED.value},
+        "restoremarker": frozenset(state.value for state in RestoreState)
+        - {RestoreState.COMPLETE.value},
     }
     assert dict(NEVER_ELIGIBLE_STATES) == expected
 
@@ -446,9 +550,78 @@ def test_a_shorter_backup_retention_cannot_lower_the_purge_floor_while_old_dumps
     )
     assert oldest_live_backup_days(ratified, HELD_BACKUP_BOUND_DAYS) == HELD_BACKUP_BOUND_DAYS
     assert HELD_BACKUP_BOUND_DAYS == (HELD_OFFHOST_DUMP_RETENTION_DAYS + OFFHOST_DUMP_INTERVAL_DAYS)
-    assert HELD_OFFHOST_DUMP_RETENTION_DAYS == OFFHOST_DUMP_RETENTION_DAYS
+    # HELD may only be lowered in a separate, later change, once every dump kept
+    # under the older (longer) retention has been pruned -- never to match a
+    # freshly lowered OFFHOST in the same change.
+    assert HELD_OFFHOST_DUMP_RETENTION_DAYS >= OFFHOST_DUMP_RETENTION_DAYS
     assert OLDEST_LIVE_BACKUP_DAYS >= HELD_BACKUP_BOUND_DAYS
     assert PURGE_MIN_RETENTION_DAYS == OLDEST_LIVE_BACKUP_DAYS
+
+
+class _EditedSource(importlib.abc.SourceLoader):
+    """Load a module from its real file with one line edited."""
+
+    def __init__(self, path: Path, replace_from: str, replace_to: str) -> None:
+        self._path = path
+        self._from = replace_from
+        self._to = replace_to
+
+    def get_filename(self, fullname: str) -> str:
+        del fullname
+        return str(self._path)
+
+    def get_data(self, path: str) -> bytes:
+        source = Path(path).read_text(encoding="utf-8")
+        assert source.count(self._from) == 1, f"{self._from!r} not found once in {path}"
+        return source.replace(self._from, self._to).encode("utf-8")
+
+
+def _load_variant(
+    monkeypatch: pytest.MonkeyPatch, name: str, path: Path, edit: tuple[str, str]
+) -> ModuleType:
+    """Import a copy of a source module, with one line edited, under another name.
+
+    Registered in ``sys.modules`` for the test only (dataclasses resolve their
+    module there while the class body runs).
+    """
+    loader = _EditedSource(path, *edit)
+    spec = importlib.util.spec_from_loader(name, loader, origin=str(path))
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, name, module)
+    loader.exec_module(module)
+    return module
+
+
+def test_ratifying_thirty_day_dumps_keeps_the_floor_at_the_held_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ratification edit itself: OFFHOST lowered to 30, HELD left at 90.
+
+    Both the oldest-live-copy bound and the journal purge floor built on it stay
+    at the held bound (97), not the 37 the new retention alone would give.
+    """
+    stores_path = _BACKEND_SRC / "domain" / "retention_stores.py"
+    ratified = _load_variant(
+        monkeypatch,
+        "retention_stores_ratified",
+        stores_path,
+        (
+            f"\nOFFHOST_DUMP_RETENTION_DAYS: Final = {OFFHOST_DUMP_RETENTION_DAYS}\n",
+            f"\nOFFHOST_DUMP_RETENTION_DAYS: Final = {PROPOSED_OFFHOST_DUMP_DAYS}\n",
+        ),
+    )
+    assert ratified.OFFHOST_DUMP_RETENTION_DAYS == PROPOSED_OFFHOST_DUMP_DAYS
+    assert ratified.OLDEST_LIVE_BACKUP_DAYS == HELD_BACKUP_BOUND_DAYS
+
+    monkeypatch.setitem(sys.modules, "domain.retention_stores", ratified)
+    purge = _load_variant(
+        monkeypatch,
+        "journal_retention_ratified",
+        _BACKEND_SRC / "services" / "journal_retention.py",
+        ("PURGE_BATCH_SIZE: Final = 200\n", "PURGE_BATCH_SIZE: Final = 200\n"),
+    )
+    assert purge.PURGE_MIN_RETENTION_DAYS == HELD_BACKUP_BOUND_DAYS
 
 
 def test_report_shows_each_proposal_and_its_comparison() -> None:

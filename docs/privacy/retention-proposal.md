@@ -44,8 +44,13 @@ The proposals follow these rules:
   `unconfirmed`, `mirror_intent`, `pending`), unconfirmed teardowns and
   unfinished restores are never eligible, and these exemptions are stored as
   data on the proposal. The sale proposal blanks two columns rather than
-  deleting the receipt. A conditional proposal cannot be ratified as a plain
-  `fixed_days` rule: its sweep has to apply the same condition.
+  deleting the receipt. The conditions are also required, per table, of any
+  rule that sweeps, so they survive ratification. A conditional proposal
+  therefore cannot be ratified as a plain `fixed_days` rule.
+- **Clocks are compared only like with like.** A proposal counted from account
+  deletion, on rows erased with the account today, is `longer` whatever window
+  applies today. A window counted from row creation is compared only with a
+  proposal on the same clock; any other clock is `unknown`.
 - **Nothing acts on a proposal.** A proposal is stored next to its placeholder
   (`RetentionRule.proposal`, `Store.proposal`) and is shown by
   `PYTHONPATH=src python -m scripts.retention_report`. No sweep, purge or route
@@ -54,10 +59,15 @@ The proposals follow these rules:
   - no module outside the two registries refers to a proposal;
   - the energy-plan sweep keeps its 30-day default;
   - the journal purge keeps no default.
-- **To ratify a row,** write its value into the rule itself, keeping any
-  condition, set `ratified=True`, delete the proposal, and update this table.
-  The tests reject a ratified rule that still carries a proposal, and an
-  unratified rule without one.
+- **To ratify a row,** write its value into the rule itself and copy the
+  proposal's conditions onto the rule (`exempt_states`, `redact_columns`).
+  Then set `ratified=True`, delete the proposal, and update this table. The
+  tests reject:
+  - a ratified rule that still carries a proposal;
+  - an unratified rule without one;
+  - a sweeping rule that drops a required condition. For example, the
+    withdrawal obligations ratified as a plain `fixed_days` rule without their
+    open-state exemption, or the sale receipt deleted rather than redacted.
 
 Claims about law, vendors and payment disputes below are assumptions **to
 confirm**, not settled facts.

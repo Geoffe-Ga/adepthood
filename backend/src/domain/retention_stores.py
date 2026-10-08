@@ -81,8 +81,10 @@ BACKUP_LEGS: tuple[BackupLeg, ...] = (
 
 #: The off-host retention the oldest dumps *still held* were written under.
 #: Lowering :data:`OFFHOST_DUMP_RETENTION_DAYS` does not delete the dumps
-#: already kept for longer, so this stays at the old value until every one of
-#: them has aged out (and been pruned), and is lowered only in a later change.
+#: already kept for longer, so this stays at the old value. It may only be
+#: lowered -- in a separate, later change -- once every dump older than the new
+#: bound (new retention plus one interval) has been pruned. It is never below
+#: :data:`OFFHOST_DUMP_RETENTION_DAYS`.
 HELD_OFFHOST_DUMP_RETENTION_DAYS: Final = 90
 #: The age the oldest still-held copy can reach under that older retention.
 HELD_BACKUP_BOUND_DAYS: Final = HELD_OFFHOST_DUMP_RETENTION_DAYS + OFFHOST_DUMP_INTERVAL_DAYS

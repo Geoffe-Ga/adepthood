@@ -39,7 +39,8 @@ def _quoted(values: tuple[str, ...]) -> str:
 
 _ACTIVATION_STATES = tuple(state.value for state in VaultActivationState)
 _CUSTODY_MODES = tuple(mode.value for mode in VaultCustodyMode)
-_TEARDOWN_STATES = (
+#: Every state a detached teardown receipt can be in; ``deleted`` is the confirmed one.
+TEARDOWN_STATES = (
     VaultActivationState.DELETING.value,
     VaultActivationState.DELETED.value,
     VaultActivationState.FAILED.value,
@@ -96,7 +97,7 @@ class VaultTeardownReceipt(SQLModel, table=True):
     __tablename__ = "vaultteardownreceipt"
     __table_args__ = (
         CheckConstraint(
-            f"state IN ({_quoted(_TEARDOWN_STATES)})",
+            f"state IN ({_quoted(TEARDOWN_STATES)})",
             name="ck_vaultteardownreceipt_state_valid",
         ),
         CheckConstraint(

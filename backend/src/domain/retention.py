@@ -187,6 +187,12 @@ class RetentionRule:
     soft_deleted: RetentionRule | None = None
     ratified: bool = True
     proposal: RetentionProposal | None = None
+    #: A sweep's conditions, carried over from the proposal on ratification: rows
+    #: in these states are never eligible, and when set, these columns are
+    #: blanked instead of the row being deleted. Required on a sweeping rule for
+    #: tables in :data:`NEVER_ELIGIBLE_STATES` / :data:`REDACT_INSTEAD_OF_DELETE`.
+    exempt_states: frozenset[str] = frozenset()
+    redact_columns: tuple[str, ...] = ()
 
     def is_bounded(self) -> bool:
         """Whether this lifetime ends on its own, independently of any account."""
@@ -659,6 +665,19 @@ NEVER_ELIGIBLE_STATES: Mapping[str, frozenset[str]] = {
     "voicedraftretraction": frozenset({"mirror_intent", "pending"}),
 }
 
+#: Tables whose bounded lifetime blanks columns rather than deleting the row:
+#: the purchase receipt stays, the buyer's identifiers go.
+REDACT_INSTEAD_OF_DELETE: Mapping[str, tuple[str, ...]] = {
+    "gumroadsale": ("email", "raw_payload"),
+}
+
+#: Every sweep window in this registry counts from row creation.
+_WINDOW_CLOCK = ProposalClock.ROW_CREATED
+
+#: Rule kinds under which something other than account deletion removes rows,
+#: so a sweep's conditions must be stated on the rule itself.
+_SWEEPING_KINDS = frozenset({RetentionKind.FIXED_DAYS, RetentionKind.SWEPT_BY})
+
 _UNBOUNDED_TODAY = frozenset(
     {RetentionKind.UNTIL_ACCOUNT_DELETION, RetentionKind.INDEFINITE, RetentionKind.SWEPT_BY}
 )
@@ -671,6 +690,13 @@ def _compare(proposed_days: int, today_days: int) -> TodayComparison:
     if proposed_days > today_days:
         return TodayComparison.LONGER
     return TodayComparison.SAME
+
+
+def _compare_window(proposal: RetentionProposal, window_days: int) -> TodayComparison:
+    """Compare with a creation-keyed window, or ``UNKNOWN`` on any other clock."""
+    if proposal.clock is not _WINDOW_CLOCK:
+        return TodayComparison.UNKNOWN
+    return _compare(proposal.days, window_days)
 
 
 def _dies_with_account(table: str, rule: RetentionRule) -> bool:
@@ -686,16 +712,18 @@ def implied_comparison(
 ) -> TodayComparison:
     """What the rule and the proposal's clock imply about the comparison with today.
 
-    * A known window (a sweep's days) is compared number to number.
     * A clock that starts at account erasure, on rows that today die with their
-      account, keeps them past erasure: longer.
+      account, keeps them past erasure: longer -- whatever window applies today.
+    * A known window (a sweep's days, counted from row creation) is compared
+      number to number, but only with a proposal on the same clock; a proposal
+      counted from another event cannot be compared and is unknown.
     * Any other finite proposal on a lifetime that is unbounded today (until
       account deletion, indefinite, or a sweep with no window) is shorter.
     """
-    if rule.days is not None:
-        return _compare(proposal.days, rule.days)
     if proposal.clock is ProposalClock.AFTER_ACCOUNT_DELETION and _dies_with_account(table, rule):
         return TodayComparison.LONGER
+    if rule.days is not None:
+        return _compare_window(proposal, rule.days)
     if rule.kind in _UNBOUNDED_TODAY:
         return TodayComparison.SHORTER
     return TodayComparison.UNKNOWN
@@ -723,6 +751,34 @@ def _exemption_finding(name: str, table: str, rule: RetentionRule) -> str | None
     return f"{name}: the proposal would make rows in {missing} eligible; they must be exempt"
 
 
+def _redaction_finding(name: str, table: str, rule: RetentionRule) -> str | None:
+    """A finding when a proposal would delete rows that must only be redacted."""
+    required = REDACT_INSTEAD_OF_DELETE.get(table)
+    if rule.proposal is None or required is None or rule.proposal.redact_columns == required:
+        return None
+    return f"{name}: the proposal must redact {list(required)} rather than delete the row"
+
+
+def _ratified_condition_findings(name: str, table: str, rule: RetentionRule) -> list[str]:
+    """Findings when a sweeping rule lost the conditions its table requires.
+
+    Ratification deletes the proposal, so the conditions must be carried into
+    the rule itself; a plain ``fixed_days`` rule would expire open obligations
+    or delete a receipt that should only be redacted.
+    """
+    if rule.kind not in _SWEEPING_KINDS:
+        return []
+    findings: list[str] = []
+    required = NEVER_ELIGIBLE_STATES.get(table, frozenset())
+    if not required <= rule.exempt_states:
+        missing = sorted(required - rule.exempt_states)
+        findings.append(f"{name}: the rule makes rows in {missing} eligible; they must be exempt")
+    redact = REDACT_INSTEAD_OF_DELETE.get(table)
+    if redact is not None and rule.redact_columns != redact:
+        findings.append(f"{name}: the rule must redact {list(redact)} rather than delete the row")
+    return findings
+
+
 def _presence_finding(name: str, rule: RetentionRule) -> str | None:
     """A finding when an unratified rule lacks a proposal, or a ratified one keeps one."""
     if rule.proposal is None:
@@ -739,8 +795,11 @@ def _rule_findings(name: str, rule: RetentionRule) -> list[str]:
         _presence_finding(name, rule),
         _comparison_finding(name, table, rule),
         _exemption_finding(name, table, rule),
+        _redaction_finding(name, table, rule),
     )
-    return [finding for finding in found if finding is not None]
+    findings = [finding for finding in found if finding is not None]
+    findings.extend(_ratified_condition_findings(name, table, rule))
+    return findings
 
 
 def proposal_findings() -> tuple[str, ...]:
@@ -751,8 +810,9 @@ def proposal_findings() -> tuple[str, ...]:
     * each proposal's declared ``compared_to_today`` matches what the rule and
       the proposal's clock imply -- so one that keeps rows longer than today,
       including past their account's erasure, must say ``longer``;
-    * no proposal makes a never-eligible state (:data:`NEVER_ELIGIBLE_STATES`)
-      eligible.
+    * no proposal, and no sweeping rule (ratified ones included), makes a
+      never-eligible state (:data:`NEVER_ELIGIBLE_STATES`) eligible or deletes
+      a row that must only be redacted (:data:`REDACT_INSTEAD_OF_DELETE`).
     """
     findings: list[str] = []
     for name, rule in _rules_with_nested():
