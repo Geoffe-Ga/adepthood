@@ -64,6 +64,7 @@ from types import MappingProxyType, SimpleNamespace
 from typing import Final
 
 import pytest
+import sentry_sdk.utils as sentry_sdk_utils
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
 
@@ -578,9 +579,29 @@ _RETIRED_SENTRY_CLAIMS: Final[tuple[str, ...]] = (
     "each is closed twice",
 )
 
-# The location fields a reported frame keeps, and the policy's words for them.
+# Each field the scrubber keeps, at each level of an exception entry, and the
+# policy's words for it. The rebuilt event must carry exactly these: a kept
+# field missing here is undisclosed, and a word here for a field never sent
+# describes a report the code does not make (#3116).
+_ENTRY_FIELD_WORDS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "type": "its type",
+        "module": "the module it comes from",
+        "value": "a fixed error code",
+        "mechanism": "how it was caught",
+        "stacktrace": "each stack frame",
+    }
+)
+_MECHANISM_FIELD_WORDS: Final[Mapping[str, str]] = MappingProxyType(
+    {"type": "how it was caught", "handled": "whether it was handled"}
+)
 _FRAME_FIELD_WORDS: Final[Mapping[str, str]] = MappingProxyType(
-    {"filename": "file", "function": "function", "lineno": "line"}
+    {
+        "filename": "file",
+        "function": "function",
+        "lineno": "line",
+        "in_app": "whether that frame is in the app's own code",
+    }
 )
 
 
@@ -590,55 +611,146 @@ def _field(node: object, name: str) -> object:
     return node[name]
 
 
-def _only_item(node: object) -> dict[str, object]:
-    """Return the single mapping in a one-element list."""
+def _mappings(node: object) -> list[dict[str, object]]:
+    """Return a non-empty list of mappings, asserting that is what ``node`` is."""
     assert isinstance(node, list), node
-    assert len(node) == 1, node
-    item = node[0]
-    assert isinstance(item, dict), item
-    return item
+    assert node, node
+    assert all(isinstance(item, dict) for item in node), node
+    return node
+
+
+# Every key the installed SDK puts on a stack frame (``serialize_frame`` plus
+# the ``in_app`` flag the client adds while preparing the event), on an
+# exception entry, and on an entry's mechanism (an exception group with a
+# chained cause fills them all). The fixture below is built by the SDK itself;
+# these pin that it really carries them, so a key the SDK fills cannot hide
+# from the disclosure check by being absent.
+_SDK_FRAME_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "filename",
+        "abs_path",
+        "function",
+        "module",
+        "lineno",
+        "pre_context",
+        "context_line",
+        "post_context",
+        "vars",
+        "in_app",
+    }
+)
+_SDK_ENTRY_KEYS: Final[frozenset[str]] = frozenset(
+    {"type", "module", "value", "mechanism", "stacktrace"}
+)
+_SDK_MECHANISM_KEYS: Final[frozenset[str]] = frozenset(
+    {"type", "handled", "exception_id", "parent_id", "source", "is_exception_group"}
+)
+
+
+class _AppDefinedError(RuntimeError):
+    """An exception class of the app's own, so the SDK fills the entry's ``module``.
+
+    A builtin's module is ``None`` on the wire; the app's own errors are not builtins.
+    """
+
+
+def _raise_with_body(body: str) -> None:
+    """Raise with ``body`` in the message and in a frame local, as a real crash would."""
+    raise KeyError(body)
+
+
+def _raise_app_error(body: str) -> None:
+    """Raise an app-defined error chained from a cause carrying ``body``."""
+    try:
+        _raise_with_body(body)
+    except KeyError as cause:
+        raise _AppDefinedError(body) from cause
+
+
+def _raise_chained(body: str) -> None:
+    """Raise an exception group around a chained cause, so every mechanism key is filled."""
+    try:
+        _raise_app_error(body)
+    except _AppDefinedError as chained:
+        raise ExceptionGroup(body, [chained]) from None
+
+
+def _sdk_built_event() -> dict[str, object]:
+    """Return the event the installed Sentry SDK builds for a real exception.
+
+    ``event_from_exception`` serialises every entry with its mechanism and every
+    frame with source context and locals; ``set_in_app_in_frames`` adds the
+    ``in_app`` flag the client sets before ``before_send`` sees the event.
+    Nothing is hand-written, so the fixture has every key a deployed SDK emits.
+    """
+    try:
+        _raise_chained(_SENTINEL_BODY)
+    except ExceptionGroup as exc:
+        event, _ = sentry_sdk_utils.event_from_exception(exc)
+    for entry in event["exception"]["values"]:
+        sentry_sdk_utils.set_in_app_in_frames(
+            entry["stacktrace"]["frames"], None, None, project_root=str(_REPO_ROOT)
+        )
+    return dict(event)
+
+
+def _entries(event: object) -> list[dict[str, object]]:
+    """Return an event's exception entries."""
+    return _mappings(_field(_field(event, "exception"), "values"))
+
+
+def _keys_of(nodes: list[dict[str, object]]) -> set[str]:
+    """Every key any of ``nodes`` carries."""
+    return {key for node in nodes for key in node}
+
+
+def test_the_sdk_built_fixture_carries_every_key_the_sdk_fills() -> None:
+    """The fixture is SDK-shaped: entries, mechanisms and frames carry every key the SDK fills."""
+    entries = _entries(_sdk_built_event())
+
+    assert all(set(entry) == _SDK_ENTRY_KEYS for entry in entries), entries
+    assert _keys_of([_string_keyed(entry["mechanism"]) for entry in entries]) == _SDK_MECHANISM_KEYS
+    for entry in entries:
+        for frame in _mappings(_field(_field(entry, "stacktrace"), "frames")):
+            assert set(frame) == _SDK_FRAME_KEYS
+
+
+def _string_keyed(node: object) -> dict[str, object]:
+    """Return ``node`` as a mapping, asserting that is what it is."""
+    assert isinstance(node, dict), node
+    return node
 
 
 def test_the_policy_describes_the_error_report_the_scrubber_builds() -> None:
-    """The Sentry paragraph describes the rebuilt event: no message, location-only frames.
+    """The Sentry paragraph names exactly what the rebuilt event carries, level by level.
 
-    Re-derived by running ``scrub_event`` over an event carrying a message,
-    frame source and frame locals: the message is replaced and each frame keeps
-    only its location, which is what the paragraph now tells a reader.
+    Re-derived by running ``scrub_event`` over the event the installed SDK
+    builds for a real exception group -- message, mechanism ids, frame source,
+    frame locals, module and ``in_app`` all present. At each level (entry,
+    mechanism, frame) the keys the scrubber sends are exactly the keys the
+    paragraph names, so nothing the SDK fills goes unsaid and nothing said is
+    left unsent.
     """
     policy = _prose(_PRIVACY_POLICY)
     start = policy.index(_SENTRY_PARAGRAPH_OPENING)
     paragraph = policy[start : policy.index(_SENTRY_PARAGRAPH_CLOSING, start)]
-    event: dict[str, object] = {
-        "exception": {
-            "values": [
-                {
-                    "type": "RuntimeError",
-                    "value": _SENTINEL_BODY,
-                    "stacktrace": {
-                        "frames": [
-                            {
-                                "filename": "routers/journal.py",
-                                "function": "create_entry",
-                                "lineno": 1,
-                                "context_line": _SENTINEL_BODY,
-                                "vars": {"body": _SENTINEL_BODY},
-                            }
-                        ]
-                    },
-                }
-            ]
-        }
-    }
 
-    entry = _only_item(_field(_field(scrub_event(event, {}), "exception"), "values"))
-    frame = _only_item(_field(_field(entry, "stacktrace"), "frames"))
+    entries = _entries(scrub_event(_sdk_built_event(), {}))
+    mechanisms = [_string_keyed(entry["mechanism"]) for entry in entries]
+    frames = [
+        frame
+        for entry in entries
+        for frame in _mappings(_field(_field(entry, "stacktrace"), "frames"))
+    ]
 
-    assert entry["value"] != _SENTINEL_BODY
-    assert set(frame) == set(_FRAME_FIELD_WORDS)
+    assert all(entry["value"] != _SENTINEL_BODY for entry in entries)
+    assert _keys_of(entries) == set(_ENTRY_FIELD_WORDS)
+    assert _keys_of(mechanisms) == set(_MECHANISM_FIELD_WORDS)
+    assert _keys_of(frames) == set(_FRAME_FIELD_WORDS)
     assert "message is never sent" in paragraph
-    for word in _FRAME_FIELD_WORDS.values():
-        assert word in paragraph, f"the Sentry paragraph no longer names a frame's {word}"
+    for words in (_ENTRY_FIELD_WORDS, _MECHANISM_FIELD_WORDS, _FRAME_FIELD_WORDS):
+        unnamed = [word for word in words.values() if word not in paragraph]
+        assert not unnamed, f"the Sentry paragraph no longer names {unnamed}"
     restated = [claim for claim in _RETIRED_SENTRY_CLAIMS if claim in paragraph]
     assert not restated, f"the Sentry paragraph still describes the retired scrubber: {restated}"
 

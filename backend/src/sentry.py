@@ -120,14 +120,26 @@ _TAG_FIELDS: Final = ("request_id",)
 # is still :class:`SentryContext`.
 _REQUEST_CONTEXT_FIELDS: Final = tuple(sorted(SentryContext.__optional_keys__))
 # ``value`` is deliberately absent: it is the exception message, and is
-# replaced by a content-free reason instead of copied.
+# replaced by a content-free reason instead of copied. Every field kept at each
+# level below is one the privacy policy names; a test compares the kept set
+# with the policy's words (#3116).
 _ENTRY_FIELDS: Final = ("type", "module")
-# ``data`` and ``description`` are left out: both are free text.
-_MECHANISM_FIELDS: Final = ("type", "handled", "exception_id", "parent_id", "is_exception_group")
-# A frame's location only. ``abs_path`` names the host's filesystem, and
+# How the exception was caught and whether it was handled. ``data`` and
+# ``description`` are left out: both are free text. ``exception_id``,
+# ``parent_id`` and ``is_exception_group`` (exception-group bookkeeping) are
+# left out too: the policy does not name them, and the app raises no exception
+# groups of its own, so Sentry groups a chain on its entries without them.
+_MECHANISM_FIELDS: Final = ("type", "handled")
+# A frame's location, and whether it is the app's own code -- the file,
+# function and line the privacy policy names, plus ``in_app``. ``in_app`` is a
+# boolean with no user content, and Sentry's grouping depends on it: without
+# it every library frame (fastapi, starlette, sqlalchemy) enters the issue
+# hash, so a routine upgrade of one of them splits existing issues.
+# ``abs_path`` names the host's filesystem, and
 # ``pre_context``/``context_line``/``post_context``/``vars`` are source and
 # locals -- exactly where the entry body sits at the moment of the raise.
-_FRAME_FIELDS: Final = ("filename", "module", "function", "lineno", "in_app")
+# ``module`` is dropped: undisclosed, and ``filename`` already locates the frame.
+_FRAME_FIELDS: Final = ("filename", "function", "lineno", "in_app")
 # Values a picked field may hold. A container in a scalar slot is dropped, not
 # walked, so nothing nested can ride in under an allowlisted name.
 _SCALARS: Final = (str, bool, int, float, datetime)
