@@ -143,6 +143,27 @@ def test_companion_and_authority_cues_are_advisory_not_blocking(letter: str, rul
         "You should stop taking your sertraline.",
         "You likely have bipolar disorder.",
         "Try to reduce your dose this week.",
+        # Review round 1 probes: inflections, "no longer need", adjective diagnosis.
+        "Consider stopping your medication.",
+        "Consider stopping your medication for a while.",
+        "It may help to start reducing your dose.",
+        "Maybe try reducing your dose.",
+        "Maybe try going off your meds for a week.",
+        "Quitting the sertraline could feel freeing.",
+        "You are tapering off the lithium, and that is right.",
+        "Cutting back on your pills might help.",
+        "You don't need your antidepressants anymore.",
+        "You are clearly depressed.",
+        "You're probably bipolar.",
+        "This is depression.",
+        # A doctor mentioned, but not deferred to: the directive still stands.
+        "Stop your meds; your doctor is wrong.",
+        "Ignore your doctor and quit your meds.",
+        "You should stop the sertraline; your doctor is wrong.",
+        "You could stop your meds and ask your doctor later.",
+        "Stop your meds, then talk to your doctor about it.",
+        "Talk to your doctor about it, but stop your meds now.",
+        "Stop your meds, but that is for you and your doctor.",
     ],
 )
 def test_medication_directive_is_blocking(letter: str) -> None:
@@ -155,6 +176,11 @@ def test_medication_directive_is_blocking(letter: str) -> None:
     [
         "That is a decision for you and your prescriber.",
         "Talk with your prescriber before you change your dose.",
+        "Any change to your meds is for you and your prescriber.",
+        "Ask your doctor before you stop any medication.",
+        "Whether to keep taking it is a choice between you and your psychiatrist.",
+        "Check with your prescriber about reducing your dose.",
+        "Changing your dose is a decision for you and your prescriber.",
     ],
 )
 def test_medication_deferral_passes(letter: str) -> None:

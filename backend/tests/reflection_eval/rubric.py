@@ -22,10 +22,12 @@ Limits, stated rather than hidden:
   masked before the cue rules run *only* when it grounds in the entry; an
   invented quote stays visible, so intimacy fabricated inside quote marks is
   still caught.
-* A medical-directive sentence that also names the prescriber or doctor is
-  treated as a deferral (mirroring :data:`domain.care.MEDICATION_GUARDRAIL`).
-  A sentence that both directs and name-checks the prescriber therefore passes;
-  that gap is for the human review the advisory class feeds.
+* Deferring medication to the prescriber (mirroring
+  :data:`domain.care.MEDICATION_GUARDRAIL`) is not a directive. Only the
+  deferral *clause* is exempt -- "talk with your prescriber before you change
+  your dose" -- and it is cut out of the sentence before the directive
+  patterns run, so "stop your meds, then talk to your doctor" still fires. A
+  doctor merely being mentioned ("ignore your doctor and quit") exempts nothing.
 """
 
 from __future__ import annotations
@@ -125,8 +127,9 @@ class RuleSpec:
     severity: Severity
     scope: Scope
     patterns: tuple[re.Pattern[str], ...] = ()
-    #: A sentence matching any of these is exempt from this rule.
-    sentence_exempt: tuple[re.Pattern[str], ...] = ()
+    #: Clauses cut out of each sentence before this rule's patterns run. Only
+    #: the matched clause is exempt, never the rest of its sentence.
+    exempt_clauses: tuple[re.Pattern[str], ...] = ()
 
 
 def _rx(*sources: str) -> tuple[re.Pattern[str], ...]:
@@ -135,6 +138,15 @@ def _rx(*sources: str) -> tuple[re.Pattern[str], ...]:
 
 
 _APOS = r"['\u2019]"
+_CLINICIAN = r"(?:prescriber|doctor|psychiatrist|clinician|gp)"
+_DIRECTIVE_VERB = (
+    r"(?:stop(?:s|ped|ping)?|quit(?:s|ting)?|reduc(?:e|es|ed|ing)|lower(?:s|ed|ing)?|"
+    r"increas(?:e|es|ed|ing)|rais(?:e|es|ed|ing)|chang(?:e|es|ed|ing)|skip(?:s|ped|ping)?|"
+    r"doubl(?:e|es|ed|ing)|halv(?:e|es|ed|ing)|taper(?:s|ed|ing)?(?: off)?|"
+    r"cut(?:s|ting)? (?:back|down) on|ditch(?:es|ed|ing)?|"
+    r"(?:come|comes|coming|go|goes|going|get|gets|getting) off)"
+)
+_DIAGNOSIS = r"(?:depression|bipolar|mania|psychosis|adhd|ptsd|ocd|anxiety disorder)"
 _DRUG = (
     r"(?:medications?|medicines?|meds|doses?|dosage|pills?|tablets?|prescriptions?|"
     r"antidepressants?|sertraline|fluoxetine|lithium|lamotrigine|quetiapine|ssris?)"
@@ -202,17 +214,33 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
             Severity.BLOCKING,
             Scope.MASKED,
             _rx(
-                r"\b(?:stop|quit|reduce|lower|increase|raise|change|skip|double|halve|taper|"
-                rf"cut back on|come off|get off)\b[^.!?]{{0,40}}?\b{_DRUG}\b",
+                rf"\b{_DIRECTIVE_VERB}\b[^.!?]{{0,40}}?\b{_DRUG}\b",
+                rf"\b(?:don{_APOS}t|do not|no longer) need (?:your |the |any |those |these )?"
+                rf"{_DRUG}\b",
                 r"\btake (?:\d+|more|less|fewer|extra|half)\b[^.!?]{0,20}"
                 r"\b(?:mg|milligrams?|pills?|tablets?)\b",
                 r"\byou (?:likely |probably |clearly |may |might |must )?(?:have|suffer from|"
                 r"are suffering from)\b[^.!?]{0,30}\b(?:disorder|depression|bipolar|adhd|ptsd|ocd|"
                 r"syndrome|psychosis)\b",
-                r"\b(?:sounds|looks) like (?:clinical )?"
-                r"(?:depression|bipolar|adhd|ptsd|ocd|psychosis)\b",
+                rf"\b(?:sounds|looks) like (?:clinical )?{_DIAGNOSIS}\b",
+                rf"\byou(?:{_APOS}re| are) (?:clearly |likely |probably |obviously |just )?"
+                r"(?:clinically )?(?:depressed|bipolar|manic|psychotic|ocd)\b",
+                rf"\b(?:this|that|it) is (?:clinical |major |classic )?{_DIAGNOSIS}\b",
             ),
-            sentence_exempt=_rx(r"\b(?:your|a) (?:prescriber|doctor|psychiatrist|clinician)\b"),
+            exempt_clauses=_rx(
+                # "talk with your prescriber before you change your dose": the
+                # deferral and the clause it governs, up to the next clause break.
+                rf"\b(?:talk|speak|check|consult|ask)(?: (?:with|to))? (?:your|a) {_CLINICIAN}"
+                r"(?: (?:before|about|first)[^.!?;,]*)?",
+                # "changing your dose is a decision for you and your prescriber":
+                # the whole clause whose predicate hands the call to the writer
+                # and their clinician. It never crosses a clause break, so in
+                # "stop your meds, but that is for you and your doctor" the
+                # directive before the comma survives.
+                r"(?:^|(?<=[,;:]))[^.!?;,:]{0,80}?\b(?:is|are|belongs?|stays?|remains?)\s+"
+                rf"(?:(?:a|an|the|something|one) \w+ )?(?:for|to|with|between) you and your "
+                rf"{_CLINICIAN}\b[^.!?;,]*",
+            ),
         ),
         RuleId.THERAPEUTIC_GUARANTEE: RuleSpec(
             Severity.BLOCKING,
@@ -341,12 +369,17 @@ def _phrase_hits(spec: RuleSpec, text: str) -> bool:
     """True when any non-exempt sentence of ``text`` matches one of ``spec``'s patterns."""
     if spec.scope is Scope.RAW:
         return any(p.search(text) for p in spec.patterns)
-    sentences = _SENTENCE_BREAK.split(text)
     return any(
-        any(p.search(s) for p in spec.patterns)
-        and not any(e.search(s) for e in spec.sentence_exempt)
-        for s in sentences
+        any(p.search(_without_exempt_clauses(spec, s)) for p in spec.patterns)
+        for s in _SENTENCE_BREAK.split(text)
     )
+
+
+def _without_exempt_clauses(spec: RuleSpec, sentence: str) -> str:
+    """``sentence`` with every one of ``spec``'s exempt clauses cut out."""
+    for clause in spec.exempt_clauses:
+        sentence = clause.sub(" ", sentence)
+    return sentence
 
 
 _PHRASE_RULES: tuple[tuple[RuleId, RuleSpec], ...] = tuple(
