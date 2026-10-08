@@ -289,22 +289,41 @@ async def test_erase_locally_confirms_when_the_vault_can_answer(
 
 @pytest.mark.asyncio
 async def test_erase_locally_of_another_accounts_page_is_refused(
-    async_client: AsyncClient, db_session: AsyncSession
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Ownership is checked first: nobody can erase, or learn about, somebody else's page."""
-    _owner_headers, _owner_id, entry_id, _a = await _page_in_vault_a(
+    """Ownership is checked first: nobody can erase, or learn about, somebody else's page.
+
+    Discriminating on purpose: the exact application 404 body (a router miss
+    answers ``Not Found``), the ownership audit row, and -- the positive
+    control -- the owner reaching the very same URL.
+    """
+    owner_headers, _owner_id, entry_id, _a = await _page_in_vault_a(
         async_client, db_session, "unreach_owner"
     )
-    intruder_headers, _intruder_id = await _signup(async_client, "unreach_intruder")
-    _use(DraftVault())
+    intruder_headers, intruder_id = await _signup(async_client, "unreach_intruder")
+    vault = _use(DraftVault())
+    caplog.set_level(logging.WARNING)
 
     response = await async_client.post(
         f"/journal/{entry_id}/erase-locally", headers=intruder_headers
     )
 
-    assert response.status_code in {HTTPStatus.NOT_FOUND, HTTPStatus.FORBIDDEN}
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert response.json() == {"detail": "journal_entry_not_found"}
+    denials = [r for r in caplog.records if r.getMessage() == "resource_access_denied"]
+    assert [
+        (r.__dict__["resource"], r.__dict__["resource_id"], r.__dict__["user_id"]) for r in denials
+    ] == [("journal_entry", entry_id, intruder_id)]
+    assert vault.withdrawals == []
     assert (await _entry(db_session, entry_id)).deleted_at is None
     assert await _obligation(db_session, entry_id) is None
+
+    owned = await async_client.post(f"/journal/{entry_id}/erase-locally", headers=owner_headers)
+
+    assert owned.status_code == HTTPStatus.OK
+    assert (await _entry(db_session, entry_id)).deleted_at is not None
 
 
 # --- 3. Reconnect afterwards confirms and clears ------------------------------
