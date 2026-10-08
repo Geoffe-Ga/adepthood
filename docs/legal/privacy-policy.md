@@ -313,8 +313,9 @@ handle, and each one is rebuilt from a short list of fields before it is sent.
 It names the release and environment that failed, a request id, the
 request's method and route — the route's pattern, such as
 `/journal/{entry_id}`, not the address you visited — and, for each exception,
-its type, a fixed error code, and the file, function and line of each stack
-frame. The exception's message is never sent: the fixed error code stands in
+its type and the module it comes from, how it was caught and whether it was
+handled, a fixed error code, and the file, function and line of each stack
+frame, and whether that frame is in the app's own code. The exception's message is never sent: the fixed error code stands in
 for it, and that code is written into the program, never taken from anything
 you typed. Nor is anything else sent — not the body or headers of the
 request, not log records, not the source lines or local variables of any

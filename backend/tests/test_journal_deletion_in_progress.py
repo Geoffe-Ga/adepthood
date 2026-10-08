@@ -133,6 +133,15 @@ async def _essay_row(session: AsyncSession, note_id: int) -> VoiceDraftRetractio
     return row
 
 
+async def _essay_due(session: AsyncSession, note_id: int) -> datetime:
+    """The moment the essay's owed withdrawal is next due, as its last attempt scheduled it."""
+    row = await _essay_row(session, note_id)
+    assert row.state == VoiceDraftRetractionState.PENDING
+    assert row.next_attempt_at is not None, "a failed attempt always schedules the next"
+    due = row.next_attempt_at
+    return due if due.tzinfo is not None else due.replace(tzinfo=UTC)
+
+
 # --- Edits are refused while a deletion is in progress ------------------------
 
 
@@ -464,6 +473,12 @@ async def test_sweep_never_settles_while_an_essay_withdrawal_is_still_owed(
     copy's: dropping the essay condition from ``_finish_pending_delete``
     (stamping on ``journal_withdrawn`` alone) turns this red, because the
     refusing vault confirms the journal copy on every pass.
+
+    The sweeps run at moments derived from the backoff the DELETE itself
+    scheduled, never at fixed wall-clock moments: the request path schedules
+    from the real clock, so a fixed sweep moment that the wall clock later
+    overtakes leaves the essay "not yet due" and the healthy sweep stamps
+    nothing (the 16:00Z failure on main 856c204b).
     """
     headers, user_id, entry_id, destination = await _mirrored_entry(
         async_client, db_session, "in_progress_owed_essay", JournalClassification.PERSONAL
@@ -479,9 +494,12 @@ async def test_sweep_never_settles_while_an_essay_withdrawal_is_still_owed(
     app.dependency_overrides[get_creek_vault_client] = lambda: refusing
     failed = await async_client.delete(f"/journal/{entry_id}", headers=headers)
     assert failed.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    due = await _essay_due(db_session, note_id)
+    refused_on_delete = len(refusing.deletes)
 
-    await _sweep(db_session, refusing, _T0 + _PAST_BACKOFF, destination=destination)
+    await _sweep(db_session, refusing, due, destination=destination)
 
+    assert len(refusing.deletes) > refused_on_delete, "the sweep retried the owed essay"
     assert entry_id in refusing.withdrawals, "the journal copy itself was confirmed"
     assert (await _entry(db_session, entry_id)).deleted_at is None
     owed = await _obligation(db_session, entry_id)
@@ -489,8 +507,12 @@ async def test_sweep_never_settles_while_an_essay_withdrawal_is_still_owed(
     assert owed.state == JournalWithdrawalState.PENDING_DELETE
     assert (await _essay_row(db_session, note_id)).state == VoiceDraftRetractionState.PENDING
 
-    await _sweep(db_session, DraftVault(), _T0 + 2 * _PAST_BACKOFF, destination=destination)
+    healthy = DraftVault()
+    await _sweep(
+        db_session, healthy, await _essay_due(db_session, note_id), destination=destination
+    )
 
+    assert healthy.deletes, "the healthy sweep retried the owed essay"
     assert (await _entry(db_session, entry_id)).deleted_at is not None
     settled = await _obligation(db_session, entry_id)
     assert settled is not None

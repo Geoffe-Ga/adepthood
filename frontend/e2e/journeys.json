@@ -669,6 +669,18 @@
     "issue": 3094
   },
   {
+    "id": "journal.write-under-vault-send-suspension",
+    "description": "While the operator's PRIVACY_SUSPEND_VAULT_SEND switch is on, a writer with a connected Creek vault saves or edits a Personal page (#3107). The page is saved locally; the vault adapter refuses the ingest before the wire, so the write is recorded as suspended -- not degraded -- and the page owes nothing: no vault destination is bound and no VAULT_WRITE lineage shadow is logged. Deleting that page later completes at once (204, no withdrawal dial, no obligation row), even if the vault has since been disconnected. Once the switch is lifted, the next save really sends, binds the destination and records the shadow exactly once. Uncovered because no lane spec drives the operator switch against the out-of-process contract fake; pinned meanwhile by backend/tests/test_vault_destination_binding.py, backend/tests/test_privacy_lineage.py and backend/tests/test_creek_vault_write.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "DELETE /journal/{entry_id}"],
+      "tables": ["journalentry", "journalwithdrawalobligation"]
+    },
+    "status": "uncovered",
+    "issue": 3107
+  },
+  {
     "id": "journal.intimate-reclassification-withdraws-copies",
     "description": "A writer whose Personal page and generated Voice Draft have reached their connected Creek vault chooses Intimate for that page (#3060, #3077). The stricter tier is committed locally whatever the vault says. When the first content-free Voice Draft retraction fails at the real HTTP boundary, the PATCH answers the stable retryable 503 vault_withdrawal_pending -- the existing privacy control keeps Intimate selected and offers a retry -- instead of a 200 while the AI-authored draft is still in the vault. Choosing Intimate again re-sends the owed DELETE from a durable, content-free obligation row and succeeds only once the vault confirms both the draft and the journal replica absent. The lane uses the production client against the out-of-process contract fake.",
     "crosses": {
@@ -2099,5 +2111,22 @@
     },
     "status": "uncovered",
     "issue": 3075
+  },
+  {
+    "id": "journal.ai-refused-without-payer",
+    "description": "A writer with no API key of their own asks for a resonance pass, a first essay letter, completion detection or a page transcription on an account with no BotMason credits, or on a server with no real provider. Each is refused 402 before anything is spent (no wallet change, no slot, no usage row, no dial): insufficient_offerings when the wallet is empty, llm_key_required when only a personal key could answer. The resonance and letter surfaces open the add-credits-or-key refill dialog; a page read shows a terminal 'add your key in Settings' card. No canned stub text ever reaches the writer; with credits or a key, generation proceeds as before (#3096). Uncovered because the e2e lane arms BOTMASON_STUB_SEAM and its provider environment lane-wide, so a spec cannot disarm the seam or empty the monthly allocation for one journey. Pinned meanwhile by backend/tests/test_generation_payer.py, backend/tests/test_generation_payer_invariants.py and the Jest suites TranscriptionPayerRefusal, ResonanceRefillDialogPayer and errorMessages.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "journal"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/transcribe-page"
+      ],
+      "tables": ["journalentry", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 3062
   }
 ]

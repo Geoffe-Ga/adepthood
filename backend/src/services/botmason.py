@@ -92,6 +92,19 @@ STUB_PROVIDER_NAME = "stub"
 # a reader (#2762), and a hand-copied literal in that assertion could drift.
 STUB_PROSE_PREFIX = "BotMason hears you. You said:"
 
+# The stub is a test seam, never a provider a writer is answered by (#3096). It
+# answers only while this variable is exactly ``true``: the backend suite arms it
+# in ``conftest.py`` and the end-to-end lane in ``frontend/e2e/globalSetup.ts``.
+# A production boot with it armed is refused (``main.validate_stub_seam_config``).
+STUB_SEAM_ENV_VAR = "BOTMASON_STUB_SEAM"
+_STUB_SEAM_ARMED_VALUE = "true"
+
+# The 402 detail for a request no one can pay for: no personal key, and a server
+# with no real provider to spend credits on. Mirrored in
+# ``frontend/src/api/errorMessages.ts``; :func:`resolve_chat_api_key` already
+# answers a real provider with no server key the same way.
+KEY_REQUIRED_DETAIL = "llm_key_required"
+
 # The two real providers, named once. They key :data:`PROVIDER_REGISTRY`, label
 # a usage row, and identify whose balance is spent in an operator's log line —
 # three places that must agree, so none of them spells the name by hand.
@@ -344,6 +357,20 @@ class LLMCreditExhaustedError(LLMProviderError):
         self.provider = provider
 
 
+class NoGenerationSourceError(LLMProviderError):
+    """Nothing may answer this request: no real provider and no armed stub seam (#3096).
+
+    The backstop behind the routes' payer gate. A request that reaches
+    :func:`generate_response` with no personal key on a deployment with no real
+    provider used to be answered by the canned stub; it is refused instead, so
+    no writer ever receives canned text as a reflection, letter or page. It
+    subclasses :class:`LLMProviderError`, so frequency classification degrades
+    on it and a route's refund arm settles any charge, and it is not in
+    :data:`_PROVIDER_ERROR_TYPES`, so it escapes with its identity intact. Its
+    message is the stable ``llm_key_required`` detail.
+    """
+
+
 class ExternalAISuspendedError(LLMProviderError):
     """The operator has suspended every external language-model call (#3075).
 
@@ -583,14 +610,13 @@ def vision_provider_available(api_key: str | None = None) -> bool:
     """Return whether this request may honestly serve an image in this environment.
 
     Real providers must advertise the configured model as vision-capable. The
-    non-registry path is the development/test stub path: it stays available there
-    so local and CI journeys remain walkable, but is never presented as a real
-    photograph transcription in production.
+    non-registry path is the stub, which can read a page only while its test
+    seam is armed (#3096): a canned transcription is never handed to a writer.
     """
     provider = _provider_for_request(api_key, "")
     spec = PROVIDER_REGISTRY.get(provider)
     if spec is None:
-        return os.getenv("ENV", "development") != "production"
+        return stub_seam_armed()
     return supports_vision(provider, _get_model(provider))
 
 
@@ -619,6 +645,28 @@ def _ensure_vision_capable(
 def get_provider() -> str:
     """Return the currently configured LLM provider identifier."""
     return os.getenv("BOTMASON_PROVIDER", "stub")
+
+
+def stub_seam_armed() -> bool:
+    """Whether the canned stub may answer: only when :data:`STUB_SEAM_ENV_VAR` is ``true``.
+
+    Read at call time, never cached. Fails shut: unset, empty, ``1``, ``yes``
+    and a typo all leave it off, so a deployment can only reach the stub by
+    naming it exactly -- and :func:`main.validate_stub_seam_config` refuses a
+    production boot that does (#3096).
+    """
+    return os.getenv(STUB_SEAM_ENV_VAR, "").strip().lower() == _STUB_SEAM_ARMED_VALUE
+
+
+def server_generation_available() -> bool:
+    """Whether a request carrying no key of its own has anything to be answered by.
+
+    True when the server is configured with a real provider, or when the stub
+    test seam is armed. A default ``stub`` deployment without the seam has no
+    such source: credits cannot buy a reply from it, so its only payer is the
+    writer's own key.
+    """
+    return get_provider() in PROVIDER_REGISTRY or stub_seam_armed()
 
 
 def provider_requires_api_key() -> bool:
@@ -685,7 +733,7 @@ def resolve_chat_api_key(header_value: str | None) -> str | None:
     if user_key is not None:
         return user_key
     if provider_requires_api_key() and not os.getenv("LLM_API_KEY"):
-        raise payment_required("llm_key_required")
+        raise payment_required(KEY_REQUIRED_DETAIL)
     return None
 
 
@@ -1148,7 +1196,10 @@ async def generate_response(
 
     Currently supports the ``BOTMASON_PROVIDER`` env var with values:
 
-    - ``"stub"`` (default) — returns a canned response for development/testing
+    - ``"stub"`` (default) — no server-side provider. Without a key of the
+      caller's own this raises :class:`NoGenerationSourceError`; the canned
+      response is served only while the :data:`STUB_SEAM_ENV_VAR` test seam is
+      armed (#3096)
     - ``"openai"`` — calls the OpenAI chat completions API
     - ``"anthropic"`` — calls the Anthropic messages API
 
@@ -1165,7 +1216,7 @@ async def generate_response(
     user turn. When the resolved provider/model cannot accept images this
     raises :class:`LLMVisionUnsupportedError` (a 422-mappable subclass of
     :class:`LLMProviderError`) *before* any network call — it is never retried
-    and never triggers a silent model substitution. The stub provider serves a
+    and never triggers a silent model substitution. The armed stub seam serves a
     deterministic canned transcription for image requests instead.
 
     Returns an :class:`LLMResponse` carrying both the generated text and the
@@ -1189,8 +1240,7 @@ async def generate_response(
 
         spec = PROVIDER_REGISTRY.get(provider)
         if spec is None:
-            # Default: stub provider for development and testing.
-            return _stub_answer(user_message, resolved_prompt, images)
+            return _unconfigured_answer(user_message, resolved_prompt, images)
         model = _get_model(provider)
         # Both checks run before dispatch and raise LLMProviderError subclasses,
         # which are not in _PROVIDER_ERROR_TYPES, so they escape this try
@@ -1207,6 +1257,19 @@ async def generate_response(
     except _PROVIDER_ERROR_TYPES as exc:
         raise _classify_provider_error(exc) from exc
     return result
+
+
+def _unconfigured_answer(
+    user_message: str, system_prompt: str, images: Sequence[ImagePayload] | None
+) -> LLMResponse:
+    """Answer a request no real provider serves: the armed stub seam, or a refusal.
+
+    The canned stub answers only as an armed test seam; otherwise nothing may
+    answer, and saying so beats inventing a reflection (#3096).
+    """
+    if stub_seam_armed():
+        return _stub_answer(user_message, system_prompt, images)
+    raise NoGenerationSourceError(KEY_REQUIRED_DETAIL)
 
 
 def _stub_answer(

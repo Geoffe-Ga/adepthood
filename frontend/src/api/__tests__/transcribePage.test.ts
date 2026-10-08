@@ -145,10 +145,10 @@ describe('journal.transcribePage error mapping', () => {
       kind: 'wallet_exhausted',
     },
     {
-      name: '402 llm_key_required is NOT wallet exhaustion',
+      name: '402 llm_key_required asks for a key, and is NOT wallet exhaustion',
       status: 402,
       body: { detail: 'llm_key_required' },
-      kind: 'unknown',
+      kind: 'key_required',
     },
     {
       name: '429 slowapi error key maps to rate_limited',
@@ -322,12 +322,16 @@ describe('journal.transcribePage exhausted-balance classification', () => {
     expect(err.kind).toBe('wallet_exhausted');
   });
 
-  test('a keyless BYOK 402 still classifies as unknown', async () => {
+  test('a keyless 402 is its own actionable kind, not the catch-all (#3096)', async () => {
+    // A server with nothing credits could buy refuses every keyless page with
+    // `llm_key_required`. That is a remedy the writer can act on -- add a key --
+    // so it must not collapse into `unknown`, whose copy only says "try again".
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_key_required' }, 402));
     const err = (await captureError(
       journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
     )) as TranscriptionErrorInstance;
 
-    expect(err.kind).toBe('unknown');
+    expect(err.kind).not.toBe('unknown');
+    expect(err.kind).toBe('key_required');
   });
 });

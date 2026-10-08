@@ -534,6 +534,35 @@ async def _spend_within_daily_ceiling(
     return spent
 
 
+async def has_generation_capacity(
+    session: AsyncSession, user_id: int, *, now: datetime | None = None
+) -> bool:
+    """Whether either wallet bucket could pay for one generation right now. Read only.
+
+    Free monthly room counts as full when the monthly reset is already due,
+    exactly as :func:`preflight_deduction` would roll it over first; otherwise
+    it is the cap less what is used. A purchased balance counts whenever it is
+    positive. Nothing is spent, staged or audited: this is the payer gate's
+    admission read (#3096), and :func:`preflight_deduction` stays the one atomic
+    chokepoint that actually charges. Raises ``400 user_not_found`` for an
+    account that no longer exists, as the deduction does.
+    """
+    user = await get_user_fresh(session, user_id)
+    if user is None:
+        raise bad_request("user_not_found")
+    if user.offering_balance > 0:
+        return True
+    moment = now or datetime.now(UTC)
+    used = 0 if _reset_due(user.monthly_reset_date, moment) else user.monthly_messages_used
+    return used < get_monthly_cap()
+
+
+def _reset_due(reset_date: datetime, now: datetime) -> bool:
+    """Whether ``reset_date`` has passed, reading a naive stored value as UTC."""
+    aware = reset_date if reset_date.tzinfo is not None else reset_date.replace(tzinfo=UTC)
+    return aware <= now
+
+
 async def preflight_deduction(
     session: AsyncSession, user_id: int, *, now: datetime | None = None
 ) -> SpendResult:

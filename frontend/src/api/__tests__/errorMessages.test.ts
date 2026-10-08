@@ -7,6 +7,7 @@ import {
   formatApiError,
   GENERATION_IN_PROGRESS_COPY,
   GENERIC_FALLBACK,
+  INSUFFICIENT_OFFERINGS_COPY,
   messageForCode,
   SERVICE_CREDIT_EXHAUSTED_COPY,
   UNREACHABLE_MESSAGE,
@@ -307,7 +308,7 @@ describe('formatApiError', () => {
     const result = formatApiError(err, {
       statusOverrides: { 402: 'This should not be used.' },
     });
-    expect(result).toMatch(/BotMason messages/);
+    expect(result).toBe(INSUFFICIENT_OFFERINGS_COPY);
   });
 
   it('returns GENERIC_FALLBACK for null/undefined inputs with no fallback', () => {
@@ -533,5 +534,27 @@ describe('vault-bound reflection refusal (#3061)', () => {
 
   it('makes no claim about where writing is or is not processed', () => {
     expect(copy).not.toMatch(/vault|local|device|cloud|never leaves|boundary|private/i);
+  });
+});
+
+describe('payer refusals say how to proceed (#3096)', () => {
+  // With no personal key and nothing to pay with, every AI feature is refused
+  // before anything is spent. A refusal that names no way forward is a dead end,
+  // so each one says what to do and that nothing was charged.
+  it('an empty wallet names both remedies: credits, or a key of your own', () => {
+    const copy = messageForCode('insufficient_offerings');
+
+    expect(copy).toMatch(/credits/iu);
+    expect(copy).toMatch(/API key/u);
+    expect(copy).toMatch(/Settings/u);
+    expect(copy).toMatch(/nothing was charged/iu);
+  });
+
+  it('a server with nothing credits could buy asks for a key, and charges nothing', () => {
+    const copy = messageForCode('llm_key_required');
+
+    expect(copy).toMatch(/API key/u);
+    expect(copy).toMatch(/Settings/u);
+    expect(copy).toMatch(/nothing was charged/iu);
   });
 });

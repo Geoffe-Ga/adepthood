@@ -38,6 +38,18 @@ const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to contin
 // One wallet pays for chat, resonance readings and a note's first letter
 // (#623). Shared by the ``payment_required`` code and the bare 402 fallback so
 // a spent month reads the same whichever road reported it.
+/**
+ * The two payer refusals (#3096). Every AI feature -- a reading, a letter,
+ * completion checks, a page read -- is refused before anything is spent unless a
+ * key of the writer's own or BotMason credits can pay for it. Each line names the
+ * way forward and says nothing was charged. Exported so the transcription
+ * surface, which keeps its own closed taxonomy, renders the same words.
+ */
+export const INSUFFICIENT_OFFERINGS_COPY =
+  "You're out of BotMason credits, so nothing was charged. Add more credits, or add your own OpenAI or Anthropic API key in Settings — readings, letters and page reading all draw from the same pool.";
+export const LLM_KEY_REQUIRED_COPY =
+  'BotMason can only answer here with an API key of your own, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.';
+
 const MONTHLY_FREE_MESSAGES_USED =
   "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";
 
@@ -186,8 +198,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   payment_required: MONTHLY_FREE_MESSAGES_USED,
   // The wallet is one pool, so the copy names what shares it rather than any
   // one of them.
-  insufficient_offerings:
-    "You've used this month's free BotMason messages — chat, readings and letters all draw from the same pool. Add your own API key in Settings, or wait for next month's fresh batch.",
+  insufficient_offerings: INSUFFICIENT_OFFERINGS_COPY,
   // Only an older build that still asks for a letter the moment a note opens
   // can meet this: the server will not charge for a letter whose price the
   // writer was never shown. Nothing was spent.
@@ -198,8 +209,7 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // The concurrency guard fails closed when its lease table is unreachable.
   generation_guard_unavailable:
     "BotMason couldn't start this just now, and nothing was charged. Give it a moment and try again.",
-  llm_key_required:
-    'BotMason needs a key to reply. Add your API key in Settings to start chatting.',
+  llm_key_required: LLM_KEY_REQUIRED_COPY,
   invalid_llm_api_key_format:
     "That API key doesn't look right. Copy the full key from your OpenAI or Anthropic dashboard and paste it into Settings.",
   // A permanent, billing-level refusal — deliberately NOT inheriting the bare

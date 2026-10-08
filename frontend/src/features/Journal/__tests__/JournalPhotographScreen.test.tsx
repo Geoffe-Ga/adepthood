@@ -621,9 +621,8 @@ describe('JournalPhotographScreen — single-page error recovery', () => {
     await settle();
     fireEvent.press(getByTestId('capture-transcribe'));
     await settle();
-    expect(getByTestId('photograph-block-1-error')).toHaveTextContent(
-      /this month's free BotMason messages/,
-    );
+    // The empty-wallet payer refusal names both remedies (#3096).
+    expect(getByTestId('photograph-block-1-error')).toHaveTextContent(/out of BotMason credits/u);
     expect(getByTestId('photograph-block-1-retry')).toBeTruthy();
   });
 

@@ -38,6 +38,7 @@ from conftest import test_engine
 from main import app, lifespan, validate_llm_base_url_config
 from privacy.recipients import PROVIDER_BASE_URL_ENV_VARS, REGISTERED_PROVIDER_BASE_URLS
 from services import botmason, email, journal_encryption
+from services.botmason import STUB_SEAM_ENV_VAR
 from tests.helpers.resend_env import RESEND_ENV_VALUES
 
 ENV_VAR = "ENV"
@@ -281,6 +282,8 @@ def _production_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APP_BASE_URL", "https://app.adepthood.invalid")
     monkeypatch.delenv("GUMROAD_API_TOKEN", raising=False)
     monkeypatch.delenv("GUMROAD_WEBHOOK_SECRET", raising=False)
+    # A real production process: the suite's stub test seam is never armed there.
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
 
 
 @pytest.mark.asyncio

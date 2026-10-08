@@ -8,10 +8,10 @@ personal knowledge base whose growing corpus becomes a "Higher Self" that
 reflects the user's own wisdom back in the language of the 36-week APTITUDE
 program and the Archetypal Wavelength. Around that floor are optional,
 self-chosen **depths** — prompted journaling, habit scaffolding, a practice
-ramp, the course reading, and the Digital Sangha. Nothing is gated and nothing
-is mandatory: the governing principle is **"you choose your depth."** Deeper
-rings are offered only as resonant, declinable invitations — never gamified
-pressure. The product vision lives in `NORTH-STAR.md`; the "Candle & Ink" visual north
+ramp, the course reading, and the Digital Sangha. Nothing is mandatory, though
+some Course readings follow a schedule: the governing principle is **"you choose
+your depth."** Deeper rings are offered only as resonant, declinable
+invitations — never gamified pressure. The product vision lives in `NORTH-STAR.md`; the "Candle & Ink" visual north
 star and implemented design system live in `frontend/src/design/DESIGN.md`
 (tokens under `frontend/src/design/`). Root `DESIGN.md` is an external
 inspiration reference — an analysis of the Anthropic / Claude.com
