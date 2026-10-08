@@ -206,3 +206,43 @@ The operational procedure and rollback matrix live in
   they are not described as no-escrow, user-held, or confidential compute.
 - Full private Higher-Self behavior remains unavailable for INTIMATE material
   until a separately specified attested path ships.
+
+## Amended by ADR 0009 (2026-10-07)
+
+On 2026-10-07 the owner decided that **the operator cannot read people's
+journal entries**.
+[ADR 0009](0009-privacy-custody-and-inference-architecture.md) records the
+decision. The text above stays as written, because it truthfully describes
+the launch service. This section states exactly what changes.
+
+- **Decision 4, launch custody.** `provider_managed` stays an accurate
+  description of what an ordinary Fly vault does today: provider-managed
+  custody is not operator-blind. It is **decided to stop being an
+  acceptable resting place for journal content.** The target under ADR 0009
+  is that journal content in a managed vault will be ciphertext under the
+  person's user-held key. **Until B13 phases (b) and (c) complete for an
+  account, this Decision 4 keeps describing and governing that account's
+  journal content, which stays operator-readable.** Provider-managed custody
+  stays for operational state (credentials, job state, configuration).
+  Vault-local inference that sees plaintext is governed by ADR 0009 Decision
+  item 4: it is labelled on each use and is not operator-blind while it
+  runs.
+- **Decision 6, what a VM is not.** Items 1 and 2 (a user-held key with no
+  escrow, and client-side ciphertext through Adepthood) are **decided as
+  requirements for all journal content**, not only INTIMATE. Neither is
+  implemented yet. Items 3-5 (attestation, key
+  release into an enclave, and confidential inference) are **not selected**.
+  They return only through ADR 0009's reopen triggers.
+- **INTIMATE is unchanged.** It stays skip-only for any remote inference,
+  exactly as [ADR 0002](0002-intimate-content-local-routing.md) Decision 1 and
+  this record's Decision 6 say. This amendment adds no condition for lifting
+  it. Whether device-side inference, which is never remote, may ever process
+  INTIMATE is open owner question INTIMATE-DEVICE in ADR 0009, not a decided
+  path. Tier inheritance is not changed here either: the owner's D01 decision
+  (a review carries its own tier) belongs to B03.
+- **Decisions 1-3, 5, 7 and 8** (on-demand activation, the control plane,
+  scale-to-zero, the cost floor, the hosting revisit and server gating) are
+  unchanged.
+
+Nothing here is a public claim. Each claim waits for B24
+([#3076](https://github.com/Geoffe-Ga/adepthood/issues/3076)).
