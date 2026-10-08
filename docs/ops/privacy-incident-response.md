@@ -137,7 +137,9 @@ deletion most needs to land.
    Creek with its `creek_job_id`. Never send journal content.
 3. Entries written while `PRIVACY_SUSPEND_VAULT_SEND` was on are not
    re-ingested automatically when it is unset. Recovering them depends on
-   #3060.
+   #3060. Their refused sends are recorded as suspended, not degraded
+   (#3107): they owe no withdrawal and add no teardown or obligation here.
+   An entry that already had a vault copy keeps owing that copy's withdrawal.
 
 Rehearsed by `test_tabletop::test_stuck_deletion_visible_and_withdraw_continues`.
 
