@@ -299,7 +299,7 @@
   },
   {
     "id": "journal.morning-pages-never-offer-and-restore",
-    "description": "A writer who wants no morning-pages invitation at all activates the tip's quiet Don't show this again link by keyboard, by its spoken name (Don't show this again: stop offering morning pages on the shelf), and the card goes, focus lands on Start a review early, and the device stores the permanent never-offer flag (#3005). The tip stays gone after a same-day reload and after a reload with the browser clock on the next day in the account's zone, where the X's set-aside would have lapsed. In Settings, the Journal group's Offer morning pages again row clears that flag and today's set-aside and says so in its description; back on the Journal shelf the tip is offered again. Component tests pin the link's action face at body weight in soft ink, its 44dp hit area and corner reserve, the save-then-focus order, the stale-read guard, and the Settings row's copy sweep.",
+    "description": "A writer who wants no morning-pages invitation at all activates the tip's quiet Don't show this again link by keyboard, by its spoken name (Don't show this again: stop offering morning pages on the shelf), and the card goes, focus lands on Start a review early, and the device stores the permanent never-offer flag (#3005). The tip stays gone after a same-day reload and after a reload with the browser clock on the next day in the account's zone, where the X's set-aside would have lapsed. In Settings, the Journal group's Offer morning pages switch reads off, and turning it on clears that flag and today's set-aside; back on the Journal shelf the tip is offered again. Component tests pin the link's action face at body weight in soft ink, its 44dp hit area and corner reserve, the save-then-focus order, the stale-read guard, and the Settings switch's copy sweep.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["auth"],
@@ -1234,6 +1234,18 @@
     "coveredBy": "frontend/e2e/api-key-remove.browser.e2e.test.ts"
   },
   {
+    "id": "account.local-model-coming-soon-stays-inert",
+    "description": "Someone opens API-key Settings and sees Adepthood's own model as a disabled coming-soon control, without a present-tense promise that their writing already stays on Adepthood infrastructure. Even if an older build left the local-model preference switched on in device storage, this unavailable option renders off, keeps the key controls usable, and cannot suppress the BYOK header on the person's next model request. Uncovered because the browser lane cannot yet seed that legacy device preference while mounting this Settings screen and then observe the request wire in one journey; the screen and context regressions pin the guard until that lane exists.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
+      "client": ["resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance"],
+      "tables": ["llmusagelog"]
+    },
+    "status": "uncovered",
+    "issue": 3032
+  },
+  {
     "id": "corpus.decide-what-may-be-sorted",
     "description": "Someone opens the corpus-consent screen, finds every kind of material off and un-asked, turns their journal on, and later turns it back off -- which deletes the copies it collected and leaves a dated refusal on the record rather than an open question. Turning it on now reaches backwards as well: the entries already in their journal are sorted on the same terms as a new one, bounded so the request they are waiting on stays finite. The spec covers the switch and the deletion; what it cannot yet observe is the reach, because the lane has no classification provider, so a backfilled entry settles as unclassified and writes no fragment for a spec to see. A provider that refuses to bill now ends that reach rather than consuming the queue, and never costs the person the permission they just gave -- the switch still answers granted and the entries it did not get to keep their place. The backend pins it at backend/tests/test_corpus_consent_api.py.",
     "crosses": {
@@ -1244,6 +1256,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/corpus-consent.e2e.test.ts"
+  },
+  {
+    "id": "corpus.sorting-switches-on-the-hub",
+    "description": "Someone who has just given their corpus a vault is told, on the vault screen, that creating one does not turn sorting on and that the yes is a switch under Your corpus in Settings. On the hub, that group now carries the sorting switches themselves -- one per kind of material the server names, under a one-line lead that says what sorting is for, what it sends and that Intimate is never sent -- between Bring in your writing and the What reflections draw on row that holds the full account. The switches are the same component the sub-screen mounts (CorpusConsentRows), so turning a source on records the decision over PUT /corpus/consent/{source} and shows only the state the server reported back, and turning one off asks first, naming the deletion, before anything is withdrawn. Uncovered because the browser lane presses the switches only on the sub-screen (corpus.decide-what-may-be-sorted); the hub mount is pinned by SettingsHubScreen.test.tsx (the switches' place in the group, the lead's three facts, the grant and the revoke question) and the vault copy by vaultCopy.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
+      "client": ["corpusConsent"],
+      "routes": ["GET /corpus/consent", "PUT /corpus/consent/{source}"],
+      "tables": ["corpusconsentevent", "corpusfragment"]
+    },
+    "status": "uncovered",
+    "issue": 3032
   },
   {
     "id": "account.delete",
@@ -1464,7 +1488,7 @@
   },
   {
     "id": "journal.timer-checks-off-a-linked-habit",
-    "description": "A writer finishes a timed writing session and is offered to keep it as a habit; the offer now asks which habit first, listing the ones they already keep by their own names with a new Journaling habit last. Choosing an existing one links the writing timer to it on the server (PATCH /ui-flags writing_session_habit_id), and from then on every finished session checks that habit off. The covering Playwright spec installs the browser clock before the app loads so a twenty-minute session can be run out in one step, signs up through the UI, seeds a habit, runs a first session and picks that habit from the picker, then reads GET /ui-flags back out of band to prove the link landed on the server. It runs a second session and waits for the POST /goal_completions/ that the habit pipeline sends, then reads GET /habits/{habit_id} back and pins the day's total at exactly the LOW tier target: 'checked off' means the low target is met today, and the amount posted is the gap to it, because since #2852 explicit amounts accumulate on the server and posting the session's minutes would push the habit further every time. A third session the same day posts nothing at all, which is the idempotency only the client's gap rule can supply. Deleting the habit then leaves GET /ui-flags unlinked. The cross-tenant refusal (403 with an audit row, and nothing written) is pinned in backend/tests/security/test_idor.py; the picker's rules, the offer's suppression once a link exists, the Settings row and the offer-again control are pinned by the Jest specs beside WritingSessionOffer, WritingHabitPicker and JournalSection.",
+    "description": "A writer finishes a timed writing session and is offered to keep it as a habit; the offer now asks which habit first, listing the ones they already keep by their own names with a new Journaling habit last. Choosing an existing one links the writing timer to it on the server (PATCH /ui-flags writing_session_habit_id), and from then on every finished session checks that habit off. The covering Playwright spec installs the browser clock before the app loads so a twenty-minute session can be run out in one step, signs up through the UI, seeds a habit, runs a first session and picks that habit from the picker, then reads GET /ui-flags back out of band to prove the link landed on the server. It runs a second session and waits for the POST /goal_completions/ that the habit pipeline sends, then reads GET /habits/{habit_id} back and pins the day's total at exactly the LOW tier target: 'checked off' means the low target is met today, and the amount posted is the gap to it, because since #2852 explicit amounts accumulate on the server and posting the session's minutes would push the habit further every time. A third session the same day posts nothing at all, which is the idempotency only the client's gap rule can supply. Deleting the habit then leaves GET /ui-flags unlinked. The cross-tenant refusal (403 with an audit row, and nothing written) is pinned in backend/tests/security/test_idor.py; the picker's rules, the offer's suppression once a link exists, the Settings row and the Offer to keep a session switch are pinned by the Jest specs beside WritingSessionOffer, WritingHabitPicker and JournalSection.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["auth", "uiFlags", "habits", "goalCompletions"],
@@ -1485,7 +1509,7 @@
   },
   {
     "id": "journal.unlinked-timer-points-to-settings",
-    "description": "A writer whose writing timer has no habit linked finishes a full-length session and the note it leaves points to Settings, where one can be chosen (#3006). On an ordinary page the keep-this offer has the first note to itself -- one invitation per note -- so declining it adds nothing to that note; the next finished session, with the offer answered and GET /ui-flags still unlinked, carries the link-a-habit note with two actions, Go to Settings and Don't show again. Go to Settings opens Settings with focus writing-habit: the Journal group's writing-habit row is scrolled into view with the WritingHabitPicker already open under it, and choosing the writer's habit there PATCHes /ui-flags (read back out of band). Back on the page, the next finished session checks that habit off and carries no note. The covering Playwright spec drives all of that with the browser clock. Jest pins the rest: LinkHabitNudge.test.tsx (nothing while the link is unknown or the flag read is pending, the server link winning over an unset flag, Don't show again hiding at once and persisting), JournalEntryScreenTimer.test.tsx (the note on a quick-launched page, which never makes the offer; the arbitration on an ordinary page; a later page after Don't show again), linkHabitNudgeStorage.test.ts (fail-open read, a save that never rejects, a restore that resolves whether it saved), and JournalSection.test.tsx plus SettingsHubScreen.test.tsx (the focus opening the picker and scrolling, and the Show the habit note again row saying it is back only when the restore saved).",
+    "description": "A writer whose writing timer has no habit linked finishes a full-length session and the note it leaves points to Settings, where one can be chosen (#3006). On an ordinary page the keep-this offer has the first note to itself -- one invitation per note -- so declining it adds nothing to that note; the next finished session, with the offer answered and GET /ui-flags still unlinked, carries the link-a-habit note with two actions, Go to Settings and Don't show again. Go to Settings opens Settings with focus writing-habit: the Journal group's writing-habit row is scrolled into view with the WritingHabitPicker already open under it, and choosing the writer's habit there PATCHes /ui-flags (read back out of band). Back on the page, the next finished session checks that habit off and carries no note. The covering Playwright spec drives all of that with the browser clock. Jest pins the rest: LinkHabitNudge.test.tsx (nothing while the link is unknown or the flag read is pending, the server link winning over an unset flag, Don't show again hiding at once and persisting), JournalEntryScreenTimer.test.tsx (the note on a quick-launched page, which never makes the offer; the arbitration on an ordinary page; a later page after Don't show again), linkHabitNudgeStorage.test.ts (fail-open read, a save that never rejects, a restore that resolves whether it saved), and JournalSection.test.tsx plus SettingsHubScreen.test.tsx (the focus opening the picker and scrolling, and the Show the habit note switch reading off after a decline and turning on only when the restore saved).",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["auth", "uiFlags", "habits", "goalCompletions"],

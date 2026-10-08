@@ -121,7 +121,7 @@ function useMorningPagesTip(
   }, [onBegin, userTimezone]);
 
   const decline = useCallback(
-    (change: Partial<MorningPagesTipState>, persist: () => Promise<void>) => {
+    (change: Partial<MorningPagesTipState>, persist: () => Promise<unknown>) => {
       writeSeq.current += 1;
       void persist();
       setState((prev) => ({ ...(prev ?? MORNING_PAGES_TIP_OPEN), ...change }));
