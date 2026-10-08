@@ -27,7 +27,7 @@ escalation 5). The writer can reconnect that vault, or -- if they cannot reach
 it -- delete the page here with an ``unconfirmed`` obligation (#3094).
 :func:`withdraw_unconfirmed_copy` is how such a copy is withdrawn later: only
 from the vault recorded on the obligation, and only when that is the vault
-connected now.
+connected now. The erasure plan is ``docs/privacy/gdpr-erasure-unreachable-vaults.md``.
 """
 
 from __future__ import annotations

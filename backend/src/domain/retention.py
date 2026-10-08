@@ -272,7 +272,7 @@ RETENTION: Mapping[str, RetentionRule] = {
         "soft-deleted page never erases the record that a copy may remain. Erased "
         "with the account today; how long a confirmed or unconfirmed row is kept, and "
         "whether an unconfirmed one should outlive erasure, are owner decisions "
-        "(#3063 AC21-22, #3094).",
+        "(#3063 AC21-22, #3094). Plan: docs/privacy/gdpr-erasure-unreachable-vaults.md.",
         ratified=False,
     ),
     "licensebinding": until_account_deletion("The claim tying a sale to this account."),
