@@ -187,3 +187,47 @@ Nothing in Decisions 1–4 depends on which protocol crosses the seam.
 The chokepoint, the custody model, and the intimate-tier rule are
 claims about where routing is decided and who holds the keys, and
 those survive the transport swap untouched.
+
+## Amended by ADR 0009 (2026-10-07)
+
+On 2026-10-07 the owner decided that **the operator cannot read people's
+journal entries**.
+[ADR 0009](0009-privacy-custody-and-inference-architecture.md) records the
+decision. The text above stays as written. This section states exactly what
+changes.
+
+- **Decision 2, key custody.** User-held keys with no operator escrow are no
+  longer a future, Creek-volume-only design. They are **decided to become** the
+  custody model for **the journal itself**, meaning Adepthood's own database
+  and every prose derivative in it. Confidential compute (TEE) is **not**
+  required for that target and is not selected. Under the target, keys will
+  be generated on the person's device and the server will store ciphertext
+  only. **Until B13 phases (b) and (c) land for an account, its journal stays
+  under today's server-held keys and is operator-readable.**
+- **Decision 3, routing.** BYOK is no longer a supplement to an app-paid
+  cloud path. BYOK is decided to be the **only** way any of a person's
+  content will reach a cloud model. Under the decision, without their own key
+  none of their data will reach one. A
+  BYOK call is decided to go **from the person's device straight to the
+  vendor**, so neither the key nor the content passes through Adepthood's
+  server. Today the call is relayed through the server (the `X-LLM-API-Key`
+  header), which is a known gap until ADR 0009 phase (a). Within
+  BYOK, the decided tier rule is unchanged: INTIMATE never reaches the cloud, and
+  Creek's `ModelRouter` stays the single chokepoint for vault-side routing.
+  Under the decision, BotMason credits will fund only non-cloud inference.
+  There is also a known gap: the app-key fallback. Today, when no BYOK key is
+  sent, the server falls back to its own `LLM_API_KEY`, so content still
+  reaches a cloud vendor on the app's account. ADR 0009 Decision item 4
+  records this gap; phase (a) closes it together with
+  [#3096](https://github.com/Geoffe-Ga/adepthood/issues/3096).
+- **Decision 4, recovery.** "No operator escrow and no operator-assisted
+  recovery reset" is kept and is decided to apply to the journal. On
+  2026-10-07 the owner chose the factors: a recovery phrase the person
+  writes down, plus their passphrase. Losing both means the data is gone,
+  agreed up front (ADR 0009 Decision item 11). That replaces the one-time
+  recovery key above. Pairing, revocation and the rest of D03 stay open.
+  Account and password reset cannot recover the data key.
+- **Decision 1 and the INTIMATE skip-only interim** are unchanged.
+
+Nothing here is a public claim. Each claim waits for B24
+([#3076](https://github.com/Geoffe-Ga/adepthood/issues/3076)).
