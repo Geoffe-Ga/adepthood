@@ -23,7 +23,7 @@ from client_ip import TRUSTED_PROXIES_ENV_VAR
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
 from services import botmason as botmason_service
-from services.botmason import LLMProviderError, LLMVisionUnsupportedError
+from services.botmason import STUB_SEAM_ENV_VAR, LLMProviderError, LLMVisionUnsupportedError
 from tests.provider_transport import OPENAI_KEY, use_openai
 from tests.transcription_helpers import JPEG_BYTES as _JPEG_BYTES
 from tests.transcription_helpers import PNG_BYTES as _PNG_BYTES
@@ -75,14 +75,20 @@ async def _usage_rows_with_null_entry(session: AsyncSession) -> list[LLMUsageLog
 
 
 @pytest.mark.asyncio
-async def test_production_stub_provider_is_422_before_wallet_deduction(
+async def test_production_stub_provider_is_refused_before_wallet_deduction(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Production refuses canned vision before billing when only the stub resolves."""
+    """Production refuses canned vision before billing when only the stub resolves.
+
+    A production process never has the stub test seam armed (its boot refuses
+    it), so a keyless page on a stub server has nothing to answer it: 402
+    ``llm_key_required``, never a canned transcription (#3096).
+    """
     monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
     monkeypatch.setenv("ENV", "production")
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
     preflight = AsyncMock()
     monkeypatch.setattr("routers.transcription.preflight_deduction", preflight)
     headers = await _signup(async_client, "production_stub")
@@ -90,8 +96,8 @@ async def test_production_stub_provider_is_422_before_wallet_deduction(
 
     resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
 
-    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert resp.json()["detail"] == "model_lacks_vision"
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED
+    assert resp.json()["detail"] == "llm_key_required"
     preflight.assert_not_awaited()
     after = await _wallet_snapshot(db_session, "production_stub@example.com")
     assert _units_spent(before, after) == 0

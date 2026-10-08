@@ -49,6 +49,7 @@ from services.botmason import (
     resolve_chat_api_key,
     vision_provider_available,
 )
+from services.generation_access import require_ai_payer
 from services.generation_guardrails import generation_slot
 from services.llm_usage import (
     GenerationFeature,
@@ -268,7 +269,9 @@ async def transcribe_page(
     suspension answers 503 ``ai_suspended`` before anything else (#3075), then
     the image is validated (422 without any charge), then the caller key and
     vision capability are resolved.
-    A production stub is refused before the wallet is touched. A valid caller
+    With no personal key, a server with no real provider (402
+    ``llm_key_required``) or an empty wallet (402 ``insufficient_offerings``) is
+    refused before the slot or the wallet is touched (#3096). A valid caller
     key bypasses both BotMason buckets; otherwise the wallet is deducted (402
     when out of capacity). A provider failure rolls the transaction back so a
     failed pass never bills, and so does a reply that is no text or a refusal
@@ -280,6 +283,7 @@ async def transcribe_page(
     """
     require_external_ai_available()
     image = _validate_image(payload.image_base64, payload.media_type)
+    await require_ai_payer(session, current_user, x_llm_api_key)
     byok_key = resolve_chat_api_key(x_llm_api_key)
     if not vision_provider_available(byok_key):
         raise unprocessable("model_lacks_vision")

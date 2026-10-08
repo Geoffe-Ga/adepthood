@@ -170,6 +170,7 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
+from services.generation_access import require_ai_payer
 from services.generation_guardrails import (
     consume_generation_minute,
     generation_slot,
@@ -2410,6 +2411,15 @@ async def run_resonance(
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
     require_external_ai_available()
+    # No personal key and nothing to pay with is refused here, free (#3096). A
+    # vault-bound pass is answered by the vault, so only an app-provider pass
+    # also needs a server provider able to answer at all.
+    await require_ai_payer(
+        session,
+        current_user,
+        clients.api_key,
+        app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
+    )
     require_generation_minute_available(current_user)
     async with generation_slot(session, current_user):
         return await _run_admitted_resonance(session, current_user, entry, clients)
@@ -2887,6 +2897,7 @@ async def detect_entry_suggestions(
         await session.commit()
         return CompletionDetectionResponse(items=[], checked=True)
     require_external_ai_available()
+    await require_ai_payer(session, current_user, caller.api_key)
     return await _detect_fresh_suggestions(
         session,
         entry=entry,
@@ -3357,6 +3368,9 @@ async def _expand_essay(
     if not admits_egress(entry.classification):
         return note
     require_external_ai_available()
+    # Before the price gate: asking a writer with no way to pay to acknowledge
+    # a price would be a false next step (#3096).
+    await require_ai_payer(session, user_id, clients.api_key)
     _require_price_acknowledged(clients)
     # A first letter is about to be asked for: the per-user guardrails (#623)
     # admit it only now, after the cached, intimate, 404 and 409 exits above.

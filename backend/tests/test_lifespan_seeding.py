@@ -40,6 +40,7 @@ from observability import remove_app_log_handlers_for_tests
 from seed_content import desired_content_records
 from seed_practices import PRESET_PRACTICES
 from services import app_links, email, journal_encryption
+from services.botmason import STUB_SEAM_ENV_VAR
 from services.content_repository import reset_content_repository_for_tests
 from tests.helpers.smtp_env import SMTP_ENV_VALUES
 
@@ -579,6 +580,8 @@ async def test_lifespan_completes_in_production_without_gumroad_config(
     """
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    # A real production process: the suite's stub test seam is never armed there.
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
     for name in _GUMROAD_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     caplog.set_level(logging.WARNING, logger="main")
@@ -597,6 +600,8 @@ async def test_lifespan_still_fails_fast_on_partial_gumroad_config(
     """Half-configured Gumroad credentials in production must still abort the boot."""
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("SKIP_STARTUP_SEED", "1")
+    # A real production process: the suite's stub test seam is never armed there.
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
     monkeypatch.setenv(_GUMROAD_API_TOKEN_ENV, _GUMROAD_TOKEN_SENTINEL)
     monkeypatch.delenv(_GUMROAD_WEBHOOK_SECRET_ENV, raising=False)
 
