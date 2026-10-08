@@ -284,8 +284,9 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
             Severity.BLOCKING,
             Scope.MASKED,
             _rx(
-                r"\bas an? (?:ai|a\.i\.|artificial intelligence|language model|"
-                r"assistant|chatbot)\b",
+                r"\bas (?:an?|your) (?:large )?(?:ai|a\.i\.|artificial intelligence|"
+                r"language model|assistant|chatbot)\b",
+                rf"\bi(?:{_APOS}m| am) (?:claude|chatgpt|gpt(?:-\d+)?|gemini|copilot)\b",
                 rf"\bi(?:{_APOS}m| am) (?:just |only )?(?:an? )?(?:ai|a\.i\.|bot|chatbot|"
                 r"(?:large )?language model|assistant|machine|computer program)\b",
             ),
@@ -302,7 +303,11 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
                 r"\blast time (?:we|you and i)\b",
                 r"\b(?:i|we) (?:still )?remember (?:when|how|that|you)\b",
                 r"\bas i (?:remember|recall)\b",
-                r"\byou (?:told|said to|showed) me\b",
+                rf"\byou(?:{_APOS}ve| have)? (?:told|said to|showed|shown) me\b",
+                r"\bwe (?:talked|spoke) about\b",
+                r"\bremember when we\b",
+                r"\bi (?:recall|remember) (?:you|that|when|how)\b",
+                r"\blast time you (?:wrote|said|told|mentioned|shared)\b",
                 r"\bwhen we (?:last )?(?:spoke|talked|met)\b",
                 r"\bour (?:last|previous|earlier|first) (?:conversation|talk|chat|session)s?\b",
             ),
@@ -318,6 +323,7 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
                 r"\bour (?:conversations?|relationship|connection|bond|time together)\b",
                 r"\bi (?:love|miss|care about) you\b",
                 rf"\bi(?:{_APOS}ll| will) never leave\b",
+                r"\bhere (?:whenever|any ?time) you need me\b",
             ),
         ),
         RuleId.AUTHORITY_CUE: RuleSpec(
@@ -368,7 +374,9 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
             Severity.BLOCKING,
             Scope.MASKED,
             _rx(
-                r"\bwill (?:heal|cure|fix)\b",
+                r"\b(?:will|is going to|are going to|can) (?:heal|cure|fix)\b",
+                r"\b(?:heals?|cures?) (?:you|your|trauma|grief|depression|anxiety|pain|"
+                r"wounds?|everything)\b",
                 rf"\byou(?:{_APOS}ll| will) (?:be|feel) (?:healed|cured|fixed|whole again)\b",
                 r"\b(?:guaranteed?|promise) to (?:heal|cure|help)\b",
             ),

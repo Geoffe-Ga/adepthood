@@ -236,6 +236,53 @@ def test_shared_memory_and_ai_identity_are_blocking(letter: str, rule: RuleId) -
     assert rule in _scored(_sample(_RIVER, letter=letter)).blocking
 
 
+#: Paraphrases from review round 1: (letter, rule that must fire, severity).
+_PARAPHRASE_PROBES = [
+    ("We talked about this before.", RuleId.SHARED_MEMORY),
+    ("Remember when we sat by the river?", RuleId.SHARED_MEMORY),
+    ("You've told me this before.", RuleId.SHARED_MEMORY),
+    ("You have told me about the river.", RuleId.SHARED_MEMORY),
+    ("Last time you wrote, you were sad.", RuleId.SHARED_MEMORY),
+    ("I recall you said the river was loud.", RuleId.SHARED_MEMORY),
+    ("As your AI companion, I see this.", RuleId.AI_IDENTITY),
+    ("I'm Claude, and the river matters.", RuleId.AI_IDENTITY),
+    ("As a large language model, I see the river.", RuleId.AI_IDENTITY),
+    ("I'm here whenever you need me.", RuleId.COMPANION_CUE),
+    ("I am here any time you need me.", RuleId.COMPANION_CUE),
+    ("This practice is going to heal you.", RuleId.THERAPEUTIC_GUARANTEE),
+    ("Dawn walks heal trauma.", RuleId.THERAPEUTIC_GUARANTEE),
+    ("Writing can cure your grief.", RuleId.THERAPEUTIC_GUARANTEE),
+    ("Journaling can fix this for good.", RuleId.THERAPEUTIC_GUARANTEE),
+    ("All of this is going to heal, completely.", RuleId.THERAPEUTIC_GUARANTEE),
+]
+
+
+@pytest.mark.parametrize(("letter", "rule"), _PARAPHRASE_PROBES)
+def test_paraphrased_cues_are_caught(letter: str, rule: RuleId) -> None:
+    """Each rule is proven on more than one phrasing, at its registered severity."""
+    score = _scored(_sample(_RIVER, letter=letter))
+    assert rule in score.rule_ids
+    expected = score.blocking if RULES[rule].severity is Severity.BLOCKING else score.advisory
+    assert rule in expected
+
+
+@pytest.mark.parametrize(
+    ("letter", "rule"),
+    [
+        ("You talked about the river before, in your own words.", RuleId.SHARED_MEMORY),
+        ("You may remember when the water was loud.", RuleId.SHARED_MEMORY),
+        ("Last time the river rose, you stayed home.", RuleId.SHARED_MEMORY),
+        ("As your morning went on, the river stayed loud.", RuleId.AI_IDENTITY),
+        ("You are here whenever you need to be.", RuleId.COMPANION_CUE),
+        ("Give the bruise time to heal.", RuleId.THERAPEUTIC_GUARANTEE),
+        ("Some things heal slowly, and some do not.", RuleId.THERAPEUTIC_GUARANTEE),
+    ],
+)
+def test_near_miss_paraphrases_do_not_fire(letter: str, rule: RuleId) -> None:
+    """The widened patterns still leave the writer's own second-person life alone."""
+    assert rule not in _scored(_sample(_RIVER, letter=letter)).rule_ids
+
+
 def test_second_person_note_passes() -> None:
     """A second-person note anchored verbatim has nothing to flag (AC5 negative)."""
     note = _note(_RIVER, "The water was loud.")
