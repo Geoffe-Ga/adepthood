@@ -3,12 +3,20 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
-import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
+import type {
+  JournalErasureReceipt,
+  JournalListResponse,
+  JournalMessage,
+  PromptDetail,
+} from '@/api';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
 >;
 const mockDelete = jest.fn() as jest.MockedFunction<(_id: number) => Promise<void>>;
+const mockEraseLocally = jest.fn() as jest.MockedFunction<
+  (_id: number) => Promise<JournalErasureReceipt>
+>;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockNavigate = jest.fn();
 
@@ -23,6 +31,8 @@ jest.mock('@/api', () => ({
   journal: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     delete: (...a: unknown[]) => (mockDelete as unknown as (...x: unknown[]) => unknown)(...a),
+    eraseLocally: (...a: unknown[]) =>
+      (mockEraseLocally as unknown as (...x: unknown[]) => unknown)(...a),
   },
   prompts: {
     current: (...a: unknown[]) =>
@@ -96,6 +106,7 @@ function page(items: JournalMessage[]): JournalListResponse {
 beforeEach(() => {
   mockList.mockReset();
   mockDelete.mockReset();
+  mockEraseLocally.mockReset();
   mockNavigate.mockReset();
   mockPromptCurrent.mockReset();
   mockList.mockResolvedValue(page([entry(2), entry(1)]));
@@ -191,5 +202,123 @@ describe('deleting one journal entry from the shelf', () => {
     const notice = await findByTestId('journal-delete-error');
     expect(notice.props.children).toMatch(/still on your shelf/i);
     expect(notice.props.children).toMatch(/Creek.*open your Creek vault.*delete this page again/i);
+  });
+});
+
+/** Confirm the delete of entry 2 and let the server refuse it with ``detail``. */
+async function refusedWith(detail: string) {
+  mockDelete.mockRejectedValue({ status: 503, detail });
+  const utils = await shelfWithDeleteRequested();
+  await act(async () => {
+    fireEvent.press(utils.getByTestId('journal-delete-confirm'));
+  });
+  await utils.findByTestId('journal-unreachable-choice');
+  return utils;
+}
+
+describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
+  it('names the previous vault and offers reconnect first, then "I can\'t reach it"', async () => {
+    const { getByTestId } = await refusedWith('vault_withdrawal_previous_vault');
+
+    const notice = getByTestId('journal-delete-error').props.children as string;
+    expect(notice).toMatch(/still on your shelf/i);
+    expect(notice).toMatch(/vault you were connected to before/i);
+    expect(getByTestId('journal-unreachable-reconnect')).toBeTruthy();
+    expect(getByTestId('journal-unreachable-erase')).toBeTruthy();
+    const explainer = getByTestId('journal-unreachable-explainer').props.children as string;
+    expect(explainer).toMatch(/can't confirm/i);
+    expect(explainer).toMatch(/delete it there yourself/i);
+    expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
+    expect(mockEraseLocally).not.toHaveBeenCalled();
+  });
+
+  it('names the disconnected vault the same way', async () => {
+    const { getByTestId } = await refusedWith('vault_withdrawal_disconnected_vault');
+
+    const notice = getByTestId('journal-delete-error').props.children as string;
+    expect(notice).toMatch(/vault you disconnected/i);
+  });
+
+  it('reconnect first opens vault settings and erases nothing', async () => {
+    const { getByTestId, queryByTestId } = await refusedWith('vault_withdrawal_previous_vault');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-reconnect'));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('VaultSettings');
+    expect(queryByTestId('journal-unreachable-choice')).toBeNull();
+    expect(mockEraseLocally).not.toHaveBeenCalled();
+    expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
+  });
+
+  it('"I can\'t reach it" deletes here only and says a copy may remain — never "withdrawn"', async () => {
+    mockEraseLocally.mockResolvedValue({
+      entry_id: 2,
+      remote_copy: 'unconfirmed',
+      copy_location: 'previous_vault',
+    });
+    const { getByTestId, queryByTestId, findByTestId } = await refusedWith(
+      'vault_withdrawal_previous_vault',
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-erase'));
+    });
+
+    expect(mockEraseLocally).toHaveBeenCalledWith(2);
+    const receipt = (await findByTestId('journal-erasure-receipt')).props.children as string;
+    expect(receipt).toMatch(/deleted from adepthood/i);
+    expect(receipt).toMatch(/copy may still be in the Creek vault you were connected to before/i);
+    expect(receipt).toMatch(/delete it there/i);
+    expect(receipt).not.toMatch(/withdrawn|removed from your vault|is gone/i);
+    await waitFor(() => expect(queryByTestId('journal-shelf-card-2')).toBeNull());
+    expect(queryByTestId('journal-unreachable-choice')).toBeNull();
+    expect(queryByTestId('journal-delete-error')).toBeNull();
+  });
+
+  it('says the vault copy is gone only when the receipt says the vault confirmed it', async () => {
+    mockEraseLocally.mockResolvedValue({
+      entry_id: 2,
+      remote_copy: 'confirmed_absent',
+      copy_location: null,
+    });
+    const { getByTestId, findByTestId } = await refusedWith('vault_withdrawal_pending');
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-erase'));
+    });
+
+    const receipt = (await findByTestId('journal-erasure-receipt')).props.children as string;
+    expect(receipt).toMatch(/confirmed/i);
+    expect(receipt).not.toMatch(/may still be/i);
+  });
+
+  it('puts the page back if deleting here only is refused too', async () => {
+    mockEraseLocally.mockRejectedValue(new Error('network down'));
+    const { getByTestId, findByTestId, queryByTestId } = await refusedWith(
+      'vault_withdrawal_disconnected_vault',
+    );
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-unreachable-erase'));
+    });
+
+    const notice = await findByTestId('journal-delete-error');
+    expect(notice.props.children).toMatch(/still on your shelf/i);
+    expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
+    expect(queryByTestId('journal-erasure-receipt')).toBeNull();
+  });
+
+  it('offers no choice for an ordinary failure', async () => {
+    mockDelete.mockRejectedValue(new Error('network down'));
+    const { getByTestId, findByTestId, queryByTestId } = await shelfWithDeleteRequested();
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-delete-confirm'));
+    });
+
+    await findByTestId('journal-delete-error');
+    expect(queryByTestId('journal-unreachable-choice')).toBeNull();
   });
 });

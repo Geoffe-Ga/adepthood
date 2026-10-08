@@ -641,6 +641,22 @@
     "coveredBy": "frontend/e2e/journal-vault-withdrawal.e2e.test.ts"
   },
   {
+    "id": "journal.delete-with-unreachable-vault",
+    "description": "A writer whose page reached a Creek vault they have since replaced or disconnected deletes that page (#3094, #3098). The DELETE never dials the new vault and answers a 503 that says, in content-free relational terms, where the copy is: vault_withdrawal_previous_vault or vault_withdrawal_disconnected_vault. The shelf keeps the page, says why, and offers reconnect first (opening vault settings) or \"I can't reach it\", which calls POST /journal/{entry_id}/erase-locally: the page is erased here -- gone from read, list and export -- a content-free unconfirmed obligation is kept bound to the old vault, and the plain receipt says a copy may remain there and must be deleted there; nothing reports it withdrawn. Reconnecting the old vault later lets the background sweep confirm and clear the obligation. Uncovered because no lane spec yet drives two vault connections for one account against the out-of-process contract fake; pinned meanwhile by backend/tests/test_journal_unreachable_vault.py, backend/tests/test_journal_delete_completion.py, backend/tests/test_vault_destination_binding.py and the Jest suites JournalShelfScreenDelete.test.tsx, JournalEntryScreenPrivacy.test.tsx and api/__tests__/journalErasure.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": [
+        "GET /journal/",
+        "DELETE /journal/{entry_id}",
+        "POST /journal/{entry_id}/erase-locally"
+      ],
+      "tables": ["journalentry", "journalwithdrawalobligation"]
+    },
+    "status": "uncovered",
+    "issue": 3094
+  },
+  {
     "id": "journal.intimate-reclassification-withdraws-copies",
     "description": "A writer whose Personal page and generated Voice Draft have reached their connected Creek vault chooses Intimate for that page (#3060, #3077). The stricter tier is committed locally whatever the vault says. When the first content-free Voice Draft retraction fails at the real HTTP boundary, the PATCH answers the stable retryable 503 vault_withdrawal_pending -- the existing privacy control keeps Intimate selected and offers a retry -- instead of a 200 while the AI-authored draft is still in the vault. Choosing Intimate again re-sends the owed DELETE from a durable, content-free obligation row and succeeds only once the vault confirms both the draft and the journal replica absent. The lane uses the production client against the out-of-process contract fake.",
     "crosses": {

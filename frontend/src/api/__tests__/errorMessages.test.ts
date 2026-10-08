@@ -60,6 +60,8 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'active_practice_exists_for_stage',
       'habits_must_not_be_empty',
       'vault_withdrawal_pending',
+      'vault_withdrawal_previous_vault',
+      'vault_withdrawal_disconnected_vault',
       // wallet
       'payment_required',
       'insufficient_offerings',

@@ -171,6 +171,13 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
   vault_withdrawal_pending:
     "Creek hasn't confirmed the removal yet. Open your Creek vault so it can catch up, then delete this page again.",
+  // DRAFT copy (#3094), pending owner review. The copy of this page is in a
+  // vault the account is no longer connected to; reconnect first, or delete it
+  // here only. Neither line says the copy is gone.
+  vault_withdrawal_previous_vault:
+    'A copy of this page is in the Creek vault you were connected to before. Reconnect that vault to remove it, or delete the page here only.',
+  vault_withdrawal_disconnected_vault:
+    'A copy of this page is in the Creek vault you disconnected. Reconnect that vault to remove it, or delete the page here only.',
 
   // --- Wallet / BotMason quota -----------------------------------------
   payment_required: MONTHLY_FREE_MESSAGES_USED,

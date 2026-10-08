@@ -331,6 +331,36 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
     }
   });
 
+  it.each(['vault_withdrawal_previous_vault', 'vault_withdrawal_disconnected_vault'])(
+    'keeps Intimate selected when the copy is in a vault no longer connected (%s, #3094)',
+    async (detail) => {
+      jest.useFakeTimers();
+      try {
+        mockGet.mockResolvedValue(entry({ id: 7, classification: 'personal' }));
+        const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+        await waitFor(() => {
+          expect(getByTestId('journal-body-input').props.value).toBeTruthy();
+        });
+        mockUpdate.mockClear();
+        mockUpdate.mockRejectedValueOnce({ status: 503, detail });
+
+        const page = within(getByTestId('journal-page'));
+        fireEvent.press(page.getByTestId('privacy-tier-intimate'));
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        // The server stored Intimate before it asked any vault; reverting the
+        // control would show a less private tier than the one on record.
+        expect(page.getByTestId('privacy-tier-intimate').props.accessibilityState.selected).toBe(
+          true,
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
+
   it('surfaces the save-error hint and reverts to the persisted tier when the PATCH rejects', async () => {
     jest.useFakeTimers();
     try {

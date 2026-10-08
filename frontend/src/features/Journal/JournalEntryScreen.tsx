@@ -29,6 +29,7 @@ import ContractionReflectionNote from './ContractionReflectionNote';
 import type { CorpusDestination } from './corpusDestination';
 import CorpusInvitationNote from './CorpusInvitationNote';
 import { claimCreateAttempt, type CreateKey, type CreateKeyRef } from './createKey';
+import { WITHDRAWAL_PENDING_LOCATIONS } from './deleteEntryCopy';
 import EditConfirmDialog from './EditConfirmDialog';
 import { FocusScrollProvider, useFocusScrollHost, type FocusScrollHost } from './focusSpanScroll';
 import FromYourCreekPanel from './FromYourCreekPanel';
@@ -287,13 +288,16 @@ function isCreateConflict(error: unknown): boolean {
   );
 }
 
-/** True only for the stable failure emitted after local privacy commits first. */
+/**
+ * True only for the stable failures emitted after local privacy commits first:
+ * the vault has not confirmed (``vault_withdrawal_pending``), or the copy is in
+ * a vault this account is no longer connected to (#3094). Either way the
+ * stricter tier is already stored.
+ */
 function isVaultWithdrawalPending(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { detail?: unknown }).detail === 'vault_withdrawal_pending'
-  );
+  if (typeof error !== 'object' || error === null) return false;
+  const { detail } = error as { detail?: unknown };
+  return typeof detail === 'string' && Object.hasOwn(WITHDRAWAL_PENDING_LOCATIONS, detail);
 }
 
 interface WriteEntryRefs {

@@ -108,6 +108,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.lg,
     paddingTop: SPACING.sm,
   },
+  deleteReceipt: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
+    paddingHorizontal: SPACING.lg,
+    paddingTop: SPACING.sm,
+  },
   emptyWrap: {
     flex: 1,
     alignItems: 'center',
