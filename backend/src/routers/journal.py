@@ -3355,7 +3355,9 @@ async def _cache_and_mirror_essay(
     # state the privacy floor returns -- and nothing is mirrored, because
     # mirroring a refusal would put it in the vault the cache refused it from.
     essay = cached.essay
-    if essay is None:
+    # Mirror only a letter this request may serve: a refused regeneration leaves
+    # a stored demo letter in the row, which must never reach the vault (#3096).
+    if essay is None or not demo_visibility.has_served_letter(cached):
         return cached
     return await _mirror_cached_essay(
         session, entry=entry, cached=cached, essay=essay, clients=clients

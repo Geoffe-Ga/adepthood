@@ -20,12 +20,19 @@ from http import HTTPStatus
 from typing import TYPE_CHECKING, Final
 
 import pytest
+from sqlmodel import func, select
 
+from dependencies.creek_vault import get_creek_vault_client
+from main import app
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaSource
+from models.voice_draft_retraction import VoiceDraftRetraction
 from routers.journal import _prior_letter_essays
 from services import botmason
+from services import marginalia as marginalia_service
+from services.botmason import LLMResponse
 from tests.incident.test_privacy_suspension import seed_entry, signup
 from tests.provider_transport import ANTHROPIC_KEY, use_anthropic
+from tests.test_voice_draft_mirroring import _RecordingDraftVault
 
 if TYPE_CHECKING:
     from httpx import AsyncClient
@@ -199,3 +206,57 @@ async def test_inside_the_armed_seam_demo_rows_stay_visible(
     assert [item["id"] for item in listing.json()["items"]] == [note_id]
     assert listing.json()["items"][0]["essay"] == _DEMO_LETTER
     assert [item["marginalia_id"] for item in shelf.json()["items"]] == [note_id]
+
+
+class _NonLetterLLM:
+    """A provider whose completion sanitizes to nothing: not a letter."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def __call__(
+        self, prompt: str, history: object, *, system_prompt: object, api_key: object
+    ) -> LLMResponse:
+        del prompt, history, system_prompt, api_key
+        self.calls += 1
+        return LLMResponse(
+            text="   ",
+            provider="anthropic",
+            model="claude-sonnet-5",
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_regeneration_never_mirrors_the_stored_demo_letter(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asking again over a demo letter and getting no letter sends nothing to the vault.
+
+    The mirror follows what *this* request produced. A refused regeneration
+    leaves the stored demo letter in the row, and mirroring from the row would
+    publish that stub text into the writer's Creek vault as a Voice Draft.
+    """
+    run_as_deployed(monkeypatch)
+    llm = _NonLetterLLM()
+    monkeypatch.setattr(marginalia_service, "generate_response", llm)
+    vault = _RecordingDraftVault(db_session)
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id, _ = await signup(async_client, "demo_letter_not_mirrored")
+    entry_id = await seed_entry(db_session, user_id)
+    note_id = await seed_note(db_session, user_id, entry_id, Stored(_REAL, _DEMO_LETTER, _DEMO))
+
+    resp = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay",
+        headers={**headers, "X-LLM-API-Key": ANTHROPIC_KEY},
+        json={"price_acknowledged": True},
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert llm.calls == 1
+    assert resp.json()["essay"] is None
+    assert _DEMO_LETTER not in resp.text
+    assert vault.upserts == []
+    intents = await db_session.execute(select(func.count()).select_from(VoiceDraftRetraction))
+    assert intents.scalar_one() == 0
