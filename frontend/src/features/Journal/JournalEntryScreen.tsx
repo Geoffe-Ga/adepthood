@@ -1021,14 +1021,6 @@ const UNSETTLED_FINISH_ERROR = 'Cannot finish an entry that has not finished loa
 type RunFinish = (_title: string, _body: string) => Promise<FinishedEntry>;
 
 /**
- * The Finish action: cancel any pending debounce, drain in-flight autosaves so a
- * shorter one can't land after us, then issue the single atomic Finish write.
- * Tracks the save state and rethrows on failure so the caller keeps the draft.
- * A failure is recorded in the Finish retry lane whatever the generation, so a
- * keystroke during the write cannot lose it; a success also settles the body,
- * whose full text the Finish write carried.
- */
-/**
  * Record a Finish that failed. A page being deleted refuses Finish like every
  * edit (#3098): no retry can land it, so its lane settles and the hint names
  * the reason. Any other failure stays owed for Retry.
@@ -1040,6 +1032,14 @@ function settleFailedFinish(error: unknown, reporter: SaveReporter, isCurrent: b
   if (isCurrent) reporter.publish(deleting ? 'deletionPending' : 'idle');
 }
 
+/**
+ * The Finish action: cancel any pending debounce, drain in-flight autosaves so a
+ * shorter one can't land after us, then issue the single atomic Finish write.
+ * Tracks the save state and rethrows on failure so the caller keeps the draft.
+ * A failure is recorded in the Finish retry lane whatever the generation, so a
+ * keystroke during the write cannot lose it; a success also settles the body,
+ * whose full text the Finish write carried.
+ */
 function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFinish {
   const writeRefs = useWriteRefs(refs);
   const { entryUnsettledRef, ctxRef, inFlightRef, timerRef, generationRef, durableTextRef } = refs;
