@@ -61,6 +61,15 @@ The export covers your Adepthood data. Your vault holds its own copy and
 exports from its own side; nothing here reaches into it. An ordinary managed
 Fly vault is provider-managed and operator-readable, not confidential compute:
 Fly and privileged Adepthood or Creek operators can access its stored bytes.
+If the vault's own deployment allows it a cloud model (its
+`CREEK_CLOUD_CONSENT` setting), what it holds of yours also goes to that
+model's provider, under the vault's configuration rather than Adepthood's. The
+[privacy policy](legal/privacy-policy.md) names every party that receives
+anything of yours: Railway, which hosts Adepthood's server and database; the
+encrypted backup copies kept off the hosting platform by the operator; the
+language-model provider; your vault, Fly for a managed one, and the vault's
+model provider; Gumroad; Sentry; the email relay (Resend, or the deployment's
+own mail server); and Google or Apple if you sign in with one.
 
 A vault and what your reflections draw on are two separate choices. Each
 reflection reads a few passages of your own writing: from your writing sorted
@@ -138,9 +147,12 @@ Deleting a page does not touch anything else about your account.
 **Settings → Delete account.** You retype the email address you sign in with,
 and the account is erased.
 
-It is **immediate and irreversible**. There is no grace period, no
-deactivation, and no support path to get any of it back. If you want a copy of
-your writing, [take it first](#taking-a-copy-of-your-writing).
+It takes effect on the live service **immediately**, and it **cannot be
+undone**. There is no grace period, no deactivation, and no support path to
+get any of it back. Backups taken before you delete still hold a copy until
+they age out — on our backup schedule, within about 97 days (see "Backups"
+below). If you want a copy of your writing, [take it
+first](#taking-a-copy-of-your-writing).
 
 You are signed out everywhere: the app on every device stops working at its
 next request.
@@ -200,6 +212,30 @@ Three things, each for a stated reason:
 The wallet ledger for your own account goes with the account. Ledger rows
 recording something you did to *another* account's wallet stay, with you
 cleared off them.
+
+### Backups
+
+Deleting your account does not reach into backups. Our backup schedule has two
+legs: the hosting platform keeps each daily backup for 6 days, and a weekly
+copy kept off the platform, itself encrypted, is kept for 90 days. The
+off-platform copies are made, and the expired ones deleted, by the operator by
+hand. A backup taken before you deleted still holds what your account held
+then, with your writing encrypted in it as it is in the database. No backup is
+edited to remove one account. On that schedule, the last copy of your data in
+Adepthood's own backups ages out within about 97 days of your deletion. That
+bound is Adepthood's alone: each party the privacy policy names keeps what it
+received under its own retention.
+
+If the operator ever has to restore the database from a backup taken before
+you deleted, that backup still holds your account, so a restore could bring
+your data back. The restore procedure has a step that re-applies deletions
+made since the backup before the service goes back online, but that step is
+still a draft and relies on a record of deletions whose keeping is not yet
+settled. <!-- DRAFT for owner (#3063 AC17): once tombstone custody is decided
+and the "Suppress resurrected deletions" step in DEPLOYMENT.md is ratified,
+replace this paragraph with: "If we ever have to restore from a backup,
+we re-apply deletions made since that backup before the service goes back
+online." -->
 
 ### If you use a Creek Vault
 

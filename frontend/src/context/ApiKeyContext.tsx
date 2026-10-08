@@ -9,7 +9,9 @@ import React, {
 } from 'react';
 
 import { setLlmApiKeyGetter, setLlmApiKeyReset } from '@/api';
+import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
 import { clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '@/storage/llmKeyStorage';
+import { loadLocalModelPreferred, saveLocalModelPreferred } from '@/storage/localModelStorage';
 
 /**
  * React context managing the user-owned BYOK LLM API key (issue #185).
@@ -22,13 +24,35 @@ import { clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '@/storage/llmKeySt
  * Between calls the key lives in device storage. On supported requests it is
  * transmitted to Adepthood, then forwarded to the provider; Adepthood never
  * persists it in the server database or returns it in an API response.
+ *
+ * The future Adepthood-model choice stays release-gated until a real
+ * Adepthood-operated backend provider exists. While unavailable, stored legacy
+ * preferences are ignored and the registered getter keeps returning the BYOK
+ * key; merely withholding it would fall back to the shared provider and would
+ * not constitute a self-hosted model path.
  */
+
+/**
+ * What ``localModel`` is until the person chooses. Off: a device with no
+ * stored choice keeps sending its key, as it did before the choice existed.
+ * Flip this once the model is live and should be the default.
+ */
+export const LOCAL_MODEL_DEFAULT = false;
 
 /** Outcome of a {@link ApiKeyContextValue.saveApiKey} call. */
 export interface ApiKeySaveResult {
   /**
    * True when the write reached SecureStore; false when it fell back to
    * session-only because the SecureStore write failed.
+   */
+  persisted: boolean;
+}
+
+/** Outcome of a {@link ApiKeyContextValue.setLocalModel} call. */
+export interface LocalModelSaveResult {
+  /**
+   * True when the choice reached device storage; false when it holds for this
+   * session only because the write failed.
    */
   persisted: boolean;
 }
@@ -66,6 +90,16 @@ interface ApiKeyContextValue {
    * when the key was only dropped from session state (the delete failed).
    */
   clearApiKey: () => Promise<ApiKeyClearResult>;
+  /**
+   * True while requests go to Adepthood's own model rather than a provider
+   * reached with the stored key. While true the key is kept but not sent.
+   */
+  localModel: boolean;
+  /**
+   * Choose Adepthood's own model (true) or the stored key (false). Applied to
+   * this session at once; resolves whether the choice also reached storage.
+   */
+  setLocalModel: (_value: boolean) => Promise<LocalModelSaveResult>;
 }
 
 const ApiKeyContext = createContext<ApiKeyContextValue | null>(null);
@@ -77,13 +111,19 @@ const ApiKeyContext = createContext<ApiKeyContextValue | null>(null);
  * next user's requests on a shared device. The reset nulls the ref
  * synchronously so the getter returns null immediately, before any re-render
  * triggered by ``setApiKey`` lands. Both seams are cleared on unmount.
+ *
+ * Once the provider release gate opens, the getter answers ``null`` while
+ * Adepthood's own model is chosen, without touching what is stored.
  */
 function useLlmApiKeyBridge(
   apiKeyRef: React.MutableRefObject<string | null>,
+  localModelRef: React.MutableRefObject<boolean>,
   setApiKey: React.Dispatch<React.SetStateAction<string | null>>,
 ): void {
   useEffect(() => {
-    setLlmApiKeyGetter(() => apiKeyRef.current);
+    setLlmApiKeyGetter(() =>
+      LOCAL_MODEL_AVAILABLE && localModelRef.current ? null : apiKeyRef.current,
+    );
     setLlmApiKeyReset(() => {
       apiKeyRef.current = null;
       setApiKey(null);
@@ -92,7 +132,25 @@ function useLlmApiKeyBridge(
       setLlmApiKeyGetter(null);
       setLlmApiKeyReset(null);
     };
-  }, [apiKeyRef, setApiKey]);
+  }, [apiKeyRef, localModelRef, setApiKey]);
+}
+
+/**
+ * Read the stored model choice once on mount; a device with none keeps
+ * {@link LOCAL_MODEL_DEFAULT}. Never blocks the key's own load.
+ */
+function useLoadLocalModelPreference(
+  setLocalModel: React.Dispatch<React.SetStateAction<boolean>>,
+): void {
+  useEffect(() => {
+    if (!LOCAL_MODEL_AVAILABLE) {
+      setLocalModel(false);
+      return;
+    }
+    void loadLocalModelPreferred().then((stored) => {
+      if (stored !== null) setLocalModel(stored);
+    });
+  }, [setLocalModel]);
 }
 
 /**
@@ -121,19 +179,46 @@ function useLoadStoredApiKey(
   }, [setApiKey, setLoadError, setIsLoading]);
 }
 
+/** Refuse activation until the self-hosted provider exists; otherwise persist the choice. */
+function useSetLocalModel(
+  localModelRef: React.MutableRefObject<boolean>,
+  setLocalModelState: React.Dispatch<React.SetStateAction<boolean>>,
+): (_next: boolean) => Promise<LocalModelSaveResult> {
+  return useCallback(
+    async (next: boolean): Promise<LocalModelSaveResult> => {
+      if (!LOCAL_MODEL_AVAILABLE) {
+        localModelRef.current = false;
+        setLocalModelState(false);
+        return { persisted: false };
+      }
+      // Applied before the write resolves, and synchronously to the ref, so the
+      // very next request already honours the choice.
+      localModelRef.current = next;
+      setLocalModelState(next);
+      const persisted = await saveLocalModelPreferred(next);
+      return { persisted };
+    },
+    [localModelRef, setLocalModelState],
+  );
+}
+
 export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<Error | null>(null);
+  const [localModel, setLocalModelState] = useState(LOCAL_MODEL_DEFAULT);
 
-  // Mirror the state into a ref so the getter we register with the API layer
-  // always reads the latest value without needing to re-register on every
+  // Mirror the state into refs so the getter we register with the API layer
+  // always reads the latest values without needing to re-register on every
   // change.
   const apiKeyRef = useRef<string | null>(null);
   apiKeyRef.current = apiKey;
+  const localModelRef = useRef(LOCAL_MODEL_DEFAULT);
+  localModelRef.current = localModel;
 
-  useLlmApiKeyBridge(apiKeyRef, setApiKey);
+  useLlmApiKeyBridge(apiKeyRef, localModelRef, setApiKey);
   useLoadStoredApiKey(setApiKey, setLoadError, setIsLoading);
+  useLoadLocalModelPreference(setLocalModelState);
 
   const saveApiKey = useCallback(async (key: string): Promise<ApiKeySaveResult> => {
     let persisted = false;
@@ -165,9 +250,11 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
     return { cleared };
   }, []);
 
+  const setLocalModel = useSetLocalModel(localModelRef, setLocalModelState);
+
   const value = useMemo(
-    () => ({ apiKey, isLoading, loadError, saveApiKey, clearApiKey }),
-    [apiKey, isLoading, loadError, saveApiKey, clearApiKey],
+    () => ({ apiKey, isLoading, loadError, saveApiKey, clearApiKey, localModel, setLocalModel }),
+    [apiKey, isLoading, loadError, saveApiKey, clearApiKey, localModel, setLocalModel],
   );
 
   return <ApiKeyContext.Provider value={value}>{children}</ApiKeyContext.Provider>;

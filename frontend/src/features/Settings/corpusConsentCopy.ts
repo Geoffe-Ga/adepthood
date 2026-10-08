@@ -29,7 +29,9 @@ export interface CorpusConsentDecision {
   readonly decided_at: string | null;
 }
 
-export const CORPUS_CONSENT_EYEBROW = 'Your writing';
+/** The Settings group the switches sit in, and this screen's eyebrow. */
+export const CORPUS_GROUP_TITLE = 'Your writing';
+export const CORPUS_CONSENT_EYEBROW = CORPUS_GROUP_TITLE;
 export const CORPUS_CONSENT_TITLE = 'Writing reflections can draw on';
 
 /** The offer, with declining stated as a whole answer rather than a deferral. */
@@ -87,10 +89,18 @@ export const CORPUS_NOT_SORTED_YET_NOTE =
 export const CORPUS_CONSENT_FAILURE =
   'That did not reach the server, so nothing changed. Check your connection and try again.';
 
-/** The Settings row that leads here. */
+/**
+ * Over the switches on the Settings hub: the three facts somebody needs
+ * before moving one, in one breath — what sorting is for, what it sends, and
+ * that Intimate is never sent — with the full account one row below.
+ */
+export const CORPUS_SORTING_HUB_LEAD =
+  'Sorted for reflections to quote. Each entry is sent once to the language-model provider; an entry marked Intimate never is. Off unless you turn it on.';
+
+/** The Settings row that leads here, under the switches, for the full account. */
 export const CORPUS_CONSENT_ROW_LABEL = 'What reflections draw on';
 export const CORPUS_CONSENT_ROW_DESCRIPTION =
-  'Choose whether your own writing is sorted for reflections to quote. Off unless you turn it on.';
+  'The full account of what sorting does, what turning it off deletes, and the record it keeps.';
 
 /**
  * The invitation offered once, after a first completed reflection (#2407).
@@ -222,6 +232,7 @@ export const CORPUS_CONSENT_COPY_ENTRIES: readonly string[] = [
   CORPUS_CONSENT_INTIMATE_LINE,
   CORPUS_CONSENT_RECORD_LINE,
   CORPUS_CONSENT_SOURCES_HEADING,
+  CORPUS_SORTING_HUB_LEAD,
   CORPUS_CONSENT_ROW_LABEL,
   CORPUS_CONSENT_ROW_DESCRIPTION,
   CORPUS_INVITATION_REACH,

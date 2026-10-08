@@ -90,10 +90,11 @@ export const VAULT_FLOOR =
 
 /**
  * Said where somebody is about to create a managed vault, so that the press
- * is not mistaken for the yes to sorting. It names where that yes lives.
+ * is not mistaken for the yes to sorting. It names where that yes lives: the
+ * switches under Your writing in Settings, beside the vault row itself.
  */
 export const VAULT_SORTING_CHOICE =
-  'Creating a vault does not turn sorting on; that stays a separate choice, under What reflections draw on in Settings.';
+  'Creating a vault does not turn sorting on; that stays a separate choice, a switch under Your writing in Settings.';
 
 /**
  * The Intimate boundary. No Intimate body is sent. A prior non-Intimate copy is

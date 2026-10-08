@@ -4,8 +4,8 @@
  * - **Set aside for today**: the corner X stores the user-timezone day it was
  *   pressed on (``YYYY-MM-DD``), and the tip comes back on any other day.
  * - **Never offer**: the in-card "Don't show this again" link stores a
- *   permanent flag, which only Settings → Journal → "Offer morning pages
- *   again" clears.
+ *   permanent flag, which only the Settings → Journal "Offer morning pages"
+ *   switch clears (and can set).
  *
  * Both live on THIS device (AsyncStorage), unscoped per account, exactly as
  * the single flag before them did. A read error fails open — the tip is an
@@ -63,13 +63,17 @@ export async function loadMorningPagesTipState(): Promise<MorningPagesTipState> 
  * Write one declining answer. Never rejects: callers fire it and forget (the
  * answer is already held in memory), so a failed write (quota exceeded,
  * storage blocked) is reported here rather than escaping as an unhandled
- * rejection. The tip is simply offered again on the next read.
+ * rejection. The tip is simply offered again on the next read. Resolves
+ * whether it was saved, for the one caller that shows the answer back (the
+ * Settings switch) and must not show a decline that did not land.
  */
-async function saveDecline(key: string, value: string): Promise<void> {
+async function saveDecline(key: string, value: string): Promise<boolean> {
   try {
     await AsyncStorage.setItem(key, value);
+    return true;
   } catch (err) {
     console.warn('[morningPagesTipStorage] failed to save dismissal state', err);
+    return false;
   }
 }
 
@@ -78,14 +82,15 @@ export async function saveMorningPagesTipSetAside(day: string): Promise<void> {
   await saveDecline(SET_ASIDE_ON_KEY, day);
 }
 
-/** "Don't show this again" (true), or its undoing (false). */
-export async function saveMorningPagesTipNeverOffer(value: boolean): Promise<void> {
-  await saveDecline(NEVER_OFFER_KEY, value ? FLAG_TRUE : FLAG_FALSE);
+/** "Don't show this again" (true), or its undoing (false). Resolves whether it saved. */
+export async function saveMorningPagesTipNeverOffer(value: boolean): Promise<boolean> {
+  return saveDecline(NEVER_OFFER_KEY, value ? FLAG_TRUE : FLAG_FALSE);
 }
 
 /**
- * Settings → "Offer morning pages again": clears the permanent decline AND
- * today's set-aside, so the tip is on the shelf now rather than tomorrow.
+ * Settings → the "Offer morning pages" switch, turned on: clears the permanent
+ * decline AND today's set-aside, so the tip is on the shelf now rather than
+ * tomorrow.
  *
  * It also drops any legacy flag the shelf has not migrated yet, and drops it
  * FIRST: if the flag outlived the new write, the next shelf read would carry
