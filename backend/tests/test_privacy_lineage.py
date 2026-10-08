@@ -64,6 +64,12 @@ from services.privacy_lineage import (
     observe_entry_lineage,
     restricted_lineage_counts,
 )
+from services.privacy_suspension import VAULT_SEND_SUSPEND_ENV_VAR
+from tests.incident.test_privacy_suspension import (
+    _VaultRecorder,
+    handshaken_vault,
+    suspend_vault,
+)
 from tests.support.lineage_canaries import (
     LINEAGE_SENTINEL,
     REVIEW_PROSE,
@@ -594,6 +600,62 @@ async def test_a_degraded_vault_write_still_counts_as_sent(
 
     assert patch.status_code == HTTPStatus.OK, patch.text
     assert vault.ingest_calls, "the degraded write never dialled"
+    assert _shadowed_operations(caplog, chain.review_id) == [LineageOperation.VAULT_WRITE.value]
+    _assert_no_canary_in_logs(caplog)
+
+
+async def _edit_review(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    headers: dict[str, str],
+    review_id: int,
+) -> None:
+    review = await db_session.get(JournalEntry, review_id)
+    assert review is not None
+    await db_session.refresh(review)
+    patch = await async_client.patch(
+        f"/journal/{review_id}",
+        json={"message": f"{review.message}\n\nOne more line."},
+        headers=headers,
+    )
+    assert patch.status_code == HTTPStatus.OK, patch.text
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_vault_send_emits_no_shadow_until_resumed(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A send the operator switch refused left nothing to count; the first real send counts once.
+
+    Driven through the real HTTP adapter, whose single request site is where
+    ``PRIVACY_SUSPEND_VAULT_SEND`` refuses (#3075, #3107). Under the switch the
+    vault sees only the content-free capability probe and no shadow is
+    recorded; once the switch is lifted the next edit really dials, and the
+    shadow is recorded exactly once.
+    """
+    recorder = _VaultRecorder()
+    vault = await handshaken_vault(recorder)
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id = await _signup(async_client, "lineage_suspended_vault")
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+
+    suspend_vault(monkeypatch)
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        await _edit_review(async_client, db_session, headers, chain.review_id)
+
+    assert "PUT" not in recorder.methods()
+    assert _shadowed_operations(caplog, chain.review_id) == []
+
+    monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR)
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        await _edit_review(async_client, db_session, headers, chain.review_id)
+
+    assert recorder.methods().count("PUT") == 1
     assert _shadowed_operations(caplog, chain.review_id) == [LineageOperation.VAULT_WRITE.value]
     _assert_no_canary_in_logs(caplog)
 

@@ -669,6 +669,18 @@
     "issue": 3094
   },
   {
+    "id": "journal.write-under-vault-send-suspension",
+    "description": "While the operator's PRIVACY_SUSPEND_VAULT_SEND switch is on, a writer with a connected Creek vault saves or edits a Personal page (#3107). The page is saved locally; the vault adapter refuses the ingest before the wire, so the write is recorded as suspended -- not degraded -- and the page owes nothing: no vault destination is bound and no VAULT_WRITE lineage shadow is logged. Deleting that page later completes at once (204, no withdrawal dial, no obligation row), even if the vault has since been disconnected. Once the switch is lifted, the next save really sends, binds the destination and records the shadow exactly once. Uncovered because no lane spec drives the operator switch against the out-of-process contract fake; pinned meanwhile by backend/tests/test_vault_destination_binding.py, backend/tests/test_privacy_lineage.py and backend/tests/test_creek_vault_write.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "DELETE /journal/{entry_id}"],
+      "tables": ["journalentry", "journalwithdrawalobligation"]
+    },
+    "status": "uncovered",
+    "issue": 3107
+  },
+  {
     "id": "journal.intimate-reclassification-withdraws-copies",
     "description": "A writer whose Personal page and generated Voice Draft have reached their connected Creek vault chooses Intimate for that page (#3060, #3077). The stricter tier is committed locally whatever the vault says. When the first content-free Voice Draft retraction fails at the real HTTP boundary, the PATCH answers the stable retryable 503 vault_withdrawal_pending -- the existing privacy control keeps Intimate selected and offers a retry -- instead of a 200 while the AI-authored draft is still in the vault. Choosing Intimate again re-sends the owed DELETE from a durable, content-free obligation row and succeeds only once the vault confirms both the draft and the journal replica absent. The lane uses the production client against the out-of-process contract fake.",
     "crosses": {

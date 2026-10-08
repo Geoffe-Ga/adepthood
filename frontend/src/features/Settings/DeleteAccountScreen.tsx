@@ -15,6 +15,7 @@ import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsFor
 
 import { ApiError, users, type AccountDeletionReceipt } from '@/api';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import { OLDEST_LIVE_BACKUP_DAYS } from '@/constants/backupSchedule';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
 
@@ -24,11 +25,11 @@ import { BORDER_RADIUS, SPACING, colors, ink, surface } from '@/design/tokens';
  * journal-first product's promise that the writing is theirs.
  *
  * Two things this screen refuses to do. It does not soften: deletion from the
- * live service is immediate and cannot be undone, and says so before the button is
- * pressable, along with how long backups taken before it survive. And it
- * does not overclaim: what survives — the anonymous catalogue contribution,
- * the purchase receipt, a Creek Vault the app cannot reach — is listed beside
- * what goes, because a promise of total erasure that is not quite true is
+ * live service is immediate and cannot be undone, and it says so before the
+ * button is pressable, along with how long a backup taken beforehand may still
+ * hold a copy. And it does not overclaim: what survives — the anonymous
+ * catalogue contribution, the purchase receipt, a Creek Vault the app cannot
+ * reach — is listed beside what goes, because a promise of total erasure that is not quite true is
  * worse than an accurate one.
  */
 
@@ -36,13 +37,13 @@ const IRREVERSIBLE_LEAD =
   'Deleting your account removes it from Adepthood immediately and is irreversible. ' +
   'There is no grace period, and no way back — not in the app, not through support. ' +
   'Backups made before you delete still hold a copy until they age out — ' +
-  'on our backup schedule, within about 97 days.';
+  `on our backup schedule, within about ${OLDEST_LIVE_BACKUP_DAYS} days.`;
 
 /** The receipt's account of what was removed, and of what ages out after. */
 function receiptSummary(rowsErased: number): string {
   return (
     `We removed ${rowsErased} records belonging to you. ` +
-    'On our backup schedule, backups made before now age out within about 97 days.'
+    `On our backup schedule, backups made before now age out within about ${OLDEST_LIVE_BACKUP_DAYS} days.`
   );
 }
 
