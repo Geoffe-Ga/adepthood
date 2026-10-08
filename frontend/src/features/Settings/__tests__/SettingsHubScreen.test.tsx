@@ -155,6 +155,16 @@ describe('SettingsHubScreen', () => {
     expect(mockNavigate).toHaveBeenCalledWith('DeleteAccount');
   });
 
+  test('describes deletion without promising that everything is erased everywhere', () => {
+    // Backups taken before a deletion still hold a copy until they age out,
+    // and the Delete account screen says so (#3057). The row may not promise
+    // more than that screen.
+    const { getByText, queryByText } = render(<SettingsHubScreen />);
+
+    expect(getByText('Erase your account from Adepthood. This cannot be undone.')).toBeTruthy();
+    expect(queryByText(/everything in it/)).toBeNull();
+  });
+
   test('offers an in-app route to a copy of everything the user wrote', () => {
     // The counterpart to deletion, and the reason deletion is a reasonable
     // thing to offer at all: an endpoint no screen reaches is not a feature.

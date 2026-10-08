@@ -260,7 +260,7 @@ const SessionSection = ({ onLogout, onDeleteAccount }: SessionSectionProps): Rea
     <SettingsRow
       icon={Trash2}
       label="Delete account"
-      description="Erase your account and everything in it. This cannot be undone."
+      description="Erase your account from Adepthood. This cannot be undone."
       onPress={onDeleteAccount}
       testID="settings-row-delete-account"
       destructive

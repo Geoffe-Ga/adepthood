@@ -465,6 +465,7 @@ def test_content_carrying_rows_are_the_expected_set() -> None:
         RecipientId.CREEK_VAULT_DEPLOYMENT,
         RecipientId.CREEK_DOWNSTREAM_MODEL,
         RecipientId.HOSTING_PLATFORM,
+        RecipientId.OFFHOST_BACKUP,
         RecipientId.FLY,
     }
 

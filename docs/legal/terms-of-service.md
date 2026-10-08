@@ -48,9 +48,11 @@ licence may be bought as a gift for someone else: the person who will use
 the account creates it themselves, with their own email address, and redeems
 the key. One licence unlocks one account at a time.
 
-You can delete your account from **Settings → Delete account**. It is
-immediate and irreversible, and what it reaches — and the little it does
-not — is set out in [Your data](../your-data.md).
+You can delete your account from **Settings → Delete account**. It takes
+effect on the live service immediately and cannot be undone; on our backup
+schedule, backups taken before then age out within about 97 days. What it
+reaches — and the little it does not — is set out in [Your
+data](../your-data.md).
 
 ## Your writing stays yours
 

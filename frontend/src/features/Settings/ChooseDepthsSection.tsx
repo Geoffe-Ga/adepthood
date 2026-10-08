@@ -43,9 +43,13 @@ const SECTION_TITLE = 'Choose your depths';
 const FLOOR_STATEMENT =
   'Your journal is always here — the floor beneath everything. Nothing below is required.';
 
-/** Framing caption: turning a depth off is a choice, not a loss. */
+/**
+ * Framing caption: turning a depth off is a choice, not a loss. Optional is
+ * not ungated, so it also says the Course's readings follow a schedule.
+ */
 const FRAMING_CAPTION =
-  'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss.';
+  'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss. ' +
+  'Some readings follow a schedule.';
 
 /** One optional depth: its label, store key, and stable testID slug. */
 interface DepthDefinition {
