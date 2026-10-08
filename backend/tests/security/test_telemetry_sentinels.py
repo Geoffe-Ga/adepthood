@@ -78,7 +78,7 @@ _TOP_LEVEL_KEYS = frozenset(
     }
 )
 _ENTRY_KEYS = frozenset({"type", "module", "value", "mechanism", "stacktrace"})
-_FRAME_KEYS = frozenset({"filename", "function", "lineno"})
+_FRAME_KEYS = frozenset({"filename", "function", "lineno", "in_app"})
 
 _SENTINEL_ROUTE = "/__sentinel__/{item_id}"
 _REQUEST_ID = "sentinel-trace-1"
@@ -199,6 +199,7 @@ def test_scrub_event_keeps_what_an_operator_diagnoses_with() -> None:
             "filename": "routers/journal.py",
             "function": "create_entry",
             "lineno": 42,
+            "in_app": True,
         }
     ]
     assert entries[-1]["mechanism"] == {"type": "generic", "handled": True}
