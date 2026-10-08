@@ -54,7 +54,7 @@ from privacy.recipients import (
 from security.secret_shapes import redact_secret_shapes
 from services import botmason, creek_provisioning_client, creek_vault_client, email
 from services.botmason import PROVIDER_REGISTRY, LLMProviderError, generate_response
-from tests.provider_transport import use_openai
+from tests.provider_transport import OPENAI_KEY, use_openai
 from tests.support.outbound_dials import (
     SRC_ROOT,
     LiteralHost,
@@ -490,7 +490,7 @@ async def test_unknown_provider_and_off_list_model_never_dial(
     monkeypatch.setenv("LLM_MODEL", "gpt-9-unvetted")
     assert "gpt-9-unvetted" not in RECIPIENTS[RecipientId.OPENAI].approved_models
     with pytest.raises(LLMProviderError):
-        await generate_response("hello", [])
+        await generate_response("hello", [], api_key=OPENAI_KEY)
     assert stub.request_count == 0
     assert "evilcorp" not in PROVIDER_RECIPIENTS
     assert botmason.get_provider() == "openai"

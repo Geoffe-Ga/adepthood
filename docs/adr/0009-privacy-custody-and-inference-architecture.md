@@ -66,9 +66,10 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
   reflection scope. Completion detection output is a separate, non-textual
   derived store (`completionsuggestion.completed_units` and `completed_on`).
 - **Server AI reads plaintext.** `services/botmason.py::resolve_chat_api_key`
-  uses the person's own key (BYOK) when one is sent, and otherwise **the
-  server's own `LLM_API_KEY`**. BotMason credits therefore pay for cloud calls
-  made with the app's key. The following all run server-side on decrypted
+  used the person's own key (BYOK) when one was sent, and otherwise **the
+  server's own `LLM_API_KEY`**, so BotMason credits paid for cloud calls made
+  with the app's key. Phase (a)'s first slice (#3067) has since removed that
+  fallback; see Decision item 4. The following all run server-side on decrypted
   prose: corpus ingest and classification, frequency classification,
   marginalia and essays, completion detection, transcription, and
   `services/creek_vault_reflect.py`.
@@ -137,12 +138,17 @@ answers to this record's follow-up questions, given the same evening.
    or a **managed no-retention runtime** we run. Under the decision, credits
    will never pay for a call made with the app's cloud key.
 
-   **Known gap until phase (a) lands, with #3096: the app-key fallback.**
-   Today, when no BYOK key is sent, `services/botmason.py::_resolve_api_key`
-   falls back to the server's `LLM_API_KEY`. A credit-funded request
-   carrying journal content therefore reaches a cloud vendor on the app's
-   account. Phase (a) removes that fallback for anything carrying a person's
-   content, together with #3096 (refuse without credits or BYOK).
+   **Closed by phase (a)'s first slice (#3067), with #3096: the app-key
+   fallback.** Before that slice, when no BYOK key was sent,
+   `services/botmason.py::_resolve_api_key` fell back to the server's
+   `LLM_API_KEY`, so a credit-funded request carrying journal content reached
+   a cloud vendor on the app's account. Now `_resolve_api_key` has no
+   fallback: a request without the person's own key is answered by their
+   vault where one is bound, and is otherwise refused `llm_key_required`
+   before any client is built (#3096). The exit test is
+   `backend/tests/security/test_byok_only_cloud.py`. Until the vault-local
+   model or the managed runtime is live, credits buy no app-provider
+   inference; that is the feature loss Decision item 12 accepts.
 
    **Honest limit, decided by the owner:** processing in that managed
    runtime is **not operator-blind while it runs**. The runtime sees the
@@ -331,7 +337,7 @@ history and future content stand or fall together.
 
 *Selected: user-held keys plus device-side and vault-local inference, BYOK cloud as explicit opt-in.*
 
-- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server and the app key is a fallback. (`owner:2026-10-07#B12-premise`)
+- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. (`owner:2026-10-07#B12-premise`)
 - **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07#B12-premise`)
 - **Recovery:** A recovery phrase the person writes down plus their passphrase; either unlocks the data key. Losing both means the data is gone, agreed up front at enrolment. Pairing, revocation and the rest of D03 stay open. (`owner:2026-10-07#followup-recovery`)
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
@@ -469,9 +475,11 @@ stores. This record consumes them and does not rebuild them.
 
 ## BotMason credits
 
-- **Today:** `resolve_chat_api_key` falls back to the server's
-  `LLM_API_KEY`, so a credit-funded message reaches a cloud vendor on the
-  app's account.
+- **Before phase (a):** `resolve_chat_api_key` fell back to the server's
+  `LLM_API_KEY`, so a credit-funded message reached a cloud vendor on the
+  app's account. Phase (a)'s first slice (#3067) removed that fallback: a
+  request without the person's own key is refused `llm_key_required` unless
+  their vault answers it.
 - **Decided:** credits fund **non-cloud** inference only. That means the
   person's vault-local model (B05) or a managed no-retention runtime we run. A
   BYOK call pays its own vendor and debits no credits. With neither credits

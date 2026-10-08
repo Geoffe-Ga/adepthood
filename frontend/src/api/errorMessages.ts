@@ -47,8 +47,10 @@ const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to contin
  */
 export const INSUFFICIENT_OFFERINGS_COPY =
   "You're out of BotMason credits, so nothing was charged. Add more credits, or add your own OpenAI or Anthropic API key in Settings — readings, letters and page reading all draw from the same pool.";
+// DRAFT for owner review (ADR 0009 phase (a), #3067): says plainly that credits
+// no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
 export const LLM_KEY_REQUIRED_COPY =
-  'BotMason can only answer here with an API key of your own, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.';
+  "BotMason's cloud AI needs an API key of your own — credits don't pay for it — so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.";
 
 const MONTHLY_FREE_MESSAGES_USED =
   "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";

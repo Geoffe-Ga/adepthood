@@ -31,6 +31,7 @@ from services.botmason import (
     STUB_MODEL_NAME,
     STUB_PROVIDER_NAME,
     ImagePayload,
+    LLMProviderError,
     LLMResponse,
     _stub_response,
     _stub_vision_response,
@@ -258,6 +259,10 @@ async def test_freeform_journal_works_at_zero_balance(async_client: AsyncClient)
 
 # ── BotMason service unit tests ────────────────────────────────────────
 
+#: A writer's own OpenAI key (BYOK): since ADR 0009 phase (a) the only way a
+#: request reaches a real provider.
+_WRITER_OPENAI_KEY = "sk-writer-key"  # pragma: allowlist secret
+
 
 @pytest.mark.asyncio
 async def test_stub_response_contains_user_message() -> None:
@@ -393,47 +398,28 @@ async def test_system_prompt_allows_file_at_size_limit(
 
 
 @pytest.mark.asyncio
-async def test_openai_provider_raises_without_api_key(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+@pytest.mark.parametrize("server_key", [None, "", "sk-ant-server-key-not-read-0123456789"])
+async def test_a_real_provider_refuses_without_the_writers_key(
+    monkeypatch: pytest.MonkeyPatch, provider: str, server_key: str | None
 ) -> None:
-    """OpenAI provider raises RuntimeError when LLM_API_KEY is not set."""
-    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
+    """A configured provider and any ``LLM_API_KEY`` still refuse a keyless call (#3067).
+
+    The server's own key is not read since ADR 0009 phase (a): the call is
+    refused ``llm_key_required`` -- an ``LLMProviderError`` -- before the
+    provider function is reached, set or unset or empty.
+    """
+    monkeypatch.setenv("BOTMASON_PROVIDER", provider)
+    monkeypatch.delenv(botmason_mod.STUB_SEAM_ENV_VAR, raising=False)
+    if server_key is None:
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("LLM_API_KEY", server_key)
+    dial = AsyncMock()
+    monkeypatch.setattr(botmason_mod, f"_call_{provider}", dial)
+    with pytest.raises(LLMProviderError, match="llm_key_required"):
         await generate_response("Hello", [])
-
-
-@pytest.mark.asyncio
-async def test_anthropic_provider_raises_without_api_key(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Anthropic provider raises RuntimeError when LLM_API_KEY is not set."""
-    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
-        await generate_response("Hello", [])
-
-
-@pytest.mark.asyncio
-async def test_openai_provider_raises_with_empty_api_key(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """OpenAI provider raises RuntimeError when LLM_API_KEY is empty string."""
-    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", "")
-    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
-        await generate_response("Hello", [])
-
-
-@pytest.mark.asyncio
-async def test_anthropic_provider_raises_with_empty_api_key(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Anthropic provider raises RuntimeError when LLM_API_KEY is empty string."""
-    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
-    monkeypatch.setenv("LLM_API_KEY", "")
-    with pytest.raises(RuntimeError, match="LLM_API_KEY"):
-        await generate_response("Hello", [])
+    dial.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -721,16 +707,19 @@ async def test_generate_response_routes_to_openai_sdk(
     """
     monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAIClient)
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", "sk-server-key")  # pragma: allowlist secret
     monkeypatch.delenv("LLM_MODEL", raising=False)
 
-    result = await generate_response("Hello", [])
+    result = await generate_response(
+        "Hello",
+        [],
+        api_key="sk-writer-key",  # pragma: allowlist secret
+    )
 
     assert result.text == "A real OpenAI completion."
     assert result.provider == "openai"
     assert result.prompt_tokens == 42
     assert result.completion_tokens == 17
-    assert _FakeOpenAIClient.last_kwargs["api_key"] == "sk-server-key"  # pragma: allowlist secret
+    assert _FakeOpenAIClient.last_kwargs["api_key"] == "sk-writer-key"  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -740,16 +729,19 @@ async def test_generate_response_routes_to_anthropic_sdk(
     """Same end-to-end proof for the anthropic provider."""
     monkeypatch.setattr(anthropic, "AsyncAnthropic", _FakeAnthropicClient)
     monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
-    monkeypatch.setenv("LLM_API_KEY", "sk-ant-server-key")  # pragma: allowlist secret
     monkeypatch.delenv("LLM_MODEL", raising=False)
 
-    result = await generate_response("Hello", [])
+    result = await generate_response(
+        "Hello",
+        [],
+        api_key="sk-ant-writer-key",  # pragma: allowlist secret
+    )
 
     assert result.text == "A real Anthropic completion."
     assert result.provider == "anthropic"
     assert result.prompt_tokens == 33
     assert result.completion_tokens == 9
-    expected_key = "sk-ant-server-key"  # pragma: allowlist secret
+    expected_key = "sk-ant-writer-key"  # pragma: allowlist secret
     assert _FakeAnthropicClient.last_kwargs["api_key"] == expected_key
 
 
@@ -795,11 +787,10 @@ async def test_disallowed_model_rejected_before_any_network_call(
 
     monkeypatch.setattr(openai, "AsyncOpenAI", _Tripwire)
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", "sk-server-key")  # pragma: allowlist secret
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-most-expensive")
 
     with pytest.raises(RuntimeError, match="allowlist"):
-        await generate_response("Hello", [])
+        await generate_response("Hello", [], api_key=_WRITER_OPENAI_KEY)
     assert constructed == []
 
 
@@ -807,10 +798,9 @@ async def test_disallowed_model_rejected_before_any_network_call(
 async def test_allowed_model_passes_the_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(openai, "AsyncOpenAI", _FakeOpenAIClient)
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", "sk-server-key")  # pragma: allowlist secret
     monkeypatch.setenv("LLM_MODEL", "gpt-4o")
 
-    result = await generate_response("Hello", [])
+    result = await generate_response("Hello", [], api_key=_WRITER_OPENAI_KEY)
     assert result.provider == "openai"
 
 
@@ -862,11 +852,12 @@ async def test_generate_response_forwards_images_to_openai_call(
 ) -> None:
     """A configured provider receives the ``images`` argument on the call path."""
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", "sk-server-key")  # pragma: allowlist secret
 
     mock_call = AsyncMock(return_value=_mock_openai_response("saw the image"))
     with patch.object(botmason_mod, "_call_openai", mock_call):
-        result = await generate_response("What do you see?", [], images=[_TEST_IMAGE])
+        result = await generate_response(
+            "What do you see?", [], api_key=_WRITER_OPENAI_KEY, images=[_TEST_IMAGE]
+        )
 
     assert result.text == "saw the image"
     assert _forwarded_images(mock_call) == [_TEST_IMAGE]

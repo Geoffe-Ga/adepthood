@@ -27,8 +27,9 @@
     future content alike: on web, protection rests on trusting the code we
     serve until signed builds ship. On native, it holds only while the signed
     build is honest.
-  - Until phase (a), BYOK is relayed through our server, and without BYOK
-    the app's own key pays.
+  - Until phase (a), BYOK is relayed through our server. Phase (a)'s first
+    slice (#3067) removed the app's own key as a payer for a person's
+    content.
 - **Target: keys will be user-held, with no operator escrow.**
   - Recovery is a written-down recovery phrase plus the person's passphrase.
   - Losing both means the data is gone, and the person agrees to that up
@@ -85,7 +86,7 @@ there too.
 
 - Remove the server `LLM_API_KEY` fallback in
   `services/botmason.py::resolve_chat_api_key` for any request carrying a
-  person's content.
+  person's content. Done in the first slice (#3067).
 - **Move BYOK client-side.** The device calls the vendor directly with the
   person's key. Retire the `X-LLM-API-Key` header and the server-side BYOK
   call.

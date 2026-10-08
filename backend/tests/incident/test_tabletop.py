@@ -96,10 +96,15 @@ async def _resonate(
 async def test_canary_leak_contained_by_ai_switch(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Before: a pass reaches the provider. After the switch: nothing more does."""
+    """Before: a pass reaches the provider. After the switch: nothing more does.
+
+    The pass carries the writer's own key: since ADR 0009 phase (a) (#3067) that
+    is the only way any pass reaches a provider, so it is what a leak rides on.
+    """
     trail: list[tuple[str, object]] = []
     stub = arm_anthropic(monkeypatch)
     headers, user_id, _ = await signup(async_client, "canary")
+    headers = {**headers, "X-LLM-API-Key": ANTHROPIC_KEY}
     admin = await _admin(async_client, db_session, "canary_admin")
 
     before = await _resonate(async_client, headers, await seed_entry(db_session, user_id))
@@ -152,26 +157,44 @@ async def _refused(message: str) -> bool:
     return False
 
 
+async def _keyless_refused(message: str) -> bool:
+    """Whether a call carrying no writer's key is refused ``llm_key_required``."""
+    try:
+        await botmason.generate_response(message, [])
+    except botmason.NoGenerationSourceError:
+        return True
+    return False
+
+
 @pytest.mark.asyncio
 async def test_compromised_llm_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Switch on, swap the key, switch off: the next call carries only the new key."""
+    """A server ``LLM_API_KEY`` is never sent, so rotating it changes no request (#3067).
+
+    Since ADR 0009 phase (a) nothing reads the server's own key. The drill is
+    unchanged -- switch on, swap the key, switch off -- and what it now proves
+    is that neither the old nor the new server key ever reaches the vendor:
+    keyless calls are refused before and after, and the only key sent is a
+    writer's own.
+    """
     trail: list[tuple[str, object]] = []
     keys = _record_anthropic_keys(monkeypatch)
+    monkeypatch.delenv(botmason.STUB_SEAM_ENV_VAR, raising=False)
     monkeypatch.setenv("LLM_API_KEY", _OLD_KEY)
-    await botmason.generate_response("before", [])
-    trail.append(("keys sent before", list(keys)))
+    trail.append(("keyless refused before", await _keyless_refused("before")))
+    await botmason.generate_response("writer", [], api_key=ANTHROPIC_KEY)
 
     suspend_ai(monkeypatch)
     trail.append(("refused while suspended", await _refused("during")))
     monkeypatch.setenv("LLM_API_KEY", _NEW_KEY)
     monkeypatch.delenv(EXTERNAL_AI_SUSPEND_ENV_VAR)
-    await botmason.generate_response("after", [])
-    trail.append(("keys sent after the swap", keys[1:]))
+    trail.append(("keyless refused after the swap", await _keyless_refused("after")))
+    trail.append(("keys sent", list(keys)))
 
     assert trail == [
-        ("keys sent before", [_OLD_KEY]),
+        ("keyless refused before", True),
         ("refused while suspended", True),
-        ("keys sent after the swap", [_NEW_KEY]),
+        ("keyless refused after the swap", True),
+        ("keys sent", [ANTHROPIC_KEY]),
     ]
 
 
@@ -316,7 +339,10 @@ async def test_stuck_deletion_visible_and_withdraw_continues(
 async def test_vendor_policy_change(
     monkeypatch: pytest.MonkeyPatch, api_key: str | None, vendor: str
 ) -> None:
-    """Before: the vendor is reached. After the switch: no client for it is built."""
+    """Before: the writer's vendor is reached. After the switch: no client for it is built.
+
+    Without a writer's key no client is built even before (ADR 0009 phase (a)).
+    """
     trail: list[tuple[str, object]] = []
     use_openai(monkeypatch, HTTPStatus.OK, _OPENAI_OK)
     arm_anthropic(monkeypatch)
@@ -332,6 +358,6 @@ async def test_vendor_policy_change(
     trail.append(("clients built under the switch", built[1:]))
 
     assert trail == [
-        ("clients built before", [vendor]),
+        ("clients built before", [vendor] if api_key else []),
         ("clients built under the switch", []),
     ]

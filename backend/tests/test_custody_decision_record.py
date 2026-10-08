@@ -1091,24 +1091,34 @@ def test_b13_epic_draft_lists_exactly_the_open_owner_questions() -> None:
     assert listed == questions
 
 
-def test_decisions_three_and_four_scope_the_cloud_rule_and_name_the_app_key_gap() -> None:
-    """Today the app's own key pays when no BYOK key is sent, so the rule is a target.
+def test_decisions_three_and_four_scope_the_cloud_rule_and_record_the_closed_app_key_gap() -> None:
+    """The cloud rule stays a target; the app-key fallback is recorded as closed, and is.
 
-    ``_resolve_api_key`` falls back to the server ``LLM_API_KEY`` when no
-    BYOK key is supplied. While it does, the record must state the cloud rule
-    as the decided target and name the fallback as a known gap that phase (a)
-    closes with #3096.
+    Phase (a)'s first slice (#3067) removed the server ``LLM_API_KEY`` fallback
+    from ``_resolve_api_key``. The record must say the gap is closed only while
+    the code agrees: no server-key read in the provider layer, and a keyless
+    resolution that refuses. Reintroducing the fallback fails here until the
+    note is put back. The BYOK relay gap stays open until slice a2 and is
+    pinned by :func:`test_custody_adr_records_the_server_proxied_byok_gap`.
     """
     text = _flat(_adr_text())
     decision = text[text.index("## Decision ") : text.index("## Threat actors")]
     botmason = (_REPO_ROOT / "backend" / "src" / "services" / "botmason.py").read_text(
         encoding="utf-8"
     )
+    resolver = botmason[botmason.index("def _resolve_api_key(") :]
+    resolver = resolver[: resolver.index("\ndef ")]
 
-    assert "return _get_llm_api_key()" in botmason
+    assert "_get_llm_api_key" not in botmason
+    assert 'os.getenv("LLM_API_KEY"' not in botmason
+    assert "raise NoGenerationSourceError(KEY_REQUIRED_DETAIL)" in resolver
     assert "The app's own cloud key never carries" not in decision
     assert "Without such a key, **none of their data reaches a cloud model**" not in decision
-    assert "Known gap until phase (a) lands, with #3096: the app-key fallback" in decision
+    assert "Known gap until phase (a) lands, with #3096: the app-key fallback" not in decision
+    assert "Closed by phase (a)'s first slice (#3067), with #3096: the app-key fallback." in (
+        decision
+    )
+    assert "backend/tests/security/test_byok_only_cloud.py" in decision
 
 
 def test_header_lists_only_what_is_still_open() -> None:
@@ -1130,8 +1140,8 @@ def test_b13_epic_draft_carries_the_per_platform_caveat() -> None:
     assert "future-capture" not in draft
 
 
-def test_adr_0002_amendment_scopes_the_cloud_rule_and_names_the_app_key_gap() -> None:
-    """The 0002 amendment states BYOK-only and credits-non-cloud as targets, with the gap."""
+def test_adr_0002_amendment_scopes_the_cloud_rule_and_records_the_closed_app_key_gap() -> None:
+    """The 0002 amendment states BYOK-only and credits-non-cloud as targets; the gap is closed."""
     text = (_ADR_DIR / "0002-intimate-content-local-routing.md").read_text(encoding="utf-8")
     amendment = _flat(text[text.index(_AMENDMENT_HEADING) :])
 
@@ -1139,7 +1149,8 @@ def test_adr_0002_amendment_scopes_the_cloud_rule_and_names_the_app_key_gap() ->
     assert "BotMason credits fund only non-cloud inference." not in amendment
     assert "is decided to be the **only** way any of a person's content will reach" in amendment
     assert "Under the decision, BotMason credits will fund only non-cloud inference" in amendment
-    assert "known gap: the app-key fallback" in amendment
+    assert "known gap: the app-key fallback" not in amendment
+    assert "The former known gap, the app-key fallback, is closed" in amendment
     assert "ADR 0009 Decision item 4" in amendment
     assert "#3096" in amendment
 

@@ -215,11 +215,14 @@ changes.
   BYOK, the decided tier rule is unchanged: INTIMATE never reaches the cloud, and
   Creek's `ModelRouter` stays the single chokepoint for vault-side routing.
   Under the decision, BotMason credits will fund only non-cloud inference.
-  There is also a known gap: the app-key fallback. Today, when no BYOK key is
-  sent, the server falls back to its own `LLM_API_KEY`, so content still
-  reaches a cloud vendor on the app's account. ADR 0009 Decision item 4
-  records this gap; phase (a) closes it together with
-  [#3096](https://github.com/Geoffe-Ga/adepthood/issues/3096).
+  The former known gap, the app-key fallback, is closed by ADR 0009
+  phase (a)'s first slice ([#3067](https://github.com/Geoffe-Ga/adepthood/issues/3067)).
+  Before it, when no BYOK key was sent, the server fell back to its own
+  `LLM_API_KEY`, so content reached a cloud vendor on the app's account. Now
+  a request without the person's own key is refused `llm_key_required`
+  unless their vault answers it, together with
+  [#3096](https://github.com/Geoffe-Ga/adepthood/issues/3096). ADR 0009
+  Decision item 4 records the change.
 - **Decision 4, recovery.** "No operator escrow and no operator-assisted
   recovery reset" is kept and is decided to apply to the journal. On
   2026-10-07 the owner chose the factors: a recovery phrase the person

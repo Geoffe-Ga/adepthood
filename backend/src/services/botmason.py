@@ -31,7 +31,6 @@ from privacy.recipients import REGISTERED_PROVIDER_BASE_URLS
 from security import sanitize_user_text
 from services.journal_encryption import production_in_force
 from services.privacy_suspension import AI_SUSPENDED_DETAIL, external_ai_suspended
-from services.provider_probe import probed_provider
 from services.stub_completions import canned_completion
 
 if TYPE_CHECKING:
@@ -99,10 +98,9 @@ STUB_PROSE_PREFIX = "BotMason hears you. You said:"
 STUB_SEAM_ENV_VAR = "BOTMASON_STUB_SEAM"
 _STUB_SEAM_ARMED_VALUE = "true"
 
-# The 402 detail for a request no one can pay for: no personal key, and a server
-# with no real provider to spend credits on. Mirrored in
-# ``frontend/src/api/errorMessages.ts``; :func:`resolve_chat_api_key` already
-# answers a real provider with no server key the same way.
+# The 402 detail for a request only the person's own key can answer: no personal
+# key, and nothing non-cloud to spend credits on (ADR 0009 phase (a), #3067).
+# Mirrored in ``frontend/src/api/errorMessages.ts``.
 KEY_REQUIRED_DETAIL = "llm_key_required"
 
 # The two real providers, named once. They key :data:`PROVIDER_REGISTRY`, label
@@ -227,22 +225,6 @@ PROVIDER_REGISTRY: dict[str, ProviderSpec] = {
         ),
     ),
 }
-
-# Models the server will not pay for (#623). The owner's 2026-09-06 economics
-# validation found "Opus/Turbo models are not safely covered by a flat
-# one-offering charge at their worst case" and ruled "treat Opus/Turbo as
-# BYOK/admin-only or charge a model-specific multiplier"; the decision record
-# (prompts/claude-comms/2026-09-05-resonance-economy-decision.md §4) picks
-# "refuse non-cost-bounded models on the server-paid path (no multiplier)".
-# They stay on the allowlists above, so a user's own key (BYOK) still reaches
-# them. ``claude-sonnet-4-6`` and ``gpt-4o`` were not named as Opus/Turbo and
-# stay allowed; whether they are "cost-bounded" is recorded as an open question
-# in the decision record, not decided here.
-SERVER_PAID_REFUSED_MODELS: frozenset[str] = frozenset(
-    {"claude-opus-5", "claude-opus-4-7", "gpt-4-turbo"}
-)
-# The LLMProviderError message a refused server-paid model raises with.
-SERVER_PAID_MODEL_NOT_ALLOWED = "server_paid_model_not_allowed"
 
 # Timeout in seconds for LLM provider HTTP calls (BUG-JOURNAL-005).
 _LLM_TIMEOUT_SECONDS = 30.0
@@ -489,7 +471,9 @@ def credit_exhausted_error(exc: LLMCreditExhaustedError, *, byok: bool) -> HTTPE
 
     A caller's own key is a bill they can settle, so they get ``402``
     :data:`CREDIT_EXHAUSTED_DETAIL`. The server's key is nothing they hold, so
-    they get ``503`` :data:`SERVICE_CREDIT_EXHAUSTED_DETAIL`.
+    they get ``503`` :data:`SERVICE_CREDIT_EXHAUSTED_DETAIL` -- though since ADR
+    0009 phase (a) (#3067) no call is made on the server's key, so a route
+    reaches that arm only if that rule is ever broken.
 
     Both branches log, at the level that matches whose problem it is: a spent
     server key is an outage an operator has to act on, a spent caller key is
@@ -609,11 +593,12 @@ def supports_vision(provider: str, model: str) -> bool:
 def vision_provider_available(api_key: str | None = None) -> bool:
     """Return whether this request may honestly serve an image in this environment.
 
-    Real providers must advertise the configured model as vision-capable. The
-    non-registry path is the stub, which can read a page only while its test
-    seam is armed (#3096): a canned transcription is never handed to a writer.
+    The provider is the one the person's own key selects, and must advertise
+    the configured model as vision-capable. Without a key the path is the stub,
+    which can read a page only while its test seam is armed (#3096): a canned
+    transcription is never handed to a writer.
     """
-    provider = _provider_for_request(api_key, "")
+    provider = _provider_for_request(api_key)
     spec = PROVIDER_REGISTRY.get(provider)
     if spec is None:
         return stub_seam_armed()
@@ -661,17 +646,15 @@ def stub_seam_armed() -> bool:
 def server_generation_available() -> bool:
     """Whether a request carrying no key of its own has anything to be answered by.
 
-    True when the server is configured with a real provider, or when the stub
-    test seam is armed. A default ``stub`` deployment without the seam has no
-    such source: credits cannot buy a reply from it, so its only payer is the
-    writer's own key.
+    Only the armed stub test seam. Every request that reaches the app provider
+    carries a person's content, and under ADR 0009 phase (a) (#3067) a cloud
+    model is reached only with the person's own key: a configured
+    ``BOTMASON_PROVIDER`` and the server's ``LLM_API_KEY`` buy a keyless request
+    nothing. Credits pay only for a non-cloud source -- the person's vault,
+    which a route admits separately -- so on the app-provider path a writer
+    without a key of their own is refused ``llm_key_required``.
     """
-    return get_provider() in PROVIDER_REGISTRY or stub_seam_armed()
-
-
-def provider_requires_api_key() -> bool:
-    """Return True when the selected provider needs an API key to function."""
-    return get_provider() in PROVIDER_REGISTRY
+    return stub_seam_armed()
 
 
 # Prefix rules derived from the registry — a dict keeps
@@ -722,19 +705,16 @@ def _validated_header_key(header_value: str | None) -> str | None:
 
 
 def resolve_chat_api_key(header_value: str | None) -> str | None:
-    """Return the validated LLM API key to forward, or raise the right HTTP error.
+    """Return the person's own validated LLM API key, or ``None`` when they sent none.
 
-    Precedence: user-supplied header (BYOK) → server ``LLM_API_KEY`` env →
-    none.  Raises 400 for a malformed header, 402 ``llm_key_required`` when
-    the active provider needs a key but neither source has one.  The key is
-    used for a single call and is never persisted, logged, or echoed back.
+    Raises 400 for a malformed header. There is no server fallback: the
+    server's ``LLM_API_KEY`` never pays for a call carrying a person's content
+    (ADR 0009 phase (a), #3067), so ``None`` means "no cloud model may answer",
+    and the route's payer gate (:func:`services.generation_access.require_ai_payer`)
+    decides whether a non-cloud source can. The key is used for a single call
+    and is never persisted, logged, or echoed back.
     """
-    user_key = _validated_header_key(header_value)
-    if user_key is not None:
-        return user_key
-    if provider_requires_api_key() and not os.getenv("LLM_API_KEY"):
-        raise payment_required(KEY_REQUIRED_DETAIL)
-    return None
+    return _validated_header_key(header_value)
 
 
 def validate_llm_api_key_format(api_key: str, provider: str) -> bool:
@@ -771,33 +751,22 @@ def provider_for_api_key(api_key: str) -> str | None:
     return None
 
 
-def _provider_for_request(api_key: str | None, user_message: str) -> str:
+def _provider_for_request(api_key: str | None) -> str:
     """Return the LLM provider to serve this request.
 
-    A user-supplied BYOK key selects its own provider (derived from the key
-    prefix) so a valid key activates a real model even when the server
-    default is ``stub``.  Requests without a user key fall back to the
-    server-configured :func:`get_provider`.
-
-    A deployment whose configured provider is *not* a real one — the stub, in
-    practice — may also carry an armed
-    :data:`~services.provider_probe.PROVIDER_PROBE_ENV_VAR`, in which case a prompt
-    marked with that token is dialled to the provider it names rather than
-    answered by the stub. That branch is reached last and only from a
-    stub-configured server: when an operator has configured OpenAI or
-    Anthropic, ``configured`` is returned before the probe is consulted, so no
-    text in a request can redirect a real deployment's traffic to another
-    provider. See :mod:`services.provider_probe` for why the seam exists and
-    what keeps it shut.
+    A person's own BYOK key selects its own provider (derived from the key
+    prefix). Without one, no cloud provider may answer, whatever
+    ``BOTMASON_PROVIDER`` names: every request here carries a person's content,
+    and under ADR 0009 phase (a) (#3067) a cloud model is reached only with
+    their own key. The stub name is returned instead, which
+    :func:`generate_response` answers from the armed test seam or refuses
+    ``llm_key_required`` -- before any client is built.
     """
     if api_key is not None:
         derived = provider_for_api_key(api_key)
         if derived is not None:
             return derived
-    configured = get_provider()
-    if configured in PROVIDER_REGISTRY:
-        return configured
-    return probed_provider(user_message, PROVIDER_REGISTRY) or configured
+    return STUB_PROVIDER_NAME
 
 
 def get_system_prompt() -> str:
@@ -1170,21 +1139,6 @@ async def _retry_on_transient(  # noqa: UP047
     raise last_exc  # type: ignore[misc]  # pragma: no cover
 
 
-def _refuse_uncapped_server_paid_model(provider: str, model: str, api_key: str | None) -> None:
-    """Raise when the server would pay for a model in :data:`SERVER_PAID_REFUSED_MODELS`.
-
-    ``api_key is None`` means the server's own ``LLM_API_KEY`` pays (see
-    :func:`resolve_chat_api_key`); a user-supplied key pays for itself and is
-    let through. This lives here, not in :func:`_get_model`, because
-    :func:`vision_provider_available` and the BYOK callers share that resolver
-    and cannot tell who pays. Logs the provider and model, never a key.
-    """
-    if api_key is not None or model not in SERVER_PAID_REFUSED_MODELS:
-        return
-    logger.warning("server_paid_model_refused", extra={"provider": provider, "model": model})
-    raise LLMProviderError(SERVER_PAID_MODEL_NOT_ALLOWED)
-
-
 async def generate_response(
     user_message: str,
     conversation_history: list[dict[str, str]],
@@ -1192,25 +1146,16 @@ async def generate_response(
     api_key: str | None = None,
     images: Sequence[ImagePayload] | None = None,
 ) -> LLMResponse:
-    """Generate a BotMason response using the configured LLM provider.
+    """Generate a BotMason response with the person's own key, or refuse.
 
-    Currently supports the ``BOTMASON_PROVIDER`` env var with values:
-
-    - ``"stub"`` (default) — no server-side provider. Without a key of the
-      caller's own this raises :class:`NoGenerationSourceError`; the canned
-      response is served only while the :data:`STUB_SEAM_ENV_VAR` test seam is
-      armed (#3096)
-    - ``"openai"`` — calls the OpenAI chat completions API
-    - ``"anthropic"`` — calls the Anthropic messages API
-
-    External providers require an API key. Callers may pass ``api_key``
-    directly (e.g. sourced from a user-supplied header) to override the
-    server-side ``LLM_API_KEY`` env var. When ``api_key`` is ``None`` the
-    env var is used; the key is never persisted or logged by this layer.
-
-    A supplied ``api_key`` also selects the provider: its prefix decides
-    whether the call routes to OpenAI or Anthropic, so a BYOK key activates
-    a real model even when ``BOTMASON_PROVIDER`` is the default ``stub``.
+    Every call here carries a person's content, so a cloud provider is reached
+    only with their own key (ADR 0009 phase (a), #3067). A supplied ``api_key``
+    selects its provider by prefix -- OpenAI or Anthropic -- and is never
+    persisted or logged by this layer. Without one, no cloud provider answers,
+    whatever ``BOTMASON_PROVIDER`` and the server's ``LLM_API_KEY`` say: the
+    canned stub answers only while the :data:`STUB_SEAM_ENV_VAR` test seam is
+    armed (#3096), and otherwise this raises :class:`NoGenerationSourceError`
+    (``llm_key_required``) before any client is built.
 
     ``images`` optionally attaches base64 image content blocks to the final
     user turn. When the resolved provider/model cannot accept images this
@@ -1225,7 +1170,7 @@ async def generate_response(
     While the operator's ``PRIVACY_SUSPEND_EXTERNAL_AI`` switch is on this
     raises :class:`ExternalAISuspendedError` before anything else -- before key
     resolution, the provider decision, the stub branch or any client is built --
-    for server-paid and BYOK calls alike (#3075).
+    for keyless and BYOK calls alike (#3075).
     """
     if external_ai_suspended():
         raise ExternalAISuspendedError(AI_SUSPENDED_DETAIL)
@@ -1236,16 +1181,15 @@ async def generate_response(
     # key / quota client errors) likewise passes through unchanged.
     try:
         resolved_prompt = system_prompt or get_system_prompt()
-        provider = _provider_for_request(api_key, user_message)
+        provider = _provider_for_request(api_key)
 
         spec = PROVIDER_REGISTRY.get(provider)
         if spec is None:
             return _unconfigured_answer(user_message, resolved_prompt, images)
         model = _get_model(provider)
-        # Both checks run before dispatch and raise LLMProviderError subclasses,
-        # which are not in _PROVIDER_ERROR_TYPES, so they escape this try
-        # unwrapped and the caller's refund arm settles the unit.
-        _refuse_uncapped_server_paid_model(provider, model, api_key)
+        # Runs before dispatch and raises an LLMProviderError subclass, which is
+        # not in _PROVIDER_ERROR_TYPES, so it escapes this try unwrapped and the
+        # caller's error arm maps it.
         _ensure_vision_capable(provider, model, images)
         # Resolve by name at call time so test monkeypatches on the module
         # attribute (e.g. ``patch.object(botmason, "_call_openai", ...)``)
@@ -1335,28 +1279,19 @@ def _stub_vision_response(user_message: str, image_count: int) -> LLMResponse:
     )
 
 
-def _get_llm_api_key() -> str:
-    """Return the server-side LLM API key, raising if unset or empty.
-
-    Follows the same fail-fast pattern as ``_get_secret_key`` in auth.py.
-    """
-    api_key = os.getenv("LLM_API_KEY", "")
-    if not api_key:
-        msg = "LLM_API_KEY environment variable must be set for non-stub providers"
-        raise LLMProviderError(msg)
-    return api_key
-
-
 def _resolve_api_key(override: str | None) -> str:
-    """Return the API key to use for a provider call.
+    """Return the person's own key for a provider call, or refuse ``llm_key_required``.
 
-    Prefers the caller-supplied ``override`` (e.g. user-owned BYOK key from a
-    request header) and falls back to the server-side ``LLM_API_KEY`` env var.
+    There is no fallback to the server's ``LLM_API_KEY``: a call reaching a
+    cloud provider carries a person's content, and under ADR 0009 phase (a)
+    (#3067) only their own key may carry it. :func:`generate_response` never
+    routes a keyless request here; this is the backstop for any caller that
+    reaches a provider function directly, raised before a client is built.
     The key is returned by value — callers must not log or persist it.
     """
     if override:
         return override
-    return _get_llm_api_key()
+    raise NoGenerationSourceError(KEY_REQUIRED_DETAIL)
 
 
 def extract_token_count(source: object, *attrs: str) -> int:
