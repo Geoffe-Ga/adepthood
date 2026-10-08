@@ -24,6 +24,7 @@ from sqlmodel import func, select
 
 from dependencies.creek_vault import get_creek_vault_client
 from main import app
+from models.journal_entry import JournalClassification
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaSource
 from models.voice_draft_retraction import VoiceDraftRetraction
 from routers.journal import _prior_letter_essays
@@ -43,6 +44,10 @@ _REAL_LETTER: Final = "A letter a real model wrote."
 _DEMO: Final = MarginaliaSource.DEMO.value
 _REAL: Final = MarginaliaSource.APP_PROVIDER.value
 _GENERATED_AT: Final = datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
+_ANTHROPIC_LETTER_TEXT: Final = (
+    "Dear writer, the river you named keeps moving, and so do you. "
+    "What bends need not break; let the willow teach the rest."
+)
 _ANTHROPIC_LETTER: Final[dict[str, object]] = {
     "id": "msg_1",
     "type": "message",
@@ -51,10 +56,7 @@ _ANTHROPIC_LETTER: Final[dict[str, object]] = {
     "content": [
         {
             "type": "text",
-            "text": (
-                "Dear writer, the river you named keeps moving, and so do you. "
-                "What bends need not break; let the willow teach the rest."
-            ),
+            "text": _ANTHROPIC_LETTER_TEXT,
         }
     ],
     "stop_reason": "end_turn",
@@ -140,8 +142,8 @@ async def test_a_cached_demo_letter_is_regenerated_for_a_payer(
 
     assert resp.status_code == HTTPStatus.OK, resp.text
     assert transport.request_count >= 1
-    assert resp.json()["essay"] != _DEMO_LETTER
-    assert resp.json()["essay_source"] != _DEMO
+    assert resp.json()["essay"] == _ANTHROPIC_LETTER_TEXT
+    assert resp.json()["essay_source"] == _REAL
 
 
 @pytest.mark.asyncio
@@ -286,3 +288,33 @@ async def test_a_stored_demo_note_cannot_be_asked_for_a_letter(
     assert resp.json() == {"detail": "marginalia_not_found"}
     assert transport.request_count == 0
     assert await wallet(db_session, user_id) == before
+
+
+@pytest.mark.asyncio
+async def test_an_intimate_entrys_demo_letter_is_not_served_either(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The privacy-floor exit returns the note unchanged -- without its demo letter.
+
+    An entry made intimate after its demo letter was cached never reaches a model,
+    so the essay route hands the note straight back. That exit must project the
+    note like every other read and show the withheld demo letter as no letter.
+    """
+    run_as_deployed(monkeypatch)
+    headers, user_id, _ = await signup(async_client, "demo_letter_intimate")
+    entry_id = await seed_entry(db_session, user_id, classification=JournalClassification.INTIMATE)
+    note_id = await seed_note(db_session, user_id, entry_id, Stored(_REAL, _DEMO_LETTER, _DEMO))
+
+    resp = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay",
+        headers={**headers, "X-LLM-API-Key": ANTHROPIC_KEY},
+        json={"price_acknowledged": True},
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert body["id"] == note_id
+    assert body["essay"] is None
+    assert body["essay_generated_at"] is None
+    assert body["essay_source"] is None
+    assert _DEMO_LETTER not in resp.text
