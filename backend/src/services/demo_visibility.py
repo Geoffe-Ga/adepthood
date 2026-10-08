@@ -65,6 +65,11 @@ def has_served_letter(note: Marginalia) -> bool:
     return not (demo_hidden() and note.essay_source == _DEMO)
 
 
+def served_letter(note: Marginalia) -> str | None:
+    """``note``'s letter when it may be served (or mirrored), else ``None``."""
+    return note.essay if has_served_letter(note) else None
+
+
 def served_note(note: Marginalia) -> MarginaliaResponse:
     """Project ``note`` for a response, with a withheld demo letter shown as no letter."""
     response = MarginaliaResponse.model_validate(note, from_attributes=True)
