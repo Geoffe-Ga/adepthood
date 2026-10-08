@@ -82,12 +82,19 @@ the clear.
 
 Some of what is derived from your writing is not text, and it is stored
 unencrypted. **Frequency weights**: when the corpus is on, each passage in it
-is stored with a score for each frequency the sorting found in it. **Embeddings**: the corpus can also hold, for each passage, an embedding —
-a list of numbers a model computes from the text so that passages with
-similar meaning can be found. **Vault tags**: when an entry is sent to a Creek
-Vault, the frequency and Wavelength-phase labels the vault gives back are kept
-on the entry. None of these is your words, but each says something about
-them, and anyone who can read the database can read them.
+is stored with a score for each frequency the sorting found in it, and one
+overall confidence score for the sorting as a whole. **Embeddings**: the
+corpus can also hold, for each passage, an embedding — a list of numbers a
+model computes from the text so that passages with similar meaning can be
+found. **Vault tags**: when an entry is sent to a Creek Vault, the frequency
+and Wavelength-phase labels the vault gives back are kept on the entry.
+**Detected amounts and dates**: when a reflection notices that an entry seems
+to record a habit or practice you finished, the suggestion it offers keeps the
+amount and date it found (say, 5 miles on a given day), where in the entry it
+found them, and which habit or practice it points at; the suggestion's wording
+and the quoted words are encrypted, these are not. None of these is your
+words, but each says something about them, and anyone who can read the
+database can read them.
 
 **If you connect your own vault or activate a managed one**, Adepthood stores
 the address and access credential and uses them only to send your own entries

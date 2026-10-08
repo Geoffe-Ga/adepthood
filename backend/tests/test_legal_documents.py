@@ -271,15 +271,21 @@ def test_exactly_the_pinned_columns_are_encrypted() -> None:
 
 
 # Columns derived from a person's writing that the schema stores in the clear,
-# each mapped to the bolded name the policy discloses it under. The owner chose
-# to disclose rather than encrypt these (#3058 AC5, B01), so the disclosure is
-# held to the schema: encrypting one, or adding another derived plaintext
-# column the policy does not name, fails here.
+# each mapped to the words the policy discloses it under. The owner chose to
+# disclose rather than encrypt these (#3058 AC5, B01). The list is kept by
+# hand: the test holds each listed column to the schema (still plaintext) and
+# to the policy (still named), and does not discover a derived column nobody
+# has added here.
 _DERIVED_PLAINTEXT_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
     {
         "corpusfragment.embedding": "**embeddings**",
         "corpusfragment.frequency_weights": "**frequency weights**",
+        "corpusfragment.overall_confidence": "overall confidence",
         "journalentry.vault_tags": "**vault tags**",
+        "completionsuggestion.completed_units": "**detected amounts and dates**",
+        "completionsuggestion.completed_on": "**detected amounts and dates**",
+        "completionsuggestion.anchor_start": "where in the entry",
+        "completionsuggestion.anchor_end": "where in the entry",
     }
 )
 
@@ -292,20 +298,19 @@ _RETIRED_DERIVED_CLAIMS: Final[tuple[str, ...]] = (
 
 
 def test_the_policy_discloses_the_derived_data_it_stores_unencrypted() -> None:
-    """Embeddings, frequency weights and vault tags are named as unencrypted.
+    """Each listed derived column stays unencrypted in the schema and named in the policy.
 
     Each is something about a person's writing rather than the writing itself,
     and each is plaintext in the schema, so the policy may neither call
     everything derived from an entry encrypted nor leave these unnamed.
     """
-    policy = _read(_PRIVACY_POLICY)
     prose = _prose(_PRIVACY_POLICY)
     encrypted = _encrypted_columns()
 
     still_encrypted = sorted(set(_DERIVED_PLAINTEXT_DISCLOSURES) & encrypted)
     assert not still_encrypted, f"now encrypted; narrow the disclosure: {still_encrypted}"
     undisclosed = sorted(
-        column for column, name in _DERIVED_PLAINTEXT_DISCLOSURES.items() if name not in policy
+        column for column, name in _DERIVED_PLAINTEXT_DISCLOSURES.items() if name not in prose
     )
     assert not undisclosed, f"the policy does not name these derived columns: {undisclosed}"
     assert "stored unencrypted" in prose
