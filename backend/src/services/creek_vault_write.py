@@ -59,6 +59,7 @@ from domain.creek_vault import (
     CreekVaultError,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     tier_ceiling_for,
 )
@@ -73,12 +74,20 @@ class VaultWriteStatus(enum.StrEnum):
     Exactly one of these is always returned; the router branches on it to decide
     whether to persist a vault ref. ``INGESTED`` is the only status that carries a
     ``vault_ref``; every other status is a no-op for the entry's stored columns.
+
+    ``DEGRADED`` and ``SUSPENDED`` are deliberately distinct (#3107).
+    ``DEGRADED`` means the ingest was dialled and its answer was lost or
+    negative, so the body *may* be in the vault and callers count it as sent.
+    ``SUSPENDED`` means the operator's ``PRIVACY_SUSPEND_VAULT_SEND`` switch
+    refused the one ingest attempt at the adapter's request site, before the
+    wire, so nothing left the server. Values are appended, never reordered.
     """
 
     INGESTED = "ingested"
     SKIPPED_INTIMATE = "skipped_intimate"
     UNAVAILABLE = "unavailable"
     DEGRADED = "degraded"
+    SUSPENDED = "suspended"
 
 
 class VaultDegradeReason(enum.StrEnum):
@@ -102,12 +111,13 @@ class VaultDegradeReason(enum.StrEnum):
     NOT_STORED = "not_stored"
 
 
-# The two static log events this module emits. Static because a vault error's
+# The three static log events this module emits. Static because a vault error's
 # own message can carry the entry body or a string the vault chose: everything
 # variable travels in the structured ``extra`` fields instead, each of which is
 # either an id, one of our own enum values, or a capability wire name.
 _DEGRADED_EVENT = "creek vault write degraded"
 _INGESTED_EVENT = "creek vault write ingested"
+_SUSPENDED_EVENT = "creek vault write suspended"
 
 
 @dataclass(frozen=True)
@@ -125,7 +135,7 @@ class VaultWriteOutcome:
     tags: tuple[str, ...]
 
 
-# The three non-ingested outcomes are value-identical every time, so they are
+# The non-ingested outcomes are value-identical every time, so they are
 # interned as module constants rather than rebuilt on each degrade path.
 _SKIPPED_INTIMATE_OUTCOME = VaultWriteOutcome(
     status=VaultWriteStatus.SKIPPED_INTIMATE, vault_ref=None, tags=()
@@ -134,6 +144,7 @@ _UNAVAILABLE_OUTCOME = VaultWriteOutcome(
     status=VaultWriteStatus.UNAVAILABLE, vault_ref=None, tags=()
 )
 _DEGRADED_OUTCOME = VaultWriteOutcome(status=VaultWriteStatus.DEGRADED, vault_ref=None, tags=())
+_SUSPENDED_OUTCOME = VaultWriteOutcome(status=VaultWriteStatus.SUSPENDED, vault_ref=None, tags=())
 
 
 def _ingest_ready(client: CreekVaultClient) -> bool:
@@ -214,25 +225,35 @@ def _log_ingested(request: VaultIngestRequest, result: VaultIngestResult) -> Non
     _LOGGER.info(_INGESTED_EVENT, extra=_log_extra(request, {"action": action}))
 
 
-async def _try_ingest(client: CreekVaultClient, request: VaultIngestRequest) -> str | None:
-    """Attempt an ingest, returning the vault ref on durable storage or ``None``.
+async def _try_ingest(client: CreekVaultClient, request: VaultIngestRequest) -> VaultWriteOutcome:
+    """Attempt one ingest and say how it ended.
 
     A :class:`CreekVaultError` (the seam's normalized transport failure) and a
-    ``stored=False`` result both collapse to ``None`` -- the caller treats either
-    as a degraded write rather than propagating the error or fabricating a ref.
-    Each path logs its own reason on the way out, because this is where the
-    replication is dropped and nothing downstream will ever hear of it again.
+    ``stored=False`` result both collapse to DEGRADED -- the caller treats either
+    as a write that may have reached the vault rather than propagating the error
+    or fabricating a ref. Each path logs its own reason on the way out, because
+    this is where the replication is dropped and nothing downstream will ever
+    hear of it again.
+
+    :class:`VaultSendSuspendedError` is matched first and is *not* a degrade
+    (#3107): the adapter raises it at its single request site, before the
+    credential header is built, and an ingest is one attempt, so its refusal
+    proves this body never left the server. It is logged at INFO under its own
+    event rather than as a degraded write, since there is no fault to chase.
     """
     try:
         result = await client.ingest(request)
+    except VaultSendSuspendedError:
+        _LOGGER.info(_SUSPENDED_EVENT, extra=_log_extra(request, {}))
+        return _SUSPENDED_OUTCOME
     except CreekVaultError as error:
         _log_degraded(request, _degrade_fields(error))
-        return None
+        return _DEGRADED_OUTCOME
     if not result.stored:
         _log_degraded(request, {"reason": VaultDegradeReason.NOT_STORED.value})
-        return None
+        return _DEGRADED_OUTCOME
     _log_ingested(request, result)
-    return result.vault_ref
+    return VaultWriteOutcome(status=VaultWriteStatus.INGESTED, vault_ref=result.vault_ref, tags=())
 
 
 async def store_and_classify(
@@ -264,7 +285,8 @@ async def store_and_classify(
     3. A handshake probes the vault; an unavailable or non-ingesting vault
        degrades to :attr:`VaultWriteStatus.UNAVAILABLE`.
     4. Ingest runs; a transport failure or a ``stored=False`` result degrades to
-       :attr:`VaultWriteStatus.DEGRADED`.
+       :attr:`VaultWriteStatus.DEGRADED`, while an operator suspension refused
+       before the wire is :attr:`VaultWriteStatus.SUSPENDED` (#3107).
     5. On a durable ingest the call returns :attr:`VaultWriteStatus.INGESTED`
        with the ref and an empty tag tuple -- per-entry vault classification is
        deferred, so no classify capability is ever called here. Creek does
@@ -296,7 +318,4 @@ async def store_and_classify(
         tier_ceiling=tier_ceiling,
         created_at=created_at,
     )
-    vault_ref = await _try_ingest(client, request)
-    if vault_ref is None:
-        return _DEGRADED_OUTCOME
-    return VaultWriteOutcome(status=VaultWriteStatus.INGESTED, vault_ref=vault_ref, tags=())
+    return await _try_ingest(client, request)
