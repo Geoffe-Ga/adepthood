@@ -2035,5 +2035,22 @@
     },
     "status": "uncovered",
     "issue": 3075
+  },
+  {
+    "id": "journal.ai-refused-without-payer",
+    "description": "A writer with no API key of their own asks for a resonance pass, a first essay letter, completion detection or a page transcription on an account with no BotMason credits, or on a server with no real provider. Each is refused 402 before anything is spent (no wallet change, no slot, no usage row, no dial): insufficient_offerings when the wallet is empty, llm_key_required when only a personal key could answer. The resonance and letter surfaces open the add-credits-or-key refill dialog; a page read shows a terminal 'add your key in Settings' card. No canned stub text ever reaches the writer; with credits or a key, generation proceeds as before (#3096). Uncovered because the e2e lane arms BOTMASON_STUB_SEAM and its provider environment lane-wide, so a spec cannot disarm the seam or empty the monthly allocation for one journey. Pinned meanwhile by backend/tests/test_generation_payer.py, backend/tests/test_generation_payer_invariants.py and the Jest suites TranscriptionPayerRefusal, ResonanceRefillDialogPayer and errorMessages.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "journal"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/transcribe-page"
+      ],
+      "tables": ["journalentry", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 3096
   }
 ]

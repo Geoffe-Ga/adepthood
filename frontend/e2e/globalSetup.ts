@@ -465,6 +465,11 @@ function serverEnvironment(
     // they raise are ones they constructed from its response bodies. That is
     // the whole point -- injecting the typed error would prove the routing and
     // assume the classification.
+    //
+    // The stub answers only as an armed test seam (#3096): without this, a
+    // keyless request on a stub server is refused 402 `llm_key_required`, as it
+    // is on every real deployment. The server refuses a production boot with it.
+    BOTMASON_STUB_SEAM: 'true',
     OPENAI_BASE_URL: `http://127.0.0.1:${provider.port}/v1`,
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${provider.port}`,
     // Whose key the server itself spends, pointed at the account the fake

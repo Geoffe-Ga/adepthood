@@ -168,7 +168,7 @@ In the backend service's **Variables** tab, add:
 | `SECRET_KEY` | *(see below)* | Yes |
 | `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it (production meaning `ENV=production` *or* Railway's `RAILWAY_ENVIRONMENT_NAME=production`) |
 | `PROD_DOMAIN` | `https://app.yourdomain.example` | Yes |
-| `BOTMASON_PROVIDER` | `stub` | Yes (use `stub` to start) |
+| `BOTMASON_PROVIDER` | `stub` | Yes (`stub` starts with AI features available to writers' own keys only: every request without one is refused `402 llm_key_required`, credits included — see the variable reference) |
 | `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
 | `LLM_MODEL` | *(model name)* | No (sensible defaults built in) |
 | `WEB_CONCURRENCY` | `2` | No (default: 2). Rate-limit state is per worker process, so every limit -- the ambient floor, burst floors, the per-client ceiling and each declared route limit -- is effectively `WEB_CONCURRENCY` x its stated budget per deployment |
@@ -869,7 +869,8 @@ are being written in the clear.
 | `SECRET_KEY` | Yes | `replace-me` | JWT signing key. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so production without it refuses to boot and refuses encrypted-column writes (production is `ENV=production` or `RAILWAY_ENVIRONMENT_NAME=production`); outside production empty is the normal local state. Rotation is finished by `scripts.journal_encryption_sweep`, not by later writes. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
 | `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS. Every live frontend origin must appear; this deployment's web origin is in [Production origins](#production-origins). |
-| `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic` |
+| `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic`. `stub` means **no server-side provider**: it never generates text for a writer (#3096). A request carrying the writer's own key (`X-LLM-API-Key`) still reaches that key's provider; every other AI request -- resonance pass, letter, completion check, page transcription -- is refused `402 llm_key_required` before anything is charged, credits included, and frequency classification degrades. On a real provider, a request with no personal key is admitted only while the account has BotMason credits (free monthly messages or a purchased balance); otherwise it is refused `402 insufficient_offerings`, also free. The canned stub answer survives only as the `BOTMASON_STUB_SEAM` test seam below. |
+| `BOTMASON_STUB_SEAM` | Never in prod | *(unset)* | Test seam only. Exactly `true` lets the canned BotMason stub answer keyless requests on a `stub` server, as the backend suite (`backend/conftest.py`) and the end-to-end lane (`frontend/e2e/globalSetup.ts`) need. Anything else leaves it off. A production boot (`ENV=production`) with it armed is refused, because the stub hands writers text-replaced sentences presented as a reflection (#3096). |
 | `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
 | `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve).  Server-paid requests refuse `claude-opus-5`, `claude-opus-4-7` and `gpt-4-turbo` (`SERVER_PAID_REFUSED_MODELS`, #623: the resonance-economy decision record rules "refuse non-cost-bounded models on the server-paid path (no multiplier)"): a charged pass, letter or page is refunded and answers `502 llm_provider_error`, and the uncharged server-paid features (frequency classification, completion detection) degrade. A user's own key (BYOK) still reaches those models. |
 | `BOTMASON_DAILY_GENERATION_CEILING` | No | `100` | Charged generations (resonance passes, first essay letters, page transcriptions) one user may make per UTC day, net of refunded failures; past it a request answers `429 daily_generation_limit_reached` with `Retry-After` set to the seconds until 00:00 UTC, and nothing is charged. The default is the owner-ratified "configurable launch ceiling of 100 charged generations/day/user" (#623). Parsed like `BOTMASON_MONTHLY_CAP`: unset, empty, malformed or negative means 100. `0` is an emergency brake that refuses every charged generation. BYOK generations are never charged, so never counted. Counted from `walletaudit` in the database, so it holds across every worker and ignores the rate-limit kill switch. Because BYOK bypasses it, `0` does not stop external inference: `PRIVACY_SUSPEND_EXTERNAL_AI` is the control that also stops BYOK calls. |
@@ -1542,7 +1543,9 @@ This runs:
 - [ ] PostgreSQL is linked to the backend service
 - [ ] Health check returns `{"status":"healthy","database":"connected",...}`
 - [ ] Alembic migrations are up to date (if configured)
-- [ ] `BOTMASON_PROVIDER` is set (`stub` is fine to start)
+- [ ] `BOTMASON_PROVIDER` is set. `stub` is fine to start, but it means only writers with their own API key get AI
+      features; everyone else is told to add credits or a key (#3096)
+- [ ] `BOTMASON_STUB_SEAM` is unset (production refuses to boot with it armed)
 - [ ] `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` are unset, or each names exactly its provider's
       registered `https` host in `backend/src/privacy/recipients.py`. Production refuses to boot
       on any other value, such as an unregistered AI gateway (#3065)
