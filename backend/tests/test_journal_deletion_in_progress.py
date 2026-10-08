@@ -27,13 +27,18 @@ from domain.creek_vault import (
     VaultVoiceDraftDeleteResult,
 )
 from main import app
+from models.completion_suggestion import CompletionSuggestion
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification
 from models.journal_withdrawal_obligation import JournalWithdrawalState
 from models.marginalia import Marginalia, MarginaliaKind
+from models.user import User
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
+from services import marginalia as marginalia_service
+from tests.test_account_egress_barrier_llm import _seed_detection_candidate
 from tests.test_journal_delete_completion import (
     _entry,
+    _factory,
     _failed_delete,
     _mirrored_entry,
     _obligation,
@@ -180,6 +185,143 @@ async def test_a_page_awaiting_deletion_refuses_a_new_reflection(
 
     assert response.status_code == HTTPStatus.CONFLICT
     assert response.json() == _DELETION_PENDING
+
+
+class _ProviderSpy:
+    """A ``generate_response`` stand-in that records every dial; none may happen here."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def __call__(self, user_message: str, *_args: object, **_kwargs: object) -> object:
+        self.calls.append(user_message)
+        raise AssertionError("a provider was dialled for a page being deleted")
+
+
+def _spy_on_the_provider(monkeypatch: pytest.MonkeyPatch) -> _ProviderSpy:
+    spy = _ProviderSpy()
+    monkeypatch.setattr(marginalia_service, "generate_response", spy)
+    return spy
+
+
+async def _wallet(session: AsyncSession, user_id: int) -> tuple[int, int]:
+    user = (
+        await session.execute(
+            select(User).where(col(User.id) == user_id).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    await session.commit()
+    return user.monthly_messages_used, user.offering_balance
+
+
+async def _seed_unexpanded_note(session: AsyncSession, user_id: int, entry_id: int) -> int:
+    note = Marginalia(
+        journal_entry_id=entry_id,
+        user_id=user_id,
+        kind=MarginaliaKind.THEME,
+        anchor_start=0,
+        anchor_end=8,
+        anchor_text="SENTINEL",
+        note="It holds.",
+    )
+    session.add(note)
+    await session.commit()
+    assert note.id is not None
+    return note.id
+
+
+@pytest.mark.asyncio
+async def test_a_page_awaiting_deletion_refuses_suggestion_detection(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Detection would send the body to a provider: 409, no dial, no suggestion row."""
+    headers, user_id, entry_id, _destination = await _mirrored_entry(
+        async_client, db_session, "in_progress_detect", JournalClassification.PERSONAL
+    )
+    await _seed_detection_candidate(_factory(db_session), user_id)
+    await _failed_delete(async_client, headers, entry_id)
+    spy = _spy_on_the_provider(monkeypatch)
+    before = await _wallet(db_session, user_id)
+
+    response = await async_client.post(f"/journal/{entry_id}/suggestions/detect", headers=headers)
+
+    assert response.status_code == HTTPStatus.CONFLICT
+    assert response.json() == _DELETION_PENDING
+    assert spy.calls == []
+    assert await _wallet(db_session, user_id) == before
+    suggestions = (
+        await db_session.execute(
+            select(CompletionSuggestion).where(
+                col(CompletionSuggestion.journal_entry_id) == entry_id
+            )
+        )
+    ).all()
+    await db_session.commit()
+    assert suggestions == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ask", [{"price_acknowledged": True}, {}])
+async def test_a_page_awaiting_deletion_refuses_essay_generation(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    ask: dict[str, bool],
+) -> None:
+    """409 before the price gate: unacknowledged or not, nothing is charged, dialled or mirrored."""
+    headers, user_id, entry_id, _destination = await _mirrored_entry(
+        async_client, db_session, f"in_progress_essay_{len(ask)}", JournalClassification.PERSONAL
+    )
+    note_id = await _seed_unexpanded_note(db_session, user_id, entry_id)
+    await _failed_delete(async_client, headers, entry_id)
+    spy = _spy_on_the_provider(monkeypatch)
+    before = await _wallet(db_session, user_id)
+
+    response = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay", json=ask, headers=headers
+    )
+
+    assert response.status_code == HTTPStatus.CONFLICT
+    assert response.json() == _DELETION_PENDING
+    assert spy.calls == []
+    assert await _wallet(db_session, user_id) == before
+    note = (
+        await db_session.execute(
+            select(Marginalia)
+            .where(col(Marginalia.id) == note_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    await db_session.commit()
+    assert note.essay is None
+    intents = (
+        await db_session.execute(
+            select(VoiceDraftRetraction).where(col(VoiceDraftRetraction.marginalia_id) == note_id)
+        )
+    ).all()
+    await db_session.commit()
+    assert intents == []
+
+
+@pytest.mark.asyncio
+async def test_essay_refusal_comes_before_the_intimate_early_return(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An Intimate page being deleted answers 409, not the private floor's quiet 200."""
+    headers, user_id, entry_id, _destination = await _mirrored_entry(
+        async_client, db_session, "in_progress_essay_intimate", JournalClassification.INTIMATE
+    )
+    note_id = await _seed_unexpanded_note(db_session, user_id, entry_id)
+    await _failed_delete(async_client, headers, entry_id)
+    spy = _spy_on_the_provider(monkeypatch)
+
+    response = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay", json={"price_acknowledged": True}, headers=headers
+    )
+
+    assert response.status_code == HTTPStatus.CONFLICT
+    assert response.json() == _DELETION_PENDING
+    assert spy.calls == []
 
 
 @pytest.mark.asyncio
