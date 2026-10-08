@@ -66,7 +66,10 @@ def _store_line(store: Store) -> str:
     """One store, its deadline today, and the deadline proposed for it."""
     line = f"  {store.key} [{store.controller.value}]: {_deadline(store.deadline)}"
     if store.proposal is not None:
-        line += f" -- proposed: {_proposed(store.proposal.deadline)}"
+        line += (
+            f" -- proposed: {_proposed(store.proposal.deadline)}"
+            f" [{store.proposal.compared_to_today.value} than today]"
+        )
     return line
 
 

@@ -79,10 +79,29 @@ BACKUP_LEGS: tuple[BackupLeg, ...] = (
     ),
 )
 
+#: The off-host retention the oldest dumps *still held* were written under.
+#: Lowering :data:`OFFHOST_DUMP_RETENTION_DAYS` does not delete the dumps
+#: already kept for longer, so this stays at the old value until every one of
+#: them has aged out (and been pruned), and is lowered only in a later change.
+HELD_OFFHOST_DUMP_RETENTION_DAYS: Final = 90
+#: The age the oldest still-held copy can reach under that older retention.
+HELD_BACKUP_BOUND_DAYS: Final = HELD_OFFHOST_DUMP_RETENTION_DAYS + OFFHOST_DUMP_INTERVAL_DAYS
+
+
+def oldest_live_backup_days(legs: tuple[BackupLeg, ...], held_bound_days: int) -> int:
+    """The oldest a live backup copy can be: today's legs, or copies held from before.
+
+    Taking the maximum with ``held_bound_days`` is what keeps a ratified,
+    shorter backup retention from lowering the journal purge floor while dumps
+    kept under the longer one still exist.
+    """
+    return max(held_bound_days, *(leg.oldest_live_copy_days for leg in legs))
+
+
 #: The oldest any live backup copy can be, provided each leg is pruned as
 #: DEPLOYMENT.md says. Anything soft-deleted longer ago than this is held
 #: *deleted* by every backup still alive.
-OLDEST_LIVE_BACKUP_DAYS: Final = max(leg.oldest_live_copy_days for leg in BACKUP_LEGS)
+OLDEST_LIVE_BACKUP_DAYS: Final = oldest_live_backup_days(BACKUP_LEGS, HELD_BACKUP_BOUND_DAYS)
 
 #: The invalid-licence throttle evicts a key once its hourly window rolls off.
 INVALID_LICENSE_THROTTLE_HOURS: Final = 1
@@ -140,13 +159,27 @@ Deadline = Days | Hours | Unknown
 #: A proposed store deadline; ``None`` where no period is ours to set.
 ProposedDeadline = Days | Hours | None
 
+
+class TodayComparison(enum.StrEnum):
+    """How a proposal compares with what happens today."""
+
+    SHORTER = "shorter"
+    SAME = "same"
+    LONGER = "longer"
+    #: Today's period is not known (an unverified vendor default), so the
+    #: proposal cannot be compared; the review table says so.
+    UNKNOWN = "unknown"
+
+
 # Proposed store deadlines for the owner to ratify (#3063 AC15). Values for
 # review only: nothing prunes or purges on them.
 #: Railway's shortest schedule already: Daily, kept 6 days.
 PROPOSED_PLATFORM_BACKUP_DAYS: Final = RAILWAY_PLATFORM_BACKUP_DAYS
-#: Four weekly off-host copies still cover a month of late-found damage.
+#: Four weekly off-host copies still cover a month of late-found damage. If
+#: ratified, the purge floor stays at :data:`HELD_BACKUP_BOUND_DAYS` until the
+#: dumps kept under the 90-day retention have aged out.
 PROPOSED_OFFHOST_DUMP_DAYS: Final = 30
-#: Content-free logs kept long enough to investigate an incident.
+#: Content-free logs: at most this, or the vendor's current setting if shorter.
 PROPOSED_APPLICATION_LOG_DAYS: Final = 30
 #: The vault is a mirror of the journal; a snapshot bridges one day.
 PROPOSED_FLY_SNAPSHOT_DAYS: Final = 1
@@ -158,13 +191,19 @@ class StoreProposal:
 
     ``deadline`` is ``None`` where no time period is ours to set (the device, the
     user's own vault, or a copy that lives exactly until a verified withdrawal).
-    Unless ``exceeds_today`` says otherwise, it is never longer than a known
-    deadline today.
+    ``compared_to_today`` is declared and checked against the store's deadline
+    today; an unknown deadline today makes a proposed period ``UNKNOWN``.
     """
 
     deadline: ProposedDeadline
     rationale: str
-    exceeds_today: bool = False
+    compared_to_today: TodayComparison
+
+    def __post_init__(self) -> None:
+        """Refuse a proposal the owner could not review."""
+        if not self.rationale.strip():
+            msg = "a store proposal must state its rationale"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -191,6 +230,7 @@ STORES: tuple[Store, ...] = (
             deadline=Days(PROPOSED_PLATFORM_BACKUP_DAYS),
             rationale="Keep: Daily kept 6 days is already Railway's shortest schedule, and "
             "it is the leg that recovers from everyday mistakes.",
+            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -202,8 +242,10 @@ STORES: tuple[Store, ...] = (
         proposal=StoreProposal(
             deadline=Days(PROPOSED_OFFHOST_DUMP_DAYS),
             rationale="Four weekly copies still cover a month of late-found damage or "
-            "platform loss, and cut the backup bound from 97 to 37 days -- and every "
-            "proposal keyed to it.",
+            "platform loss. Transition: the purge floor stays at the held 97-day bound "
+            "until every dump kept under the 90-day retention has aged out and been "
+            "pruned; only a later change lowers it, to 37.",
+            compared_to_today=TodayComparison.SHORTER,
         ),
     ),
     Store(
@@ -215,9 +257,11 @@ STORES: tuple[Store, ...] = (
         evidence="backend/src/observability.py; DEPLOYMENT.md 'Logs'",
         proposal=StoreProposal(
             deadline=Days(PROPOSED_APPLICATION_LOG_DAYS),
-            rationale="Content-free by invariant but names account ids; 30 days is common "
-            "security-log practice for incident investigation. Use the vendor's shortest "
-            "setting where 30 is unavailable (#3064).",
+            rationale="30 days or the vendor's current setting, whichever is shorter: "
+            "content-free by invariant but names account ids, and 30 days is common "
+            "security-log practice (to confirm). Today's vendor retention is unverified, "
+            "so the comparison is unknown (#3064).",
+            compared_to_today=TodayComparison.UNKNOWN,
         ),
     ),
     Store(
@@ -239,6 +283,7 @@ STORES: tuple[Store, ...] = (
             deadline=None,
             rationale="Not ours to set: the device holds it, and it is wiped when another "
             "account signs in.",
+            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -251,6 +296,7 @@ STORES: tuple[Store, ...] = (
             deadline=None,
             rationale="Event-bound, not time-bound: a copy lives until its verified "
             "withdrawal or the vault's teardown at account deletion.",
+            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -265,6 +311,7 @@ STORES: tuple[Store, ...] = (
             rationale="The vault mirrors the journal, so a snapshot only bridges a day; "
             "set the vendor's minimum (the pilot keeps 7) and destroy snapshots at "
             "teardown, subject to the AC19 vendor check (#3063).",
+            compared_to_today=TodayComparison.UNKNOWN,
         ),
     ),
     Store(
@@ -276,6 +323,7 @@ STORES: tuple[Store, ...] = (
         proposal=StoreProposal(
             deadline=None,
             rationale="Event-bound: vectors go with their entry's verified withdrawal.",
+            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -287,6 +335,7 @@ STORES: tuple[Store, ...] = (
         proposal=StoreProposal(
             deadline=None,
             rationale="Event-bound: ledger rows go with their entry's verified withdrawal.",
+            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -299,6 +348,7 @@ STORES: tuple[Store, ...] = (
             deadline=None,
             rationale="The vendor's period, not ours; the owner deferred vendor fields to "
             "B11 (#3065).",
+            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -310,6 +360,7 @@ STORES: tuple[Store, ...] = (
         proposal=StoreProposal(
             deadline=None,
             rationale="Not ours to set: the user operates the vault and decides.",
+            compared_to_today=TodayComparison.SAME,
         ),
     ),
 )
@@ -318,35 +369,59 @@ STORES: tuple[Store, ...] = (
 _BACKUP_KEYS = frozenset(leg.key for leg in BACKUP_LEGS)
 
 
-def _lengthens(today: Deadline, proposed: ProposedDeadline) -> bool:
-    """Whether ``proposed`` is longer than a known deadline of the same unit."""
-    if isinstance(today, Days) and isinstance(proposed, Days):
-        return proposed.count > today.count
-    if isinstance(today, Hours) and isinstance(proposed, Hours):
-        return proposed.count > today.count
-    return False
+def _count_comparison(today: int, proposed: int) -> TodayComparison:
+    """How a proposed count compares with today's, in the same unit."""
+    if proposed < today:
+        return TodayComparison.SHORTER
+    if proposed > today:
+        return TodayComparison.LONGER
+    return TodayComparison.SAME
+
+
+def _same_unit_counts(today: Deadline, proposed: Days | Hours) -> tuple[int, int] | None:
+    """``(today, proposed)`` counts when both deadlines share a unit, else None."""
+    if type(today) is type(proposed) and isinstance(today, Days | Hours):
+        return today.count, proposed.count
+    return None
+
+
+def implied_store_comparison(today: Deadline, proposed: ProposedDeadline) -> TodayComparison:
+    """What today's deadline implies about a proposed one.
+
+    No proposed period changes nothing (``SAME``); a period of the same unit is
+    compared; anything against an unknown deadline cannot be compared.
+    """
+    if proposed is None:
+        return TodayComparison.SAME
+    counts = _same_unit_counts(today, proposed)
+    if counts is None:
+        return TodayComparison.UNKNOWN
+    return _count_comparison(*counts)
 
 
 def _missing_proposal(store: Store) -> list[str]:
-    """A finding when a store owes a proposal (undecided deadline or backup leg)."""
-    owed = isinstance(store.deadline, Unknown) or store.key in _BACKUP_KEYS
-    return [f"store {store.key!r} has an undecided deadline but no proposal"] if owed else []
+    """A finding when a store owes a proposal: a backup leg, or an undecided deadline."""
+    if store.key in _BACKUP_KEYS:
+        return [f"backup leg {store.key!r} carries no proposal (its retention is AC15's)"]
+    if isinstance(store.deadline, Unknown):
+        return [f"store {store.key!r} has an undecided deadline but no proposal"]
+    return []
 
 
 def _proposal_findings(store: Store) -> list[str]:
-    """Findings for a store's proposal: missing where owed, or quietly longer."""
+    """Findings for a store's proposal: missing where owed, or a misdeclared comparison."""
     proposal = store.proposal
     if proposal is None:
         return _missing_proposal(store)
-    findings: list[str] = []
-    if not proposal.rationale.strip():
-        findings.append(f"store {store.key!r} proposal states no rationale")
-    if _lengthens(store.deadline, proposal.deadline) and not proposal.exceeds_today:
-        findings.append(
-            f"store {store.key!r} proposal is longer than today's deadline and does not "
-            "say so (exceeds_today)"
-        )
-    return findings
+    implied = implied_store_comparison(store.deadline, proposal.deadline)
+    if implied is proposal.compared_to_today:
+        return []
+    declared = proposal.compared_to_today.value
+    finding = (
+        f"store {store.key!r} proposal says {declared} than today, but its deadlines "
+        f"make it {implied.value}"
+    )
+    return [finding]
 
 
 def _store_findings(store: Store) -> list[str]:
