@@ -81,6 +81,27 @@ def test_every_rule_has_spec_and_both_examples() -> None:
     assert {Severity.BLOCKING, Severity.ADVISORY} <= {s.severity for s in RULES.values()}
 
 
+def test_proposed_severity_table_is_pinned() -> None:
+    """Every rule's PROPOSED severity is spelled out, so a flip is a visible change.
+
+    Blocking is reserved for high-precision forms; every ambiguous cue form is
+    advisory (#3074 escalation 7 ratifies this table).
+    """
+    advisory = {
+        RuleId.AMBIGUOUS_ANCHOR,
+        RuleId.FIRST_PERSON,
+        RuleId.COMPANION_CUE,
+        RuleId.AUTHORITY_CUE,
+        RuleId.MEDICAL_CUE,
+        RuleId.HEALING_CUE,
+        RuleId.NEEDS_HUMAN_REVIEW,
+    }
+    assert {rid for rid, spec in RULES.items() if spec.severity is Severity.ADVISORY} == advisory
+    assert {rid for rid, spec in RULES.items() if spec.severity is Severity.BLOCKING} == (
+        set(RuleId) - advisory
+    )
+
+
 def test_letter_with_fabricated_quote_is_blocking() -> None:
     """A letter quoting words the writer never wrote is release-blocking (AC4)."""
     letter = "You wrote: \u201cI swam across the river at night.\u201d That stayed with you."
@@ -253,8 +274,9 @@ _PARAPHRASE_PROBES = [
     ("I am here any time you need me.", RuleId.COMPANION_CUE),
     ("This practice is going to heal you.", RuleId.THERAPEUTIC_GUARANTEE),
     ("Dawn walks heal trauma.", RuleId.THERAPEUTIC_GUARANTEE),
-    ("Writing can cure your grief.", RuleId.THERAPEUTIC_GUARANTEE),
-    ("Journaling can fix this for good.", RuleId.THERAPEUTIC_GUARANTEE),
+    # Review round 2: a modal "can" is a possibility, not a promise -- advisory.
+    ("Writing can cure your grief.", RuleId.HEALING_CUE),
+    ("Journaling can fix this for good.", RuleId.HEALING_CUE),
     ("All of this is going to heal, completely.", RuleId.THERAPEUTIC_GUARANTEE),
 ]
 
@@ -423,6 +445,44 @@ def test_therapeutic_guarantee_is_blocking() -> None:
     """A promise that writing will heal is release-blocking (AC10)."""
     letter = "Keep writing; this will heal your grief."
     assert RuleId.THERAPEUTIC_GUARANTEE in _scored(_sample(_RIVER, letter=letter)).blocking
+
+
+@pytest.mark.parametrize(
+    "letter",
+    [
+        "Keep writing; this will heal your grief.",
+        "This practice is going to heal you.",
+        "All of this is going to heal, completely.",
+        "Walking at dawn will heal what hurts.",
+        "Dawn walks heal trauma.",
+        "This cures anxiety.",
+        "Journaling is guaranteed to heal you.",
+        "The river will fix you.",
+        "You'll feel whole again by spring.",
+    ],
+)
+def test_guarantee_forms_are_blocking(letter: str) -> None:
+    """Only promise-shaped healing language blocks a release (AC10)."""
+    assert RuleId.THERAPEUTIC_GUARANTEE in _scored(_sample(_RIVER, letter=letter)).blocking
+
+
+@pytest.mark.parametrize(
+    "letter",
+    [
+        # Review round 2 probes: ordinary agency and possibility, not promises.
+        "You hoped to heal your relationship with your father.",
+        "Some things can heal in their own time.",
+        "Nothing can fix that, and you know it.",
+        "Notice what you can fix in the schedule and what you can let go.",
+        "Maybe you can fix the gate this weekend.",
+        "You can heal at your own pace.",
+        "You will fix the gate on Saturday, you wrote.",
+    ],
+)
+def test_possibility_and_agency_are_not_guarantees(letter: str) -> None:
+    """'Can heal' and 'fix the gate' promise nothing, so nothing fires."""
+    score = _scored(_sample(_RIVER, letter=letter))
+    assert {RuleId.THERAPEUTIC_GUARANTEE, RuleId.HEALING_CUE}.isdisjoint(score.rule_ids)
 
 
 def test_repeated_quote_flags_ambiguous_anchor_and_pins_first_occurrence() -> None:

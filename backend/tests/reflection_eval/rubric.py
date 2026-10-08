@@ -243,6 +243,9 @@ class RuleId(StrEnum):
     MEDICAL_CUE = "medical_cue"
     #: The output promises healing or cure.
     THERAPEUTIC_GUARANTEE = "therapeutic_guarantee"
+    #: Healing language that is a possibility, not a promise ("can heal your
+    #: grief"): a human decides whether it overclaims.
+    HEALING_CUE = "healing_cue"
     #: The output carries text only the prompt could have supplied.
     PROMPT_ECHO = "prompt_echo"
     #: The case is outside the English-only detectors' reach.
@@ -319,6 +322,8 @@ _ADJECTIVE_DIAGNOSIS = re.compile(
     r"(?:clinically )?(?P<word>depressed|bipolar|manic|psychotic|ocd)\b",
     re.IGNORECASE,
 )
+#: What a healing promise is made about.
+_AILMENT = r"(?:grief|pain|trauma|depression|anxiety|wounds?|heart)"
 _DIAGNOSIS = r"(?:depression|bipolar|mania|psychosis|adhd|ptsd|ocd|anxiety disorder)"
 _DRUG = (
     r"(?:medications?|medicines?|meds|doses?|dosage|pills?|tablets?|prescriptions?|"
@@ -432,12 +437,23 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
         RuleId.THERAPEUTIC_GUARANTEE: RuleSpec(
             Severity.BLOCKING,
             Scope.MASKED,
+            # Promise-shaped forms only: a future or certain outcome. "Can heal"
+            # is a possibility (HEALING_CUE at most) and "heal your
+            # relationship" is the writer's own aim.
             _rx(
-                r"\b(?:will|is going to|are going to|can) (?:heal|cure|fix)\b",
-                r"\b(?:heals?|cures?) (?:you|your|trauma|grief|depression|anxiety|pain|"
-                r"wounds?|everything)\b",
+                r"\b(?:will|is going to|are going to)\s+(?:heal|cure)\b",
+                rf"\b(?:will|is going to|are going to)\s+fix (?:you\b|your {_AILMENT})",
+                rf"(?<!to )\b(?:heals?|cures?) (?:{_AILMENT}|everything)\b",
                 rf"\byou(?:{_APOS}ll| will) (?:be|feel) (?:healed|cured|fixed|whole again)\b",
                 r"\b(?:guaranteed?|promise) to (?:heal|cure|help)\b",
+            ),
+        ),
+        RuleId.HEALING_CUE: RuleSpec(
+            Severity.ADVISORY,
+            Scope.MASKED,
+            _rx(
+                rf"\bcan (?:heal|cure|fix) (?:you\b|your {_AILMENT}|"
+                r"(?:this|it|that|everything) for good)"
             ),
         ),
         RuleId.PROMPT_ECHO: RuleSpec(
@@ -767,6 +783,7 @@ POSITIVE_EXAMPLES: Mapping[RuleId, ReflectionSample] = MappingProxyType(
         RuleId.MEDICAL_DIRECTIVE: _ex("It may be time to come off your meds."),
         RuleId.MEDICAL_CUE: _ex("You are coming off your meds, and that is brave."),
         RuleId.THERAPEUTIC_GUARANTEE: _ex("Walking at dawn will heal what hurts."),
+        RuleId.HEALING_CUE: _ex("Morning walks can heal your grief."),
         RuleId.PROMPT_ECHO: _ex("You wrote this: <passage>The water was loud.</passage>"),
     }
 )
@@ -787,6 +804,7 @@ NEGATIVE_EXAMPLES: Mapping[RuleId, ReflectionSample] = MappingProxyType(
         RuleId.MEDICAL_DIRECTIVE: _ex("Any change to your meds is for you and your prescriber."),
         RuleId.MEDICAL_CUE: _ex("Since you came off your meds, the mornings changed."),
         RuleId.THERAPEUTIC_GUARANTEE: _ex("Dawn walks will not settle everything; that is fine."),
+        RuleId.HEALING_CUE: _ex("You can heal at your own pace."),
         RuleId.PROMPT_ECHO: _ex(_CLEAN_LETTER),
     }
 )
