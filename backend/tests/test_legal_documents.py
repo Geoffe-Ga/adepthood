@@ -64,6 +64,7 @@ from types import MappingProxyType, SimpleNamespace
 from typing import Final
 
 import pytest
+import sentry_sdk.utils as sentry_sdk_utils
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel
 
@@ -599,43 +600,83 @@ def _only_item(node: object) -> dict[str, object]:
     return item
 
 
+# Every key the installed SDK puts on a stack frame (``serialize_frame`` plus
+# the ``in_app`` flag the client adds while preparing the event). The fixture
+# below is built by the SDK itself; this pins that it really carries them all,
+# so a key the SDK fills cannot hide from the disclosure check by being absent.
+_SDK_FRAME_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "filename",
+        "abs_path",
+        "function",
+        "module",
+        "lineno",
+        "pre_context",
+        "context_line",
+        "post_context",
+        "vars",
+        "in_app",
+    }
+)
+
+
+def _raise_with_body(body: str) -> None:
+    """Raise with ``body`` in the message and in a frame local, as a real crash would."""
+    raise RuntimeError(body)
+
+
+def _sdk_built_event() -> dict[str, object]:
+    """Return the event the installed Sentry SDK builds for a real exception.
+
+    ``event_from_exception`` serialises every frame with source context and
+    locals; ``set_in_app_in_frames`` adds the ``in_app`` flag the client sets
+    before ``before_send`` sees the event. Nothing is hand-written, so the
+    fixture has every key a deployed SDK emits.
+    """
+    try:
+        _raise_with_body(_SENTINEL_BODY)
+    except RuntimeError as exc:
+        event, _ = sentry_sdk_utils.event_from_exception(exc)
+    for entry in event["exception"]["values"]:
+        sentry_sdk_utils.set_in_app_in_frames(
+            entry["stacktrace"]["frames"], None, None, project_root=str(_REPO_ROOT)
+        )
+    return dict(event)
+
+
+def test_the_sdk_built_fixture_carries_every_frame_key() -> None:
+    """The fixture is SDK-shaped: each frame has every key the SDK fills."""
+    entry = _only_item(_field(_field(_sdk_built_event(), "exception"), "values"))
+    frames = _field(_field(entry, "stacktrace"), "frames")
+
+    assert isinstance(frames, list)
+    assert frames
+    for frame in frames:
+        assert isinstance(frame, dict)
+        assert set(frame) == _SDK_FRAME_KEYS
+
+
 def test_the_policy_describes_the_error_report_the_scrubber_builds() -> None:
     """The Sentry paragraph describes the rebuilt event: no message, location-only frames.
 
-    Re-derived by running ``scrub_event`` over an event carrying a message,
-    frame source and frame locals: the message is replaced and each frame keeps
-    only its location, which is what the paragraph now tells a reader.
+    Re-derived by running ``scrub_event`` over the event the installed SDK
+    builds for a real exception -- message, frame source, frame locals, module
+    and ``in_app`` all present -- so each frame the scrubber sends keeps exactly
+    the fields the paragraph names, and nothing the SDK fills goes unsaid.
     """
     policy = _prose(_PRIVACY_POLICY)
     start = policy.index(_SENTRY_PARAGRAPH_OPENING)
     paragraph = policy[start : policy.index(_SENTRY_PARAGRAPH_CLOSING, start)]
-    event: dict[str, object] = {
-        "exception": {
-            "values": [
-                {
-                    "type": "RuntimeError",
-                    "value": _SENTINEL_BODY,
-                    "stacktrace": {
-                        "frames": [
-                            {
-                                "filename": "routers/journal.py",
-                                "function": "create_entry",
-                                "lineno": 1,
-                                "context_line": _SENTINEL_BODY,
-                                "vars": {"body": _SENTINEL_BODY},
-                            }
-                        ]
-                    },
-                }
-            ]
-        }
-    }
 
-    entry = _only_item(_field(_field(scrub_event(event, {}), "exception"), "values"))
-    frame = _only_item(_field(_field(entry, "stacktrace"), "frames"))
+    entry = _only_item(_field(_field(scrub_event(_sdk_built_event(), {}), "exception"), "values"))
+    frames = _field(_field(entry, "stacktrace"), "frames")
 
     assert entry["value"] != _SENTINEL_BODY
-    assert set(frame) == set(_FRAME_FIELD_WORDS)
+    assert isinstance(frames, list)
+    assert frames
+    for frame in frames:
+        assert isinstance(frame, dict)
+        assert set(frame) == set(_FRAME_FIELD_WORDS)
     assert "message is never sent" in paragraph
     for word in _FRAME_FIELD_WORDS.values():
         assert word in paragraph, f"the Sentry paragraph no longer names a frame's {word}"

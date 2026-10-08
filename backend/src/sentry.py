@@ -124,10 +124,13 @@ _REQUEST_CONTEXT_FIELDS: Final = tuple(sorted(SentryContext.__optional_keys__))
 _ENTRY_FIELDS: Final = ("type", "module")
 # ``data`` and ``description`` are left out: both are free text.
 _MECHANISM_FIELDS: Final = ("type", "handled", "exception_id", "parent_id", "is_exception_group")
-# A frame's location only. ``abs_path`` names the host's filesystem, and
+# A frame's location only -- the file, function and line the privacy policy
+# names, and nothing it does not. ``abs_path`` names the host's filesystem, and
 # ``pre_context``/``context_line``/``post_context``/``vars`` are source and
 # locals -- exactly where the entry body sits at the moment of the raise.
-_FRAME_FIELDS: Final = ("filename", "module", "function", "lineno", "in_app")
+# ``module`` and ``in_app`` are dropped too (#3116): undisclosed, and Sentry
+# groups on filename and function without them.
+_FRAME_FIELDS: Final = ("filename", "function", "lineno")
 # Values a picked field may hold. A container in a scalar slot is dropped, not
 # walked, so nothing nested can ride in under an allowlisted name.
 _SCALARS: Final = (str, bool, int, float, datetime)
