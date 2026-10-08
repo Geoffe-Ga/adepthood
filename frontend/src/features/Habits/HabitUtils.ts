@@ -220,9 +220,13 @@ const additiveScaleEnd = (
       ? Math.max(0, periodProgress)
       : 0;
   const uncappedEnd = Math.max(stretchTarget, finiteProgress);
-  const adjacentGaps = [clearTarget - lowTarget, stretchTarget - clearTarget];
-  if (adjacentGaps.some((gap) => gap <= 0)) return uncappedEnd;
-  const maximumSeparatedEnd = (Math.min(...adjacentGaps) * 100) / MIN_ADDITIVE_MARKER_GAP_PERCENT;
+  // Equal adjacent tiers share a target, so one marker may sit directly over
+  // the other; still preserve the gap to every *distinct* target beside them.
+  const distinctGaps = [clearTarget - lowTarget, stretchTarget - clearTarget].filter(
+    (gap) => gap > 0,
+  );
+  if (distinctGaps.length === 0) return uncappedEnd;
+  const maximumSeparatedEnd = (Math.min(...distinctGaps) * 100) / MIN_ADDITIVE_MARKER_GAP_PERCENT;
   return Math.max(stretchTarget, Math.min(uncappedEnd, maximumSeparatedEnd));
 };
 

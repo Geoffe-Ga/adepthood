@@ -293,6 +293,27 @@ describe('HabitUtils', () => {
     expect(targetForMarkerPercent(positions.clear, 'clear', low, clear, stretch, 100)).toBe(2);
   });
 
+  test('keeps the distinct target reachable when adjacent additive tiers are equal', () => {
+    const low: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 1,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    const clear: Goal = { ...low, id: 2, tier: 'clear', title: 'clear' };
+    const stretch: Goal = { ...low, id: 3, tier: 'stretch', title: 'stretch', target: 2 };
+
+    const positions = getMarkerPositions(low, clear, stretch, 100);
+
+    expect(positions).toEqual({ low: 10, clear: 10, stretch: 20 });
+    expect(positions.stretch - positions.clear).toBeGreaterThanOrEqual(10);
+    expect(targetForMarkerPercent(positions.clear, 'clear', low, clear, stretch, 100)).toBe(1);
+  });
+
   test('getMarkerPositions subtractive places all three on a low-anchored scale', () => {
     const low: Goal = {
       id: 1,

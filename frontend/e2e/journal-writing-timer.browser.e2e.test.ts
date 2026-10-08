@@ -55,6 +55,8 @@ test('the idle timer does not cover the entry body at 1280x720', async ({ page }
   const idleTimer = await boxOf(page.getByTestId('writing-timer-pill'), 'idle timer');
   const visibleBody = clippedTo(body, scrollViewport);
 
+  expect(visibleBody.width, 'the journal body has no visible width').toBeGreaterThan(0);
+  expect(visibleBody.height, 'the journal body has no visible height').toBeGreaterThan(0);
   expect(
     overlapArea(visibleBody, idleTimer),
     `the idle timer covers the visible writing field: body=${JSON.stringify(visibleBody)} timer=${JSON.stringify(idleTimer)}`,

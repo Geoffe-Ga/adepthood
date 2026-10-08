@@ -932,6 +932,15 @@ export const styles = StyleSheet.create({
     color: COLORS.destructive.text,
     marginBottom: SPACING.sm,
   },
+  errorBannerButton: {
+    minHeight: touchTarget.minimum,
+    backgroundColor: COLORS.primary,
+    paddingVertical: SPACING.md,
+    borderRadius: BORDER_RADIUS.xxl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...SHADOWS.medium,
+  },
   energyScaffoldingButton: {
     flex: 1,
     backgroundColor: COLORS.primary,

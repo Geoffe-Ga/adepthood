@@ -89,7 +89,7 @@ jest.mock('../components/OnboardingModal', () => ({ __esModule: true, default: (
 jest.mock('../components/ReorderHabitsModal', () => ({ __esModule: true, default: () => null }));
 jest.mock('../components/StatsModal', () => ({ __esModule: true, default: () => null }));
 
-import { type } from '../../../design/tokens';
+import { touchTarget, type } from '../../../design/tokens';
 import HabitsScreen, { EnergyCTA, ErrorBanner, ModeBar } from '../HabitsScreen';
 
 const noop = (): void => {};
@@ -156,6 +156,16 @@ describe('habits footer band layout', () => {
     expect(flat.alignItems).toBe('stretch');
     expect(flat.position).toBeUndefined();
     expect(flat.bottom).toBeUndefined();
+  });
+
+  it('keeps the error retry action intrinsic and at least one touch target tall', () => {
+    const { getByTestId } = render(<ErrorBanner error="boom" onRetry={noop} />);
+    const flat = StyleSheet.flatten(
+      getByTestId('retry-button').props.style as StyleProp<ViewStyle>,
+    );
+
+    expect(flat.flex).toBeUndefined();
+    expect(flat.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
   });
 });
 

@@ -93,6 +93,18 @@
     "coveredBy": "frontend/e2e/habits.e2e.test.ts"
   },
   {
+    "id": "habits.walk-back-from-beyond-stretch",
+    "description": "A user whose additive progress has run far beyond Stretch still sees separately operable tier controls: the visual scale stops compressing before the distinct targets overlap, a long press names the negative walk-back adjustment it will make, releasing that press restores the server-backed fill, and dragging Low or Clear cannot cross the displayed Stretch marker. The current live-wire habit journey proves signed corrections and day-total reconciliation but does not operate the tile or GoalModal marker gestures in a browser, so #2814 tracks this missing seam. Pinned meanwhile by HabitUtils.test.ts for extreme and equal-adjacent marker geometry plus inverse target math, starFill.test.ts and HabitTileStarLongPress.test.tsx for over-Stretch walk-back and fill release, and GoalModal.markerDrag.test.tsx for the displayed drag ceiling and persisted target.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/components/GoalModal.tsx",
+      "client": ["goals", "goalCompletions"],
+      "routes": ["PUT /goals/{goal_id}", "POST /goal_completions/"],
+      "tables": ["goal", "goalcompletion"]
+    },
+    "status": "uncovered",
+    "issue": 2814
+  },
+  {
     "id": "habits.log-unit-operation-selector",
     "description": "A user opens a habit modal and leaves the operation on + to add the entered amount, taps once for set to make the selected day's total exact, or taps again for − to subtract the entered amount. Log Units remains the only commit action. The set operation derives the signed correction from that selected calendar day's existing completions before using the ordinary append-only completion route. Uncovered because the browser habit journey logs through its API-backed seam but does not yet open GoalModal; pinned meanwhile by GoalModal.test.tsx for the operation cycle, add/subtract qualification, exact higher and lower totals, selected past-day bucketing, and reset after commit.",
     "crosses": {

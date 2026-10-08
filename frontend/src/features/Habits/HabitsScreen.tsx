@@ -191,11 +191,7 @@ export const ErrorBanner = ({ error, onRetry }: { error: string; onRetry: () => 
     <Text style={styles.errorBannerText} accessibilityRole="alert">
       {error}
     </Text>
-    <TouchableOpacity
-      testID="retry-button"
-      onPress={onRetry}
-      style={styles.energyScaffoldingButton}
-    >
+    <TouchableOpacity testID="retry-button" onPress={onRetry} style={styles.errorBannerButton}>
       <Text style={styles.energyScaffoldingButtonText}>Retry</Text>
     </TouchableOpacity>
   </View>
