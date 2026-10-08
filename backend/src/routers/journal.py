@@ -79,6 +79,7 @@ from models.completion_suggestion import (
 from models.goal import Goal
 from models.habit import Habit
 from models.journal_entry import JournalEntry, JournalTag
+from models.journal_withdrawal_obligation import JournalWithdrawalState
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -185,6 +186,7 @@ from services.inference_provenance import (
     stamp_letter,
     stamp_note,
 )
+from services.journal_withdrawal_obligation import record_obligation, settle_confirmed
 from services.llm_usage import (
     GenerationFeature,
     GenerationKey,
@@ -3747,6 +3749,23 @@ async def _keep_letter(
     return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
 
 
+async def _owe_pending_delete(session: AsyncSession, entry: JournalEntry) -> None:
+    """Record, durably, that this page's deletion waits only on its vault (#3098).
+
+    Committed before the 503 so the background sweep can finish both the
+    withdrawal and the ``deleted_at`` stamp for any classification, without
+    the writer having to ask again. The page stays live until then.
+    """
+    await record_obligation(
+        session,
+        user_id=entry.user_id,
+        entry_id=cast("int", entry.id),
+        state=JournalWithdrawalState.PENDING_DELETE,
+        destination=entry.vault_destination,
+    )
+    await session.commit()
+
+
 @router.delete("/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_journal_entry(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -3764,6 +3783,11 @@ async def delete_journal_entry(
     automatic retention window: the row and its derivatives (margin notes,
     promoted quotes, completion suggestions) persist until account deletion
     or an operator purge (#3063; see ``domain.retention``).
+
+    A vault that cannot confirm its copy absent leaves the page live and
+    answers 503, but the request is not forgotten: a durable, content-free
+    ``pending_delete`` obligation lets the background sweep finish the
+    withdrawal and then the deletion, for every classification (#3098).
     """
     entry_id = cast("int", entry.id)
     # The ownership dependency's read opened a transaction. End it before
@@ -3789,9 +3813,11 @@ async def delete_journal_entry(
         await mark_entry_retractions_pending(session, user_id=current_user, entry_id=entry_id)
         await session.commit()
         if not await _withdraw_remote_copies(session, current, vault_client):
+            await _owe_pending_delete(session, current)
             raise service_unavailable("vault_withdrawal_pending")
         current.deleted_at = datetime.now(UTC)
         session.add(current)
+        await settle_confirmed(session, user_id=current_user, entry_id=entry_id)
         await session.commit()
     logger.info(
         "journal_entry_soft_deleted",

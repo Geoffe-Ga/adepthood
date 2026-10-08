@@ -22,12 +22,18 @@ and left for an owner decision rather than widened here.
 
 After a reconnect or disconnect, a copy bound to the old vault is never
 dialled and never confirmed: the Intimate reclassification and DELETE answer a
-standing 503 and log ``destination_changed`` (#3060 escalation 5).
+503 that names where the copy is and log ``destination_changed`` (#3060
+escalation 5). The writer can reconnect that vault, or -- if they cannot reach
+it -- delete the page here with an ``unconfirmed`` obligation (#3094).
+:func:`withdraw_unconfirmed_copy` is how such a copy is withdrawn later: only
+from the vault recorded on the obligation, and only when that is the vault
+connected now.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -143,3 +149,38 @@ async def _clear_marker(session: AsyncSession, entry: JournalEntry) -> None:
     session.add(entry)
     await session.commit()
     await session.refresh(entry)
+
+
+@dataclass(frozen=True)
+class CopyBinding:
+    """Where an owed copy was recorded to live, and which vault is connected now."""
+
+    entry_id: int
+    recorded: str | None
+    current: str | None
+
+
+async def withdraw_unconfirmed_copy(
+    session: AsyncSession,
+    entry: JournalEntry | None,
+    client: CreekVaultClient,
+    *,
+    binding: CopyBinding,
+) -> bool:
+    """Withdraw a copy whose page is already gone here; ``True`` only on its vault's confirmation.
+
+    The page was erased locally, so its own marker cannot be trusted to say
+    where the copy lives -- the obligation's recorded destination does. A copy
+    with no recorded destination cannot be attributed to any vault and is
+    never confirmed by one; a copy recorded elsewhere is never dialled. On
+    confirmation the soft-deleted row's marker, if the row still exists, is
+    cleared as well.
+    """
+    await session.commit()
+    if binding.recorded is None or binding.recorded != binding.current:
+        return _degraded(binding.entry_id, "destination_changed")
+    if not await withdraw_journal_from_vault(client, entry_id=binding.entry_id):
+        return False
+    if entry is not None:
+        await _clear_marker(session, entry)
+    return True
