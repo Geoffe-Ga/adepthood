@@ -119,9 +119,10 @@ _ELISION = r"(?:em|cause|cos|til|n|bout|round|tis|twas|nuff)\b|\d"
 #: closes before one, and an apostrophe followed by a letter never closes a
 #: span -- so "you're", "the walkers' path" and "it's" are never read as quotes,
 #: while 'I'm tired' is one span. A straight single quote also never opens on a
-#: leading elision ('cause, '90s) and never closes on a plural possessive (an
-#: "s'" followed by a lower-case word), the two shapes that otherwise pair up
-#: into a phantom multi-word quote.
+#: leading elision ('cause, '90s). An "s'" (a plural, or a plural possessive)
+#: closes the span unless a later straight quote in the same sentence can close
+#: it instead, so 'I miss our long walks' ends at "walks'" while 'the kids'
+#: rooms were cold' runs on past "kids'".
 _QUOTED = re.compile(
     r"\u201c(?P<curly>[^\u201d]+)\u201d"
     r"|\u201e(?P<low9>[^\u201c\u201d]+)[\u201c\u201d]"
@@ -130,7 +131,8 @@ _QUOTED = re.compile(
     r"|\u300c(?P<corner>[^\u300d]+)\u300d"
     r"|\u300e(?P<white_corner>[^\u300f]+)\u300f"
     r"|(?<!\w)\u2018(?P<curly_single>(?:[^\u2018\u2019]|\u2019(?=\w))+)\u2019(?!\w)"
-    rf"|(?<!\w)'(?!{_ELISION})(?P<single>(?:[^']|'(?=\w))+?)'(?!\w)(?!(?<=s')\s+[a-z])"
+    rf"|(?<!\w)'(?!{_ELISION})(?P<single>(?:[^']|'(?=\w)|(?<=s)')+?)'(?!\w)"
+    r"(?!(?<=s')[^.!?']*'(?!\w))"
 )
 #: Common English function words, for the output-language heuristic.
 _ENGLISH_STOPWORDS = frozenset(

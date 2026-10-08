@@ -177,10 +177,8 @@ def test_grounded_quote_is_extracted_and_masked_in_every_quote_style(
         "You stayed 'cause the water was loud, and your parents' voices faded.",
         "You mention the '90s and your parents' house, and the quiet there.",
         "Rock 'n' roll and your neighbours' radio filled the street.",
-        # Each guard on its own: an elision with a later one-word quote, and an
-        # unclosed quote that a plural possessive must not close.
+        # The elision guard on its own: an elision with a later one-word quote.
         "You stayed 'cause the water was loud, and you said 'enough' to the night.",
-        "You crossed by the 'old bridge near the walkers' path again.",
     ],
 )
 def test_apostrophes_are_not_read_as_quotes(letter: str) -> None:
@@ -199,6 +197,27 @@ def test_apostrophes_are_not_read_as_quotes(letter: str) -> None:
 def test_straight_single_quoted_fabrication_is_still_caught(letter: str) -> None:
     """The elision and possessive guards do not hide a genuine single-quoted invention."""
     assert RuleId.LETTER_QUOTE_UNGROUNDED in _scored(_sample(_RIVER, letter=letter)).blocking
+
+
+@pytest.mark.parametrize(
+    ("entry", "letter", "ungrounded"),
+    [
+        # A quote ending in a plural closes there when no later quote can.
+        (_RIVER, "You wrote 'I miss our long walks' and that longing is real.", True),
+        ("I miss our long walks.", "You wrote 'I miss our long walks' and that is real.", False),
+        # A plural possessive inside a quote is skipped when a later quote closes it.
+        (_RIVER, "You wrote 'the dogs' bowls were empty' and left.", True),
+        ("The kids' rooms were cold.", "You wrote 'The kids' rooms were cold' and left.", False),
+    ],
+)
+def test_single_quote_ending_or_containing_s_apostrophe(
+    entry: str, letter: str, ungrounded: bool
+) -> None:
+    """An s' closes a span unless a later quote in the sentence can (both directions)."""
+    score = _scored(_sample(entry, letter=letter))
+    assert (RuleId.LETTER_QUOTE_UNGROUNDED in score.blocking) is ungrounded
+    if not ungrounded:  # grounded, so masked: the writer's own "I" is not the model's
+        assert RuleId.FIRST_PERSON not in score.rule_ids
 
 
 def test_single_quoted_span_with_a_contraction_inside_grounds() -> None:
