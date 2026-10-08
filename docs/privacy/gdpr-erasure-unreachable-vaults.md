@@ -134,7 +134,10 @@ The table is registered in all three registries:
 - `domain/data_export.py`: omitted from export as housekeeping.
 
 These are placeholders consistent with B08's existing ones. They are not
-decided.
+decided. Proposed values for owner review (30 days after confirmation for a
+`confirmed` row, and an open row kept until confirmed) are in
+[retention-proposal.md](retention-proposal.md), along with the separate
+question of whether an `unconfirmed` row should outlive account deletion.
 
 ## Known limits
 

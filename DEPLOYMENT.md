@@ -455,6 +455,12 @@ Two independent legs, because each one fails in a way the other survives.
 | Platform | Railway volume backup, configured per-database in the service's **Backups** tab | Daily | 6 days | Dropped table, bad migration, accidental delete |
 | Off-host | `pg_dump -Fc`, encrypted, copied off Railway | Weekly | 90 days | Railway account loss, project deletion, region loss |
 
+Shorter retention values for both legs, and for every other undecided store, are
+proposed for owner review in
+[docs/privacy/retention-proposal.md](docs/privacy/retention-proposal.md)
+(*DRAFT, #3063; not ratified*). The values in the table above stay in force
+until the owner ratifies a change.
+
 **Railway's own backups are not off-host in the sense that matters.** They are
 copy-on-write volume backups restorable only **into the same project and
 environment**, with no documented export path. That makes them excellent for the
