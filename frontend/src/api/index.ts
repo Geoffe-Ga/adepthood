@@ -5,6 +5,7 @@ import { isDeviceKnownOffline, setNetworkOnlineGetter } from './networkSignal';
 import {
   apiGoalGroupSchema,
   accountDeletionReceiptSchema,
+  journalErasureReceiptSchema,
   dataExportArchiveSchema,
   authResponseSchema,
   contentItemSchema,
@@ -59,6 +60,8 @@ import {
   wheelBalanceSchema,
   feedbackReceiptSchema,
   type AccountDeletionReceiptT,
+  type CopyLocationT,
+  type JournalErasureReceiptT,
   type DataExportArchiveT,
   type AcceptSuggestionResultT,
   type CareKindT,
@@ -2061,6 +2064,19 @@ export const journal = {
     return request<void>(`/journal/${entryId}`, { method: 'DELETE', token });
   },
   /**
+   * Delete a page here even though the vault holding its copy cannot confirm
+   * the copy gone (#3094) — the "I can't reach it" path after a delete answered
+   * a withdrawal 503. The server still tries every owed withdrawal first; the
+   * receipt says whether the copy was confirmed absent or may remain.
+   */
+  eraseLocally(entryId: number, token?: string): Promise<JournalErasureReceipt> {
+    return request<JournalErasureReceipt>(`/journal/${entryId}/erase-locally`, {
+      method: 'POST',
+      token,
+      schema: journalErasureReceiptSchema,
+    });
+  },
+  /**
    * Transcribe the text in one captured image (a page, a screenshot, a photo of
    * a screen) from base64. Stateless: it persists nothing and just returns the
    * OCR'd text; an image with no text, or a declined read, is a typed 422
@@ -3666,6 +3682,8 @@ export interface TimezoneUpdatePayload {
 
 /** The receipt ``DELETE /users/me`` returns once an account is gone. */
 export type AccountDeletionReceipt = AccountDeletionReceiptT;
+export type CopyLocation = CopyLocationT;
+export type JournalErasureReceipt = JournalErasureReceiptT;
 
 /** The whole archive ``GET /users/me/export`` streams back. */
 export type DataExportArchive = DataExportArchiveT;

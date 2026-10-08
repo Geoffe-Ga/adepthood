@@ -47,15 +47,26 @@ from domain.creek_vault import (
 )
 from domain.privacy_tier import egress_denied_clause
 from models.journal_entry import JournalEntry
+from models.journal_withdrawal_obligation import (
+    OPEN_STATES,
+    JournalWithdrawalObligation,
+    JournalWithdrawalState,
+)
 from models.voice_draft_retraction import (
     RetractionFailureCode,
     VoiceDraftRetraction,
     VoiceDraftRetractionState,
 )
 from services.account_egress_barrier import ensure_account_live, hold_account
+from services.corpus_ingest import withdraw_journal_entry as withdraw_local_journal_entry
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_upload import _expressible_on_the_wire
-from services.creek_vault_withdraw import withdraw_journal_copy
+from services.creek_vault_withdraw import (
+    CopyBinding,
+    withdraw_journal_copy,
+    withdraw_unconfirmed_copy,
+)
+from services.journal_withdrawal_obligation import open_obligation, settle_confirmed
 from services.voice_draft_privacy import voice_draft_privacy
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,6 +113,7 @@ _SWEEP_MAX_BACKOFF_SECONDS: Final = 3600
 _PENDING = VoiceDraftRetractionState.PENDING.value
 _MIRROR_INTENT = VoiceDraftRetractionState.MIRROR_INTENT.value
 _CONFIRMED = VoiceDraftRetractionState.CONFIRMED.value
+_PENDING_DELETE = JournalWithdrawalState.PENDING_DELETE.value
 
 VaultClientResolver = Callable[[AsyncSession, int], Awaitable[CreekVaultPipelineClient]]
 DestinationResolver = Callable[[AsyncSession, int], Awaitable[str | None]]
@@ -680,6 +692,19 @@ async def _due_entries(session: AsyncSession, sweep: _SweepPass) -> tuple[tuple[
     for user_id, entry_id in journals.all():
         if entry_id is not None:
             pairs.setdefault((user_id, entry_id))
+    owed = await session.execute(
+        select(JournalWithdrawalObligation.user_id, JournalWithdrawalObligation.journal_entry_id)
+        .where(
+            col(JournalWithdrawalObligation.state).in_(OPEN_STATES),
+            col(JournalWithdrawalObligation.journal_entry_id).not_in(
+                sweep.journal_retries.backed_off(sweep.moment)
+            ),
+        )
+        .order_by(col(JournalWithdrawalObligation.id))
+        .limit(_SWEEP_BATCH)
+    )
+    for user_id, entry_id in owed.all():
+        pairs.setdefault((user_id, entry_id))
     await session.commit()
     return tuple(pairs)
 
@@ -704,7 +729,138 @@ async def _log_backlog(session: AsyncSession, moment: datetime) -> None:
     )
 
 
+@dataclass(frozen=True)
+class _JournalAttempt:
+    """One entry's journal-copy retry: whose it is, and which vault it may be confirmed by."""
+
+    target: EntryRef
+    destination: str | None
+
+
 async def _retry_journal_copy(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    sweep: _SweepPass,
+    attempt: _JournalAttempt,
+) -> None:
+    """Finish an owed deletion or unconfirmed withdrawal, else retry an Intimate copy.
+
+    An entry with an open :class:`JournalWithdrawalObligation` is worked from
+    that durable marker whatever its classification (#3098); one without is
+    retried only while it is Intimate and still holds its vault marker, exactly
+    as before. A live, non-Intimate page nobody asked to delete is never dialled.
+    """
+    target = attempt.target
+    obligation = await open_obligation(session, user_id=target.user_id, entry_id=target.entry_id)
+    if obligation is None:
+        await _retry_intimate_copy(
+            session, client, sweep, entry_id=target.entry_id, destination=attempt.destination
+        )
+        return
+    if not sweep.journal_retries.due(target.entry_id, sweep.moment):
+        await session.commit()
+        return
+    confirmed = await _finish_obligation(
+        session,
+        client,
+        attempt,
+        owed=_OwedCopy(state=obligation.state, recorded=obligation.destination),
+        moment=sweep.moment,
+    )
+    sweep.journal_retries.record(target.entry_id, sweep.moment, confirmed=confirmed)
+
+
+@dataclass(frozen=True)
+class _OwedCopy:
+    """What an open obligation says about the copy: its state and its recorded vault."""
+
+    state: str
+    recorded: str | None
+
+
+async def _entry_row(session: AsyncSession, target: EntryRef) -> JournalEntry | None:
+    """The obligation's entry, live or soft-deleted; ``None`` once purged."""
+    result = await session.execute(
+        select(JournalEntry).where(
+            JournalEntry.id == target.entry_id,
+            JournalEntry.user_id == target.user_id,
+        )
+    )
+    return result.scalars().first()
+
+
+async def _finish_obligation(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    attempt: _JournalAttempt,
+    *,
+    owed: _OwedCopy,
+    moment: datetime,
+) -> bool:
+    """Drive one open obligation to confirmed when its vault confirms; report whether it did.
+
+    ``pending_delete``: the page is still live, so its own marker is withdrawn
+    (bound to the vault that received it) and, once every essay withdrawal is
+    confirmed too, the deletion the writer asked for is stamped. ``unconfirmed``
+    (or a purged page): the page is already gone here, so only the recorded
+    vault's confirmation can clear the row.
+    """
+    target = attempt.target
+    entry = await _entry_row(session, target)
+    if owed.state == _PENDING_DELETE and entry is not None:
+        confirmed = await _finish_pending_delete(session, client, attempt, entry, moment=moment)
+    else:
+        confirmed = await withdraw_unconfirmed_copy(
+            session,
+            entry,
+            client,
+            binding=CopyBinding(
+                entry_id=target.entry_id, recorded=owed.recorded, current=attempt.destination
+            ),
+        )
+    if not confirmed:
+        return False
+    await settle_confirmed(session, user_id=target.user_id, entry_id=target.entry_id)
+    await session.commit()
+    return True
+
+
+async def _finish_pending_delete(
+    session: AsyncSession,
+    client: CreekVaultPipelineClient,
+    attempt: _JournalAttempt,
+    entry: JournalEntry,
+    *,
+    moment: datetime,
+) -> bool:
+    """Finish a requested deletion once every copy of the page is confirmed gone.
+
+    The local half of the deletion is repeated first -- the corpus withdrawal
+    and the essay retraction marking -- so a fragment or an essay mirror that
+    appeared after the DELETE (a write that raced the obligation, a restore)
+    never outlives it. Then the page's own copy is withdrawn and every owed
+    essay withdrawal, including any just marked, must be confirmed before
+    ``deleted_at`` is stamped.
+    """
+    target = attempt.target
+    await withdraw_local_journal_entry(session, user_id=target.user_id, entry_id=target.entry_id)
+    await mark_entry_retractions_pending(session, user_id=target.user_id, entry_id=target.entry_id)
+    await session.commit()
+    journal_withdrawn = await withdraw_journal_copy(
+        session, entry, client, destination=attempt.destination
+    )
+    drafts_withdrawn = await retract_pending_voice_drafts(
+        session, client, target, destination=attempt.destination, due_by=moment
+    )
+    if not (journal_withdrawn and drafts_withdrawn):
+        return False
+    if entry.deleted_at is None:
+        entry.deleted_at = moment
+        session.add(entry)
+    return True
+
+
+async def _retry_intimate_copy(
     session: AsyncSession,
     client: CreekVaultPipelineClient,
     sweep: _SweepPass,
@@ -747,11 +903,15 @@ async def _resume_entry(session: AsyncSession, sweep: _SweepPass, target: EntryR
             await ensure_account_live(session, target.user_id)
             client = await sweep.resolve_client(session, target.user_id)
             destination = await sweep.resolve_destination(session, target.user_id)
+            # Every owed essay withdrawal for this entry, whatever owes it (an
+            # Intimate retry, a page erased here, a deletion in progress). A
+            # deletion in progress re-runs this itself after marking any late
+            # essays, and stamps only on that second answer.
             await retract_pending_voice_drafts(
                 session, client, target, destination=destination, due_by=sweep.moment
             )
             await _retry_journal_copy(
-                session, client, sweep, entry_id=target.entry_id, destination=destination
+                session, client, sweep, _JournalAttempt(target=target, destination=destination)
             )
     except HTTPException:
         _LOGGER.info(_SWEEP_SKIPPED_EVENT, extra={"reason": "account_unavailable"})

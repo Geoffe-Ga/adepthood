@@ -22,6 +22,7 @@ from .gumroad_sale import GumroadSale
 from .habit import Habit
 from .invitation_signal import InvitationSignal
 from .journal_entry import JournalEntry
+from .journal_withdrawal_obligation import JournalWithdrawalObligation
 from .license_binding import LicenseBinding
 from .llm_usage_log import LLMUsageLog
 from .login_attempt import LoginAttempt
@@ -83,6 +84,7 @@ __all__ = [
     "Habit",
     "InvitationSignal",
     "JournalEntry",
+    "JournalWithdrawalObligation",
     "LLMUsageLog",
     "LicenseBinding",
     "LoginAttempt",

@@ -263,6 +263,18 @@ RETENTION: Mapping[str, RetentionRule] = {
             ratified=False,
         ),
     ),
+    "journalwithdrawalobligation": until_account_deletion(
+        "Content-free obligation to withdraw a journal page's copy from a vault: "
+        "``pending_delete`` while a requested deletion waits on the vault, "
+        "``unconfirmed`` after the writer deleted the page here because the vault "
+        "holding the copy was out of reach (#3094), ``confirmed`` once that vault "
+        "confirmed absence. Not a foreign key into the entry, so a purge of the "
+        "soft-deleted page never erases the record that a copy may remain. Erased "
+        "with the account today; how long a confirmed or unconfirmed row is kept, and "
+        "whether an unconfirmed one should outlive erasure, are owner decisions "
+        "(#3063 AC21-22, #3094). Plan: docs/privacy/gdpr-erasure-unreachable-vaults.md.",
+        ratified=False,
+    ),
     "licensebinding": until_account_deletion("The claim tying a sale to this account."),
     "llmusagelog": until_account_deletion(
         "Per-request AI metering rows. Kept for the account's whole life; whether "

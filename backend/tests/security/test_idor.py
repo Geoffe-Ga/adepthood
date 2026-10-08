@@ -53,6 +53,7 @@ from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
 from models.journal_entry import JournalEntry
+from models.journal_withdrawal_obligation import JournalWithdrawalObligation
 from models.marginalia import Marginalia, MarginaliaKind
 from models.metta_return_arc import MettaReturnArc
 from models.metta_return_habit_release import MettaReturnHabitRelease
@@ -418,6 +419,49 @@ async def test_idor_journal_entry_delete_returns_404(async_client: AsyncClient) 
 
     resp = await async_client.delete(f"/journal/{entry_id}", headers=bob_headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_idor_journal_entry_erase_locally_returns_404(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """``POST /journal/{id}/erase-locally`` (#3094) collapses a cross-user probe to 404.
+
+    Nothing is persisted for the prober: no deletion stamp and no withdrawal
+    obligation. The owner's call to the same URL succeeds, so the 404 is the
+    ownership check and not a missing route.
+    """
+    alice_headers, _ = await _signup(async_client, "alice_j_erase")
+    bob_headers, _ = await _signup(async_client, "bob_j_erase")
+    create = await async_client.post(
+        "/journal/", json={"message": "private"}, headers=alice_headers
+    )
+    entry_id = create.json()["id"]
+
+    resp = await async_client.post(f"/journal/{entry_id}/erase-locally", headers=bob_headers)
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert resp.json() == {"detail": "journal_entry_not_found"}
+    row = (
+        await db_session.execute(
+            select(JournalEntry)
+            .where(col(JournalEntry.id) == entry_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert row.deleted_at is None
+    obligations = (
+        await db_session.execute(
+            select(func.count())
+            .select_from(JournalWithdrawalObligation)
+            .where(col(JournalWithdrawalObligation.journal_entry_id) == entry_id)
+        )
+    ).scalar_one()
+    assert obligations == 0
+    await db_session.commit()
+
+    owned = await async_client.post(f"/journal/{entry_id}/erase-locally", headers=alice_headers)
+    assert owned.status_code == HTTPStatus.OK
 
 
 @pytest.mark.asyncio

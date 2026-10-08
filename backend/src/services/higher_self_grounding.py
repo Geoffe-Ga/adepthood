@@ -78,6 +78,7 @@ from services.corpus_store import (
     resolve_stage_frequency,
     retrieve_fragments,
 )
+from services.journal_withdrawal_obligation import deletion_in_progress_clause
 from services.privacy_lineage import LineageOperation, observe_lineage
 
 # How many pieces of the reader's own writing may accompany their entry to the
@@ -165,6 +166,8 @@ async def _recent_entries(
             JournalEntry.user_id == user_id,
             JournalEntry.id != exclude_id,
             col(JournalEntry.deleted_at).is_(None),
+            # A page whose deletion is in progress is going, not context (#3098).
+            ~deletion_in_progress_clause(col(JournalEntry.id)),
             egress_eligible_clause(col(JournalEntry.classification)),
         )
         .order_by(col(JournalEntry.id).desc())

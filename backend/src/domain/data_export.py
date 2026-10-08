@@ -308,6 +308,11 @@ MANIFEST: Mapping[str, ExportRule] = {
         # transport bookkeeping, withheld exactly as ``feedbackreport``'s is.
         drop_columns=("vault_ref", "vault_tags", "idem_key"),
     ),
+    "journalwithdrawalobligation": Omitted(
+        "Content-free bookkeeping of which deleted pages still owe their vault "
+        "copy a withdrawal, and whether that vault confirmed it. The pages "
+        "themselves are deleted; this is housekeeping, as voicedraftretraction is.",
+    ),
     "licensebinding": Omitted(
         "The processor's sale identifier for the licence this account "
         "redeemed — an operational record the account did not write; the "

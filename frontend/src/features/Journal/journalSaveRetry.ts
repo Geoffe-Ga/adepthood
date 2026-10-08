@@ -16,7 +16,15 @@ import type { JournalClassification } from '@/api';
 
 /** Every state the footer's save hint can show. */
 export type SaveState =
-  'idle' | 'typing' | 'saving' | 'saved' | 'error' | 'weekTaken' | 'vaultWithdrawalPending';
+  | 'idle'
+  | 'typing'
+  | 'saving'
+  | 'saved'
+  | 'error'
+  | 'weekTaken'
+  | 'vaultWithdrawalPending'
+  | 'vaultWithdrawalReconnect'
+  | 'deletionPending';
 
 /**
  * What a writer may publish. ``error`` is excluded on purpose: it is derived
@@ -77,6 +85,8 @@ const TRANSIENT_STATES: ReadonlySet<PublishedSaveState> = new Set<PublishedSaveS
   'saving',
   'weekTaken',
   'vaultWithdrawalPending',
+  'vaultWithdrawalReconnect',
+  'deletionPending',
 ]);
 
 /** Record a failure in its own lane; a later failure overwrites the attempted value. */

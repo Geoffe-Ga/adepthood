@@ -97,7 +97,7 @@ DETACHED_ENTRY_POINTS: Mapping[str, Site] = {
 #: the exact failure mode this gate exists to make impossible. The number is the
 #: measured site count, and it is meant to be raised when a real site is added,
 #: never lowered to make a run go green.
-_MINIMUM_DERIVED_ROUTES = 9
+_MINIMUM_DERIVED_ROUTES = 10
 
 #: Routes that hand this account's *stored* content outward -- to a vault, to a
 #: language model, or to both -- and therefore take the per-account egress
@@ -108,6 +108,7 @@ BARRIERED: frozenset[_Route] = frozenset(
         ("POST", "/journal/"),
         ("PATCH", "/journal/{entry_id}"),
         ("DELETE", "/journal/{entry_id}"),
+        ("POST", "/journal/{entry_id}/erase-locally"),
         ("POST", "/journal/{entry_id}/resonance"),
         ("POST", "/journal/{entry_id}/suggestions/detect"),
         ("POST", "/journal/marginalia/{marginalia_id}/essay"),

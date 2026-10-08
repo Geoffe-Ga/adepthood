@@ -3879,6 +3879,46 @@
         "title": "JournalEntryUpdate",
         "type": "object"
       },
+      "JournalErasureReceipt": {
+        "description": "What ``POST /journal/{id}/erase-locally`` did, in closed, content-free terms.\n\nThe page is always gone from Adepthood when this is returned.\n``remote_copy`` is ``confirmed_absent`` only when the vault holding the copy\nconfirmed it absent; otherwise it is ``unconfirmed`` and ``copy_location``\nsays, relative to the vault connected now, where a copy may remain. There\nis deliberately no \"withdrawn\" value: a copy nobody confirmed is not one.",
+        "properties": {
+          "copy_location": {
+            "anyOf": [
+              {
+                "enum": [
+                  "connected_vault",
+                  "previous_vault",
+                  "disconnected_vault"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Copy Location"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "integer"
+          },
+          "remote_copy": {
+            "enum": [
+              "confirmed_absent",
+              "unconfirmed"
+            ],
+            "title": "Remote Copy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry_id",
+          "remote_copy",
+          "copy_location"
+        ],
+        "title": "JournalErasureReceipt",
+        "type": "object"
+      },
       "JournalListResponse": {
         "description": "Paginated list of journal entries.",
         "properties": {
@@ -18355,7 +18395,7 @@
     },
     "/journal/{entry_id}": {
       "delete": {
-        "description": "Soft-delete a journal entry (BUG-JOURNAL-007).\n\nStamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.\nThis preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the\nusage audit trail is never orphaned.  Soft-deleted rows are invisible to\nall read paths (list, get, ``load_recent_conversation``) which filter\n``deleted_at IS NULL``, and no recovery path is exposed.  There is no\nautomatic retention window: the row and its derivatives (margin notes,\npromoted quotes, completion suggestions) persist until account deletion\nor an operator purge (#3063; see ``domain.retention``).",
+        "description": "Soft-delete a journal entry (BUG-JOURNAL-007).\n\nStamps ``deleted_at = utcnow()`` instead of issuing a hard ``DELETE``.\nThis preserves the ``LLMUsageLog.journal_entry_id`` FK reference so the\nusage audit trail is never orphaned.  Soft-deleted rows are invisible to\nall read paths (list, get, ``load_recent_conversation``) which filter\n``deleted_at IS NULL``, and no recovery path is exposed.  There is no\nautomatic retention window: the row and its derivatives (margin notes,\npromoted quotes, completion suggestions) persist until account deletion\nor an operator purge (#3063; see ``domain.retention``).\n\nA vault that cannot confirm its copy absent leaves the page live and\nanswers 503, but the request is not forgotten: a durable, content-free\n``pending_delete`` obligation lets the background sweep finish the\nwithdrawal and then the deletion, for every classification (#3098).",
         "operationId": "delete_journal_entry_journal__entry_id__delete",
         "parameters": [
           {
@@ -18805,6 +18845,157 @@
         ]
       }
     },
+    "/journal/{entry_id}/erase-locally": {
+      "post": {
+        "description": "Delete a page here even though its vault copy cannot be confirmed gone (#3094).\n\nThe \"I can't reach it\" path behind a withdrawal 503, so a writer is never\nstuck behind a vault they no longer have. Reconnect-first still holds:\nevery owed withdrawal is attempted exactly as DELETE attempts it, and a\nconfirmation makes this an ordinary deletion. Otherwise the page is erased\nhere -- gone from read, list and export -- and a content-free\n``unconfirmed`` obligation remembers that a copy may remain; reconnecting\nthat vault later lets the background sweep confirm and clear it. The\nreceipt never says \"withdrawn\" for a copy nobody confirmed.",
+        "operationId": "erase_journal_entry_locally_journal__entry_id__erase_locally_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Entry Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalErasureReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The account has no credit left for this operation."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Erase Journal Entry Locally",
+        "tags": [
+          "journal"
+        ]
+      }
+    },
     "/journal/{entry_id}/marginalia": {
       "get": {
         "description": "List the caller's marginalia for an entry, ordered by anchor position.",
@@ -19050,6 +19241,16 @@
             },
             "description": "No such resource -- or none this caller is allowed to see."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -19164,6 +19365,16 @@
               }
             },
             "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
           },
           "422": {
             "content": {
@@ -23761,6 +23972,16 @@
             },
             "description": "No such resource -- or none this caller is allowed to see."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -23864,6 +24085,16 @@
               }
             },
             "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
           },
           "422": {
             "content": {
@@ -23983,6 +24214,16 @@
               }
             },
             "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
           },
           "422": {
             "content": {

@@ -29,6 +29,7 @@ import ContractionReflectionNote from './ContractionReflectionNote';
 import type { CorpusDestination } from './corpusDestination';
 import CorpusInvitationNote from './CorpusInvitationNote';
 import { claimCreateAttempt, type CreateKey, type CreateKeyRef } from './createKey';
+import { DELETION_PENDING_DETAIL, WITHDRAWAL_PENDING_LOCATIONS } from './deleteEntryCopy';
 import EditConfirmDialog from './EditConfirmDialog';
 import { FocusScrollProvider, useFocusScrollHost, type FocusScrollHost } from './focusSpanScroll';
 import FromYourCreekPanel from './FromYourCreekPanel';
@@ -194,6 +195,14 @@ const BLANK_HINT = ' ';
 const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
 const VAULT_WITHDRAWAL_PENDING_HINT =
   'Intimate here. Your vault hasn’t confirmed it dropped its copy yet — once it’s back online, choose Intimate again.';
+// DRAFT copy (#3094 review), pending owner review. The copy is in a vault this
+// account is no longer connected to, so choosing Intimate again cannot reach it.
+const VAULT_WITHDRAWAL_RECONNECT_HINT =
+  'Intimate here. A copy of this page is in a Creek vault you’re no longer connected to — reconnect that vault in Settings so it can remove the copy.';
+// DRAFT copy (#3098 review), pending owner review. A deletion is in progress:
+// the server refuses edits until the vault confirms and the deletion finishes.
+const DELETION_PENDING_HINT =
+  'This page is set to be deleted, so it can’t be edited. Deletion finishes once your Creek vault confirms its copy is gone.';
 
 /**
  * The state the save hint should show while a quote is being folded in.
@@ -253,6 +262,8 @@ function savedHintLabel(state: SaveState): string {
   if (state === 'saved') return SAVED_HINT;
   if (state === 'weekTaken') return WEEK_TAKEN_HINT;
   if (state === 'vaultWithdrawalPending') return VAULT_WITHDRAWAL_PENDING_HINT;
+  if (state === 'vaultWithdrawalReconnect') return VAULT_WITHDRAWAL_RECONNECT_HINT;
+  if (state === 'deletionPending') return DELETION_PENDING_HINT;
   if (state === 'error') return "Couldn't save — keep writing, we'll retry";
   return BLANK_HINT;
 }
@@ -287,13 +298,33 @@ function isCreateConflict(error: unknown): boolean {
   );
 }
 
-/** True only for the stable failure emitted after local privacy commits first. */
-function isVaultWithdrawalPending(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    (error as { detail?: unknown }).detail === 'vault_withdrawal_pending'
-  );
+/** The server's detail on a failed write, when it sent one. */
+function errorDetail(error: unknown): string | null {
+  if (typeof error !== 'object' || error === null) return null;
+  const { detail } = error as { detail?: unknown };
+  return typeof detail === 'string' ? detail : null;
+}
+
+/**
+ * The state for a stable failure emitted after local privacy commits first,
+ * chosen by where the copy is (#3094): the connected vault has not confirmed
+ * (choose Intimate again once it is back), or the copy is in a vault this
+ * account is no longer connected to (reconnect it first). Either way the
+ * stricter tier is already stored. Null for any other failure.
+ */
+function withdrawalPendingState(
+  error: unknown,
+): 'vaultWithdrawalPending' | 'vaultWithdrawalReconnect' | null {
+  const detail = errorDetail(error);
+  if (detail === null || !Object.hasOwn(WITHDRAWAL_PENDING_LOCATIONS, detail)) return null;
+  return WITHDRAWAL_PENDING_LOCATIONS[detail] === 'connected_vault'
+    ? 'vaultWithdrawalPending'
+    : 'vaultWithdrawalReconnect';
+}
+
+/** True for the 409 a page answers while its deletion is in progress (#3098). */
+function isDeletionPending(error: unknown): boolean {
+  return errorDetail(error) === DELETION_PENDING_DETAIL;
 }
 
 interface WriteEntryRefs {
@@ -582,7 +613,13 @@ function useTimerCleanup(timerRef: TimerRef): () => void {
 }
 
 /** A tier/chord PATCH's result; null when nothing was sent or a later change superseded it. */
-type PersistState = 'saved' | 'failed' | 'vaultWithdrawalPending' | null;
+type PersistState =
+  | 'saved'
+  | 'failed'
+  | 'vaultWithdrawalPending'
+  | 'vaultWithdrawalReconnect'
+  | 'deletionPending'
+  | null;
 
 interface PersistResult<T> {
   revertTo: T | null;
@@ -676,18 +713,19 @@ function failedWrite<T>({
   ref,
   report,
 }: FailedWrite<T>): PersistResult<T> {
-  const withdrawalPending = isVaultWithdrawalPending(error);
+  const withdrawalPending = withdrawalPendingState(error);
   // A failed response does not say what the server committed (#2935), except a
   // pending vault withdrawal: the server commits Intimate before asking Creek.
   report?.(withdrawalPending ? { seq, ok: true, value, stored: null } : { seq, ok: false });
   // A rapid superseding change already owns the ref and the UI — leave both
   // to it rather than reverting to this now-stale value.
   if (ref.current !== value) return { revertTo: null, state: null };
-  // Keep that safer truth selected and expose its retry path; reverting to
+  // Keep that safer truth selected and expose its way forward; reverting to
   // Personal would visually contradict persisted privacy.
-  if (withdrawalPending) return { revertTo: null, state: 'vaultWithdrawalPending' };
+  if (withdrawalPending) return { revertTo: null, state: withdrawalPending };
   ref.current = previous;
-  return { revertTo: previous, state: 'failed' };
+  // A page being deleted refuses every edit; no retry can land it (#3098).
+  return { revertTo: previous, state: isDeletionPending(error) ? 'deletionPending' : 'failed' };
 }
 
 // Module-level so the mappers stay referentially stable across renders, keeping
@@ -797,7 +835,7 @@ const chordFailure = (chord: AspectChordValue): RetryFailure => ({ lane: 'chord'
 
 interface WriteOutcome {
   durable: boolean;
-  state: 'saved' | 'failed' | 'weekTaken';
+  state: 'saved' | 'failed' | 'weekTaken' | 'deletionPending';
   /** The body the server holds when it is not the body sent (#2936). */
   durableBody?: string;
 }
@@ -818,6 +856,9 @@ function trackedWrite(
       if (heldAnswer != null) return { durable: true, state: 'weekTaken', durableBody: heldAnswer };
       return { durable: true, state: 'saved' };
     } catch (error) {
+      // A page being deleted refuses every edit (#3098). Not a create conflict,
+      // and not retryable: it names itself in the hint instead.
+      if (isDeletionPending(error)) return { durable: false, state: 'deletionPending' };
       // Surface a distinct error state so the hint isn't mistaken for "untouched".
       // A 409 on the weekly-prompt path is not retryable — the week already holds
       // its one response — so it gets its own state rather than the retry hint.
@@ -980,6 +1021,18 @@ const UNSETTLED_FINISH_ERROR = 'Cannot finish an entry that has not finished loa
 type RunFinish = (_title: string, _body: string) => Promise<FinishedEntry>;
 
 /**
+ * Record a Finish that failed. A page being deleted refuses Finish like every
+ * edit (#3098): no retry can land it, so its lane settles and the hint names
+ * the reason. Any other failure stays owed for Retry.
+ */
+function settleFailedFinish(error: unknown, reporter: SaveReporter, isCurrent: boolean): void {
+  const deleting = isDeletionPending(error);
+  if (deleting) reporter.succeed('finish');
+  else reporter.fail({ lane: 'finish' });
+  if (isCurrent) reporter.publish(deleting ? 'deletionPending' : 'idle');
+}
+
+/**
  * The Finish action: cancel any pending debounce, drain in-flight autosaves so a
  * shorter one can't land after us, then issue the single atomic Finish write.
  * Tracks the save state and rethrows on failure so the caller keeps the draft.
@@ -1019,8 +1072,7 @@ function useFinishWriter(refs: FinishRunnerRefs, reporter: SaveReporter): RunFin
         if (generationRef.current === generation) reporter.publish('saved');
         return finished;
       } catch (error) {
-        reporter.fail({ lane: 'finish' });
-        if (generationRef.current === generation) reporter.publish('idle');
+        settleFailedFinish(error, reporter, generationRef.current === generation);
         throw error;
       } finally {
         if (inFlightRef.current === shadow) inFlightRef.current = null;
@@ -3155,8 +3207,8 @@ function useEditGate({ status, setStatus, finish, body, navigation, onConfirmEdi
       await finish();
       setStatus('finished');
       setEditing(false);
-    } catch {
-      setFinishError(FINISH_ERROR_MESSAGE);
+    } catch (error) {
+      setFinishError(isDeletionPending(error) ? DELETION_PENDING_HINT : FINISH_ERROR_MESSAGE);
     } finally {
       setFinishing(false);
     }

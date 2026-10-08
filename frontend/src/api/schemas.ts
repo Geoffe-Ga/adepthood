@@ -134,6 +134,29 @@ export const accountDeletionReceiptSchema = z.object({
 export type AccountDeletionReceiptT = z.infer<typeof accountDeletionReceiptSchema>;
 
 /**
+ * Response for ``POST /journal/{id}/erase-locally`` (#3094): what deleting a
+ * page "here only" did. ``remote_copy`` is ``confirmed_absent`` only when the
+ * vault holding the copy confirmed it gone; otherwise it is ``unconfirmed`` and
+ * ``copy_location`` says where a copy may remain, relative to the vault
+ * connected now. There is no "withdrawn" value on purpose.
+ */
+export const copyLocationSchema = z.enum([
+  'connected_vault',
+  'previous_vault',
+  'disconnected_vault',
+]);
+
+export type CopyLocationT = z.infer<typeof copyLocationSchema>;
+
+export const journalErasureReceiptSchema = z.object({
+  entry_id: z.number().int(),
+  remote_copy: z.enum(['confirmed_absent', 'unconfirmed']),
+  copy_location: copyLocationSchema.nullable(),
+});
+
+export type JournalErasureReceiptT = z.infer<typeof journalErasureReceiptSchema>;
+
+/**
  * Response for ``GET /users/me/export``: the whole archive.
  *
  * Validated at the envelope only. The collections underneath are the user's

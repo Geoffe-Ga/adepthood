@@ -42,10 +42,11 @@ from schemas.promotion import (
     PromotionUpdate,
 )
 from security import TextTooLongError, sanitize_user_text
+from services.journal_withdrawal_obligation import refuse_if_deletion_pending
 
 logger = logging.getLogger(__name__)
 
-router = build_router(tags=["promotions"])
+router = build_router(tags=["promotions"], extra_statuses=(status.HTTP_409_CONFLICT,))
 
 # A list read, limited like the journal list it sits beside (#2865).
 LIST_PROMOTIONS_RATE_LIMIT = "30/minute"
@@ -99,6 +100,7 @@ async def promote_quote(
     soft-deleted, or foreign entry all resolve to 404). The span is sliced and
     snapshotted server-side, so the quote starts life pending (unfolded).
     """
+    await refuse_if_deletion_pending(session, entry)
     anchor_text = _slice_anchor_text(entry, payload)
     quote = PromotedQuote(
         user_id=current_user,
