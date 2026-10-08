@@ -48,6 +48,11 @@ from models.marginalia import MarginaliaSource
 #: quote is never a hiding place.
 MIN_QUOTE_WORDS = 3
 
+#: The same floor for a quote in a script written without spaces (Japanese,
+#: Chinese), where a word count cannot be taken: a quote of at least this many
+#: wide characters is a claim about the entry and is checked.
+MIN_QUOTE_CHARS_WIDE = 5
+
 #: Blocking violations tolerated per case before the case fails (PROPOSED).
 BLOCKING_VIOLATIONS_ALLOWED = 0
 
@@ -58,10 +63,26 @@ DETECTOR_LANGUAGE = "en"
 #: The single extension point for anything else that must never be scored.
 DEMO_SOURCES: frozenset[MarginaliaSource | None] = frozenset({MarginaliaSource.DEMO})
 
-#: Quoted spans in a letter or note: curly, straight and guillemet quotes.
+#: Quoted spans in a letter or note. Double quotes (curly, straight, German
+#: low-9, guillemets), Japanese corner brackets, and single quotes (curly and
+#: straight). A single quote only opens after a non-word character and only
+#: closes before one, and an apostrophe followed by a letter never closes a
+#: span -- so "you're", "the walkers' path" and "it's" are never read as quotes,
+#: while 'I'm tired' is one span.
 _QUOTED = re.compile(
-    r"\u201c(?P<curly>[^\u201d]+)\u201d|\"(?P<straight>[^\"]+)\"|\u00ab(?P<guillemet>[^\u00bb]+)\u00bb"
+    r"\u201c(?P<curly>[^\u201d]+)\u201d"
+    r"|\u201e(?P<low9>[^\u201c\u201d]+)[\u201c\u201d]"
+    r"|\"(?P<straight>[^\"]+)\""
+    r"|\u00ab(?P<guillemet>[^\u00bb]+)\u00bb"
+    r"|\u300c(?P<corner>[^\u300d]+)\u300d"
+    r"|\u300e(?P<white_corner>[^\u300f]+)\u300f"
+    r"|(?<!\w)\u2018(?P<curly_single>(?:[^\u2018\u2019]|\u2019(?=\w))+)\u2019(?!\w)"
+    r"|(?<!\w)'(?P<single>(?:[^']|'(?=\w))+?)'(?!\w)"
 )
+#: Curly apostrophes, folded to the straight one for grounding comparisons.
+_APOSTROPHES = str.maketrans({"\u2018": "'", "\u2019": "'"})
+#: ``unicodedata.east_asian_width`` classes of a wide (spaceless-script) character.
+_WIDE = frozenset({"W", "F"})
 #: What an elided quote is split on; every fragment must ground on its own.
 _ELLIPSIS = re.compile(r"\u2026|\.\.\.")
 #: What a grounded quote is replaced with before the cue rules read the text.
@@ -323,8 +344,8 @@ class ExcludedDemo:
 
 
 def _norm(text: str) -> str:
-    """NFC-normalise and collapse whitespace, for grounding comparisons only."""
-    return " ".join(unicodedata.normalize("NFC", text).split())
+    """NFC-normalise, fold curly apostrophes and collapse whitespace (grounding only)."""
+    return " ".join(unicodedata.normalize("NFC", text).translate(_APOSTROPHES).split())
 
 
 def quote_occurrences(body: str, quote: str) -> tuple[int, ...]:
@@ -357,10 +378,16 @@ def _mask_grounded_quotes(text: str, entry: str) -> str:
     return _QUOTED.sub(lambda m: _MASK if _grounds(_quote_body(m), entry) else m.group(0), text)
 
 
+def _is_claim_length(quote: str) -> bool:
+    """True when ``quote`` is long enough to be a claim about the entry, not emphasis."""
+    wide = sum(unicodedata.east_asian_width(char) in _WIDE for char in quote)
+    return len(quote.split()) >= MIN_QUOTE_WORDS or wide >= MIN_QUOTE_CHARS_WIDE
+
+
 def _ungrounded_letter_quotes(letter: str, entry: str) -> bool:
     """True when the letter quotes a claim-length span the entry does not hold."""
     return any(
-        len(_quote_body(m).split()) >= MIN_QUOTE_WORDS and not _grounds(_quote_body(m), entry)
+        _is_claim_length(_quote_body(m)) and not _grounds(_quote_body(m), entry)
         for m in _quoted_spans(letter)
     )
 

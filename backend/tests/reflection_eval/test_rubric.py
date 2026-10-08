@@ -12,6 +12,7 @@ from models.marginalia import MarginaliaSource
 from services.stub_completions import _CANNED_NOTE, _essay_completion
 from tests.reflection_eval.rubric import (
     DEMO_SOURCES,
+    MIN_QUOTE_CHARS_WIDE,
     NEGATIVE_EXAMPLES,
     POSITIVE_EXAMPLES,
     RULES,
@@ -100,6 +101,76 @@ def test_elided_letter_quote_grounds_each_fragment() -> None:
     bad = "You wrote: \u201cI walked to the river \u2026 the fish were singing to me.\u201d"
     assert RuleId.LETTER_QUOTE_UNGROUNDED not in _scored(_sample(_RIVER, letter=good)).rule_ids
     assert RuleId.LETTER_QUOTE_UNGROUNDED in _scored(_sample(_RIVER, letter=bad)).blocking
+
+
+#: Every quote style the rubric extracts, as (open, close).
+_QUOTE_STYLES = [
+    ("\u201c", "\u201d"),  # English curly double
+    ('"', '"'),  # straight double
+    ("\u00ab", "\u00bb"),  # guillemets
+    ("\u201e", "\u201c"),  # German low-9 ... high-6
+    ("\u201e", "\u201d"),  # German low-9 ... high-9
+    ("\u2018", "\u2019"),  # curly single
+    ("'", "'"),  # straight single
+    ("\u300c", "\u300d"),  # Japanese corner brackets
+    ("\u300e", "\u300f"),  # Japanese white corner brackets
+]
+
+
+@pytest.mark.parametrize(("open_", "close"), _QUOTE_STYLES)
+def test_fabricated_quote_is_caught_in_every_quote_style(open_: str, close: str) -> None:
+    """An invented quote is blocking whichever quote marks carry it."""
+    letter = f"You wrote: {open_}I swam across the river at night.{close} It stayed."
+    assert RuleId.LETTER_QUOTE_UNGROUNDED in _scored(_sample(_RIVER, letter=letter)).blocking
+
+
+@pytest.mark.parametrize(("open_", "close"), _QUOTE_STYLES)
+def test_grounded_quote_is_extracted_and_masked_in_every_quote_style(
+    open_: str, close: str
+) -> None:
+    """The writer's own 'I' in any quote style is grounded and hidden from the cue rules."""
+    letter = f"You wrote: {open_}I walked to the river at dawn.{close} You went early."
+    score = _scored(_sample(_RIVER, letter=letter))
+    assert {RuleId.LETTER_QUOTE_UNGROUNDED, RuleId.FIRST_PERSON}.isdisjoint(score.rule_ids)
+
+
+@pytest.mark.parametrize(
+    "letter",
+    [
+        "You\u2019re right that the water\u2019s loud, and it\u2019s yours to keep.",
+        "You're right that the water's loud, and the walkers' path is yours.",
+        "It's your river; whether it's 'loud' or not isn't for anyone else to say.",
+    ],
+)
+def test_apostrophes_are_not_read_as_quotes(letter: str) -> None:
+    """Contractions and possessives never open a quoted span."""
+    assert RuleId.LETTER_QUOTE_UNGROUNDED not in _scored(_sample(_RIVER, letter=letter)).rule_ids
+
+
+def test_single_quoted_span_with_a_contraction_inside_grounds() -> None:
+    """A contraction inside single quotes neither ends the span nor breaks grounding."""
+    entry = "I'm tired of the noise. The street never sleeps."
+    for letter in (
+        "You wrote \u2018I\u2019m tired of the noise.\u2019 and moved on.",
+        "You wrote 'I'm tired of the noise.' and moved on.",
+    ):
+        score = _scored(_sample(entry, letter=letter))
+        assert {RuleId.LETTER_QUOTE_UNGROUNDED, RuleId.FIRST_PERSON}.isdisjoint(score.rule_ids)
+
+
+@pytest.mark.parametrize(
+    ("quote", "checked"),
+    [
+        ("\u5ddd\u3092\u6cf3\u3044\u3067\u6e21\u3063\u305f", True),  # 8 wide chars
+        ("\u96e8\u306e\u97f3", False),  # 3 wide chars: as short as a scare quote
+    ],
+)
+def test_spaceless_script_quotes_are_measured_in_characters(quote: str, checked: bool) -> None:
+    """Japanese has no spaces to count, so claim length is measured in characters."""
+    assert MIN_QUOTE_CHARS_WIDE == 5
+    letter = f"\u300c{quote}\u300d"
+    score = _scored(_sample(_RIVER, letter=letter, language="ja"))
+    assert (RuleId.LETTER_QUOTE_UNGROUNDED in score.rule_ids) is checked
 
 
 @pytest.mark.parametrize(

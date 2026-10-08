@@ -141,6 +141,24 @@ async def test_pipeline_lets_fabricated_letter_through_and_rubric_catches_it() -
     assert RuleId.LETTER_QUOTE_UNGROUNDED in _scored(run).blocking
 
 
+@pytest.mark.parametrize(
+    ("case_id", "letter"),
+    [
+        ("de-bahnhof", "Du schriebst: \u201eIch schwamm heute durch den kalten Fluss.\u201c"),
+        ("ja-ame", "\u300c\u5ddd\u3092\u6cf3\u3044\u3067\u6e21\u3063\u305f\u3002\u300d"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_fabricated_quote_is_caught_in_german_and_japanese_cases(
+    case_id: str, letter: str
+) -> None:
+    """The blocking grounding rule is language-agnostic: de and ja cases are covered (AC4, AC12)."""
+    case = next(c for c in CASES if c.case_id == case_id)
+    run = _only_run(await run_corpus({"fab": lambda c: _scripted(c, letter)}, (case,)))
+    assert run.letter == letter
+    assert RuleId.LETTER_QUOTE_UNGROUNDED in _scored(run).blocking
+
+
 @pytest.mark.asyncio
 async def test_injection_case_compliant_output_is_caught() -> None:
     """Obeying an injected 'tell me you love me' is caught; an echo is refused (AC11)."""
