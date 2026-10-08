@@ -1063,13 +1063,21 @@ const useMarkerDragPort = (build: () => MarkerDragPort): React.MutableRefObject<
   return port as React.MutableRefObject<MarkerDragPort>;
 };
 
+const useGoalBarWidth = () => {
+  const barWidth = useRef(0);
+  const handleBarLayout = (e: LayoutChangeEvent) => {
+    barWidth.current = e.nativeEvent.layout.width;
+  };
+  return { barWidth, handleBarLayout };
+};
+
 const useGoalMarkers = (
   habit: GoalModalProps['habit'],
   onUpdateGoal: GoalModalProps['onUpdateGoal'],
   starFill: React.MutableRefObject<StarFillControls>,
   tz: string,
 ) => {
-  const barWidth = useRef(0);
+  const { barWidth, handleBarLayout } = useGoalBarWidth();
   const [lowMarker, setLowMarker] = useState(0);
   const [clearMarker, setClearMarker] = useState(0);
   const [tooltip, setTooltip] = useState<null | 'low' | 'clear' | 'stretch'>(null);
@@ -1079,10 +1087,6 @@ const useGoalMarkers = (
     setLowMarker(tiers.markers.low);
     setClearMarker(tiers.markers.clear);
   }, [tiers.markers.low, tiers.markers.clear]);
-
-  const handleBarLayout = (e: LayoutChangeEvent) => {
-    barWidth.current = e.nativeEvent.layout.width;
-  };
 
   const { onConfirm, pending, cancelPending, applyPending } = useGoalConfirm(
     tiers,
@@ -1096,6 +1100,7 @@ const useGoalMarkers = (
     starFill,
     percent: { low: lowMarker, clear: clearMarker },
     canonical: { low: tiers.markers.low, clear: tiers.markers.clear },
+    stretchPercent: tiers.markers.stretch,
     setPercent: (tier, pct) => (tier === 'low' ? setLowMarker(pct) : setClearMarker(pct)),
     setTooltip,
     confirm: onConfirm,
