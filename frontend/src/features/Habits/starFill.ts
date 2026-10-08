@@ -81,8 +81,9 @@ export const computeStarFillPlan = (
   const deltaUnits = getGoalTarget(tierGoal) - unitsInCurrentPeriod(habit, tierGoal, tz);
   if (Math.abs(deltaUnits) < DELTA_EPSILON) return null;
 
+  const periodProgress = unitsInCurrentPeriod(habit, stretchGoal, tz);
   const fromPercent = getProgressPercentage(habit, stretchGoal, tz);
-  const toPercent = getMarkerPositions(lowGoal, clearGoal, stretchGoal)[tier];
+  const toPercent = getMarkerPositions(lowGoal, clearGoal, stretchGoal, periodProgress)[tier];
   return {
     habitId: habit.id,
     tier,

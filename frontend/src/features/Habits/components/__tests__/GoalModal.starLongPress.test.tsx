@@ -234,6 +234,26 @@ describe('GoalModal star long-press fill', () => {
     expect(props.onLogUnit).toHaveBeenCalledWith(42, -1);
   });
 
+  it('releases an over-Stretch walk-back frame when the habit update lands', () => {
+    const overStretch = makeHabit({
+      completions: [{ id: 't-1', timestamp: new Date(), completed_units: 6 }],
+    });
+    const { getByTestId, props, rerender } = renderModal(overStretch);
+
+    fireEvent(getByTestId('modal-marker-stretch'), 'longPress');
+    advance(FULL_SWEEP_MS + 100);
+
+    expect(props.onLogUnit).toHaveBeenCalledWith(42, -3);
+    expect(fillWidth(getByTestId as never)).toBe(50);
+
+    const walkedBack = makeHabit({
+      completions: [{ id: 't-2', timestamp: new Date(), completed_units: 3 }],
+    });
+    rerender(<GoalModal {...props} habit={walkedBack} />);
+
+    expect(fillWidth(getByTestId as never)).toBe(100);
+  });
+
   it('does not open the drag-edit confirm after a long-press fill completes', () => {
     const { getByTestId, queryByTestId, props } = renderModal(subtractiveHabit());
     const lowMarker = getByTestId('modal-marker-low');

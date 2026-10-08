@@ -73,6 +73,8 @@ export interface WritingSessionSurfaceProps {
    * way to close it.
    */
   renderOffer?: (_result: WritingSessionResult) => React.ReactNode;
+  /** Reports whether the timer overlaps its page rather than sitting below it. */
+  onFloatingChange?: (_floating: boolean) => void;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
@@ -96,9 +98,11 @@ function WritingSessionSurface({
   autoStart,
   renderOffer,
   onSession,
+  onFloatingChange,
   deps,
 }: WritingSessionSurfaceProps): React.JSX.Element {
   const [note, setNote] = useState<StandingNote | null>(null);
+  const [timerFloating, setTimerFloating] = useState(false);
   const dismiss = useCallback(() => setNote(null), []);
   // Held through a ref so ``record`` keeps one identity for the life of the
   // mount: it is the ticking timer's ``onComplete``, and a consumer that
@@ -106,6 +110,12 @@ function WritingSessionSurface({
   // times a second.
   const onSessionRef = useRef(onSession);
   onSessionRef.current = onSession;
+  const onFloatingChangeRef = useRef(onFloatingChange);
+  onFloatingChangeRef.current = onFloatingChange;
+  const reportFloating = useCallback((floating: boolean) => {
+    setTimerFloating(floating);
+    onFloatingChangeRef.current?.(floating);
+  }, []);
   const record = useCallback((result: WritingSessionResult) => {
     onSessionRef.current?.(result);
     if (!result.reachedFullDuration) return;
@@ -114,7 +124,11 @@ function WritingSessionSurface({
   return (
     <>
       {note === null ? null : (
-        <WritingSessionBanner result={note.result} onDismiss={dismiss}>
+        <WritingSessionBanner
+          result={note.result}
+          onDismiss={dismiss}
+          clearsFloatingTimer={timerFloating}
+        >
           {renderOffer === undefined ? null : (
             <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
           )}
@@ -124,6 +138,7 @@ function WritingSessionSurface({
         initialMinutes={initialMinutes}
         autoStart={autoStart}
         onComplete={record}
+        onFloatingChange={reportFloating}
         deps={deps}
       />
     </>

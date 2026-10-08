@@ -3708,11 +3708,13 @@ function JournalPageSurface({
   bodyPlaceholder,
   narrow,
   focus,
+  timerFloating,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   narrow: boolean;
   focus: FocusScrollHost;
+  timerFloating: boolean;
 }): React.JSX.Element {
   const [layoutTick, bumpLayoutTick] = useReducer((tick: number) => tick + 1, 0);
   const onPageLayout = focus.onPageLayout;
@@ -3730,7 +3732,7 @@ function JournalPageSurface({
       style={[
         styles.page,
         narrow && styles.pageNarrow,
-        ctl.editGate.editMode && styles.pageWithFloatingAction,
+        ctl.editGate.editMode && timerFloating && styles.pageWithFloatingAction,
       ]}
       testID="journal-page"
     >
@@ -3746,11 +3748,14 @@ function JournalPage({
   ctl,
   bodyPlaceholder,
   focusSpan,
+  timerFloating,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   /** A quote the reader arrived to see; read mode scrolls it into view. */
   focusSpan?: FocusSpan;
+  /** Whether the timer currently occupies the floating rail over the page. */
+  timerFloating: boolean;
 }) {
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   const settle = useEntrance();
@@ -3776,6 +3781,7 @@ function JournalPage({
             bodyPlaceholder={bodyPlaceholder}
             narrow={narrow}
             focus={focus}
+            timerFloating={timerFloating}
           />
         </ScrollView>
       </Animated.View>
@@ -4203,14 +4209,21 @@ function EntryComposeRow({
   ctl,
   bodyPlaceholder,
   focusSpan,
+  timerFloating,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   focusSpan?: FocusSpan;
+  timerFloating: boolean;
 }): React.JSX.Element {
   return (
     <View style={styles.composeRow} testID="journal-compose-row">
-      <JournalPage ctl={ctl} bodyPlaceholder={bodyPlaceholder} focusSpan={focusSpan} />
+      <JournalPage
+        ctl={ctl}
+        bodyPlaceholder={bodyPlaceholder}
+        focusSpan={focusSpan}
+        timerFloating={timerFloating}
+      />
       <ReflectionSourcesDock reflection={ctl.reflection} />
     </View>
   );
@@ -4493,9 +4506,11 @@ type WritingLaunchParam = NonNullable<RootStackParamList['JournalEntry']>['writi
 function EntryWritingSurfaces({
   ctl,
   launch,
+  onTimerFloatingChange,
 }: {
   ctl: Controller;
   launch: WritingLaunchParam;
+  onTimerFloatingChange: (_floating: boolean) => void;
 }): React.JSX.Element | null {
   const session = useQuickLaunchedSession(launch);
   // Above the edit-mode return, beside the practice hook it wraps: both kinds
@@ -4508,8 +4523,38 @@ function EntryWritingSurfaces({
       initialMinutes={session.initialMinutes}
       autoStart={session.autoStart}
       onSession={onSession}
+      onFloatingChange={onTimerFloatingChange}
       renderOffer={session.launched ? renderLaunchedSessionNote : renderSessionOffer}
     />
+  );
+}
+
+/** Keep the page inset and timer mount in one placement-aware subtree. */
+function EntryWritingCanvas({
+  ctl,
+  bodyPlaceholder,
+  focusSpan,
+  launch,
+}: {
+  ctl: Controller;
+  bodyPlaceholder: string;
+  focusSpan?: FocusSpan;
+  launch: WritingLaunchParam;
+}): React.JSX.Element {
+  // The idle expanded timer is a normal sibling below the page; only its
+  // compact/running mount needs a matching content inset inside the page.
+  const [timerFloating, setTimerFloating] = useState(false);
+  return (
+    <>
+      <EntryComposeRow
+        ctl={ctl}
+        bodyPlaceholder={bodyPlaceholder}
+        focusSpan={focusSpan}
+        timerFloating={timerFloating}
+      />
+      <ReflectionComposer reflection={ctl.reflection} />
+      <EntryWritingSurfaces ctl={ctl} launch={launch} onTimerFloatingChange={setTimerFloating} />
+    </>
   );
 }
 
@@ -4616,13 +4661,12 @@ function JournalEntryScreen({
         returnTo={route.params?.returnTo}
         onOpenApiKey={openApiKey}
       />
-      <EntryComposeRow
+      <EntryWritingCanvas
         ctl={ctl}
         bodyPlaceholder={bodyPlaceholder}
         focusSpan={route.params?.highlightSpan}
+        launch={route.params?.writingSession}
       />
-      <ReflectionComposer reflection={ctl.reflection} />
-      <EntryWritingSurfaces ctl={ctl} launch={route.params?.writingSession} />
       <EntryOverlays
         modal={ctl.modal}
         editGate={ctl.editGate}

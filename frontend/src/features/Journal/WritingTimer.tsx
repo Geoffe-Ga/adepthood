@@ -93,6 +93,8 @@ export interface WritingTimerProps {
   autoStart?: boolean;
   /** Called once per finished session, however the session ended. */
   onComplete: (result: WritingSessionResult) => void;
+  /** Reports whether sibling content must clear the timer's floating rail. */
+  onFloatingChange?: (_floating: boolean) => void;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
@@ -475,6 +477,7 @@ function TimerMount({
   onExpand: () => void;
   children: React.ReactNode;
 }): React.JSX.Element {
+  const floats = compact || !idle;
   const mountedPill =
     compact && idle ? (
       <TouchableOpacity
@@ -491,7 +494,7 @@ function TimerMount({
   return (
     <View
       style={[
-        styles.floatingWrapper,
+        floats ? styles.floatingWrapper : styles.inFlowWrapper,
         compact ? styles.floatingWrapperCompact : null,
         docked ? styles.floatingWrapperDocked : null,
       ]}
@@ -505,17 +508,30 @@ function TimerMount({
   );
 }
 
+/** Keep sibling clearance aligned with the timer's current mount strategy. */
+function useTimerPlacement(
+  compact: boolean,
+  status: EngineStatus,
+  viewportWidth: number,
+  onFloatingChange: WritingTimerProps['onFloatingChange'],
+): boolean {
+  const floats = compact || status !== 'idle';
+  useEffect(() => onFloatingChange?.(floats), [floats, onFloatingChange]);
+  return compact && viewportWidth >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
+}
+
 function WritingTimer({
   initialMinutes = DEFAULT_WRITING_MINUTES,
   autoStart = false,
   onComplete,
+  onFloatingChange,
   deps = NO_DEPS,
 }: WritingTimerProps): React.JSX.Element {
   const viewportWidth = useWindowDimensions().width;
   const [minutes, setMinutes] = useState(initialMinutes);
   const [state, controls] = useRitualEngine(useWritingConfig(minutes), deps);
   const { compact, collapse, expand } = useCompactPill(state.status);
-  const docked = compact && viewportWidth >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
+  const docked = useTimerPlacement(compact, state.status, viewportWidth, onFloatingChange);
   const statusRef = useRef(state.status);
   statusRef.current = state.status;
   const view = describeTimer({
@@ -567,6 +583,18 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: RESONANCE_BUTTON_CLEARANCE,
+  },
+  // The expanded idle choice belongs below the page in normal flow. A fixed
+  // viewport offset can land in the middle of a flex-grown textarea even when
+  // the scroll content reserves enough room at its end; flow makes the sheet
+  // yield the pill's real height instead. Running/compact shapes still use the
+  // floating rail above, so the active timer remains continuously reachable.
+  inFlowWrapper: {
+    flexShrink: 0,
+    // Keep a real seam between the clipped page viewport and the idle pill.
+    // The sheet's hairline border otherwise rounds a couple of web pixels into
+    // the next sibling even though the flex regions themselves do not overlap.
+    paddingTop: SPACING.sm,
   },
   floatingWrapperCompact: {
     left: undefined,

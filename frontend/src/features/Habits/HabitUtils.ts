@@ -196,11 +196,46 @@ export const goalsAreSubtractive = (goals: ReadonlyArray<Goal>): boolean =>
 /** Habit-level polarity: delegates to {@link goalsAreSubtractive} over `habit.goals`. */
 export const isSubtractiveHabit = (habit: Habit): boolean => goalsAreSubtractive(habit.goals);
 
+/** Minimum horizontal gap between separately interactive additive tier markers. */
+const MIN_ADDITIVE_MARKER_GAP_PERCENT = 10;
+
+/**
+ * Far end of an additive bar: stretch until today's work carries it farther.
+ *
+ * Once progress dwarfs the goals, an unbounded scale compresses the three
+ * fixed-size star controls into the same touch target. Saturate that visual
+ * scale at the smallest value that preserves a 10% gap between adjacent,
+ * distinct tiers. The fill is already capped at 100%, so no additional amount
+ * of completed progress is encoded past this point; preserving three usable
+ * controls is the truthful interaction.
+ */
+const additiveScaleEnd = (
+  lowTarget: number,
+  clearTarget: number,
+  stretchTarget: number,
+  periodProgress?: number,
+): number => {
+  const finiteProgress =
+    periodProgress !== undefined && Number.isFinite(periodProgress)
+      ? Math.max(0, periodProgress)
+      : 0;
+  const uncappedEnd = Math.max(stretchTarget, finiteProgress);
+  // Equal adjacent tiers share a target, so one marker may sit directly over
+  // the other; still preserve the gap to every *distinct* target beside them.
+  const distinctGaps = [clearTarget - lowTarget, stretchTarget - clearTarget].filter(
+    (gap) => gap > 0,
+  );
+  if (distinctGaps.length === 0) return uncappedEnd;
+  const maximumSeparatedEnd = (Math.min(...distinctGaps) * 100) / MIN_ADDITIVE_MARKER_GAP_PERCENT;
+  return Math.max(stretchTarget, Math.min(uncappedEnd, maximumSeparatedEnd));
+};
+
 /** LG/CG/SG on a unified 0-100 bar; missing-tier collapses to {0,0,0} as a failure signal. */
 export const getMarkerPositions = (
   lowGoal?: Goal,
   clearGoal?: Goal,
   stretchGoal?: Goal,
+  periodProgress?: number,
 ): { low: number; clear: number; stretch: number } => {
   if (!lowGoal || !clearGoal || !stretchGoal) {
     return { low: 0, clear: 0, stretch: 0 };
@@ -212,10 +247,11 @@ export const getMarkerPositions = (
 
   if (!goalsAreSubtractive([lowGoal, clearGoal, stretchGoal])) {
     if (stretchTarget <= 0) return { low: 0, clear: 50, stretch: 100 };
+    const scaleEnd = additiveScaleEnd(lowTarget, clearTarget, stretchTarget, periodProgress);
     return {
-      low: clampPercentage((lowTarget / stretchTarget) * 100),
-      clear: clampPercentage((clearTarget / stretchTarget) * 100),
-      stretch: 100,
+      low: clampPercentage((lowTarget / scaleEnd) * 100),
+      clear: clampPercentage((clearTarget / scaleEnd) * 100),
+      stretch: clampPercentage((stretchTarget / scaleEnd) * 100),
     };
   }
 
@@ -316,6 +352,7 @@ export const targetForMarkerPercent = (
   lowGoal: Goal,
   clearGoal: Goal,
   stretchGoal: Goal,
+  periodProgress?: number,
 ): number | null => {
   const goal = tier === 'low' ? lowGoal : clearGoal;
   const fraction = clampPercentage(percent) / 100;
@@ -330,7 +367,14 @@ export const targetForMarkerPercent = (
 
   const stretchTarget = getGoalTarget(stretchGoal);
   if (stretchTarget <= 0) return null;
-  return roundedTarget(rawTargetFor(goal, fraction * stretchTarget));
+  const lowTarget = getGoalTarget(lowGoal);
+  const clearTarget = getGoalTarget(clearGoal);
+  return roundedTarget(
+    rawTargetFor(
+      goal,
+      fraction * additiveScaleEnd(lowTarget, clearTarget, stretchTarget, periodProgress),
+    ),
+  );
 };
 
 /** Resolve the durable calendar day, falling back only for legacy cached rows. */

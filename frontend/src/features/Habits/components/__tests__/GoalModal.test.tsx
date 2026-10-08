@@ -811,6 +811,17 @@ describe('GoalModal progress-bar zero/equal-target guards', () => {
     expect(String(width)).not.toContain('NaN');
   });
 
+  it('keeps the fill capped while moving stretch behind progress that is twice its target', () => {
+    const habit = makeHabit({
+      completions: [{ timestamp: new Date(), completed_units: 6 }],
+    });
+    const { getByTestId } = renderModal(habit);
+    const stretchStyle = StyleSheet.flatten(getByTestId('modal-marker-stretch').props.style);
+
+    expect(getByTestId('modal-progress-fill').props.style.width).toBe('100%');
+    expect(stretchStyle.left).toBe('50%');
+  });
+
   it('falls back to the low goal for the progress percentage when no stretch goal exists', () => {
     const habit = makeHabit({
       goals: [makeGoal('low', { target: 4, frequency_unit: 'per_day' })],
