@@ -3430,10 +3430,12 @@ async def _cache_and_mirror_essay(
     await session.commit()
     async with hold_account(session, entry.user_id):
         await ensure_account_live(session, entry.user_id)
+        await session.refresh(entry)
         await session.refresh(note)
-        refusal = await withdrawal_refusal(session, entry)
-        if refusal is not None and entry.deleted_at is None:
-            raise refusal
+        # A DELETE that won the barrier while this waited may have left the
+        # page a deletion in progress (#3098): 409, before any charge or dial.
+        await refuse_if_deletion_pending(session, entry)
+        await session.commit()
         if note.essay is not None:
             # A concurrent first ask for this note won the barrier and cached
             # its letter while this one waited: a cached reopen, not a second
