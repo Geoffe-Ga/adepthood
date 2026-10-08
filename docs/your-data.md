@@ -221,8 +221,10 @@ copy kept off the platform, itself encrypted, is kept for 90 days. The
 off-platform copies are made, and the expired ones deleted, by the operator by
 hand. A backup taken before you deleted still holds what your account held
 then, with your writing encrypted in it as it is in the database. No backup is
-edited to remove one account. On that schedule, the last copy holding your
-data ages out within about 97 days of your deletion.
+edited to remove one account. On that schedule, the last copy of your data in
+Adepthood's own backups ages out within about 97 days of your deletion. That
+bound is Adepthood's alone: each party the privacy policy names keeps what it
+received under its own retention.
 
 If the operator ever has to restore the database from a backup taken before
 you deleted, that backup still holds your account, so a restore could bring

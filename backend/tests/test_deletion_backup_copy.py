@@ -145,3 +145,18 @@ def test_restore_copy_promises_only_what_the_ratified_procedure_does(document: P
         assert _RESTORE_PROMISE in copy, (
             f"{document.name} still carries the pre-ratification caveat"
         )
+
+
+# The bound covers Adepthood's own backups; recipients keep what they received
+# under their own retention, and the copy must not read as "no copy anywhere".
+_OWN_BACKUPS_SCOPE: Final = "adepthood's own backups"
+_RECIPIENT_RETENTION: Final = "under its own retention"
+
+
+@pytest.mark.parametrize("document", _SCHEDULE_DOCUMENTS, ids=lambda path: path.name)
+def test_backup_bound_is_scoped_to_adepthoods_own_backups(document: Path) -> None:
+    """The bound is Adepthood's; each recipient's own retention is pointed to, not covered."""
+    copy = _prose(document)
+
+    assert _OWN_BACKUPS_SCOPE in copy, f"{document.name} reads as 'no copy anywhere'"
+    assert _RECIPIENT_RETENTION in copy, f"{document.name} does not point to recipients' retention"

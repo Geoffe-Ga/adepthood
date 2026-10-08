@@ -494,8 +494,10 @@ your writing encrypted in it as it is in the database. No backup is altered to
 remove one account. Our backup schedule keeps the hosting platform's daily
 backups for 6 days and the weekly encrypted copies kept off the platform for
 90 days; those off-platform copies are made, and the expired ones deleted, by
-the operator by hand. On that schedule, the last copy holding your data ages
-out within about 97 days of your deletion.
+the operator by hand. On that schedule, the last copy of your data in
+Adepthood's own backups ages out within about 97 days of your deletion. That
+bound is Adepthood's alone: each party under "Who else receives your data"
+keeps what it received under its own retention, which this page does not set.
 
 If the operator ever has to restore the database from a backup taken before
 you deleted, that backup still holds your account, so a restore could bring
