@@ -225,6 +225,14 @@ POLICY: Mapping[str, TablePolicy] = {
         "The writing. Encrypted at rest and erased outright — this is the "
         "single most important row in the sweep.",
     ),
+    "journalwithdrawalobligation": _erase(
+        "user_id",
+        "Content-free record that a journal page's vault copy is still owed a "
+        "withdrawal, or was confirmed absent: ids, a closed state, an opaque "
+        "destination fingerprint, timestamps. Erased with the account for now, as "
+        "``voicedraftretraction`` is; whether an unconfirmed copy's record should "
+        "outlive erasure is an owner decision (#3094, #3063).",
+    ),
     "licensebinding": _erase(
         "user_id",
         "The claim tying a Gumroad sale to this account. Erased with the "
