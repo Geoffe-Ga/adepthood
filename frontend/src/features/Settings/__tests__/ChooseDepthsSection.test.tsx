@@ -114,11 +114,13 @@ describe('ChooseDepthsSection — section-level copy', () => {
     expect(getByText('Choose your depths')).toBeTruthy();
   });
 
-  it('renders the rings framing caption verbatim', () => {
+  // The Course is optional but not ungated: its chapters drip out across each
+  // stage, and the owner asked that the depths copy say so (#3057 C18, B20).
+  it('renders the rings framing caption verbatim, naming the Course schedule', () => {
     const { getByText } = render(<ChooseDepthsSection />);
     expect(
       getByText(
-        'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss.',
+        'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss. Some readings follow a schedule.',
       ),
     ).toBeTruthy();
   });

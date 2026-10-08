@@ -59,6 +59,10 @@ from models.corpus_consent import CorpusConsentEvent
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.corpus_sweep import CorpusSweep
 from models.journal_entry import JournalClassification, JournalEntry
+from models.journal_withdrawal_obligation import (
+    JournalWithdrawalObligation,
+    JournalWithdrawalState,
+)
 from models.user import User
 from services import corpus_backfill as cb
 from services import frequency_classification as fc
@@ -194,6 +198,36 @@ async def test_saying_yes_ontologizes_the_writing_that_was_already_there(
 
     assert outcome.fragments_added == 2
     assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND])
+
+
+@pytest.mark.asyncio
+async def test_a_page_whose_deletion_is_in_progress_is_not_swept_up(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DELETE that met a vault outage left the page live with a pending_delete obligation.
+
+    The sweep must not load it, send it to a provider, or store a fragment for
+    it: the background withdrawal sweep is about to finish that deletion, and a
+    fragment written now would outlive it as grounding (#3098 review).
+    """
+    calls = _patch_provider(monkeypatch)
+    await _entry(db_session, body=_FIRST)
+    going = await _entry(db_session, body=_DISCARDED)
+    db_session.add(
+        JournalWithdrawalObligation(
+            user_id=_OWNER,
+            journal_entry_id=going,
+            state=JournalWithdrawalState.PENDING_DELETE.value,
+        )
+    )
+    await db_session.flush()
+
+    outcome = await _decide(db_session, granted=True)
+
+    assert outcome.fragments_added == 1
+    assert await _stored(db_session) == [_FIRST]
+    assert len(calls) == 1
+    assert all(_DISCARDED not in json.dumps(call, default=str) for call in calls)
 
 
 @pytest.mark.asyncio

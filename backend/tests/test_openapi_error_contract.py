@@ -109,6 +109,11 @@ _SERVICE_HELPER_STATUSES: Final[dict[str, dict[str, frozenset[str]]]] = {
         # was in flight.
         "ensure_account_live": frozenset({"401"}),
     },
+    "services.journal_withdrawal_obligation": {
+        # A page whose deletion is in progress refuses every content write
+        # (#3098 review): 409 journal_entry_deletion_pending.
+        "refuse_if_deletion_pending": frozenset({"409"}),
+    },
 }
 
 _HELPER_STATUSES: Final = {

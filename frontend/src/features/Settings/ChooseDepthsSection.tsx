@@ -1,13 +1,14 @@
 import React, { useEffect } from 'react';
-import { StyleSheet, Switch, Text, useWindowDimensions, View } from 'react-native';
+import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { sanghaInviteUrl } from './sanghaInvite';
+import { SettingsSwitch } from './shared/SettingsSwitch';
 
 import type { DepthPreferencesUpdate } from '@/api';
 import { EditorialSection } from '@/components/layout/EditorialSection';
 import { SANGHA_INVITE_URL } from '@/config';
 import { useAuth } from '@/context/AuthContext';
-import { accent, ink, rhythm, surface, touchTarget, type as typeRamp } from '@/design/tokens';
+import { ink, rhythm, surface, touchTarget, type as typeRamp } from '@/design/tokens';
 import {
   load,
   selectEnableCourse,
@@ -42,9 +43,13 @@ const SECTION_TITLE = 'Choose your depths';
 const FLOOR_STATEMENT =
   'Your journal is always here — the floor beneath everything. Nothing below is required.';
 
-/** Framing caption: turning a depth off is a choice, not a loss. */
+/**
+ * Framing caption: turning a depth off is a choice, not a loss. Optional is
+ * not ungated, so it also says the Course's readings follow a schedule.
+ */
 const FRAMING_CAPTION =
-  'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss.';
+  'Turn any depth on or off whenever it fits your life. Turning one off is a choice, not a loss. ' +
+  'Some readings follow a schedule.';
 
 /** One optional depth: its label, store key, and stable testID slug. */
 interface DepthDefinition {
@@ -101,15 +106,12 @@ const DepthToggleRow = ({
   return (
     <View style={styles.row} testID={rowTestID}>
       <Text style={[t.body, styles.rowLabel]}>{label}</Text>
-      <Switch
+      <SettingsSwitch
         testID={testID}
-        accessibilityRole="switch"
         accessibilityLabel={label}
         accessibilityState={{ checked: value }}
         value={value}
         onValueChange={onValueChange}
-        trackColor={{ false: surface.hairline, true: accent.primary }}
-        thumbColor={surface.raised}
       />
     </View>
   );

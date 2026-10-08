@@ -352,24 +352,32 @@ const tooltipOnlyInteraction = (
  * toward that star and logs its delta on arrival; an early release reverts.
  */
 const fillMarkerInteraction = (
-  tier: TierType,
+  marker: TileMarkerSpec,
+  habit: Habit,
+  tz: string,
   setTooltip: (_v: TierType | null) => void,
   starFill: StarFillControls,
-): MarkerInteraction => ({
-  Wrapper: TouchableOpacity,
-  interactionProps: {
-    onPressIn: () => setTooltip(tier),
-    onPressOut: () => {
-      setTooltip(null);
-      starFill.release();
+): MarkerInteraction => {
+  const { tier, goal } = marker;
+  const walksBack = unitsInCurrentPeriod(habit, goal, tz) > getGoalTarget(goal);
+  return {
+    Wrapper: TouchableOpacity,
+    interactionProps: {
+      onPressIn: () => setTooltip(tier),
+      onPressOut: () => {
+        setTooltip(null);
+        starFill.release();
+      },
+      onLongPress: () => starFill.begin(tier),
+      delayLongPress: STAR_LONG_PRESS_MS,
+      accessibilityRole: 'button',
+      accessibilityLabel: TIER_LABELS[tier],
+      accessibilityHint: walksBack
+        ? `Hold to walk back to your ${TIER_LABELS[tier]} target.`
+        : `Hold to log your ${TIER_LABELS[tier]} for today.`,
     },
-    onLongPress: () => starFill.begin(tier),
-    delayLongPress: STAR_LONG_PRESS_MS,
-    accessibilityRole: 'button',
-    accessibilityLabel: TIER_LABELS[tier],
-    accessibilityHint: `Hold to log your ${TIER_LABELS[tier]} for today.`,
-  },
-});
+  };
+};
 
 /**
  * Stars only arm the fill when the tile is actually wired to log units; without
@@ -377,14 +385,16 @@ const fillMarkerInteraction = (
  * toward a no-op.
  */
 const tileMarkerInteraction = (
-  tier: TierType,
+  marker: TileMarkerSpec,
+  habit: Habit,
+  tz: string,
   setTooltip: (_v: TierType | null) => void,
   starFill: StarFillControls,
   hasLogUnit: boolean,
 ): MarkerInteraction =>
   hasLogUnit
-    ? fillMarkerInteraction(tier, setTooltip, starFill)
-    : tooltipOnlyInteraction(tier, setTooltip);
+    ? fillMarkerInteraction(marker, habit, tz, setTooltip, starFill)
+    : tooltipOnlyInteraction(marker.tier, setTooltip);
 
 /** The bar's own fill, plus everything its tier-star overlay needs. */
 interface ProgressBarProps extends TileMarkerLayerProps {
@@ -485,7 +495,9 @@ const TileMarkerLayer = ({
     renderTooltip={(m) => (
       <TileTooltipText goal={m.goal} habit={habit} tz={tz} fontSize={tooltipFontSize} />
     )}
-    resolveInteraction={(m) => tileMarkerInteraction(m.tier, setTooltip, starFill, hasLogUnit)}
+    resolveInteraction={(m) =>
+      tileMarkerInteraction(m, habit, tz, setTooltip, starFill, hasLogUnit)
+    }
   />
 );
 
@@ -537,6 +549,7 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
 
   const { currentGoal, completedAllGoals } = getGoalTier(habit, tz);
   const progressPercentage = clampPercentage(getProgressPercentage(habit, currentGoal, tz));
+  const periodProgress = unitsInCurrentPeriod(habit, stretchGoal ?? currentGoal, tz);
   const progressBarColor = getProgressBarColor(habit, tz, stageColor);
   const hasCompletedGoal = completedAllGoals || progressPercentage >= 100;
   const achievementPeriod = periodOf(stretchGoal ?? currentGoal).kind;
@@ -545,7 +558,7 @@ const useHabitTileData = (habit: Habit, tz: string, stageColor: string) => {
     low: lowMarker,
     clear: clearMarker,
     stretch: stretchMarker,
-  } = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
+  } = getMarkerPositions(lowGoal, clearGoal, stretchGoal, periodProgress);
 
   // Each marker is visible whenever its tier's goal exists — the stretch marker is
   // no longer gated on ``hasCleared`` (that gate caused user-reported confusion).

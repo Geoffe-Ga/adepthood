@@ -6,10 +6,9 @@ import {
   MORNING_PAGES_COPY_ENTRIES,
   MORNING_PAGES_NEVER_A11Y,
   MORNING_PAGES_NEVER_LINK,
-  MORNING_PAGES_OFFER_AGAIN_DESCRIPTION,
-  MORNING_PAGES_OFFER_AGAIN_DONE,
-  MORNING_PAGES_OFFER_AGAIN_LABEL,
   MORNING_PAGES_SETTINGS_COPY_ENTRIES,
+  MORNING_PAGES_SWITCH_DESCRIPTION,
+  MORNING_PAGES_SWITCH_LABEL,
   morningPageTitle,
 } from '../morningPagesCopy';
 
@@ -49,9 +48,8 @@ describe('morningPagesCopy — balance-not-altitude intent rule', () => {
   it('sweeps the card and the Settings row together, every string once', () => {
     expect(MORNING_PAGES_CARD_COPY_ENTRIES).toHaveLength(9);
     expect(MORNING_PAGES_SETTINGS_COPY_ENTRIES).toEqual([
-      MORNING_PAGES_OFFER_AGAIN_LABEL,
-      MORNING_PAGES_OFFER_AGAIN_DESCRIPTION,
-      MORNING_PAGES_OFFER_AGAIN_DONE,
+      MORNING_PAGES_SWITCH_LABEL,
+      MORNING_PAGES_SWITCH_DESCRIPTION,
     ]);
     expect(MORNING_PAGES_COPY_ENTRIES).toEqual([
       ...MORNING_PAGES_CARD_COPY_ENTRIES,
@@ -67,8 +65,10 @@ describe('morningPagesCopy — balance-not-altitude intent rule', () => {
     expect(MORNING_PAGES_NEVER_A11Y.length).toBeGreaterThan(MORNING_PAGES_NEVER_LINK.length);
   });
 
-  it('promises the restore only for this device, where the decline is kept', () => {
-    expect(MORNING_PAGES_OFFER_AGAIN_DESCRIPTION).toMatch(/on this device/);
-    expect(MORNING_PAGES_OFFER_AGAIN_DONE).toMatch(/on this device/);
+  it('names the switch by the state it holds, and keeps its promise to this device', () => {
+    expect(MORNING_PAGES_SWITCH_LABEL).toBe('Offer morning pages');
+    expect(MORNING_PAGES_SWITCH_LABEL).not.toMatch(/again/i);
+    expect(MORNING_PAGES_SWITCH_DESCRIPTION).toMatch(/on this device/);
+    expect(MORNING_PAGES_SWITCH_DESCRIPTION).toMatch(/turns this off/);
   });
 });

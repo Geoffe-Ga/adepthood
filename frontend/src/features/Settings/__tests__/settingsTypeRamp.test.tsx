@@ -196,6 +196,7 @@ interface Region {
 /** Each region a reader sees at once, with the static keys and ramp faces it paints. */
 const REGIONS: Readonly<Record<string, Region>> = {
   'API key intro': { keys: ['form.body', 'apiKey.hint'], ramp: ['title'] },
+  'API key model choice': { keys: [], ramp: ['caption'] },
   'API key stored card': { keys: ['apiKey.storedValue'], ramp: ['caption'] },
   'API key providers': {
     keys: ['form.inputLabel', 'apiKey.providerName', 'apiKey.providerHint'],

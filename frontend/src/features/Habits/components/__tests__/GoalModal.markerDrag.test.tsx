@@ -253,6 +253,26 @@ describe('GoalModal marker drag', () => {
     expect(savedGoal(props.onUpdateGoal).target).toBeLessThanOrEqual(100);
   });
 
+  it('keeps Clear at or below Stretch when progress expands the additive scale', () => {
+    const habit = makeHabit({
+      completions: [{ id: 't-1', timestamp: new Date(), completed_units: 16 }],
+    });
+    const { getByTestId, props } = renderModal(habit);
+    layoutBar(getByTestId);
+    const clear = getByTestId('modal-marker-clear');
+
+    grantMarker(clear);
+    advance(STAR_LONG_PRESS_MS / 4);
+    moveMarker(clear, 200, 0, 2); // run past the 50% Stretch marker on the expanded scale
+    releaseMarker(clear, 200, 3);
+    fireEvent.press(getByTestId('goal-edit-confirm-button'));
+
+    expect(props.onUpdateGoal).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({ tier: 'clear', target: 8 }),
+    );
+  });
+
   it('round-trips a per_week habit in its own raw units', () => {
     const { getByTestId, props } = renderModal(weeklyHabit());
     layoutBar(getByTestId);

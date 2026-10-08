@@ -31,6 +31,7 @@ import { formatDate, groupByRecency, MONTH_DAYS, type ShelfSection } from './rec
 import ReflectionDismiss from './ReflectionDismiss';
 import SearchBar from './SearchBar';
 import StatTileRow from './StatTileRow';
+import UnreachableVaultChoice from './UnreachableVaultChoice';
 import { useEntryDeletion, type EntryDeletion } from './useEntryDeletion';
 import { usePagedJournal } from './usePagedJournal';
 import VoiceReadinessBand from './VoiceReadinessBand';
@@ -969,6 +970,49 @@ function DeleteFailureNotice({ message }: { message: string | null }): React.JSX
   );
 }
 
+/**
+ * The plain receipt after a page was deleted here only (#3094). Says what may
+ * remain in a vault; renders nothing otherwise.
+ */
+function ErasureReceiptNotice({ message }: { message: string | null }): React.JSX.Element | null {
+  if (message === null) return null;
+  return (
+    <Text style={styles.deleteReceipt} testID="journal-erasure-receipt">
+      {message}
+    </Text>
+  );
+}
+
+/**
+ * Everything a delete can leave to say: the refusal, the reconnect-first /
+ * "I can't reach it" choice when a vault copy is not confirmed gone, and the
+ * receipt once a page was deleted here only (#3094).
+ */
+function DeletionNotices({
+  deletion,
+  navigation,
+}: {
+  deletion: EntryDeletion;
+  navigation: ShelfNavigation;
+}): React.JSX.Element {
+  const { dismissUnreachable } = deletion;
+  const reconnectVault = useCallback(() => {
+    dismissUnreachable();
+    navigation.navigate('VaultSettings');
+  }, [dismissUnreachable, navigation]);
+  return (
+    <>
+      <DeleteFailureNotice message={deletion.error} />
+      <UnreachableVaultChoice
+        visible={deletion.unreachable !== null}
+        onReconnect={reconnectVault}
+        onEraseHere={deletion.eraseHere}
+      />
+      <ErasureReceiptNotice message={deletion.receipt} />
+    </>
+  );
+}
+
 function JournalShelfScreen(): React.JSX.Element {
   const navigation = useNavigation<ShelfNavigation>();
   const shelf = useShelf();
@@ -992,7 +1036,7 @@ function JournalShelfScreen(): React.JSX.Element {
 
   return (
     <ScreenScaffold testID="journal-shelf">
-      <DeleteFailureNotice message={deletion.error} />
+      <DeletionNotices deletion={deletion} navigation={navigation} />
       <ShelfBody
         shelf={shelf}
         nav={nav}

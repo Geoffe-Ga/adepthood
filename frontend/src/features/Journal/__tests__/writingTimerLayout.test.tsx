@@ -44,14 +44,22 @@ function dp(value: unknown): number {
  * timer keeps its offset above the page's lower edge and nothing floats beside
  * it to share or fight over that band.
  */
-describe('the writing timer floats alone above the page edge', () => {
-  it('floats at its band offset while the resonance button stays in the flow', () => {
+describe('the writing timer uses flow at rest and floats only after it starts', () => {
+  it('keeps the expanded idle pill in flow while the resonance button stays in flow', () => {
     const timer = render(<WritingTimer onComplete={jest.fn()} />);
     const resonance = render(<GetResonanceButton visible onPress={jest.fn()} />);
 
+    expect(flat(timer.root.props.style).position).toBeUndefined();
+    expect(flat(timer.root.props.style).bottom).toBeUndefined();
+    expect(flat(resonance.root.props.style).position).not.toBe('absolute');
+  });
+
+  it('keeps the running compact pill on the existing floating rail', () => {
+    const timer = render(<WritingTimer onComplete={jest.fn()} />);
+    fireEvent.press(timer.getByTestId('writing-timer-start'));
+
     expect(flat(timer.root.props.style).position).toBe('absolute');
     expect(flat(timer.root.props.style).bottom).toBe(RESONANCE_BUTTON_CLEARANCE);
-    expect(flat(resonance.root.props.style).position).not.toBe('absolute');
   });
 
   it('lets a touch fall through its own band as well, rather than trading one trap for another', () => {

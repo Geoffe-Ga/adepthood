@@ -49,8 +49,8 @@ describe('linkHabitNudgeStorage', () => {
     await expect(loadLinkHabitNudgeDeclined()).resolves.toBe(false);
   });
 
-  test('a decline is written under its key and read back', async () => {
-    await expect(saveLinkHabitNudgeDeclined()).resolves.toBeUndefined();
+  test('a decline is written under its key, read back, and resolves that it saved', async () => {
+    await expect(saveLinkHabitNudgeDeclined()).resolves.toBe(true);
 
     expect(mockAsyncStorage.setItem).toHaveBeenCalledWith(LINK_HABIT_NUDGE_NEVER_OFFER_KEY, 'true');
     await expect(loadLinkHabitNudgeDeclined()).resolves.toBe(true);
@@ -71,12 +71,12 @@ describe('linkHabitNudgeStorage', () => {
     expect(warn).toHaveBeenCalledWith('[linkHabitNudgeStorage] failed to load the decline', error);
   });
 
-  test('a failed decline write resolves and says so rather than rejecting', async () => {
+  test('a failed decline write resolves false and says so rather than rejecting', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     const error = new Error('quota exceeded');
     mockAsyncStorage.setItem.mockRejectedValueOnce(error);
 
-    await expect(saveLinkHabitNudgeDeclined()).resolves.toBeUndefined();
+    await expect(saveLinkHabitNudgeDeclined()).resolves.toBe(false);
     expect(warn).toHaveBeenCalledWith('[linkHabitNudgeStorage] failed to save the decline', error);
   });
 

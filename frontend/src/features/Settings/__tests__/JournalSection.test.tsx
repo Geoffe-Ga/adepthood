@@ -7,18 +7,15 @@ import JournalSection from '../JournalSection';
 import type { UiFlags, UiFlagsUpdate } from '@/api';
 import type { Goal, Habit } from '@/features/Habits/Habits.types';
 import {
-  MORNING_PAGES_OFFER_AGAIN_DESCRIPTION,
-  MORNING_PAGES_OFFER_AGAIN_DONE,
-  MORNING_PAGES_OFFER_AGAIN_LABEL,
   MORNING_PAGES_SETTINGS_COPY_ENTRIES,
+  MORNING_PAGES_SWITCH_DESCRIPTION,
+  MORNING_PAGES_SWITCH_LABEL,
 } from '@/features/Journal/morningPagesCopy';
 import {
-  LINK_HABIT_NUDGE_AGAIN_DESCRIPTION,
-  LINK_HABIT_NUDGE_AGAIN_DONE,
-  LINK_HABIT_NUDGE_AGAIN_LABEL,
-  OFFER_AGAIN_DESCRIPTION,
-  OFFER_AGAIN_DONE,
-  OFFER_AGAIN_LABEL,
+  LINK_HABIT_NUDGE_SWITCH_DESCRIPTION,
+  LINK_HABIT_NUDGE_SWITCH_LABEL,
+  OFFER_SWITCH_DESCRIPTION,
+  OFFER_SWITCH_LABEL,
   WRITING_TIMER_ROW_LINKED_PENDING,
   WRITING_TIMER_ROW_UNLINKED,
   writingTimerRowLabel,
@@ -29,9 +26,15 @@ import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 const mockFlagsGet = jest.fn<(_token?: string) => Promise<UiFlags>>();
 const mockFlagsUpdate = jest.fn<(_partial: UiFlagsUpdate, _token?: string) => Promise<UiFlags>>();
 const mockLoadHabits = jest.fn<(_tz?: string) => Promise<void>>();
+const mockLoadAnswered = jest.fn<() => Promise<boolean>>();
 const mockSaveAnswered = jest.fn<(_value: boolean) => Promise<void>>();
+const mockLoadTipState =
+  jest.fn<() => Promise<{ setAsideOn: string | null; neverOffer: boolean }>>();
 const mockRestoreTip = jest.fn<() => Promise<boolean>>();
+const mockSaveTipNeverOffer = jest.fn<(_value: boolean) => Promise<boolean>>();
+const mockLoadNudgeDeclined = jest.fn<() => Promise<boolean>>();
 const mockRestoreNudge = jest.fn<() => Promise<boolean>>();
+const mockSaveNudgeDeclined = jest.fn<() => Promise<boolean>>();
 /** The account's zone, which AuthContext can adopt from the server mid-mount. */
 const mockUserTimezone = { current: 'Europe/Lisbon' };
 
@@ -51,15 +54,20 @@ jest.mock('@/features/Habits/services/habitManager', () => ({
 }));
 
 jest.mock('@/storage/writingOfferStorage', () => ({
+  loadWritingOfferAnswered: () => mockLoadAnswered(),
   saveWritingOfferAnswered: (value: boolean) => mockSaveAnswered(value),
 }));
 
 jest.mock('@/storage/morningPagesTipStorage', () => ({
+  loadMorningPagesTipState: () => mockLoadTipState(),
   restoreMorningPagesTip: () => mockRestoreTip(),
+  saveMorningPagesTipNeverOffer: (value: boolean) => mockSaveTipNeverOffer(value),
 }));
 
 jest.mock('@/storage/linkHabitNudgeStorage', () => ({
+  loadLinkHabitNudgeDeclined: () => mockLoadNudgeDeclined(),
   restoreLinkHabitNudge: () => mockRestoreNudge(),
+  saveLinkHabitNudgeDeclined: () => mockSaveNudgeDeclined(),
 }));
 
 const ladder = (): Goal[] =>
@@ -108,9 +116,14 @@ beforeEach(() => {
     Promise.resolve(flags(partial.writing_session_habit_id ?? null)),
   );
   mockLoadHabits.mockResolvedValue(undefined);
+  mockLoadAnswered.mockResolvedValue(false);
   mockSaveAnswered.mockResolvedValue(undefined);
+  mockLoadTipState.mockResolvedValue({ setAsideOn: null, neverOffer: false });
   mockRestoreTip.mockResolvedValue(true);
+  mockSaveTipNeverOffer.mockResolvedValue(true);
+  mockLoadNudgeDeclined.mockResolvedValue(false);
   mockRestoreNudge.mockResolvedValue(true);
+  mockSaveNudgeDeclined.mockResolvedValue(true);
   mockUserTimezone.current = 'Europe/Lisbon';
 });
 
@@ -248,95 +261,6 @@ describe('JournalSection — the writing timer row', () => {
   });
 });
 
-describe('JournalSection — offering again', () => {
-  it('clears this device’s answer so the end-of-session offer comes back', async () => {
-    const view = render(<JournalSection />);
-    const row = view.getByTestId('settings-row-writing-offer-again');
-    expect(row.props.accessibilityLabel).toBe(OFFER_AGAIN_LABEL);
-    expect(row.props.accessibilityHint).toBe(OFFER_AGAIN_DESCRIPTION);
-
-    fireEvent.press(row);
-
-    expect(mockSaveAnswered).toHaveBeenCalledTimes(1);
-    expect(mockSaveAnswered).toHaveBeenCalledWith(false);
-    await waitFor(() =>
-      expect(view.getByTestId('settings-row-writing-offer-again').props.accessibilityHint).toBe(
-        OFFER_AGAIN_DONE,
-      ),
-    );
-  });
-
-  it('every row is a button', () => {
-    const view = render(<JournalSection />);
-
-    expect(view.getByTestId('settings-row-writing-habit').props.accessibilityRole).toBe('button');
-    expect(view.getByTestId('settings-row-writing-offer-again').props.accessibilityRole).toBe(
-      'button',
-    );
-    expect(view.getByTestId('settings-row-morning-pages-offer-again').props.accessibilityRole).toBe(
-      'button',
-    );
-  });
-});
-
-describe('JournalSection — offering morning pages again (#3005)', () => {
-  const row = (view: ReturnType<typeof render>) =>
-    view.getByTestId('settings-row-morning-pages-offer-again');
-
-  it('clears this device’s "Don’t show this again", and says the tip is back', async () => {
-    const view = render(<JournalSection />);
-    expect(row(view).props.accessibilityLabel).toBe(MORNING_PAGES_OFFER_AGAIN_LABEL);
-    expect(row(view).props.accessibilityHint).toBe(MORNING_PAGES_OFFER_AGAIN_DESCRIPTION);
-    expect(view.getByText(MORNING_PAGES_OFFER_AGAIN_LABEL)).toBeTruthy();
-
-    fireEvent.press(row(view));
-
-    expect(mockRestoreTip).toHaveBeenCalledTimes(1);
-    // Its own decline, not the end-of-session offer's.
-    expect(mockSaveAnswered).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(row(view).props.accessibilityHint).toBe(MORNING_PAGES_OFFER_AGAIN_DONE),
-    );
-    expect(view.getByText(MORNING_PAGES_OFFER_AGAIN_DONE)).toBeTruthy();
-    // The end-of-session row is untouched by it.
-    expect(view.getByTestId('settings-row-writing-offer-again').props.accessibilityHint).toBe(
-      OFFER_AGAIN_DESCRIPTION,
-    );
-  });
-
-  it('keeps the offer when the restore could not be saved, rather than claiming it worked', async () => {
-    mockRestoreTip.mockResolvedValueOnce(false);
-    const view = render(<JournalSection />);
-
-    fireEvent.press(row(view));
-
-    await waitFor(() => expect(mockRestoreTip).toHaveBeenCalledTimes(1));
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(row(view).props.accessibilityHint).toBe(MORNING_PAGES_OFFER_AGAIN_DESCRIPTION);
-    expect(view.queryByText(MORNING_PAGES_OFFER_AGAIN_DONE)).toBeNull();
-  });
-
-  it('renders every Settings string its copy sweep lists, before and after the press', async () => {
-    const view = render(<JournalSection />);
-    const seen = new Set<string>();
-    const collect = () => {
-      seen.add(row(view).props.accessibilityLabel as string);
-      seen.add(row(view).props.accessibilityHint as string);
-    };
-    collect();
-    fireEvent.press(row(view));
-    await waitFor(() =>
-      expect(row(view).props.accessibilityHint).toBe(MORNING_PAGES_OFFER_AGAIN_DONE),
-    );
-    collect();
-    for (const entry of MORNING_PAGES_SETTINGS_COPY_ENTRIES) {
-      expect(seen).toContain(entry);
-    }
-  });
-});
-
 describe('JournalSection — opened on the writing-habit row (#3006)', () => {
   it('opens the picker at once when Settings is opened on the writing habit', async () => {
     const view = render(<JournalSection focus="writing-habit" />);
@@ -393,51 +317,182 @@ describe('JournalSection — opened on the writing-habit row (#3006)', () => {
   });
 });
 
-describe('JournalSection — showing the habit note again (#3006)', () => {
-  const row = (view: ReturnType<typeof render>) =>
-    view.getByTestId('settings-row-link-habit-nudge-again');
+// ---------------------------------------------------------------------------
+// The three invitation switches: each the journal's own decline, seen from here.
+// ---------------------------------------------------------------------------
 
-  it('is a fourth row, after the three that were there', () => {
+type View = ReturnType<typeof render>;
+const OFFER = 'settings-row-writing-offer';
+const TIP = 'settings-row-morning-pages-offer';
+const NUDGE = 'settings-row-link-habit-nudge';
+
+const switchOf = (view: View, rowId: string) => view.getByTestId(`${rowId}-switch`);
+const isOn = (view: View, rowId: string): boolean => switchOf(view, rowId).props.value as boolean;
+const isDisabled = (view: View, rowId: string): boolean =>
+  switchOf(view, rowId).props.accessibilityState.disabled as boolean;
+const flip = (view: View, rowId: string, next: boolean): void => {
+  fireEvent(switchOf(view, rowId), 'valueChange', next);
+};
+/** Waits for all three reads to answer, so a position shown is a confirmed one. */
+const settled = async (view: View): Promise<void> => {
+  await waitFor(() => expect(isDisabled(view, NUDGE)).toBe(false));
+};
+
+describe('JournalSection — the invitation switches', () => {
+  it('follows the writing-habit row, as three switches rather than buttons', async () => {
     const view = render(<JournalSection />);
-    const ids = view
-      .getAllByRole('button')
-      .map((button) => button.props.testID as string)
-      .filter((id) => id.startsWith('settings-row-'));
+    await settled(view);
 
-    expect(ids).toEqual([
-      'settings-row-writing-habit',
-      'settings-row-writing-offer-again',
-      'settings-row-morning-pages-offer-again',
-      'settings-row-link-habit-nudge-again',
-    ]);
+    const switches = view.getAllByRole('switch').map((node) => node.props.testID as string);
+    expect(switches).toEqual([`${OFFER}-switch`, `${TIP}-switch`, `${NUDGE}-switch`]);
+    expect(view.getByTestId('settings-row-writing-habit').props.accessibilityRole).toBe('button');
+    expect(view.queryByTestId('settings-row-writing-offer-again')).toBeNull();
   });
 
-  it('clears this device’s "Don’t show again", and says the note is back', async () => {
+  it('names each switch by its label and describes what it does, on this device', async () => {
     const view = render(<JournalSection />);
-    expect(row(view).props.accessibilityLabel).toBe(LINK_HABIT_NUDGE_AGAIN_LABEL);
-    expect(row(view).props.accessibilityHint).toBe(LINK_HABIT_NUDGE_AGAIN_DESCRIPTION);
+    await settled(view);
 
-    fireEvent.press(row(view));
-
-    expect(mockRestoreNudge).toHaveBeenCalledTimes(1);
-    expect(mockSaveAnswered).not.toHaveBeenCalled();
-    expect(mockRestoreTip).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(row(view).props.accessibilityHint).toBe(LINK_HABIT_NUDGE_AGAIN_DONE),
-    );
+    expect(switchOf(view, OFFER).props.accessibilityLabel).toBe(OFFER_SWITCH_LABEL);
+    expect(switchOf(view, OFFER).props.accessibilityHint).toBe(OFFER_SWITCH_DESCRIPTION);
+    expect(switchOf(view, TIP).props.accessibilityLabel).toBe(MORNING_PAGES_SWITCH_LABEL);
+    expect(switchOf(view, TIP).props.accessibilityHint).toBe(MORNING_PAGES_SWITCH_DESCRIPTION);
+    expect(switchOf(view, NUDGE).props.accessibilityLabel).toBe(LINK_HABIT_NUDGE_SWITCH_LABEL);
+    expect(switchOf(view, NUDGE).props.accessibilityHint).toBe(LINK_HABIT_NUDGE_SWITCH_DESCRIPTION);
+    for (const entry of MORNING_PAGES_SETTINGS_COPY_ENTRIES) {
+      expect(view.getByText(entry)).toBeTruthy();
+    }
   });
 
-  it('keeps its description when the restore could not be saved, rather than claiming it worked', async () => {
-    mockRestoreNudge.mockResolvedValueOnce(false);
+  it('reads on, and is disabled until the read answers, when nothing was declined', async () => {
+    let answer: (_declined: boolean) => void = () => undefined;
+    mockLoadNudgeDeclined.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
     const view = render(<JournalSection />);
 
-    fireEvent.press(row(view));
-
-    await waitFor(() => expect(mockRestoreNudge).toHaveBeenCalledTimes(1));
+    expect(isDisabled(view, NUDGE)).toBe(true);
     await act(async () => {
+      answer(false);
       await Promise.resolve();
     });
-    expect(row(view).props.accessibilityHint).toBe(LINK_HABIT_NUDGE_AGAIN_DESCRIPTION);
-    expect(view.queryByText(LINK_HABIT_NUDGE_AGAIN_DONE)).toBeNull();
+
+    await settled(view);
+    expect(isOn(view, OFFER)).toBe(true);
+    expect(isOn(view, TIP)).toBe(true);
+    expect(isOn(view, NUDGE)).toBe(true);
+  });
+
+  it('turns itself off for whatever the journal recorded a decline on', async () => {
+    mockLoadAnswered.mockResolvedValue(true);
+    mockLoadTipState.mockResolvedValue({ setAsideOn: '2026-10-02', neverOffer: true });
+    mockLoadNudgeDeclined.mockResolvedValue(true);
+    const view = render(<JournalSection />);
+    await settled(view);
+
+    expect(isOn(view, OFFER)).toBe(false);
+    expect(isOn(view, TIP)).toBe(false);
+    expect(isOn(view, NUDGE)).toBe(false);
+  });
+
+  it('a set-aside-for-today alone leaves morning pages on: that is not a decline', async () => {
+    mockLoadTipState.mockResolvedValue({ setAsideOn: '2026-10-02', neverOffer: false });
+    const view = render(<JournalSection />);
+    await settled(view);
+
+    expect(isOn(view, TIP)).toBe(true);
+  });
+
+  it('turning the offer on clears this device’s answer; off records one', async () => {
+    mockLoadAnswered.mockResolvedValue(true);
+    const view = render(<JournalSection />);
+    await settled(view);
+    expect(isOn(view, OFFER)).toBe(false);
+
+    flip(view, OFFER, true);
+    await waitFor(() => expect(isOn(view, OFFER)).toBe(true));
+    expect(mockSaveAnswered).toHaveBeenCalledWith(false);
+
+    flip(view, OFFER, false);
+    await waitFor(() => expect(isOn(view, OFFER)).toBe(false));
+    expect(mockSaveAnswered).toHaveBeenLastCalledWith(true);
+    // Its own flag, nobody else's.
+    expect(mockRestoreTip).not.toHaveBeenCalled();
+    expect(mockRestoreNudge).not.toHaveBeenCalled();
+  });
+
+  it('turning morning pages on restores the tip (today’s set-aside too); off declines it for good', async () => {
+    mockLoadTipState.mockResolvedValue({ setAsideOn: null, neverOffer: true });
+    const view = render(<JournalSection />);
+    await settled(view);
+    expect(isOn(view, TIP)).toBe(false);
+
+    flip(view, TIP, true);
+    await waitFor(() => expect(isOn(view, TIP)).toBe(true));
+    expect(mockRestoreTip).toHaveBeenCalledTimes(1);
+    expect(mockSaveTipNeverOffer).not.toHaveBeenCalled();
+
+    flip(view, TIP, false);
+    await waitFor(() => expect(isOn(view, TIP)).toBe(false));
+    expect(mockSaveTipNeverOffer).toHaveBeenCalledWith(true);
+    expect(mockRestoreTip).toHaveBeenCalledTimes(1);
+    expect(mockSaveAnswered).not.toHaveBeenCalled();
+  });
+
+  it('turning the habit note on restores it; off records the decline', async () => {
+    mockLoadNudgeDeclined.mockResolvedValue(true);
+    const view = render(<JournalSection />);
+    await settled(view);
+    expect(isOn(view, NUDGE)).toBe(false);
+
+    flip(view, NUDGE, true);
+    await waitFor(() => expect(isOn(view, NUDGE)).toBe(true));
+    expect(mockRestoreNudge).toHaveBeenCalledTimes(1);
+
+    flip(view, NUDGE, false);
+    await waitFor(() => expect(isOn(view, NUDGE)).toBe(false));
+    expect(mockSaveNudgeDeclined).toHaveBeenCalledTimes(1);
+    expect(mockSaveAnswered).not.toHaveBeenCalled();
+    expect(mockRestoreTip).not.toHaveBeenCalled();
+  });
+
+  it('keeps the old position when a write could not be saved, rather than claiming it moved', async () => {
+    mockLoadTipState.mockResolvedValue({ setAsideOn: null, neverOffer: true });
+    mockRestoreTip.mockResolvedValueOnce(false);
+    mockLoadNudgeDeclined.mockResolvedValue(true);
+    mockRestoreNudge.mockResolvedValueOnce(false);
+    jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockSaveAnswered.mockRejectedValueOnce(new Error('quota'));
+    const view = render(<JournalSection />);
+    await settled(view);
+
+    flip(view, TIP, true);
+    flip(view, NUDGE, true);
+    flip(view, OFFER, false);
+
+    await waitFor(() => expect(mockRestoreTip).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockRestoreNudge).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockSaveAnswered).toHaveBeenCalledTimes(1));
+    await settled(view);
+    expect(isOn(view, TIP)).toBe(false);
+    expect(isOn(view, NUDGE)).toBe(false);
+    expect(isOn(view, OFFER)).toBe(true);
+  });
+
+  it('disables a switch while its write is out, so a second tap cannot race the first', async () => {
+    let land: (_saved: boolean) => void = () => undefined;
+    mockRestoreNudge.mockReturnValueOnce(new Promise((resolve) => (land = resolve)));
+    mockLoadNudgeDeclined.mockResolvedValue(true);
+    const view = render(<JournalSection />);
+    await settled(view);
+
+    flip(view, NUDGE, true);
+    expect(isDisabled(view, NUDGE)).toBe(true);
+    expect(isDisabled(view, OFFER)).toBe(false);
+
+    await act(async () => {
+      land(true);
+      await Promise.resolve();
+    });
+    await settled(view);
+    expect(isOn(view, NUDGE)).toBe(true);
   });
 });

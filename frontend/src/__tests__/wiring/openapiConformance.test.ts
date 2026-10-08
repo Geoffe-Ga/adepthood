@@ -147,6 +147,11 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
     reason:
       'The routing kind is an inline enum inside CareResourceResponse, not a named component; the client hoists it so the four remedies can be exhaustively handled.',
   },
+  copyLocationSchema: {
+    component: null,
+    reason:
+      'An inline enum inside JournalErasureReceipt rather than a named component; hoisted so the receipt copy can map every location the server can name (#3094).',
+  },
   dataExportArchiveSchema: {
     component: null,
     reason:
