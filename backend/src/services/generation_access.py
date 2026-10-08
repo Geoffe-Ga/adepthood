@@ -33,6 +33,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final
 
+from fastapi import HTTPException, status
+
 from errors import payment_required
 from services.account_egress_barrier import ensure_account_live
 from services.botmason import (
@@ -76,3 +78,25 @@ async def require_ai_payer(
     await ensure_account_live(session, user_id)
     if not await has_generation_capacity(session, user_id):
         raise payment_required(CREDITS_OR_KEY_REQUIRED)
+
+
+async def payer_refusal(
+    session: AsyncSession,
+    user_id: int,
+    supplied_key: str | None,
+    *,
+    app_provider: bool = True,
+) -> HTTPException | None:
+    """Run :func:`require_ai_payer`, handing back its 402 instead of raising it.
+
+    For a route that owes the writer something even when nobody can pay -- the
+    resonance pass's local care surface. ``None`` means admitted; any other
+    refusal (a malformed key, an erased account) still raises.
+    """
+    try:
+        await require_ai_payer(session, user_id, supplied_key, app_provider=app_provider)
+    except HTTPException as refusal:
+        if refusal.status_code != status.HTTP_402_PAYMENT_REQUIRED:
+            raise
+        return refusal
+    return None

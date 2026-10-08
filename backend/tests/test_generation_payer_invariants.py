@@ -37,6 +37,8 @@ _STUB_BUILDERS: Final = frozenset({"_stub_response", "_stub_vision_response"})
 _SEAM_CHECK: Final = "stub_seam_armed"
 _SEAM_ENV_NAME: Final = "STUB_SEAM_ENV_VAR"
 _PAYER_GATE: Final = "require_ai_payer"
+#: The gate run so its 402 is handed back rather than raised (resonance care).
+_PAYER_GATE_RETURNING: Final = "payer_refusal"
 _MIN_GATED_ROUTES: Final = 4
 #: Where the seam's variable may be named: its definition and reader, and the
 #: production boot refusal. Nothing else in ``src`` may touch it.
@@ -152,11 +154,11 @@ def test_nothing_in_src_arms_the_seam() -> None:
 def _admits_through_gate(graph: SourceGraph, module: str, body: ast.AST) -> bool:
     """Whether ``body`` calls the payer gate, directly or through a same-module helper.
 
-    One level of helper is followed -- ``run_resonance`` admits through
-    ``_care_if_unpaid`` so a refused distressed writer still gets care -- and
-    only helpers defined in the same module, so the check stays lexical.
+    ``payer_refusal`` is the gate with its 402 handed back, so a refused
+    distressed writer still gets care. One level of same-module helper is
+    followed too, so the check stays lexical.
     """
-    if _calls_named(body, _PAYER_GATE):
+    if _calls_named(body, _PAYER_GATE) or _calls_named(body, _PAYER_GATE_RETURNING):
         return True
     for node in ast.walk(body):
         if not isinstance(node, ast.Call):

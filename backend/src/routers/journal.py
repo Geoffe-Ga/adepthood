@@ -29,7 +29,7 @@ from dependencies.ownership import (
     resolve_owned_user_practice,
 )
 from dependencies.timezone import current_user_timezone
-from domain.care import CarePayload, build_care_payload
+from domain.care import build_care_payload
 from domain.contraction import build_contraction_invitation, detect_contraction
 from domain.creek_vault import (
     CreekVaultCareEscalationError,
@@ -60,7 +60,6 @@ from domain.resonance import (
     generate_essay,
     generate_marginalia,
 )
-from domain.safety import assess_distress
 from domain.stage_progress import get_user_progress, is_stage_unlocked
 from error_responses import build_router
 from errors import (
@@ -82,7 +81,6 @@ from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
 from models.practice import Practice
 from models.practice_session import PracticeSession
-from models.user import User
 from models.user_practice import UserPractice
 from models.wallet_audit import (
     REASON_REFUND_DEMO,
@@ -106,7 +104,6 @@ from schemas.journal import (
     JournalMessageResponse,
 )
 from schemas.marginalia import (
-    CareResourceResponse,
     CareResponse,
     ContractionReflectionResponse,
     EssayRequest,
@@ -123,7 +120,7 @@ from schemas.marginalia import (
 from schemas.pagination import count_query_total, page_has_more
 from security import TextTooLongError, sanitize_user_text
 from security.idempotency import IDEMPOTENCY_KEY_MAX_LENGTH, hash_idem_key
-from services import journal_encryption
+from services import demo_visibility, journal_encryption
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
@@ -170,13 +167,7 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
-from services.demo_visibility import (
-    has_served_letter,
-    served_letter_clauses,
-    served_note,
-    visible_note_clauses,
-)
-from services.generation_access import require_ai_payer
+from services.generation_access import payer_refusal, require_ai_payer
 from services.generation_guardrails import (
     consume_generation_minute,
     generation_slot,
@@ -220,6 +211,14 @@ from services.reflection_boundary import (
     VaultSourceUnavailableReason,
     app_provider_llm,
     require_app_provider_llm,
+)
+from services.resonance_care import (
+    care_for,
+    care_only_response,
+    care_or_refusal,
+    care_response,
+    care_surface,
+    private_response,
 )
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
@@ -908,7 +907,7 @@ def _expanded_drafts_query(user_id: int) -> Select[tuple[Marginalia]]:
             col(JournalEntry.deleted_at).is_(None),
             col(Marginalia.essay).is_not(None),
             # A stored demo letter is no letter outside the test seam (#3096).
-            *served_letter_clauses(),
+            *demo_visibility.served_letter_clauses(),
         )
     )
 
@@ -1601,104 +1600,6 @@ async def _generate_marginalia_or_error(
         raise bad_gateway("llm_provider_error") from exc
 
 
-def _care_for(body: str) -> CarePayload | None:
-    """Screen ``body`` and return the care payload on an elevated signal, else None.
-
-    Pure and local (no network/LLM): :func:`assess_distress` cannot fail the
-    request, and the payload is built from reviewable constants — derived from
-    this entry alone, so it can never leak across users.
-    """
-    if assess_distress(body).level == "elevated":
-        return build_care_payload()
-    return None
-
-
-def _care_surface(payload: CarePayload) -> CareResponse:
-    """Map a care payload onto its response DTO.
-
-    Split out from :func:`_care_response` so the paths that already know they
-    have a payload — the vault's care escalation among them — can build the
-    surface without a cast through an optional.
-    """
-    return CareResponse(
-        title=payload.title,
-        message=payload.message,
-        resources=[
-            CareResourceResponse(
-                kind=resource.kind,
-                name=resource.name,
-                contact=resource.contact,
-                what_it_is=resource.what_it_is,
-            )
-            for resource in payload.resources
-        ],
-    )
-
-
-def _care_response(payload: CarePayload | None) -> CareResponse | None:
-    """Map a care payload to its response DTO, or ``None`` when not flagged."""
-    return None if payload is None else _care_surface(payload)
-
-
-# Non-shaming copy shown when an intimate entry is kept off the cloud (issue #895).
-# The exact string is contract with the client and the RED tests — one named
-# constant so the wording lives in a single place.
-_INTIMATE_PRIVATE_MESSAGE = (
-    "This entry stays private — it's not sent to any AI. Change its privacy to enable reflection."
-)
-
-
-def _unspent_resonance(
-    user: User,
-    *,
-    care: CareResponse | None,
-    private: bool = False,
-    private_message: str | None = None,
-) -> ResonanceResponse:
-    """Build a no-reflection response over the caller's *unspent* wallet balances.
-
-    Shared skeleton for the two paths that return before any charge lands: the
-    intimate/private path and the care-only fallback when an elevated entry's
-    LLM pass fails. Both surface empty marginalia + suggestions
-    and read the wallet fresh (no ``preflight_deduction``), differing only in
-    the ``care`` payload and the private-message fields.
-    """
-    return ResonanceResponse(
-        marginalia=[],
-        suggestions=[],
-        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
-        remaining_balance=user.offering_balance,
-        monthly_reset_date=user.monthly_reset_date,
-        care=care,
-        private=private,
-        private_message=private_message,
-    )
-
-
-async def _private_response(
-    session: AsyncSession, user_id: int, care: CareResponse | None
-) -> ResonanceResponse:
-    """Resonance response for an intimate entry: no model call, no net charge.
-
-    An ``intimate`` entry is never sent to a language model (issue #895), so this
-    is returned *before* any LLM construction: no marginalia, no suggestions,
-    unspent balances (read fresh, like :func:`_care_only_response`), and the
-    non-shaming private message. On the usual path it is returned before any
-    wallet deduction too. When the entry only became intimate while the pass
-    waited for the account barrier, :func:`_withdrawn_under_hold` has already
-    refunded the committed deduction before calling this, so the balances it
-    reads are unspent on that path as well (#2998).
-
-    ``care`` is the locally-screened surface (never None-forced): a distressed
-    intimate entry still points to human/professional support, with no cloud
-    call, charge, or usage-log — the privacy floor never suppresses crisis care.
-    """
-    user = await require_user_fresh(session, user_id)
-    return _unspent_resonance(
-        user, care=care, private=True, private_message=_INTIMATE_PRIVATE_MESSAGE
-    )
-
-
 async def _withdrawn_under_hold(
     session: AsyncSession,
     entry: JournalEntry,
@@ -1721,7 +1622,7 @@ async def _withdrawn_under_hold(
     * A row now ``intimate`` stops the whole pass: no vault, no cloud
       reflection, no completion detection. Any committed unit is refunded and
       this returns ``True``, so the caller answers with
-      :func:`_private_response` -- still carrying ``care``, because the privacy
+      :func:`private_response` -- still carrying ``care``, because the privacy
       floor never suppresses crisis support.
 
     Otherwise this returns ``False`` and the refreshed ``entry.classification``
@@ -1734,7 +1635,7 @@ async def _withdrawn_under_hold(
     the second caller (#3008). It waits for the same hold behind the same
     PATCH and DELETE, but it is uncharged, so it passes ``spent=None`` and the
     "refund" is a bare rollback. On ``True`` it answers
-    ``{items: [], checked: false}`` rather than :func:`_private_response`.
+    ``{items: [], checked: false}`` rather than :func:`private_response`.
 
     Every path out of here has released the pooled connection -- the commit
     after the refresh, or the refund's own rollback and commit -- so nothing
@@ -1782,7 +1683,7 @@ async def _body_under_hold(
     except HTTPException:
         await _refund_failed_pass(session, entry.user_id, spent, trace=trace)
         raise
-    return message, _care_response(_care_for(message))
+    return message, care_response(care_for(message))
 
 
 async def _pass_context_under_hold(
@@ -1821,23 +1722,6 @@ async def _pass_context_under_hold(
     await observe_entry_lineage(session, LineageOperation.RESONANCE, entry)
     await session.commit()
     return grounding, prior_letters
-
-
-async def _care_only_response(
-    session: AsyncSession, user_id: int, care: CareResponse
-) -> ResonanceResponse:
-    """Care surface with no reflection, for the paths that reach care instead of one.
-
-    Used when an elevated entry's LLM pass fails, when a connected vault
-    answers with its care escalation, and when a vault-bound entry is flagged
-    locally and so asks no model at all. Every time, the marginalia charge has
-    already been settled — by a compensating credit when BotMason paid, or
-    with no wallet work for BYOK — so the fresh read below reports unchanged
-    balances. We surface the human + professional pointers regardless, because
-    care must never depend on the reflection succeeding (NORTH-STAR §10).
-    """
-    user = await require_user_fresh(session, user_id)
-    return _unspent_resonance(user, care=care)
 
 
 async def _refresh_persisted(
@@ -1885,7 +1769,7 @@ async def _escalated_care(
     are dropped at the adapter.
     """
     await _refund_failed_pass(session, user_id, spent, trace=trace)
-    return _CareInstead(_care_surface(build_care_payload()))
+    return _CareInstead(care_surface(build_care_payload()))
 
 
 async def _resonance_pass_or_care(
@@ -2340,33 +2224,6 @@ async def _resonance_payment(
     return None, await preflight_deduction(session, user_id)
 
 
-async def _care_if_unpaid(
-    session: AsyncSession, user_id: int, message: str, clients: _ReflectionClients
-) -> ResonanceResponse | None:
-    """Admit the pass through the payer gate, or answer a refused distressed writer with care.
-
-    No personal key and nothing to pay with is refused here, free (#3096). A
-    vault-bound pass is answered by the vault, so only an app-provider pass
-    also needs a server provider able to answer at all. Care never depends on
-    the payer (NORTH-STAR §10): when the gate refuses an entry the local screen
-    flags, the writer gets the care surface with no reflection -- the 200 the
-    client already renders -- instead of a bare 402. ``None`` means admitted.
-    """
-    try:
-        await require_ai_payer(
-            session,
-            user_id,
-            clients.api_key,
-            app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
-        )
-    except HTTPException as refusal:
-        care = _care_for(message)
-        if care is None or refusal.status_code != status.HTTP_402_PAYMENT_REQUIRED:
-            raise
-        return await _care_only_response(session, user_id, _care_surface(care))
-    return None
-
-
 @router.post("/{entry_id}/resonance", response_model=ResonanceResponse)
 @limiter.limit("10/minute")
 async def run_resonance(
@@ -2441,14 +2298,21 @@ async def run_resonance(
     # both the body and this screen from the row it re-reads under the hold
     # (#3008); this reading serves only the 422 and intimate fast paths.
     if not admits_egress(entry.classification):
-        return await _private_response(session, current_user, _care_response(_care_for(message)))
+        return await private_response(session, current_user, care_response(care_for(message)))
     # A generation is about to happen: the per-user guardrails (#623) admit it
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
     require_external_ai_available()
-    refused_care = await _care_if_unpaid(session, current_user, message, clients)
-    if refused_care is not None:
-        return refused_care
+    # No personal key and nothing to pay with is refused here, free (#3096); a
+    # vault-bound pass is answered by the vault, so it needs no server provider.
+    refusal = await payer_refusal(
+        session,
+        current_user,
+        clients.api_key,
+        app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
+    )
+    if refusal is not None:
+        return await care_or_refusal(session, current_user, message, refusal)
     require_generation_minute_available(current_user)
     async with generation_slot(session, current_user):
         return await _run_admitted_resonance(session, current_user, entry, clients)
@@ -2526,15 +2390,15 @@ async def _run_admitted_resonance(
             # on this path, assess_distress normalizes its own input, and this
             # private answer must never 422: a blank body still answers private,
             # and a body an edit made both intimate and distressed still gets care.
-            return await _private_response(
-                session, current_user, _care_response(_care_for(entry.message))
+            return await private_response(
+                session, current_user, care_response(care_for(entry.message))
             )
         message, care = await _body_under_hold(session, entry, spent=spent, trace=trace)
         if app_llm is None and care is not None:
             # Vault-bound and flagged locally: adepthood's care surface alone. No
             # vault and no model is asked, and the committed charge is refunded.
             await _refund_failed_pass(session, current_user, spent, trace=trace)
-            return await _care_only_response(session, current_user, care)
+            return await care_only_response(session, current_user, care)
         grounding, prior_letters = await _pass_context_under_hold(session, entry)
         reflected = await _reflect_or_answer(
             _ReflectionRequest(
@@ -2556,7 +2420,7 @@ async def _run_admitted_resonance(
             ),
         )
         if isinstance(reflected, _CareInstead):
-            return await _care_only_response(session, current_user, reflected.care)
+            return await care_only_response(session, current_user, reflected.care)
         anchored, reflection_llm = reflected
         notes_receipt = reflection_receipt(reflection_llm, usage)
         detection_mark = len(usage)
@@ -2612,12 +2476,12 @@ async def list_marginalia(
             Marginalia.journal_entry_id == entry_id,
             Marginalia.user_id == current_user,  # defense-in-depth alongside the entry check
             # Stored stub output is never served outside the test seam (#3096).
-            *visible_note_clauses(),
+            *demo_visibility.visible_note_clauses(),
         )
         .order_by(col(Marginalia.anchor_start))
     )
     rows = result.scalars().all()
-    return MarginaliaListResponse(items=[served_note(r) for r in rows])
+    return MarginaliaListResponse(items=[demo_visibility.served_note(r) for r in rows])
 
 
 @router.get("/{entry_id}/suggestions", response_model=CompletionSuggestionListResponse)
@@ -3330,7 +3194,7 @@ async def _essay_response(session: AsyncSession, note: Marginalia) -> EssayRespo
     await reset_monthly_usage_if_due(session, note.user_id, datetime.now(UTC))
     user = await require_user_fresh(session, note.user_id)
     return EssayResponse(
-        **served_note(note).model_dump(),
+        **demo_visibility.served_note(note).model_dump(),
         remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
         remaining_balance=user.offering_balance,
         monthly_reset_date=user.monthly_reset_date,
@@ -3384,7 +3248,7 @@ async def _expand_essay(
     if note is None:
         raise not_found("marginalia")
     # A stored demo letter is not a letter already bought: ask again (#3096).
-    if has_served_letter(note):
+    if demo_visibility.has_served_letter(note):
         _log_essay_cache_hit(note, _CACHE_HIT_PRE_BARRIER)
         return note
     entry = await _load_user_entry(session, note.journal_entry_id, user_id)
@@ -3472,7 +3336,7 @@ async def _cache_and_mirror_essay(
         await session.refresh(entry)
         await session.refresh(note)
         await session.commit()
-        if has_served_letter(note):
+        if demo_visibility.has_served_letter(note):
             # A concurrent first ask for this note won the barrier and cached
             # its letter while this one waited: a cached reopen, not a second
             # purchase -- no charge, no dial, no overwrite (#623).
