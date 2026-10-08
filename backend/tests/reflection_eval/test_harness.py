@@ -38,7 +38,13 @@ from tests.reflection_eval.harness import (
     to_content_free_json,
     write_review_files,
 )
-from tests.reflection_eval.rubric import ExcludedDemo, ReflectionScore, RuleId, quote_occurrences
+from tests.reflection_eval.rubric import (
+    ExcludedDemo,
+    ReflectionScore,
+    RuleId,
+    Violation,
+    quote_occurrences,
+)
 
 #: Window length for the content-free check: long enough that a hit means real
 #: text leaked, short enough to catch a truncated excerpt.
@@ -212,6 +218,7 @@ async def test_grounded_model_is_clean_on_every_english_case() -> None:
             continue
         score = _scored(run)
         assert score.blocking == frozenset(), (run.case_id, score.violations)
+        assert Violation(RuleId.NEEDS_HUMAN_REVIEW, "output") not in score.violations
         assert run.notes, run.case_id
 
 

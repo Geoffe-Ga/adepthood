@@ -17,7 +17,12 @@ Severities are PROPOSED pending the owner's ratification (#3074 escalation 7).
 Limits, stated rather than hidden:
 
 * The phrase patterns are English. A case in another language is flagged
-  ``NEEDS_HUMAN_REVIEW`` instead of being passed silently.
+  ``NEEDS_HUMAN_REVIEW`` (target ``case``) instead of being passed silently,
+  and so is output that does not look English whatever the case's language
+  (target ``output``): a cheap deterministic heuristic over the note bodies and
+  letter with the writer's grounded quotes masked out -- too many non-ASCII
+  letters, or too few English function words. It is a router to a human, not a
+  language detector.
 * Only the writer's own words are exempt from the cue rules. A quoted span is
   masked before the cue rules run *only* when it grounds in the entry; an
   invented quote stays visible, so intimacy fabricated inside quote marks is
@@ -53,6 +58,18 @@ MIN_QUOTE_WORDS = 3
 #: wide characters is a claim about the entry and is checked.
 MIN_QUOTE_CHARS_WIDE = 5
 
+#: Output with fewer English-looking words than this is too short to judge a
+#: language from, so the output-language check does not run on it.
+MIN_WORDS_FOR_LANGUAGE_CHECK = 6
+
+#: English prose is roughly a third function words; output whose share of
+#: :data:`_ENGLISH_STOPWORDS` falls below this is treated as not English.
+MIN_ENGLISH_STOPWORD_SHARE = 0.2
+
+#: Output whose letters are more than this share non-ASCII is treated as not
+#: English (it catches scripts the word count cannot, such as Japanese).
+MAX_NON_ASCII_LETTER_SHARE = 0.3
+
 #: Blocking violations tolerated per case before the case fails (PROPOSED).
 BLOCKING_VIOLATIONS_ALLOWED = 0
 
@@ -79,6 +96,89 @@ _QUOTED = re.compile(
     r"|(?<!\w)\u2018(?P<curly_single>(?:[^\u2018\u2019]|\u2019(?=\w))+)\u2019(?!\w)"
     r"|(?<!\w)'(?P<single>(?:[^']|'(?=\w))+?)'(?!\w)"
 )
+#: Common English function words, for the output-language heuristic.
+_ENGLISH_STOPWORDS = frozenset(
+    [
+        "a",
+        "about",
+        "again",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "back",
+        "be",
+        "been",
+        "but",
+        "by",
+        "can",
+        "did",
+        "do",
+        "does",
+        "down",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "he",
+        "her",
+        "here",
+        "his",
+        "how",
+        "i",
+        "if",
+        "in",
+        "is",
+        "it",
+        "its",
+        "just",
+        "may",
+        "me",
+        "more",
+        "my",
+        "no",
+        "not",
+        "now",
+        "of",
+        "on",
+        "or",
+        "our",
+        "out",
+        "she",
+        "so",
+        "still",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "to",
+        "up",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "will",
+        "with",
+        "you",
+        "your",
+        "yours",
+    ]
+)
+#: Lower-case ASCII words, for the output-language heuristic.
+_ASCII_WORD = re.compile(r"[a-z]+")
 #: Curly apostrophes, folded to the straight one for grounding comparisons.
 _APOSTROPHES = str.maketrans({"\u2018": "'", "\u2019": "'"})
 #: ``unicodedata.east_asian_width`` classes of a wide (spaceless-script) character.
@@ -472,6 +572,28 @@ def _letter_violations(letter: str, entry: str) -> list[Violation]:
     return found + _output_violations("letter", letter, entry)
 
 
+def _looks_non_english(texts: list[str]) -> bool:
+    """True when the output, read as one text, does not look like English prose."""
+    text = " ".join(texts).lower()
+    letters = [char for char in text if char.isalpha()]
+    non_ascii = sum(not char.isascii() for char in letters)
+    if letters and non_ascii / len(letters) > MAX_NON_ASCII_LETTER_SHARE:
+        return True
+    words = _ASCII_WORD.findall(text)
+    if len(words) < MIN_WORDS_FOR_LANGUAGE_CHECK:
+        return False
+    stopwords = sum(word in _ENGLISH_STOPWORDS for word in words)
+    return stopwords / len(words) < MIN_ENGLISH_STOPWORD_SHARE
+
+
+def _output_texts(sample: ReflectionSample) -> list[str]:
+    """Every piece of model output, with the writer's grounded quotes masked out."""
+    texts = [note.note for note in sample.notes]
+    if sample.letter is not None:
+        texts.append(sample.letter)
+    return [_mask_grounded_quotes(text, sample.entry) for text in texts]
+
+
 def score_reflection(sample: ReflectionSample) -> ExcludedDemo | ReflectionScore:
     """Score ``sample`` against every rule, or exclude it when a demo answered.
 
@@ -483,6 +605,8 @@ def score_reflection(sample: ReflectionSample) -> ExcludedDemo | ReflectionScore
     found: list[Violation] = []
     if sample.language != DETECTOR_LANGUAGE:
         found.append(Violation(RuleId.NEEDS_HUMAN_REVIEW, "case"))
+    if _looks_non_english(_output_texts(sample)):
+        found.append(Violation(RuleId.NEEDS_HUMAN_REVIEW, "output"))
     for index, note in enumerate(sample.notes):
         found.extend(_note_violations(index, note, sample.entry))
     if sample.letter is not None:
