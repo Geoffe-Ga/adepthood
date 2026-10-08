@@ -26,15 +26,25 @@ then a local erase with an UNCONFIRMED obligation and a plain tell.**
    - `vault_withdrawal_previous_vault`: in a vault connected before the current one;
    - `vault_withdrawal_disconnected_vault`: in the vault that was disconnected;
    - `vault_withdrawal_pending` (unchanged): the connected vault has not
-     confirmed yet. The background sweep now finishes this deletion on its own
-     once the vault confirms (#3098).
+     confirmed yet.
+
+   In every one of these cases the DELETE has recorded a `pending_delete`
+   obligation, so the deletion is **in progress**: the background sweep
+   finishes it once the vault holding the copy confirms (#3098). Until then the
+   page refuses every content write (edit, tier change, reflection, essay,
+   suggestion detection, quote promotion) with 409
+   `journal_entry_deletion_pending`. Before it stamps `deleted_at` the sweep
+   repeats the local half of the deletion: the corpus withdrawal and the essay
+   retraction marking. It requires every essay withdrawal, including any it
+   just marked, to be confirmed first.
 
    The location is relational on purpose. Once a connection is replaced its URL
    is not kept, and a fingerprint means nothing to a person. What they do know
    is which vault they are connected to now. Naming the old vault by URL or
    label would mean storing it at bind time, which is an owner decision (see
    "Open decisions").
-2. The shelf keeps the page and offers two actions:
+2. The shelf keeps the page, says it is set to be deleted and when deletion
+   finishes (never that the delete failed), and offers two actions:
    - **Reconnect vault** (primary), which opens vault settings;
    - **I can't reach it — delete here only**, explained before it is offered.
 3. **Delete here only** calls `POST /journal/{entry_id}/erase-locally`.
@@ -107,8 +117,9 @@ text below:
 
 - Unconfirmed: "Deleted from Adepthood. A copy may still be in the Creek vault
   you were connected to before. We couldn't confirm it's gone, so please delete
-  it there." (The disconnected variant reads "the Creek vault you
-  disconnected".)
+  it there." The disconnected variant reads "the Creek vault you
+  disconnected". When the connected vault itself could not confirm, or no
+  location is named, it reads "your Creek vault".
 - Confirmed: "Deleted. Your Creek vault confirmed its copy is gone too."
 
 Nothing anywhere reports a copy withdrawn while its row is `unconfirmed`.
