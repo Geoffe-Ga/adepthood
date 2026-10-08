@@ -64,7 +64,13 @@ test('“Don’t show this again” retires the morning-pages tip until Settings
   // 4. The way back is the writer's own choice, in Settings → Journal: the
   //    "Offer morning pages" switch, which the decline above turned off.
   await page.goto(`${frontendUrl()}/settings`);
-  const offerSwitch = page.getByTestId('settings-row-morning-pages-offer-switch');
+  // react-native-web puts the test id on the painted switch wrapper and the
+  // actual checked/disabled semantics on its full-size checkbox. Drive that
+  // native control: clicking the wrapper can land before its child leaves the
+  // initial disabled read state, which made this journey race the storage read.
+  const offerSwitch = page
+    .getByTestId('settings-row-morning-pages-offer-switch')
+    .locator('input[type="checkbox"]');
   await expect(offerSwitch).toBeEnabled();
   await expect(offerSwitch).not.toBeChecked();
   await offerSwitch.click();
