@@ -431,6 +431,10 @@ RULES: Mapping[RuleId, RuleSpec] = MappingProxyType(
                 rf"\byou(?:{_APOS}ve| have)? (?:told|said to|showed|shown) me\b",
                 r"\bwe (?:talked|spoke) about\b",
                 r"\bremember when we\b",
+                # "last time you said this to me": the model as the recipient. A
+                # plain "last time you wrote" points at the writer's own pages.
+                r"\blast time you (?:wrote|said|told|mentioned|shared|talked)\b"
+                r"[^.!?]{0,40}?\b(?:to|with) me\b",
                 r"\bi (?:recall|remember) (?:you|that|when|how)\b",
                 r"\bwhen we (?:last )?(?:spoke|talked|met)\b",
                 r"\bour (?:last|previous|earlier|first) (?:conversation|talk|chat|session)s?\b",
