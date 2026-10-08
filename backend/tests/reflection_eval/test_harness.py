@@ -312,7 +312,7 @@ async def test_blind_packet_hides_model_labels_and_is_seeded(
     assert len(orders) >= 2
     assert any(len(set(order[:4])) > 1 for order in orders)
 
-    with pytest.raises(ValueError, match="same directory"):
+    with pytest.raises(ValueError, match="separate directories"):
         write_review_files(
             packet, key, packet_path=tmp_path / "packet.json", key_path=tmp_path / "key.json"
         )
@@ -322,3 +322,23 @@ async def test_blind_packet_hides_model_labels_and_is_seeded(
     assert json.loads(packet_path.read_text(encoding="utf-8")) == packet
     assert json.loads(key_path.read_text(encoding="utf-8")) == key
     assert sorted(p.name for p in packet_path.parent.iterdir()) == ["packet.json"]
+
+
+@pytest.mark.parametrize(
+    ("packet_rel", "key_rel"),
+    [
+        ("p/packet.json", "p/key.json"),  # same directory
+        ("p/packet.json", "p/k/key.json"),  # reviewer probe: key nested under the packet
+        ("p/k/packet.json", "p/key.json"),  # packet nested under the key
+        ("p/packet.json", "q/../p/key.json"),  # same directory, spelled through ..
+    ],
+)
+def test_review_key_is_never_inside_the_packet_folder(
+    tmp_path: Path, packet_rel: str, key_rel: str
+) -> None:
+    """Whoever is handed the packet's folder must not be handed the key (AC15)."""
+    with pytest.raises(ValueError, match="separate directories"):
+        write_review_files(
+            [], {"R-0": "mdl-x"}, packet_path=tmp_path / packet_rel, key_path=tmp_path / key_rel
+        )
+    assert not (tmp_path / "p").exists()

@@ -297,13 +297,16 @@ def write_review_files(
     packet_path: Path,
     key_path: Path,
 ) -> None:
-    """Write the packet and its key to DIFFERENT directories, local only.
+    """Write the packet and its key to separate, unnested directories, local only.
 
-    Refusing a shared directory is the point: a reviewer handed the packet's
-    folder must not be handed the key with it.
+    Refusing a shared or nested directory is the point: a reviewer handed the
+    packet's folder -- with everything beneath it -- must not be handed the key
+    with it, and vice versa. Paths are resolved first, so ``..`` cannot hide a
+    shared folder. Nothing is written when the check fails.
     """
-    if packet_path.resolve().parent == key_path.resolve().parent:
-        msg = "The review packet and its key must not be written to the same directory."
+    packet_dir, key_dir = packet_path.resolve().parent, key_path.resolve().parent
+    if packet_dir.is_relative_to(key_dir) or key_dir.is_relative_to(packet_dir):
+        msg = "The review packet and its key must be written to separate directories."
         raise ValueError(msg)
     for path, data in ((packet_path, packet), (key_path, dict(key))):
         path.parent.mkdir(parents=True, exist_ok=True)
