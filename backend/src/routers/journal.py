@@ -3148,11 +3148,17 @@ def _essay_clients(
 async def _load_user_marginalia(
     session: AsyncSession, marginalia_id: int, user_id: int
 ) -> Marginalia | None:
-    """Load the caller's own marginalia row by id (denormalized user_id scope)."""
+    """Load the caller's own marginalia row by id (denormalized user_id scope).
+
+    Shares the listing's visibility filter, so a stored demo note hidden there
+    is a 404 here too rather than a letter the writer can still be charged for.
+    """
     result = await session.execute(
         select(Marginalia).where(
             Marginalia.id == marginalia_id,
             Marginalia.user_id == user_id,
+            # A hidden demo note is absent by id as in the listing (#3096).
+            *demo_visibility.visible_note_clauses(),
         )
     )
     return result.scalars().first()

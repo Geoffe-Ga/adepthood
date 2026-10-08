@@ -30,7 +30,7 @@ from routers.journal import _prior_letter_essays
 from services import botmason
 from services import marginalia as marginalia_service
 from services.botmason import LLMResponse
-from tests.incident.test_privacy_suspension import seed_entry, signup
+from tests.incident.test_privacy_suspension import seed_entry, signup, wallet
 from tests.provider_transport import ANTHROPIC_KEY, use_anthropic
 from tests.test_voice_draft_mirroring import _RecordingDraftVault
 
@@ -260,3 +260,29 @@ async def test_a_refused_regeneration_never_mirrors_the_stored_demo_letter(
     assert vault.upserts == []
     intents = await db_session.execute(select(func.count()).select_from(VoiceDraftRetraction))
     assert intents.scalar_one() == 0
+
+
+@pytest.mark.asyncio
+async def test_a_stored_demo_note_cannot_be_asked_for_a_letter(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hidden demo note is absent by id too: 404, nothing charged, nothing dialled.
+
+    Hiding it from the listing alone would leave it reachable, and billable,
+    through ``POST /journal/marginalia/{id}/essay`` for anyone holding its id.
+    """
+    transport = use_anthropic(monkeypatch, HTTPStatus.OK, _ANTHROPIC_LETTER)
+    monkeypatch.delenv(botmason.STUB_SEAM_ENV_VAR, raising=False)
+    headers, user_id, _ = await signup(async_client, "demo_note_by_id")
+    entry_id = await seed_entry(db_session, user_id)
+    note_id = await seed_note(db_session, user_id, entry_id, Stored(_DEMO))
+    before = await wallet(db_session, user_id)
+
+    resp = await async_client.post(
+        f"/journal/marginalia/{note_id}/essay", headers=headers, json={"price_acknowledged": True}
+    )
+
+    assert resp.status_code == HTTPStatus.NOT_FOUND, resp.text
+    assert resp.json() == {"detail": "marginalia_not_found"}
+    assert transport.request_count == 0
+    assert await wallet(db_session, user_id) == before
