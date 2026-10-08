@@ -42,6 +42,7 @@ from models.marginalia import Marginalia, MarginaliaKind
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
 from routers import journal as journal_router
 from routers.auth import get_current_user
+from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import record_mirror_intent
 from services.creek_vault_write import VaultWriteOutcome
 from services.user_vault_config import clear_vault_config, store_vault_config
@@ -52,7 +53,10 @@ _VAULT_A = "https://vault-a.example.com"
 _VAULT_B = "https://vault-b.example.com"
 _KEY_A = "key-a-0123456789"  # pragma: allowlist secret
 _KEY_B = "key-b-0123456789"  # pragma: allowlist secret
-_PENDING_DETAIL = {"detail": "vault_withdrawal_pending"}
+# A copy owed to a vault other than the connected one answers with where it is
+# (#3094): the vault connected before, or the one disconnected.
+_PREVIOUS_DETAIL = {"detail": "vault_withdrawal_previous_vault"}
+_DISCONNECTED_DETAIL = {"detail": "vault_withdrawal_disconnected_vault"}
 
 
 class _DraftAwareVault(SequencedVaultClient):
@@ -161,7 +165,7 @@ async def test_reconnected_vault_never_confirms_old_journal_copy(
     await store_vault_config(db_session, user_id, vault_url=_VAULT_B, api_key=_KEY_B)
     status, body = await _patch_intimate(async_client, entry_id, headers)
 
-    assert (status, body) == (HTTPStatus.SERVICE_UNAVAILABLE, _PENDING_DETAIL)
+    assert (status, body) == (HTTPStatus.SERVICE_UNAVAILABLE, _PREVIOUS_DETAIL)
     assert vault.withdraw_calls == [], "a different vault must never be asked to confirm"
     pending = await _entry(db_session, entry_id)
     assert pending.classification == "intimate"
@@ -190,9 +194,11 @@ async def test_disconnected_vault_keeps_the_copy_pending(
     entry_id = await _create_public_entry(async_client, headers)
 
     await clear_vault_config(db_session, user_id)
+    # With no vault connected the app resolves the local fallback, which dials nothing.
+    app.dependency_overrides[get_creek_vault_client] = LocalFallbackCreekVaultClient
     status, body = await _patch_intimate(async_client, entry_id, headers)
 
-    assert (status, body) == (HTTPStatus.SERVICE_UNAVAILABLE, _PENDING_DETAIL)
+    assert (status, body) == (HTTPStatus.SERVICE_UNAVAILABLE, _DISCONNECTED_DETAIL)
     assert vault.withdraw_calls == []
     assert (await _entry(db_session, entry_id)).vault_ref == "vault-ref-1"
 
@@ -301,7 +307,7 @@ async def test_reconnected_vault_never_confirms_old_essay(
     await store_vault_config(db_session, user_id, vault_url=_VAULT_B, api_key=_KEY_B)
     status, body = await _patch_intimate(async_client, entry_id, headers)
 
-    assert (status, body) == (HTTPStatus.SERVICE_UNAVAILABLE, _PENDING_DETAIL)
+    assert (status, body) == (HTTPStatus.SERVICE_UNAVAILABLE, _PREVIOUS_DETAIL)
     assert vault.draft_deletes == []
     result = await db_session.execute(
         select(VoiceDraftRetraction).where(col(VoiceDraftRetraction.marginalia_id) == note_id)
@@ -417,8 +423,9 @@ async def test_reconnected_vault_never_confirms_old_copy_on_delete(
     """DELETE after a reconnect stays pending, names destination_changed, and dials nobody.
 
     Escalation 5 (#3060): the old vault still holds the copy and no stored
-    credential reaches it, so the honest answer is a standing 503 until the
-    owner decides the reconnect policy. This pins that behaviour deliberately.
+    credential reaches it. Owner decision (#3094): the 503 names the previous
+    vault so the writer can reconnect it first, or take the erase-locally
+    path (pinned in ``test_journal_unreachable_vault.py``).
     """
     headers, user_id = await _signup(async_client, "dest_delete_swap")
     await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
@@ -432,7 +439,7 @@ async def test_reconnected_vault_never_confirms_old_copy_on_delete(
     deleted = await async_client.delete(f"/journal/{entry_id}", headers=headers)
 
     assert deleted.status_code == HTTPStatus.SERVICE_UNAVAILABLE
-    assert deleted.json() == _PENDING_DETAIL
+    assert deleted.json() == _PREVIOUS_DETAIL
     assert vault.withdraw_calls == []
     row = await _entry(db_session, entry_id)
     assert row.deleted_at is None
