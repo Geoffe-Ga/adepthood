@@ -58,6 +58,7 @@ from models.voice_draft_retraction import (
     VoiceDraftRetractionState,
 )
 from services.account_egress_barrier import ensure_account_live, hold_account
+from services.corpus_ingest import withdraw_journal_entry as withdraw_local_journal_entry
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_upload import _expressible_on_the_wire
 from services.creek_vault_withdraw import (
@@ -833,11 +834,26 @@ async def _finish_pending_delete(
     *,
     moment: datetime,
 ) -> bool:
-    """Withdraw a live page's copy and, once nothing is owed, stamp the asked-for deletion."""
+    """Finish a requested deletion once every copy of the page is confirmed gone.
+
+    The local half of the deletion is repeated first -- the corpus withdrawal
+    and the essay retraction marking -- so a fragment or an essay mirror that
+    appeared after the DELETE (a write that raced the obligation, a restore)
+    never outlives it. Then the page's own copy is withdrawn and every owed
+    essay withdrawal, including any just marked, must be confirmed before
+    ``deleted_at`` is stamped.
+    """
+    target = attempt.target
+    await withdraw_local_journal_entry(session, user_id=target.user_id, entry_id=target.entry_id)
+    await mark_entry_retractions_pending(session, user_id=target.user_id, entry_id=target.entry_id)
+    await session.commit()
     journal_withdrawn = await withdraw_journal_copy(
         session, entry, client, destination=attempt.destination
     )
-    if not (journal_withdrawn and attempt.drafts_withdrawn):
+    drafts_withdrawn = await retract_pending_voice_drafts(
+        session, client, target, destination=attempt.destination, due_by=moment
+    )
+    if not (journal_withdrawn and drafts_withdrawn):
         return False
     if entry.deleted_at is None:
         entry.deleted_at = moment

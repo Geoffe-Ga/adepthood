@@ -21,6 +21,7 @@ from typing import Final
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from errors import conflict
 from models.journal_entry import JournalEntry
 from models.journal_withdrawal_obligation import (
     OPEN_STATES,
@@ -290,3 +291,21 @@ async def erase_here(
     location = await locate_owed_copy(session, entry, destination, client)
     await erase_with_unconfirmed_copy(session, entry, destination=destination, location=location)
     return location
+
+
+#: The 409 every content write gets while a page's deletion is in progress.
+DELETION_PENDING_DETAIL: Final = "journal_entry_deletion_pending"
+
+
+async def refuse_if_deletion_pending(session: AsyncSession, entry: JournalEntry) -> None:
+    """Refuse a content write to a page whose deletion is in progress (409).
+
+    An open ``pending_delete`` obligation means the writer asked for this page
+    to go and the background sweep will finish that once its vault confirms.
+    Until then the page must not change underneath the deletion: no edit, no
+    re-ingest into the corpus or the vault, no new derived writing. Retrying
+    the DELETE (or taking ``erase-locally``) stays open. Reads only.
+    """
+    row = await open_obligation(session, user_id=entry.user_id, entry_id=_entry_id(entry))
+    if row is not None and row.state == JournalWithdrawalState.PENDING_DELETE.value:
+        raise conflict(DELETION_PENDING_DETAIL)

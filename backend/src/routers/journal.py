@@ -188,6 +188,7 @@ from services.journal_withdrawal_obligation import (
     complete_confirmed_delete,
     erase_here,
     owe_pending_delete,
+    refuse_if_deletion_pending,
     withdrawal_pending_detail,
 )
 from services.llm_usage import (
@@ -1203,6 +1204,7 @@ async def _persist_entry_update(
     entry = result.scalars().first()
     if entry is None:
         raise not_found("journal_entry")
+    await refuse_if_deletion_pending(session, entry)
     await _apply_entry_update(entry, payload, session)
     session.add(entry)
     try:
@@ -2388,6 +2390,7 @@ async def run_resonance(
     any committed BotMason deduction is refunded, so the pass costs them nothing.
     """
     entry = await _require_user_entry(session, entry_id, current_user)
+    await refuse_if_deletion_pending(session, entry)
     message = _sanitize_message(entry.message)
     # Privacy floor (issue #895): an intimate entry is NEVER sent to a language
     # model, whoever pays. Decided from the *persisted* classification (never
@@ -2863,6 +2866,7 @@ async def detect_entry_suggestions(
     entry = await _load_user_entry(session, entry_id, current_user)
     if entry is None:
         raise not_found("journal_entry")
+    await refuse_if_deletion_pending(session, entry)
     # Validation only: a legacy row whose body sanitizes to nothing answers 422
     # before any candidate or provider work. The body actually dialled is
     # re-derived from the row re-read under the hold.
@@ -3343,6 +3347,7 @@ async def _expand_essay(
     entry = await _load_user_entry(session, note.journal_entry_id, user_id)
     if entry is None:  # pragma: no cover — marginalia FK guarantees the parent
         raise not_found("journal_entry")
+    await refuse_if_deletion_pending(session, entry)
     # Privacy floor (issue #895): an intimate entry is NEVER sent to a cloud LLM,
     # so skip essay generation entirely and return the note (no essay) unchanged.
     # Decided from the *persisted* classification, before the LLM is constructed.
