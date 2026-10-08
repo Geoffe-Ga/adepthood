@@ -167,11 +167,37 @@ def test_grounded_quote_is_extracted_and_masked_in_every_quote_style(
         "You\u2019re right that the water\u2019s loud, and it\u2019s yours to keep.",
         "You're right that the water's loud, and the walkers' path is yours.",
         "It's your river; whether it's 'loud' or not isn't for anyone else to say.",
+        # Review round 2: a leading elision paired with a later plural possessive.
+        "You stayed 'cause the water was loud, by the walkers' path.",
+        "You walked in the '90s and you're still walking the dogs' path.",
+        "You'll hold on 'til morning, and the kids' rooms can wait for you.",
+        "Back in the '90s you wrote of the kids' rooms, and the quiet there.",
+        "You let 'em go, and your friends' laughter stayed with you.",
+        "You stayed 'cause the water was loud, and your parents' voices faded.",
+        "You mention the '90s and your parents' house, and the quiet there.",
+        "Rock 'n' roll and your neighbours' radio filled the street.",
+        # Each guard on its own: an elision with a later one-word quote, and an
+        # unclosed quote that a plural possessive must not close.
+        "You stayed 'cause the water was loud, and you said 'enough' to the night.",
+        "You crossed by the 'old bridge near the walkers' path again.",
     ],
 )
 def test_apostrophes_are_not_read_as_quotes(letter: str) -> None:
     """Contractions and possessives never open a quoted span."""
     assert RuleId.LETTER_QUOTE_UNGROUNDED not in _scored(_sample(_RIVER, letter=letter)).rule_ids
+
+
+@pytest.mark.parametrize(
+    "letter",
+    [
+        "You wrote 'I swam across the river at night' and kept going.",
+        "You wrote 'the fish sang to me all night' and the walkers' path stayed empty.",
+        "You wrote 'the fish swam for hours'.",  # a real quote may end in s'
+    ],
+)
+def test_straight_single_quoted_fabrication_is_still_caught(letter: str) -> None:
+    """The elision and possessive guards do not hide a genuine single-quoted invention."""
+    assert RuleId.LETTER_QUOTE_UNGROUNDED in _scored(_sample(_RIVER, letter=letter)).blocking
 
 
 def test_single_quoted_span_with_a_contraction_inside_grounds() -> None:
