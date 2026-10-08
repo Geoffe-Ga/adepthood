@@ -21,6 +21,8 @@ from functools import cache
 from pathlib import Path
 from typing import Final
 
+import pytest
+
 from tests.incident.test_suspension_invariants import (
     AI_EXCLUSIONS,
     _ai_trails,
@@ -151,22 +153,55 @@ def test_nothing_in_src_arms_the_seam() -> None:
     assert subscript_writes == [], subscript_writes
 
 
-def _admits_through_gate(graph: SourceGraph, module: str, body: ast.AST) -> bool:
-    """Whether ``body`` calls the payer gate, directly or through a same-module helper.
+def _refusal_binding(node: ast.AST) -> str | None:
+    """The name ``x`` when ``node`` is ``x = [await] payer_refusal(...)``, else ``None``."""
+    if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
+        return None
+    target, value = node.targets[0], node.value
+    if isinstance(value, ast.Await):
+        value = value.value
+    if not (
+        isinstance(target, ast.Name)
+        and isinstance(value, ast.Call)
+        and _dotted(value.func).rsplit(".", 1)[-1] == _PAYER_GATE_RETURNING
+    ):
+        return None
+    return target.id
 
-    ``payer_refusal`` is the gate with its 402 handed back, so a refused
-    distressed writer still gets care. One level of same-module helper is
-    followed too, so the check stays lexical.
-    """
-    if _calls_named(body, _PAYER_GATE) or _calls_named(body, _PAYER_GATE_RETURNING):
-        return True
+
+def _acts_on(body: ast.AST, name: str) -> bool:
+    """Whether ``body`` has ``if <name> is not None:`` whose branch returns or raises."""
     for node in ast.walk(body):
-        if not isinstance(node, ast.Call):
+        if not isinstance(node, ast.If):
             continue
-        helper = graph.body_of(Site(module, _dotted(node.func).rsplit(".", 1)[-1]))
-        if helper is not None and _calls_named(helper, _PAYER_GATE):
+        test = node.test
+        if not (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == name
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.IsNot)
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value is None
+        ):
+            continue
+        if any(isinstance(child, ast.Return | ast.Raise) for child in node.body):
             return True
     return False
+
+
+def _admits_through_gate(body: ast.AST) -> bool:
+    """Whether ``body`` admits through the payer gate.
+
+    Either it calls ``require_ai_payer``, which raises its refusal, or it binds
+    ``payer_refusal``'s handed-back 402 and returns or raises when there is one.
+    A ``payer_refusal`` whose result is ignored admits everything, so it does
+    not count.
+    """
+    if _calls_named(body, _PAYER_GATE):
+        return True
+    names = [name for node in ast.walk(body) if (name := _refusal_binding(node))]
+    return any(_acts_on(body, name) for name in names)
 
 
 def _gated(graph: SourceGraph, trail: tuple[str, ...]) -> bool:
@@ -174,9 +209,42 @@ def _gated(graph: SourceGraph, trail: tuple[str, ...]) -> bool:
     for step in trail[:-1]:
         module, _, name = step.rpartition(".")
         body = graph.body_of(Site(module, name))
-        if body is not None and _admits_through_gate(graph, module, body):
+        if body is not None and _admits_through_gate(body):
             return True
     return False
+
+
+#: A handler that binds the gate's handed-back refusal, for the rule's own cases.
+_BIND: Final = "async def r(s):\n    refusal = await payer_refusal(s, 1, None)\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "admits"),
+    [
+        ("async def r(s):\n    await require_ai_payer(s, 1, None)\n", True),
+        (_BIND + "    if refusal is not None:\n        return refusal\n", True),
+        (_BIND + "    if refusal is not None:\n        raise refusal\n", True),
+        ("async def r(s):\n    await payer_refusal(s, 1, None)\n", False),
+        (
+            "async def r(s):\n    refusal = await payer_refusal(s, 1, None)\n    log(refusal)\n",
+            False,
+        ),
+        (_BIND + "    if refusal is not None:\n        log(refusal)\n", False),
+        ("async def r(s):\n    await _helper(s)\n", False),
+    ],
+    ids=[
+        "require-raises",
+        "refusal-returned",
+        "refusal-raised",
+        "refusal-ignored",
+        "refusal-bound-unused",
+        "refusal-branch-falls-through",
+        "helper-not-followed",
+    ],
+)
+def test_the_gate_check_accepts_only_an_acted_on_refusal(source: str, *, admits: bool) -> None:
+    """Non-vacuity for the rule: an ignored or unacted ``payer_refusal`` is no gate."""
+    assert _admits_through_gate(ast.parse(source)) is admits
 
 
 def test_every_ai_reaching_route_admits_through_the_payer_gate() -> None:
