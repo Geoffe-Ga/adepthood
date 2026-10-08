@@ -39,7 +39,10 @@ export function deleteEntryFailureNotice(detail: string): string {
 // DRAFT copy, pending owner review. Each line is a strict narrowing: nothing
 // here says a vault copy is gone unless that vault confirmed it.
 
-/** The 503 details that mean "the page is safe here, its vault copy is not confirmed". */
+/** The 409 a page answers to any edit while its deletion is in progress (#3098). */
+export const DELETION_PENDING_DETAIL = 'journal_entry_deletion_pending';
+
+/** The 503 details that mean "deletion is recorded; its vault copy is not confirmed yet". */
 export const WITHDRAWAL_PENDING_LOCATIONS: Readonly<Record<string, CopyLocation>> = {
   vault_withdrawal_pending: 'connected_vault',
   vault_withdrawal_previous_vault: 'previous_vault',

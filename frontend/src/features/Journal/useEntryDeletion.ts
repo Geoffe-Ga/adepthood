@@ -25,6 +25,9 @@ import { optimisticRemove } from './optimisticRemove';
 import { journal } from '@/api';
 import type { CopyLocation, JournalMessage } from '@/api';
 
+/** HTTP status a delete answers for a page that is already gone. */
+const HTTP_NOT_FOUND = 404;
+
 export interface EntryDeletionDeps {
   items: readonly JournalMessage[];
   setItems: Dispatch<SetStateAction<JournalMessage[]>>;
@@ -68,6 +71,13 @@ export interface EntryDeletion {
 export interface UnreachableCopy {
   entry: JournalMessage;
   location: CopyLocation;
+}
+
+/** True for the 404 a delete answers once the page is already gone. */
+function isAlreadyDeleted(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { status, detail } = error as { status?: unknown; detail?: unknown };
+  return status === HTTP_NOT_FOUND && detail === 'journal_entry_not_found';
 }
 
 /** The location a withdrawal 503 names, or null for any other failure. */
@@ -117,13 +127,18 @@ function deleteWithChoice(target: JournalMessage, ctx: RemovalContext): void {
     setItems: ctx.setItems,
     removeRemote: (entryId) =>
       journal.delete(entryId).catch((err: unknown) => {
+        // A retry of a delete the background sweep already finished: the page
+        // is gone, which is what was asked for, so it is not a refusal (#3098).
+        if (isAlreadyDeleted(err)) return;
         location = withdrawalLocation(err);
         throw err;
       }),
     reinsert: reinsertNewestFirst,
     onError: (detail) => {
       ctx.adjustTotal(1);
-      ctx.setError(deleteEntryFailureNotice(detail));
+      // A withdrawal 503 means the deletion is recorded and finishes on its
+      // own once the vault confirms; say that, not that the delete failed.
+      ctx.setError(location === null ? deleteEntryFailureNotice(detail) : detail);
       if (location !== null) ctx.setUnreachable({ entry: target, location });
     },
     beforeStart: () => {

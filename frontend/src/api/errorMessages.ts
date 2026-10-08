@@ -169,15 +169,18 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   tag_slug_taken: 'You already have a tag by that name. Pick a different one.',
   habits_must_not_be_empty:
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
+  // DRAFT copy (#3094/#3098 review), pending owner review. A DELETE that
+  // answers one of these has recorded the deletion: the server finishes it once
+  // the vault holding the copy confirms, and refuses edits until then. So none
+  // of these says the delete failed, and none says the copy is gone.
   vault_withdrawal_pending:
-    "Creek hasn't confirmed the removal yet. Open your Creek vault so it can catch up, then delete this page again.",
-  // DRAFT copy (#3094), pending owner review. The copy of this page is in a
-  // vault the account is no longer connected to; reconnect first, or delete it
-  // here only. Neither line says the copy is gone.
+    "This page is set to be deleted. Deletion finishes once your Creek vault confirms its copy is gone; until then the page can't be edited.",
   vault_withdrawal_previous_vault:
-    'A copy of this page is in the Creek vault you were connected to before. Reconnect that vault to remove it, or delete the page here only.',
+    "This page is set to be deleted. Its copy is in the Creek vault you were connected to before, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
   vault_withdrawal_disconnected_vault:
-    'A copy of this page is in the Creek vault you disconnected. Reconnect that vault to remove it, or delete the page here only.',
+    "This page is set to be deleted. Its copy is in the Creek vault you disconnected, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
+  journal_entry_deletion_pending:
+    "This page is set to be deleted, so it can't be edited. Deletion finishes once your Creek vault confirms its copy is gone.",
 
   // --- Wallet / BotMason quota -----------------------------------------
   payment_required: MONTHLY_FREE_MESSAGES_USED,

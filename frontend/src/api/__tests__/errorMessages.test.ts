@@ -62,6 +62,7 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'vault_withdrawal_pending',
       'vault_withdrawal_previous_vault',
       'vault_withdrawal_disconnected_vault',
+      'journal_entry_deletion_pending',
       // wallet
       'payment_required',
       'insufficient_offerings',

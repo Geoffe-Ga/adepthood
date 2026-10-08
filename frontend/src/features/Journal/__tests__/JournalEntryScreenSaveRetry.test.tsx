@@ -812,3 +812,52 @@ describe('a retried create is one entry (#2936)', () => {
     expect(hint(screen)).toBe(WEEK_TAKEN_HINT);
   });
 });
+
+describe('a page whose deletion is in progress, and a copy in another vault (#3094/#3098)', () => {
+  const DELETION_PENDING = { status: 409, detail: 'journal_entry_deletion_pending' };
+
+  it('says the page is set to be deleted when a body save is refused, and offers no retry', async () => {
+    const screen = await openLoaded();
+    mockUpdate.mockRejectedValueOnce(DELETION_PENDING);
+
+    await typeBody(screen, 'Words typed after the delete.');
+
+    expect(hint(screen)).toMatch(/set to be deleted, so it can’t be edited/);
+    expect(hint(screen)).toMatch(/once your Creek vault confirms its copy is gone/);
+    expect(screen.queryByTestId('journal-save-retry')).toBeNull();
+  });
+
+  it('reverts a refused tier change and says why', async () => {
+    const screen = await openLoaded({ classification: 'personal' });
+    mockUpdate.mockRejectedValueOnce(DELETION_PENDING);
+
+    await pressTier(screen, 'public');
+
+    expect(tierSelected(screen, 'personal')).toBe(true);
+    expect(hint(screen)).toMatch(/set to be deleted/);
+    expect(screen.queryByTestId('journal-save-retry')).toBeNull();
+  });
+
+  it.each(['vault_withdrawal_previous_vault', 'vault_withdrawal_disconnected_vault'])(
+    'asks to reconnect the old vault, not to choose Intimate again (%s)',
+    async (detail) => {
+      const screen = await openLoaded({ classification: 'personal' });
+      mockUpdate.mockRejectedValueOnce({ status: 503, detail });
+
+      await pressTier(screen, 'intimate');
+
+      expect(tierSelected(screen, 'intimate')).toBe(true);
+      expect(hint(screen)).toMatch(/no longer connected to — reconnect that vault/);
+      expect(hint(screen)).not.toMatch(/choose Intimate again/);
+    },
+  );
+
+  it('keeps the choose-again hint when the connected vault has simply not confirmed', async () => {
+    const screen = await openLoaded({ classification: 'personal' });
+    mockUpdate.mockRejectedValueOnce({ status: 503, detail: 'vault_withdrawal_pending' });
+
+    await pressTier(screen, 'intimate');
+
+    expect(hint(screen)).toMatch(/choose Intimate again/);
+  });
+});
