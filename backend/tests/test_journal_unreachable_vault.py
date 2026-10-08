@@ -262,6 +262,42 @@ async def test_erase_locally_after_disconnect_names_the_disconnected_vault(
 
 
 @pytest.mark.asyncio
+async def test_erase_locally_when_the_connected_vault_itself_fails(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Vault A is still connected but cannot confirm: the receipt names the connected vault.
+
+    The obligation stays bound to A, and A's later confirmation clears it.
+    """
+    headers, _user_id, entry_id, destination_a = await _page_in_vault_a(
+        async_client, db_session, "unreach_erase_connected"
+    )
+    failing = _use(DraftVault(fail=True))
+
+    erased = await async_client.post(f"/journal/{entry_id}/erase-locally", headers=headers)
+
+    assert erased.status_code == HTTPStatus.OK
+    assert erased.json() == {
+        "entry_id": entry_id,
+        "remote_copy": "unconfirmed",
+        "copy_location": "connected_vault",
+    }
+    assert failing.withdrawals == [entry_id], "the connected vault was asked first"
+    owed = await _obligation(db_session, entry_id)
+    assert owed is not None
+    assert owed.state == JournalWithdrawalState.UNCONFIRMED
+    assert owed.destination == destination_a
+
+    healthy = DraftVault()
+    await _sweep(db_session, healthy, destination=destination_a)
+
+    assert healthy.withdrawals == [entry_id]
+    cleared = await _obligation(db_session, entry_id)
+    assert cleared is not None
+    assert cleared.state == JournalWithdrawalState.CONFIRMED
+
+
+@pytest.mark.asyncio
 async def test_erase_locally_confirms_when_the_vault_can_answer(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
