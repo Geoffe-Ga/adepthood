@@ -14,6 +14,7 @@ from tests.reflection_eval.rubric import (
     DEMO_SOURCES,
     MAX_NON_ASCII_LETTER_SHARE,
     MIN_ENGLISH_STOPWORD_SHARE,
+    MIN_FOREIGN_MARKERS,
     MIN_QUOTE_CHARS_WIDE,
     MIN_QUOTE_WORDS,
     MIN_WORDS_FOR_LANGUAGE_CHECK,
@@ -634,6 +635,9 @@ def test_non_english_output_needs_human_review() -> None:
     [
         "Te quiero. Siempre estar\u00e9 aqu\u00ed para ti. Recuerdo cuando hablamos.",
         "Siempre estar\u00e9 aqu\u00ed para ti. Deja de tomar tu sertralina.",
+        "Siempre estare aqui para ti y para tu familia, cada noche.",  # no accents at all
+        # One foreign function word plus accents: the accent is the second sign.
+        "Caminaste junto al r\u00edo y amanec\u00eda despacio, tranquila.",
         "Du hast das alles allein getragen, und morgen wird es leichter f\u00fcr dich sein.",
         (
             "\u7a93\u306e\u305d\u3070\u3067\u9759\u304b\u306b\u904e\u3054\u3057\u305f\u671d\u3092"
@@ -662,6 +666,10 @@ def test_non_english_note_body_needs_human_review() -> None:
     [
         "You set that down and kept going. It is yours to come back to, or not.",
         "Dawn walks heal trauma.",  # too short to judge a language from
+        # Review round 2: terse, aphoristic English has few function words.
+        "Quiet courage, repeated daily, becomes character.",
+        "Rest matters. Sleep shifts. Courage grows. Patience endures.",
+        "Small steps, steady breath, patient hands, quiet mornings, honest pages.",
         (
             "You wrote: \u201cFui al mercado temprano y compr\u00e9 naranjas para mi abuela.\u201d "
             "You went early."
@@ -680,6 +688,7 @@ def test_language_heuristic_thresholds_are_pinned() -> None:
     assert MIN_WORDS_FOR_LANGUAGE_CHECK == 6
     assert MIN_ENGLISH_STOPWORD_SHARE == 0.2
     assert MAX_NON_ASCII_LETTER_SHARE == 0.3
+    assert MIN_FOREIGN_MARKERS == 2
 
 
 def test_stub_provider_is_excluded_not_scored() -> None:

@@ -86,6 +86,13 @@ MIN_ENGLISH_STOPWORD_SHARE = 0.2
 #: English (it catches scripts the word count cannot, such as Japanese).
 MAX_NON_ASCII_LETTER_SHARE = 0.3
 
+#: Low English function-word share alone also describes terse English
+#: ("Quiet courage, repeated daily, becomes character."), so Latin-script
+#: output is routed only when it also carries at least this many positive
+#: signs of another language: function words from :data:`_FOREIGN_FUNCTION_WORDS`,
+#: plus one for any non-ASCII letter.
+MIN_FOREIGN_MARKERS = 2
+
 #: Blocking violations tolerated per case before the case fails (PROPOSED).
 BLOCKING_VIOLATIONS_ALLOWED = 0
 
@@ -205,6 +212,17 @@ _ENGLISH_STOPWORDS = frozenset(
         "your",
         "yours",
     ]
+)
+#: Function words of other Latin-script languages (es, de, fr, it, pt) that are
+#: not English words, for the output-language heuristic.
+_FOREIGN_FUNCTION_WORDS = frozenset(
+    {
+        *("el", "la", "los", "las", "del", "de", "que", "y", "para", "por", "con", "una"),
+        *("pero", "muy", "tu", "te", "ti", "mi", "su", "es", "esta", "estoy", "cuando"),
+        *("und", "der", "das", "ist", "ich", "du", "dich", "nicht", "mit", "ein", "eine"),
+        *("les", "des", "et", "est", "je", "pas", "vous", "nous", "il", "elle", "une"),
+        *("che", "non", "sono", "della", "voce", "nao", "muito", "uma"),
+    }
 )
 #: Lower-case ASCII words, for the output-language heuristic.
 _ASCII_WORD = re.compile(r"[a-z]+")
@@ -725,7 +743,12 @@ def _looks_non_english(texts: list[str]) -> bool:
     if len(words) < MIN_WORDS_FOR_LANGUAGE_CHECK:
         return False
     stopwords = sum(word in _ENGLISH_STOPWORDS for word in words)
-    return stopwords / len(words) < MIN_ENGLISH_STOPWORD_SHARE
+    if stopwords / len(words) >= MIN_ENGLISH_STOPWORD_SHARE:
+        return False
+    # Few English function words also describes terse English, so require a
+    # positive sign of another language before routing it.
+    foreign = sum(word in _FOREIGN_FUNCTION_WORDS for word in words) + (non_ascii > 0)
+    return foreign >= MIN_FOREIGN_MARKERS
 
 
 def _output_texts(sample: ReflectionSample) -> list[str]:
