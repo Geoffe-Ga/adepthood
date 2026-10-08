@@ -239,6 +239,37 @@ describe('HabitUtils', () => {
     expect(pos.clear).toBeLessThan(pos.stretch);
   });
 
+  test('getMarkerPositions additive rescales the goals behind progress beyond stretch', () => {
+    const low: Goal = {
+      id: 1,
+      tier: 'low',
+      title: 'low',
+      target: 1,
+      target_unit: 'u',
+      frequency: 1,
+      frequency_unit: 'per_day',
+      is_additive: true,
+    };
+    const clear: Goal = { ...low, id: 2, tier: 'clear', title: 'clear', target: 2 };
+    const stretch: Goal = { ...low, id: 3, tier: 'stretch', title: 'stretch', target: 4 };
+
+    expect(getMarkerPositions(low, clear, stretch, 0)).toEqual({
+      low: 25,
+      clear: 50,
+      stretch: 100,
+    });
+    expect(getMarkerPositions(low, clear, stretch, 4)).toEqual({
+      low: 25,
+      clear: 50,
+      stretch: 100,
+    });
+    expect(getMarkerPositions(low, clear, stretch, 8)).toEqual({
+      low: 12.5,
+      clear: 25,
+      stretch: 50,
+    });
+  });
+
   test('getMarkerPositions subtractive places all three on a low-anchored scale', () => {
     const low: Goal = {
       id: 1,
@@ -1626,6 +1657,14 @@ describe('targetForMarkerPercent', () => {
 
     expect(targetForMarkerPercent(50, 'low', low, clear, stretch)).toBe(4);
     expect(targetForMarkerPercent(60, 'clear', low, clear, stretch)).toBe(5);
+  });
+
+  test('inverts against the expanded scale when progress has passed stretch', () => {
+    const low = goalAt('low', { target: 2 });
+    const clear = goalAt('clear', { target: 6 });
+    const stretch = goalAt('stretch', { target: 8 });
+
+    expect(targetForMarkerPercent(50, 'low', low, clear, stretch, 16)).toBe(8);
   });
 
   test('round-trips a per_week habit in its own raw units, not period totals', () => {

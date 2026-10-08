@@ -475,6 +475,7 @@ function TimerMount({
   onExpand: () => void;
   children: React.ReactNode;
 }): React.JSX.Element {
+  const floats = compact || !idle;
   const mountedPill =
     compact && idle ? (
       <TouchableOpacity
@@ -491,7 +492,7 @@ function TimerMount({
   return (
     <View
       style={[
-        styles.floatingWrapper,
+        floats ? styles.floatingWrapper : styles.inFlowWrapper,
         compact ? styles.floatingWrapperCompact : null,
         docked ? styles.floatingWrapperDocked : null,
       ]}
@@ -567,6 +568,18 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: RESONANCE_BUTTON_CLEARANCE,
+  },
+  // The expanded idle choice belongs below the page in normal flow. A fixed
+  // viewport offset can land in the middle of a flex-grown textarea even when
+  // the scroll content reserves enough room at its end; flow makes the sheet
+  // yield the pill's real height instead. Running/compact shapes still use the
+  // floating rail above, so the active timer remains continuously reachable.
+  inFlowWrapper: {
+    flexShrink: 0,
+    // Keep a real seam between the clipped page viewport and the idle pill.
+    // The sheet's hairline border otherwise rounds a couple of web pixels into
+    // the next sibling even though the flex regions themselves do not overlap.
+    paddingTop: SPACING.sm,
   },
   floatingWrapperCompact: {
     left: undefined,

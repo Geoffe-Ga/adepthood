@@ -196,11 +196,21 @@ export const goalsAreSubtractive = (goals: ReadonlyArray<Goal>): boolean =>
 /** Habit-level polarity: delegates to {@link goalsAreSubtractive} over `habit.goals`. */
 export const isSubtractiveHabit = (habit: Habit): boolean => goalsAreSubtractive(habit.goals);
 
+/** Far end of an additive bar: stretch until today's work carries it farther. */
+const additiveScaleEnd = (stretchTarget: number, periodProgress?: number): number => {
+  const finiteProgress =
+    periodProgress !== undefined && Number.isFinite(periodProgress)
+      ? Math.max(0, periodProgress)
+      : 0;
+  return Math.max(stretchTarget, finiteProgress);
+};
+
 /** LG/CG/SG on a unified 0-100 bar; missing-tier collapses to {0,0,0} as a failure signal. */
 export const getMarkerPositions = (
   lowGoal?: Goal,
   clearGoal?: Goal,
   stretchGoal?: Goal,
+  periodProgress?: number,
 ): { low: number; clear: number; stretch: number } => {
   if (!lowGoal || !clearGoal || !stretchGoal) {
     return { low: 0, clear: 0, stretch: 0 };
@@ -212,10 +222,11 @@ export const getMarkerPositions = (
 
   if (!goalsAreSubtractive([lowGoal, clearGoal, stretchGoal])) {
     if (stretchTarget <= 0) return { low: 0, clear: 50, stretch: 100 };
+    const scaleEnd = additiveScaleEnd(stretchTarget, periodProgress);
     return {
-      low: clampPercentage((lowTarget / stretchTarget) * 100),
-      clear: clampPercentage((clearTarget / stretchTarget) * 100),
-      stretch: 100,
+      low: clampPercentage((lowTarget / scaleEnd) * 100),
+      clear: clampPercentage((clearTarget / scaleEnd) * 100),
+      stretch: clampPercentage((stretchTarget / scaleEnd) * 100),
     };
   }
 
@@ -316,6 +327,7 @@ export const targetForMarkerPercent = (
   lowGoal: Goal,
   clearGoal: Goal,
   stretchGoal: Goal,
+  periodProgress?: number,
 ): number | null => {
   const goal = tier === 'low' ? lowGoal : clearGoal;
   const fraction = clampPercentage(percent) / 100;
@@ -330,7 +342,9 @@ export const targetForMarkerPercent = (
 
   const stretchTarget = getGoalTarget(stretchGoal);
   if (stretchTarget <= 0) return null;
-  return roundedTarget(rawTargetFor(goal, fraction * stretchTarget));
+  return roundedTarget(
+    rawTargetFor(goal, fraction * additiveScaleEnd(stretchTarget, periodProgress)),
+  );
 };
 
 /** Resolve the durable calendar day, falling back only for legacy cached rows. */

@@ -118,7 +118,6 @@ describe('habits footer band layout', () => {
   const bands: [string, React.ReactElement][] = [
     ['ModeBar', <ModeBar key="m" mode="quickLog" onExit={noop} />],
     ['EnergyCTA', <EnergyCTA key="c" onOpen={noop} onArchive={noop} />],
-    ['ErrorBanner', <ErrorBanner key="e" error="boom" onRetry={noop} />],
   ];
 
   it.each(bands)(
@@ -145,6 +144,18 @@ describe('habits footer band layout', () => {
 
     expect(flat.marginBottom).toBeGreaterThan(0);
     expect(flat.marginHorizontal).toBeGreaterThan(0);
+  });
+
+  it('keeps the error at the top of the body in its own column banner', () => {
+    const { getByTestId } = render(<ErrorBanner error="boom" onRetry={noop} />);
+    const flat = StyleSheet.flatten(
+      getByTestId('habits-error-banner').props.style as StyleProp<ViewStyle>,
+    );
+
+    expect(flat.flexDirection).toBe('column');
+    expect(flat.alignItems).toBe('stretch');
+    expect(flat.position).toBeUndefined();
+    expect(flat.bottom).toBeUndefined();
   });
 });
 

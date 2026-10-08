@@ -913,6 +913,25 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
+  // Errors belong at the top of HabitsContent, before the body they describe.
+  // Unlike the footer chrome above, this is a vertical message + action card;
+  // keeping its own in-flow style prevents a row layout from scattering them.
+  errorBanner: {
+    marginHorizontal: SPACING.xl,
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.md,
+    padding: SPACING.md,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    backgroundColor: COLORS.destructive.background,
+    borderColor: COLORS.destructive.border,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  errorBannerText: {
+    color: COLORS.destructive.text,
+    marginBottom: SPACING.sm,
+  },
   energyScaffoldingButton: {
     flex: 1,
     backgroundColor: COLORS.primary,

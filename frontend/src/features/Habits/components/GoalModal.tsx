@@ -42,6 +42,7 @@ import {
   isGoalAchieved,
   completionDayKey,
   targetForMarkerPercent,
+  unitsInCurrentPeriod,
 } from '../HabitUtils';
 import { useStarFill, type StarFill, type StarFillControls } from '../hooks/useStarFill';
 import { createMarkerPanResponder, type DraggableTier, type MarkerDragPort } from '../markerDrag';
@@ -968,7 +969,14 @@ const buildPendingGoalEdit = (
 ): PendingGoalEdit | null => {
   const { lowGoal, clearGoal, stretchGoal } = tiers;
   if (habitId == null || !lowGoal || !clearGoal || !stretchGoal) return null;
-  const newTarget = targetForMarkerPercent(percent, tier, lowGoal, clearGoal, stretchGoal);
+  const newTarget = targetForMarkerPercent(
+    percent,
+    tier,
+    lowGoal,
+    clearGoal,
+    stretchGoal,
+    tiers.periodProgress,
+  );
   if (newTarget === null) return null;
   const goal = tier === 'low' ? lowGoal : clearGoal;
   const tierLabel = TIER_LABELS[tier];
@@ -981,12 +989,14 @@ const buildPendingGoalEdit = (
   };
 };
 
-function useGoalTiers(habit: GoalModalProps['habit']) {
+function useGoalTiers(habit: GoalModalProps['habit'], tz: string) {
   const lowGoal = habit?.goals.find((g) => g.tier === 'low');
   const clearGoal = habit?.goals.find((g) => g.tier === 'clear');
   const stretchGoal = habit?.goals.find((g) => g.tier === 'stretch');
-  const markers = getMarkerPositions(lowGoal, clearGoal, stretchGoal);
-  return { lowGoal, clearGoal, stretchGoal, markers };
+  const periodProgress =
+    habit && stretchGoal ? unitsInCurrentPeriod(habit, stretchGoal, tz) : undefined;
+  const markers = getMarkerPositions(lowGoal, clearGoal, stretchGoal, periodProgress);
+  return { lowGoal, clearGoal, stretchGoal, periodProgress, markers };
 }
 
 /**
@@ -1057,12 +1067,13 @@ const useGoalMarkers = (
   habit: GoalModalProps['habit'],
   onUpdateGoal: GoalModalProps['onUpdateGoal'],
   starFill: React.MutableRefObject<StarFillControls>,
+  tz: string,
 ) => {
   const barWidth = useRef(0);
   const [lowMarker, setLowMarker] = useState(0);
   const [clearMarker, setClearMarker] = useState(0);
   const [tooltip, setTooltip] = useState<null | 'low' | 'clear' | 'stretch'>(null);
-  const tiers = useGoalTiers(habit);
+  const tiers = useGoalTiers(habit, tz);
 
   useEffect(() => {
     setLowMarker(tiers.markers.low);
@@ -1321,7 +1332,7 @@ const useMarkersWithStarFill = (
   tz: string,
 ) => {
   const starFillRef = useRef<StarFillControls>({ begin: () => {}, release: () => {} });
-  const m = useGoalMarkers(habit, onUpdateGoal, starFillRef);
+  const m = useGoalMarkers(habit, onUpdateGoal, starFillRef, tz);
   const fill = useStarFill({
     habit,
     tz,

@@ -79,6 +79,13 @@ describe('computeStarFillPlan — additive habits', () => {
     expect(plan?.toPercent).toBeCloseTo(33.33, 1);
   });
 
+  it('lands on the rescaled star when progress is twice the stretch target', () => {
+    const plan = computeStarFillPlan(withTodayUnits(6), 'low', TZ);
+    expect(plan?.deltaUnits).toBe(-5);
+    expect(plan?.fromPercent).toBe(100);
+    expect(plan?.toPercent).toBeCloseTo(16.67, 1);
+  });
+
   it('returns null when today already sits exactly on the pressed star', () => {
     expect(computeStarFillPlan(withTodayUnits(2), 'clear', TZ)).toBeNull();
   });
