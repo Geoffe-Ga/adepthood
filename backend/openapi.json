@@ -18847,7 +18847,7 @@
     },
     "/journal/{entry_id}/erase-locally": {
       "post": {
-        "description": "Delete a page here even though its vault copy cannot be confirmed gone (#3094).\n\nThe \"I can't reach it\" path behind a DELETE that answered\n``vault_withdrawal_previous_vault`` (or any other withdrawal 503), so a\nwriter is never stuck behind a vault they no longer have. Reconnect-first\nstill holds: every owed withdrawal is attempted exactly as DELETE attempts\nit, and a confirmation makes this an ordinary deletion. Otherwise the page\nis erased here -- gone from read, list and export -- and a content-free\n``unconfirmed`` obligation remembers that a copy may remain; reconnecting\nthat vault later lets the background sweep confirm and clear it.\n\nThe receipt is closed and content-free, and never says \"withdrawn\" for a\ncopy nobody confirmed.",
+        "description": "Delete a page here even though its vault copy cannot be confirmed gone (#3094).\n\nThe \"I can't reach it\" path behind a withdrawal 503, so a writer is never\nstuck behind a vault they no longer have. Reconnect-first still holds:\nevery owed withdrawal is attempted exactly as DELETE attempts it, and a\nconfirmation makes this an ordinary deletion. Otherwise the page is erased\nhere -- gone from read, list and export -- and a content-free\n``unconfirmed`` obligation remembers that a copy may remain; reconnecting\nthat vault later lets the background sweep confirm and clear it. The\nreceipt never says \"withdrawn\" for a copy nobody confirmed.",
         "operationId": "erase_journal_entry_locally_journal__entry_id__erase_locally_post",
         "parameters": [
           {
