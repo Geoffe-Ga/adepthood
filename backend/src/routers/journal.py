@@ -170,6 +170,12 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
+from services.demo_visibility import (
+    has_served_letter,
+    served_letter_clauses,
+    served_note,
+    visible_note_clauses,
+)
 from services.generation_access import require_ai_payer
 from services.generation_guardrails import (
     consume_generation_minute,
@@ -901,6 +907,8 @@ def _expanded_drafts_query(user_id: int) -> Select[tuple[Marginalia]]:
             JournalEntry.user_id == user_id,
             col(JournalEntry.deleted_at).is_(None),
             col(Marginalia.essay).is_not(None),
+            # A stored demo letter is no letter outside the test seam (#3096).
+            *served_letter_clauses(),
         )
     )
 
@@ -2603,13 +2611,13 @@ async def list_marginalia(
         .where(
             Marginalia.journal_entry_id == entry_id,
             Marginalia.user_id == current_user,  # defense-in-depth alongside the entry check
+            # Stored stub output is never served outside the test seam (#3096).
+            *visible_note_clauses(),
         )
         .order_by(col(Marginalia.anchor_start))
     )
     rows = result.scalars().all()
-    return MarginaliaListResponse(
-        items=[MarginaliaResponse.model_validate(r, from_attributes=True) for r in rows]
-    )
+    return MarginaliaListResponse(items=[served_note(r) for r in rows])
 
 
 @router.get("/{entry_id}/suggestions", response_model=CompletionSuggestionListResponse)
@@ -3322,7 +3330,7 @@ async def _essay_response(session: AsyncSession, note: Marginalia) -> EssayRespo
     await reset_monthly_usage_if_due(session, note.user_id, datetime.now(UTC))
     user = await require_user_fresh(session, note.user_id)
     return EssayResponse(
-        **MarginaliaResponse.model_validate(note, from_attributes=True).model_dump(),
+        **served_note(note).model_dump(),
         remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
         remaining_balance=user.offering_balance,
         monthly_reset_date=user.monthly_reset_date,
@@ -3375,7 +3383,8 @@ async def _expand_essay(
     note = await _load_user_marginalia(session, marginalia_id, user_id)
     if note is None:
         raise not_found("marginalia")
-    if note.essay is not None:
+    # A stored demo letter is not a letter already bought: ask again (#3096).
+    if has_served_letter(note):
         _log_essay_cache_hit(note, _CACHE_HIT_PRE_BARRIER)
         return note
     entry = await _load_user_entry(session, note.journal_entry_id, user_id)
@@ -3463,7 +3472,7 @@ async def _cache_and_mirror_essay(
         await session.refresh(entry)
         await session.refresh(note)
         await session.commit()
-        if note.essay is not None:
+        if has_served_letter(note):
             # A concurrent first ask for this note won the barrier and cached
             # its letter while this one waited: a cached reopen, not a second
             # purchase -- no charge, no dial, no overwrite (#623).
