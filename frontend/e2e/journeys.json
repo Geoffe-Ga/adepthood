@@ -2051,6 +2051,6 @@
       "tables": ["journalentry", "walletaudit"]
     },
     "status": "uncovered",
-    "issue": 3096
+    "issue": 3062
   }
 ]
