@@ -21,6 +21,8 @@ def test_report_exits_zero_and_lists_unratified(capsys: pytest.CaptureFixture[st
     unratified = out.split("Unratified", 1)[1]
     assert "gumroadsale" in unratified
     assert "fly_volume_snapshots" in out
+    gumroad = next(line for line in unratified.splitlines() if "gumroadsale" in line)
+    assert "proposed:" in gumroad
 
 
 def test_report_exits_nonzero_on_a_registry_gap(
@@ -31,3 +33,16 @@ def test_report_exits_nonzero_on_a_registry_gap(
     monkeypatch.setattr("scripts.retention_report.retention_gaps", lambda _m: ("table 'x'",))
     assert main([]) != 0
     assert "table 'x'" in capsys.readouterr().err
+
+
+def test_report_exits_nonzero_on_a_missing_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unratified rule with no proposal is a failure the owner cannot review."""
+    monkeypatch.setattr(
+        "scripts.retention_report.proposal_findings",
+        lambda: ("gumroadsale is unratified but carries no proposal",),
+    )
+    assert main([]) != 0
+    assert "carries no proposal" in capsys.readouterr().err

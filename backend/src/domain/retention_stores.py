@@ -15,6 +15,13 @@ The two backup legs' day counts are the constants
 pinned equal to the values ``DEPLOYMENT.md`` states by a drift test. Changing
 either is a change to a retention promise and belongs to the owner (#3063 AC15).
 
+A store whose deadline is unknown, and each backup leg (whose retention is
+itself an owner decision, #3063 AC15), also carries a :class:`StoreProposal`:
+a deadline proposed for the owner to ratify, or none where no period is ours
+to set, with a one-line rationale. Proposals are values for review only --
+the constants above, not the proposals, are what the purge floor and the
+runbook use. The owner reviews them in ``docs/privacy/retention-proposal.md``.
+
 Data only: no I/O, no model, no session.
 """
 
@@ -130,6 +137,35 @@ class Unknown:
 
 Deadline = Days | Hours | Unknown
 
+#: A proposed store deadline; ``None`` where no period is ours to set.
+ProposedDeadline = Days | Hours | None
+
+# Proposed store deadlines for the owner to ratify (#3063 AC15). Values for
+# review only: nothing prunes or purges on them.
+#: Railway's shortest schedule already: Daily, kept 6 days.
+PROPOSED_PLATFORM_BACKUP_DAYS: Final = RAILWAY_PLATFORM_BACKUP_DAYS
+#: Four weekly off-host copies still cover a month of late-found damage.
+PROPOSED_OFFHOST_DUMP_DAYS: Final = 30
+#: Content-free logs kept long enough to investigate an incident.
+PROPOSED_APPLICATION_LOG_DAYS: Final = 30
+#: The vault is a mirror of the journal; a snapshot bridges one day.
+PROPOSED_FLY_SNAPSHOT_DAYS: Final = 1
+
+
+@dataclass(frozen=True)
+class StoreProposal:
+    """A store deadline proposed for the owner to ratify (#3063 AC15). Never a deadline.
+
+    ``deadline`` is ``None`` where no time period is ours to set (the device, the
+    user's own vault, or a copy that lives exactly until a verified withdrawal).
+    Unless ``exceeds_today`` says otherwise, it is never longer than a known
+    deadline today.
+    """
+
+    deadline: ProposedDeadline
+    rationale: str
+    exceeds_today: bool = False
+
 
 @dataclass(frozen=True)
 class Store:
@@ -140,6 +176,7 @@ class Store:
     controller: Controller
     deadline: Deadline
     evidence: str
+    proposal: StoreProposal | None = None
 
 
 STORES: tuple[Store, ...] = (
@@ -150,6 +187,11 @@ STORES: tuple[Store, ...] = (
         controller=Controller.RAILWAY,
         deadline=Days(RAILWAY_PLATFORM_BACKUP_DAYS),
         evidence="DEPLOYMENT.md 'What is backed up' (platform leg; enabling it is #3058)",
+        proposal=StoreProposal(
+            deadline=Days(PROPOSED_PLATFORM_BACKUP_DAYS),
+            rationale="Keep: Daily kept 6 days is already Railway's shortest schedule, and "
+            "it is the leg that recovers from everyday mistakes.",
+        ),
     ),
     Store(
         key="offhost_pg_dump",
@@ -157,6 +199,12 @@ STORES: tuple[Store, ...] = (
         controller=Controller.ADEPTHOOD,
         deadline=Days(OFFHOST_DUMP_RETENTION_DAYS),
         evidence="DEPLOYMENT.md 'What is backed up' (off-host leg)",
+        proposal=StoreProposal(
+            deadline=Days(PROPOSED_OFFHOST_DUMP_DAYS),
+            rationale="Four weekly copies still cover a month of late-found damage or "
+            "platform loss, and cut the backup bound from 97 to 37 days -- and every "
+            "proposal keyed to it.",
+        ),
     ),
     Store(
         key="application_logs",
@@ -165,6 +213,12 @@ STORES: tuple[Store, ...] = (
         controller=Controller.RAILWAY,
         deadline=Unknown("Railway log retention and Sentry retention unverified (#3064)"),
         evidence="backend/src/observability.py; DEPLOYMENT.md 'Logs'",
+        proposal=StoreProposal(
+            deadline=Days(PROPOSED_APPLICATION_LOG_DAYS),
+            rationale="Content-free by invariant but names account ids; 30 days is common "
+            "security-log practice for incident investigation. Use the vendor's shortest "
+            "setting where 30 is unavailable (#3064).",
+        ),
     ),
     Store(
         key="invalid_license_throttle",
@@ -181,6 +235,11 @@ STORES: tuple[Store, ...] = (
         controller=Controller.USER,
         deadline=Unknown("device-controlled; no server-side deadline possible (#3063)"),
         evidence="frontend/src/storage/userScope.ts; frontend/src/context/AuthContext.tsx",
+        proposal=StoreProposal(
+            deadline=None,
+            rationale="Not ours to set: the device holds it, and it is wiped when another "
+            "account signs in.",
+        ),
     ),
     Store(
         key="creek_vault_volume",
@@ -188,6 +247,11 @@ STORES: tuple[Store, ...] = (
         controller=Controller.CREEK,
         deadline=Unknown("withdrawn per entry; account-wide teardown via #3063 AC21-22"),
         evidence="backend/src/services/account_deletion.py vault guidance",
+        proposal=StoreProposal(
+            deadline=None,
+            rationale="Event-bound, not time-bound: a copy lives until its verified "
+            "withdrawal or the vault's teardown at account deletion.",
+        ),
     ),
     Store(
         key="fly_volume_snapshots",
@@ -196,6 +260,12 @@ STORES: tuple[Store, ...] = (
         controller=Controller.FLY,
         deadline=Unknown("#3063 AC19: verify Fly snapshot survival after volume destroy"),
         evidence="Creek creek_mcp/provisioning/fly_pilot_config.py (snapshot_retention: 7)",
+        proposal=StoreProposal(
+            deadline=Days(PROPOSED_FLY_SNAPSHOT_DAYS),
+            rationale="The vault mirrors the journal, so a snapshot only bridges a day; "
+            "set the vendor's minimum (the pilot keeps 7) and destroy snapshots at "
+            "teardown, subject to the AC19 vendor check (#3063).",
+        ),
     ),
     Store(
         key="creek_embeddings_cache",
@@ -203,6 +273,10 @@ STORES: tuple[Store, ...] = (
         controller=Controller.CREEK,
         deadline=Unknown("verified absent per withdrawal; no account deadline (#3063)"),
         evidence="Creek creek_mcp/httpapi/journal.py _verified_absent",
+        proposal=StoreProposal(
+            deadline=None,
+            rationale="Event-bound: vectors go with their entry's verified withdrawal.",
+        ),
     ),
     Store(
         key="creek_ledger",
@@ -210,6 +284,10 @@ STORES: tuple[Store, ...] = (
         controller=Controller.CREEK,
         deadline=Unknown("verified absent per withdrawal; no account deadline (#3063)"),
         evidence="Creek creek_mcp/httpapi/journal.py _verified_absent",
+        proposal=StoreProposal(
+            deadline=None,
+            rationale="Event-bound: ledger rows go with their entry's verified withdrawal.",
+        ),
     ),
     Store(
         key="model_vendor_copies",
@@ -217,6 +295,11 @@ STORES: tuple[Store, ...] = (
         controller=Controller.MODEL_VENDOR,
         deadline=Unknown("vendor retention to be established by #3065 (B11)"),
         evidence="docs/legal/privacy-policy.md model-provider section",
+        proposal=StoreProposal(
+            deadline=None,
+            rationale="The vendor's period, not ours; the owner deferred vendor fields to "
+            "B11 (#3065).",
+        ),
     ),
     Store(
         key="manual_vaults",
@@ -224,8 +307,41 @@ STORES: tuple[Store, ...] = (
         controller=Controller.USER,
         deadline=Unknown("user-controlled; Adepthood cannot purge it (#3063 AC24)"),
         evidence="backend/src/services/account_deletion.py VAULT_GUIDANCE_CONFIGURED",
+        proposal=StoreProposal(
+            deadline=None,
+            rationale="Not ours to set: the user operates the vault and decides.",
+        ),
     ),
 )
+
+
+_BACKUP_KEYS = frozenset(leg.key for leg in BACKUP_LEGS)
+
+
+def _lengthens(today: Deadline, proposed: ProposedDeadline) -> bool:
+    """Whether ``proposed`` is longer than a known deadline of the same unit."""
+    if isinstance(today, Days) and isinstance(proposed, Days):
+        return proposed.count > today.count
+    if isinstance(today, Hours) and isinstance(proposed, Hours):
+        return proposed.count > today.count
+    return False
+
+
+def _proposal_findings(store: Store) -> list[str]:
+    """Findings for a store's proposal: missing where owed, or quietly longer."""
+    proposal = store.proposal
+    if proposal is None:
+        owed = isinstance(store.deadline, Unknown) or store.key in _BACKUP_KEYS
+        return [f"store {store.key!r} has an undecided deadline but no proposal"] if owed else []
+    findings: list[str] = []
+    if not proposal.rationale.strip():
+        findings.append(f"store {store.key!r} proposal states no rationale")
+    if _lengthens(store.deadline, proposal.deadline) and not proposal.exceeds_today:
+        findings.append(
+            f"store {store.key!r} proposal is longer than today's deadline and does not "
+            "say so (exceeds_today)"
+        )
+    return findings
 
 
 def _store_findings(store: Store) -> list[str]:
@@ -236,11 +352,12 @@ def _store_findings(store: Store) -> list[str]:
     deadline = store.deadline
     if isinstance(deadline, Unknown) and not _ISSUE_MARKER.search(deadline.open_question):
         findings.append(f"store {store.key!r} has an unknown deadline with no tracked question")
+    findings.extend(_proposal_findings(store))
     return findings
 
 
 def inventory_findings() -> tuple[str, ...]:
-    """Report duplicated keys, evidence-free stores, and untracked unknowns."""
+    """Report duplicated keys, evidence-free stores, untracked unknowns, and proposal gaps."""
     findings: list[str] = []
     seen: set[str] = set()
     for store in STORES:

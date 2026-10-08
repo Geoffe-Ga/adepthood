@@ -3,7 +3,9 @@
 The report is generated on demand rather than committed, so it never reads as a
 published retention schedule -- publishing one is the owner's decision
 (#3063 AC16). It lists every table's lifetime, flags the rules nobody has
-ratified, and lists the non-database stores with their deadlines.
+ratified with the lifetime proposed for each, and lists the non-database
+stores with their deadlines and proposals. The owner reviews the proposals in
+``docs/privacy/retention-proposal.md``; none is in force until ratified.
 
 Usage, from ``backend/``::
 
@@ -11,8 +13,9 @@ Usage, from ``backend/``::
 
 Exit codes:
     0 -- the registry and the store inventory are complete; report printed.
-    1 -- the registry has a gap or a conflict with the deletion policy, or the
-         store inventory has a finding. The findings go to stderr.
+    1 -- the registry has a gap, a conflict with the deletion policy, or an
+         unratified rule without a proposal, or the store inventory has a
+         finding. The findings go to stderr.
 """
 
 from __future__ import annotations
@@ -24,12 +27,21 @@ from collections.abc import Sequence
 from sqlmodel import SQLModel
 
 from domain.retention import (
+    proposal_findings,
     retention_conflicts,
     retention_gaps,
     retention_report,
     unratified_rules,
 )
-from domain.retention_stores import STORES, Days, Deadline, Hours, inventory_findings
+from domain.retention_stores import (
+    STORES,
+    Days,
+    Deadline,
+    Hours,
+    ProposedDeadline,
+    Store,
+    inventory_findings,
+)
 
 _FAILURE = 1
 
@@ -43,6 +55,21 @@ def _deadline(deadline: Deadline) -> str:
     return f"unknown -- {deadline.open_question}"
 
 
+def _proposed(deadline: ProposedDeadline) -> str:
+    """Render one store's proposed deadline for the report."""
+    if deadline is None:
+        return "no fixed period"
+    return _deadline(deadline)
+
+
+def _store_line(store: Store) -> str:
+    """One store, its deadline today, and the deadline proposed for it."""
+    line = f"  {store.key} [{store.controller.value}]: {_deadline(store.deadline)}"
+    if store.proposal is not None:
+        line += f" -- proposed: {_proposed(store.proposal.deadline)}"
+    return line
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Print the report; return non-zero when the registry is incomplete."""
     del argv  # no options today; accepted so the CLI shape can grow
@@ -52,6 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     findings = (
         *retention_gaps(SQLModel.metadata),
         *retention_conflicts(),
+        *proposal_findings(),
         *inventory_findings(),
     )
     if findings:
@@ -62,12 +90,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.write(retention_report() + "\n")
     sys.stdout.write("\n")
     sys.stdout.write("Unratified (owner decision required, #3063 AC15):\n")
+    proposed = {line.split(":", 1)[0]: line for line in retention_report().splitlines()}
     for name in unratified_rules():
-        sys.stdout.write(f"  {name}\n")
+        proposal = proposed[name].split(" -- proposed: ", 1)[1]
+        sys.stdout.write(f"  {name} -- proposed: {proposal}\n")
     sys.stdout.write("\n")
     sys.stdout.write("Stores outside the database:\n")
     for store in STORES:
-        sys.stdout.write(f"  {store.key} [{store.controller.value}]: {_deadline(store.deadline)}\n")
+        sys.stdout.write(_store_line(store) + "\n")
     return 0
 
 
