@@ -22,6 +22,7 @@ import {
   LOCAL_MODEL_SAVE_FAILED,
   LOCAL_MODEL_SWITCH_DESCRIPTION,
   LOCAL_MODEL_SWITCH_LABEL,
+  LOCAL_MODEL_UNAVAILABLE_NOTE,
 } from './localModelCopy';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import {
@@ -35,6 +36,7 @@ import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
 
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
+import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
 import type {
   ApiKeyClearResult,
   ApiKeySaveResult,
@@ -53,13 +55,10 @@ import type { RootStackParamList } from '@/navigation/RootStack';
  * it to the provider without persisting, logging, or echoing it; reveal toggles
  * only show the masked-by-default value locally in this screen.
  *
- * Above the key sits the "Use Adepthood's own model" switch: the open-source
- * model Adepthood runs on servers it operates, in place of a provider reached
- * with a key. It is the first choice on the screen; everything about the key
- * itself, from where it travels to the Save button, sits below it in one
- * area. While the switch is on that whole area is greyed and inert — the
- * switch is the way to use it again — and a key already saved stays on the
- * device but is not sent (``ApiKeyContext`` withholds it per request).
+ * Above the key sits a disabled preview of Adepthood's planned self-hosted
+ * model. The release gate stays closed until that backend provider exists;
+ * until then, the key area remains live and requests continue through the
+ * person's key or the shared provider exactly as the disclosure says.
  */
 
 const MAX_KEY_LENGTH = 256;
@@ -261,7 +260,9 @@ interface ScreenBodyProps extends LocalModelChoiceProps {
   onOpenTimezone?: () => void;
 }
 
-/** The switch, and under it which of the two paths requests take right now. */
+const ignoreUnavailableModelToggle = (): void => undefined;
+
+/** The gated switch, and under it which path requests actually take right now. */
 const LocalModelChoice = ({
   localModel,
   onToggleLocalModel,
@@ -273,12 +274,17 @@ const LocalModelChoice = ({
         icon={ShieldCheck}
         label={LOCAL_MODEL_SWITCH_LABEL}
         description={LOCAL_MODEL_SWITCH_DESCRIPTION}
-        value={localModel}
-        onValueChange={onToggleLocalModel}
+        value={LOCAL_MODEL_AVAILABLE && localModel}
+        onValueChange={LOCAL_MODEL_AVAILABLE ? onToggleLocalModel : ignoreUnavailableModelToggle}
+        disabled={!LOCAL_MODEL_AVAILABLE}
         testID="local-model"
       />
       <Text style={[face.cardLabel, styles.localModelNote]} testID="local-model-note">
-        {localModel ? LOCAL_MODEL_ON_NOTE : LOCAL_MODEL_OFF_NOTE}
+        {LOCAL_MODEL_AVAILABLE
+          ? localModel
+            ? LOCAL_MODEL_ON_NOTE
+            : LOCAL_MODEL_OFF_NOTE
+          : LOCAL_MODEL_UNAVAILABLE_NOTE}
       </Text>
     </View>
   );
@@ -443,18 +449,21 @@ const ScreenBody = ({
   onBack,
   onOpenTimezone,
   ...keyArea
-}: ScreenBodyProps): React.JSX.Element => (
-  <>
-    <ScreenTitle />
-    <SettingsFeedbackBanner idPrefix="api-key-storage" error={storageWarning} status={null} />
-    <LocalModelChoice
-      localModel={keyArea.localModel}
-      onToggleLocalModel={keyArea.onToggleLocalModel}
-    />
-    <KeyArea {...keyArea} />
-    <ScreenFooter onBack={onBack} onOpenTimezone={onOpenTimezone} />
-  </>
-);
+}: ScreenBodyProps): React.JSX.Element => {
+  const activeLocalModel = LOCAL_MODEL_AVAILABLE && keyArea.localModel;
+  return (
+    <>
+      <ScreenTitle />
+      <SettingsFeedbackBanner idPrefix="api-key-storage" error={storageWarning} status={null} />
+      <LocalModelChoice
+        localModel={keyArea.localModel}
+        onToggleLocalModel={keyArea.onToggleLocalModel}
+      />
+      <KeyArea {...keyArea} localModel={activeLocalModel} />
+      <ScreenFooter onBack={onBack} onOpenTimezone={onOpenTimezone} />
+    </>
+  );
+};
 
 function useSaveKeyHandler(
   form: SettingsFormState,

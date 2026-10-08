@@ -1,16 +1,19 @@
 /**
- * Everything the "Use Adepthood's own model" switch says, in one place so it
- * can be checked. "Local" is the open-source model Adepthood runs on servers
- * it operates — not a model on the device, and not a provider reached with a
- * key the person brought. The promises here are the ones that model is run
- * under; nothing below describes a provider's terms, which are the provider's.
+ * Everything the future Adepthood-model choice says, in one place so it can
+ * be checked. Until an Adepthood-operated provider exists, the control is a
+ * disabled coming-soon row and makes no present-tense routing or privacy
+ * promise. The release gate must only be opened alongside the real provider.
  */
 
-export const LOCAL_MODEL_SWITCH_LABEL = "Use Adepthood's own model";
+export const LOCAL_MODEL_SWITCH_LABEL = "Adepthood's own model — coming soon";
 
-/** What the model is, and the four things it is not done with your writing. */
+/** What is planned, explicitly not what routes requests today. */
 export const LOCAL_MODEL_SWITCH_DESCRIPTION =
-  'An open-source model running on servers Adepthood operates. It does not read, keep, or sell your writing, does not train on it, and builds no profile of you to sell anything with.';
+  'Adepthood plans to offer an open-source model on servers Adepthood operates. This option is not available yet.';
+
+/** Shown while the release gate is closed. */
+export const LOCAL_MODEL_UNAVAILABLE_NOTE =
+  'Requests still use the API key you add below, or the shared provider when no key is saved.';
 
 /** Under the switch while it is on: what is in use, and what the key is not. */
 export const LOCAL_MODEL_ON_NOTE =
@@ -27,6 +30,7 @@ export const LOCAL_MODEL_SAVE_FAILED =
 export const LOCAL_MODEL_COPY_ENTRIES: readonly string[] = [
   LOCAL_MODEL_SWITCH_LABEL,
   LOCAL_MODEL_SWITCH_DESCRIPTION,
+  LOCAL_MODEL_UNAVAILABLE_NOTE,
   LOCAL_MODEL_ON_NOTE,
   LOCAL_MODEL_OFF_NOTE,
   LOCAL_MODEL_SAVE_FAILED,

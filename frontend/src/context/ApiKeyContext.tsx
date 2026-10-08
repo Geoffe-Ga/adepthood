@@ -9,6 +9,7 @@ import React, {
 } from 'react';
 
 import { setLlmApiKeyGetter, setLlmApiKeyReset } from '@/api';
+import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
 import { clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '@/storage/llmKeyStorage';
 import { loadLocalModelPreferred, saveLocalModelPreferred } from '@/storage/localModelStorage';
 
@@ -24,11 +25,11 @@ import { loadLocalModelPreferred, saveLocalModelPreferred } from '@/storage/loca
  * transmitted to Adepthood, then forwarded to the provider; Adepthood never
  * persists it in the server database or returns it in an API response.
  *
- * Beside the key sits the "Use Adepthood's own model" choice (``localModel``):
- * the open-source model Adepthood runs on its own servers, in place of a
- * provider reached with the key. While it is on the registered getter answers
- * ``null``, so a saved key stays on the device and never rides the header —
- * the key is kept, not cleared, so turning the choice back off restores it.
+ * The future Adepthood-model choice stays release-gated until a real
+ * Adepthood-operated backend provider exists. While unavailable, stored legacy
+ * preferences are ignored and the registered getter keeps returning the BYOK
+ * key; merely withholding it would fall back to the shared provider and would
+ * not constitute a self-hosted model path.
  */
 
 /**
@@ -111,8 +112,8 @@ const ApiKeyContext = createContext<ApiKeyContextValue | null>(null);
  * synchronously so the getter returns null immediately, before any re-render
  * triggered by ``setApiKey`` lands. Both seams are cleared on unmount.
  *
- * The getter also answers ``null`` while Adepthood's own model is chosen, so
- * that choice withholds the key per request without touching what is stored.
+ * Once the provider release gate opens, the getter answers ``null`` while
+ * Adepthood's own model is chosen, without touching what is stored.
  */
 function useLlmApiKeyBridge(
   apiKeyRef: React.MutableRefObject<string | null>,
@@ -120,7 +121,9 @@ function useLlmApiKeyBridge(
   setApiKey: React.Dispatch<React.SetStateAction<string | null>>,
 ): void {
   useEffect(() => {
-    setLlmApiKeyGetter(() => (localModelRef.current ? null : apiKeyRef.current));
+    setLlmApiKeyGetter(() =>
+      LOCAL_MODEL_AVAILABLE && localModelRef.current ? null : apiKeyRef.current,
+    );
     setLlmApiKeyReset(() => {
       apiKeyRef.current = null;
       setApiKey(null);
@@ -140,6 +143,10 @@ function useLoadLocalModelPreference(
   setLocalModel: React.Dispatch<React.SetStateAction<boolean>>,
 ): void {
   useEffect(() => {
+    if (!LOCAL_MODEL_AVAILABLE) {
+      setLocalModel(false);
+      return;
+    }
     void loadLocalModelPreferred().then((stored) => {
       if (stored !== null) setLocalModel(stored);
     });
@@ -170,6 +177,29 @@ function useLoadStoredApiKey(
       })
       .finally(() => setIsLoading(false));
   }, [setApiKey, setLoadError, setIsLoading]);
+}
+
+/** Refuse activation until the self-hosted provider exists; otherwise persist the choice. */
+function useSetLocalModel(
+  localModelRef: React.MutableRefObject<boolean>,
+  setLocalModelState: React.Dispatch<React.SetStateAction<boolean>>,
+): (_next: boolean) => Promise<LocalModelSaveResult> {
+  return useCallback(
+    async (next: boolean): Promise<LocalModelSaveResult> => {
+      if (!LOCAL_MODEL_AVAILABLE) {
+        localModelRef.current = false;
+        setLocalModelState(false);
+        return { persisted: false };
+      }
+      // Applied before the write resolves, and synchronously to the ref, so the
+      // very next request already honours the choice.
+      localModelRef.current = next;
+      setLocalModelState(next);
+      const persisted = await saveLocalModelPreferred(next);
+      return { persisted };
+    },
+    [localModelRef, setLocalModelState],
+  );
 }
 
 export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
@@ -220,14 +250,7 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
     return { cleared };
   }, []);
 
-  const setLocalModel = useCallback(async (next: boolean): Promise<LocalModelSaveResult> => {
-    // Applied before the write resolves, and synchronously to the ref, so the
-    // very next request already honours the choice.
-    localModelRef.current = next;
-    setLocalModelState(next);
-    const persisted = await saveLocalModelPreferred(next);
-    return { persisted };
-  }, []);
+  const setLocalModel = useSetLocalModel(localModelRef, setLocalModelState);
 
   const value = useMemo(
     () => ({ apiKey, isLoading, loadError, saveApiKey, clearApiKey, localModel, setLocalModel }),

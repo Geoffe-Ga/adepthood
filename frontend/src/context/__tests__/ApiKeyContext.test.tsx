@@ -5,6 +5,7 @@ import React from 'react';
 import { Text } from 'react-native';
 
 import * as apiModule from '@/api';
+import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
 import * as localModelStorage from '@/storage/localModelStorage';
@@ -308,7 +309,7 @@ describe('ApiKeyProvider', () => {
 });
 
 // ---------------------------------------------------------------------------
-// "Use Adepthood's own model": the key is kept but not sent while it is on.
+// Adepthood's own model stays unavailable until a real self-hosted provider exists.
 // ---------------------------------------------------------------------------
 
 describe('ApiKeyProvider — the local-model choice', () => {
@@ -340,69 +341,23 @@ describe('ApiKeyProvider — the local-model choice', () => {
     expect(getter()?.()).toBe('sk-alpha');
   });
 
-  test('reads a stored choice on mount, and withholds the key while it is on', async () => {
+  test('ignores a stale stored choice while the provider is unavailable', async () => {
+    expect(LOCAL_MODEL_AVAILABLE).toBe(false);
     mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
     mockLocalModel.loadLocalModelPreferred.mockResolvedValueOnce(true);
     const { ctx, getter } = mount();
 
-    await waitFor(() => expect(ctx().localModel).toBe(true));
     await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
-    // Kept, not cleared — and not sent.
-    expect(ctx().apiKey).toBe('sk-alpha');
-    expect(getter()?.()).toBeNull();
+    expect(ctx().localModel).toBe(false);
+    expect(getter()?.()).toBe('sk-alpha');
+    expect(mockLocalModel.loadLocalModelPreferred).not.toHaveBeenCalled();
     expect(mockStorage.clearLlmApiKey).not.toHaveBeenCalled();
   });
 
-  test('turning it on persists the choice and withholds the key at once; off sends it again', async () => {
+  test('refuses programmatic activation while unavailable and keeps sending the key', async () => {
     mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
     const { ctx, getter } = mount();
     await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
-
-    let result: { persisted: boolean } | undefined;
-    await act(async () => {
-      result = await ctx().setLocalModel(true);
-    });
-
-    expect(mockLocalModel.saveLocalModelPreferred).toHaveBeenCalledWith(true);
-    expect(result).toEqual({ persisted: true });
-    expect(ctx().localModel).toBe(true);
-    expect(getter()?.()).toBeNull();
-
-    await act(async () => {
-      result = await ctx().setLocalModel(false);
-    });
-
-    expect(mockLocalModel.saveLocalModelPreferred).toHaveBeenLastCalledWith(false);
-    expect(ctx().localModel).toBe(false);
-    expect(getter()?.()).toBe('sk-alpha');
-  });
-
-  test('the getter honours the choice synchronously, before any re-render lands', async () => {
-    mockStorage.loadLlmApiKey.mockResolvedValueOnce('sk-alpha');
-    let land: (_saved: boolean) => void = () => undefined;
-    mockLocalModel.saveLocalModelPreferred.mockReturnValueOnce(
-      new Promise((resolve) => (land = resolve)),
-    );
-    const { ctx, getter } = mount();
-    await waitFor(() => expect(ctx().apiKey).toBe('sk-alpha'));
-
-    let pending: Promise<{ persisted: boolean }> | undefined;
-    act(() => {
-      pending = ctx().setLocalModel(true);
-    });
-
-    // The write is still out; the very next request must already withhold the key.
-    expect(getter()?.()).toBeNull();
-    await act(async () => {
-      land(true);
-      await pending;
-    });
-  });
-
-  test('a choice whose write fails still holds for this session, and says it did not persist', async () => {
-    mockLocalModel.saveLocalModelPreferred.mockResolvedValueOnce(false);
-    const { ctx } = mount();
-    await waitFor(() => expect(ctx().isLoading).toBe(false));
 
     let result: { persisted: boolean } | undefined;
     await act(async () => {
@@ -410,6 +365,8 @@ describe('ApiKeyProvider — the local-model choice', () => {
     });
 
     expect(result).toEqual({ persisted: false });
-    expect(ctx().localModel).toBe(true);
+    expect(ctx().localModel).toBe(false);
+    expect(getter()?.()).toBe('sk-alpha');
+    expect(mockLocalModel.saveLocalModelPreferred).not.toHaveBeenCalled();
   });
 });

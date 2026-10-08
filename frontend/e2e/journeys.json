@@ -1234,18 +1234,6 @@
     "coveredBy": "frontend/e2e/api-key-remove.browser.e2e.test.ts"
   },
   {
-    "id": "account.local-model-switch-withholds-the-key",
-    "description": "Someone on the API-key screen turns on Use Adepthood's own model, the switch above the key that names the open-source model Adepthood runs on servers it operates and the four things it is not done with your writing. The whole key area greys and goes inert -- the input will not take text, Save, Remove and Show are disabled -- and a key already saved stays on the device but is not sent: ApiKeyContext's registered getter answers null while the choice is on, so the next resonance pass leaves without the X-LLM-API-Key header and is disclosed as the shared allowance. Turning the switch off sends the key again. The choice is kept on the device under its own key and read back on the next launch; a write that fails holds for the session and says so in the form's banner. Uncovered because the browser lane has not yet pressed the switch against the wire; pinned meanwhile by ApiKeySettingsScreen.test.tsx (the greyed area, the note, the banner), ApiKeyContext.test.tsx (the getter withholding the key synchronously, the stored choice read on mount) and localModelStorage.test.ts. The backend serves no such model yet, so the observable effect today is the header's absence, which is what a covering spec should pin.",
-    "crosses": {
-      "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
-      "client": ["resonance", "botmasonUsage"],
-      "routes": ["POST /journal/{entry_id}/resonance", "GET /user/usage"],
-      "tables": ["user", "llmusagelog"]
-    },
-    "status": "uncovered",
-    "issue": 3032
-  },
-  {
     "id": "corpus.decide-what-may-be-sorted",
     "description": "Someone opens the corpus-consent screen, finds every kind of material off and un-asked, turns their journal on, and later turns it back off -- which deletes the copies it collected and leaves a dated refusal on the record rather than an open question. Turning it on now reaches backwards as well: the entries already in their journal are sorted on the same terms as a new one, bounded so the request they are waiting on stays finite. The spec covers the switch and the deletion; what it cannot yet observe is the reach, because the lane has no classification provider, so a backfilled entry settles as unclassified and writes no fragment for a spec to see. A provider that refuses to bill now ends that reach rather than consuming the queue, and never costs the person the permission they just gave -- the switch still answers granted and the entries it did not get to keep their place. The backend pins it at backend/tests/test_corpus_consent_api.py.",
     "crosses": {
