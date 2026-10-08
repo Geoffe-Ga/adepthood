@@ -623,18 +623,31 @@ def validate_app_base_url_config() -> None:
     raise RuntimeError(_unusable_web_origin_message(origin))
 
 
+#: The only environments an armed stub seam may boot in: a laptop (the default)
+#: and the end-to-end lane. Everything else is, or may be, in front of people.
+_DEFAULT_ENVIRONMENT = "development"
+_STUB_SEAM_ENVIRONMENTS = frozenset({_DEFAULT_ENVIRONMENT, "e2e"})
+
+
 def validate_stub_seam_config() -> None:
-    """Refuse a production boot while the canned-stub test seam is armed (#3096).
+    """Refuse a deployed boot while the canned-stub test seam is armed (#3096).
 
     The stub answers a request with a few text-replaced sentences presented as a
     reflection, letter or page. It exists for the backend suite and the
     end-to-end lane, and :data:`~services.botmason.STUB_SEAM_ENV_VAR` is the only
-    way to reach it; a production process with that armed would hand canned text
+    way to reach it; a deployed process with that armed would hand canned text
     to real people, which is exactly what #3096 forbids.
+
+    Fails closed: an armed seam may boot only where it belongs -- ``ENV`` of
+    ``development`` (the default) or ``e2e`` -- and never where
+    :func:`services.journal_encryption.production_in_force` judges the process
+    production. A Railway production with ``ENV`` unset, a staging deploy and a
+    mistyped ``ENV`` all refuse.
     """
-    if os.getenv("ENV", "development") != "production":
-        return
     if not stub_seam_armed():
+        return
+    environment = os.getenv("ENV", _DEFAULT_ENVIRONMENT).strip().lower()
+    if environment in _STUB_SEAM_ENVIRONMENTS and not journal_encryption.production_in_force():
         return
     msg = (
         f"{STUB_SEAM_ENV_VAR} is armed, which lets the canned BotMason stub answer "

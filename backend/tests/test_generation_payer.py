@@ -31,7 +31,7 @@ from models.llm_usage_log import LLMUsageLog
 from models.marginalia import Marginalia
 from models.user import User
 from models.wallet_audit import WalletAudit
-from services import botmason
+from services import botmason, journal_encryption
 from services.generation_access import (
     CREDITS_OR_KEY_REQUIRED,
     KEY_REQUIRED,
@@ -150,21 +150,73 @@ def test_vision_is_unavailable_on_an_unarmed_stub(monkeypatch: pytest.MonkeyPatc
 # --- the boot: the seam never fronts real users --------------------------------
 
 
-def test_production_boot_refuses_an_armed_stub_seam(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A production process with the seam armed would serve canned text: refuse to boot."""
-    monkeypatch.setenv("ENV", "production")
+def _deploy_environment(monkeypatch: pytest.MonkeyPatch, env: dict[str, str]) -> None:
+    """Exactly ``env`` for ``ENV`` and the platform variables, everything else unset."""
+    for name in journal_encryption.PRODUCTION_SIGNAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"ENV": "production"},
+        {"ENV": "Production "},
+        {"ENV": "staging"},
+        {"RAILWAY_ENVIRONMENT_NAME": "production"},
+        {"ENV": "development", "RAILWAY_ENVIRONMENT_NAME": "production"},
+        {"RAILWAY_PROJECT_ID": "proj"},
+        {"ENV": "prod"},
+    ],
+    ids=[
+        "env-production",
+        "env-production-unnormalised",
+        "staging",
+        "railway-production-env-unset",
+        "railway-production-env-development",
+        "platform-marker-without-a-name",
+        "env-typo",
+    ],
+)
+def test_a_deployed_boot_refuses_an_armed_stub_seam(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str]
+) -> None:
+    """Anywhere but a laptop or the e2e lane, an armed seam would serve canned text: refuse.
+
+    Production is judged by the repo's fail-shut predicate
+    (``journal_encryption.production_in_force``), and the seam is allowed only
+    in the two environments that need it, so staging and a typo refuse too.
+    """
+    _deploy_environment(monkeypatch, env)
     monkeypatch.setenv(botmason.STUB_SEAM_ENV_VAR, "true")
 
     with pytest.raises(RuntimeError, match=botmason.STUB_SEAM_ENV_VAR):
         validate_stub_seam_config()
 
 
-@pytest.mark.parametrize(("env", "seam"), [("production", None), ("development", "true")])
-def test_boot_passes_without_the_seam_or_outside_production(
-    monkeypatch: pytest.MonkeyPatch, env: str, seam: str | None
+@pytest.mark.parametrize(
+    ("env", "seam"),
+    [
+        ({"ENV": "production"}, None),
+        ({"RAILWAY_ENVIRONMENT_NAME": "production"}, None),
+        ({}, "true"),
+        ({"ENV": "development"}, "true"),
+        ({"ENV": "e2e"}, "true"),
+    ],
+    ids=[
+        "production-unarmed",
+        "railway-unarmed",
+        "default-armed",
+        "development-armed",
+        "e2e-armed",
+    ],
+)
+def test_boot_passes_without_the_seam_or_where_the_seam_belongs(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], seam: str | None
 ) -> None:
-    """Only the production-plus-armed combination is refused."""
-    monkeypatch.setenv("ENV", env)
+    """An unarmed seam never blocks a boot; an armed one boots only locally or in the e2e lane."""
+    _deploy_environment(monkeypatch, env)
     if seam is None:
         monkeypatch.delenv(botmason.STUB_SEAM_ENV_VAR, raising=False)
     else:
