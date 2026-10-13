@@ -155,10 +155,10 @@ from services.creek_vault_reflect import (
     select_reflection_llm,
 )
 from services.creek_vault_voice_drafts import (
+    MirrorIntent,
     VoiceDraftCopy,
     mark_entry_retractions_pending,
     mirror_voice_draft,
-    record_mirror_intent,
 )
 from services.creek_vault_withdraw import is_pre_binding_copy
 from services.creek_vault_write import (
@@ -3423,7 +3423,9 @@ async def _mirror_cached_essay(
     and if this PUT linearized first, the competing mutation waits and retracts
     it. The content-free intent row -- bound to the destination being dialled --
     is committed before the PUT, so even a lost acknowledgement leaves the
-    withdrawal that mutation owes on record. The request transaction is
+    withdrawal that mutation owes on record; only a PUT the operator's
+    vault-send suspension refused before the wire releases it, and logs no
+    lineage shadow, because nothing left the server (#3122). The request transaction is
     committed before Creek I/O; PostgreSQL holds the cross-worker lock on a
     non-pooled, dedicated connection rather than consuming the application
     pool. Account outermost, entry innermost -- the
@@ -3437,24 +3439,14 @@ async def _mirror_cached_essay(
         if await withdrawal_refusal(session, entry) is not None:
             return cached
         marginalia_id = cast("int", cached.id)
-        destination = await resolved_vault_destination(session, entry.user_id)
-
-        async def _record_intent() -> bool:
-            recorded = await record_mirror_intent(
-                session,
-                user_id=entry.user_id,
-                entry_id=cast("int", entry.id),
-                marginalia_id=marginalia_id,
-                destination=destination,
-            )
-            if recorded:
-                # Shadow only (#3059): the mirror was admitted and its PUT is
-                # next. Committed so no connection is held across that PUT.
-                await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
-                await session.commit()
-            return recorded
-
-        await mirror_voice_draft(
+        intent = MirrorIntent(
+            session,
+            user_id=entry.user_id,
+            entry_id=cast("int", entry.id),
+            marginalia_id=marginalia_id,
+            destination=await resolved_vault_destination(session, entry.user_id),
+        )
+        outcome = await mirror_voice_draft(
             clients.vault_client,
             VoiceDraftCopy(
                 owner_user_id=entry.user_id,
@@ -3462,8 +3454,14 @@ async def _mirror_cached_essay(
                 essay=essay,
                 classification=entry.classification,
             ),
-            record_intent=_record_intent,
+            record_intent=intent.record,
+            release_intent=intent.release,
         )
+        if outcome.dialled:
+            # Shadow only (#3059), once the PUT was really dialled: a suspended
+            # send left nothing to count (#3122), a degraded one may have landed.
+            await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
+            await session.commit()
     return cached
 
 

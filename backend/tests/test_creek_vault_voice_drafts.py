@@ -15,6 +15,7 @@ from domain.creek_vault import (
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultIngestAction,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     VaultVoiceDraftDeleteResult,
     VaultVoiceDraftRequest,
@@ -23,6 +24,7 @@ from domain.creek_vault import (
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import (
     VoiceDraftCopy,
+    VoiceDraftMirrorOutcome,
     mirror_voice_draft,
     retract_voice_draft,
     voice_draft_external_id,
@@ -194,6 +196,88 @@ async def test_failed_voice_draft_upsert_is_swallowed_and_never_retried() -> Non
 
     assert client.handshake_calls == 1
     assert len(client.upserts) == 1
+
+
+class _SuspendedVoiceDraftClient(_RecordingVoiceDraftClient):
+    """A client whose PUT the operator's vault-send switch refuses before the wire."""
+
+    async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
+        del request
+        raise VaultSendSuspendedError
+
+
+class _IntentLedger:
+    """Records the order of intent and release calls a mirror makes."""
+
+    def __init__(self, *, admit: bool = True) -> None:
+        self.calls: list[str] = []
+        self._admit = admit
+
+    async def record(self) -> bool:
+        self.calls.append("record")
+        return self._admit
+
+    async def release(self) -> None:
+        self.calls.append("release")
+
+
+_DRAFT = VoiceDraftCopy(owner_user_id=12, marginalia_id=34, essay=_ESSAY, classification="public")
+
+
+@pytest.mark.parametrize(
+    ("client", "expected", "calls"),
+    [
+        (_RecordingVoiceDraftClient(), VoiceDraftMirrorOutcome.STORED, ["record"]),
+        (
+            _RecordingVoiceDraftClient(fail_upsert=True),
+            VoiceDraftMirrorOutcome.DEGRADED,
+            ["record"],
+        ),
+        (_SuspendedVoiceDraftClient(), VoiceDraftMirrorOutcome.SUSPENDED, ["record", "release"]),
+        (_RecordingVoiceDraftClient(supported=False), VoiceDraftMirrorOutcome.NOT_OFFERED, []),
+    ],
+    ids=["stored", "degraded", "suspended", "not_offered"],
+)
+@pytest.mark.asyncio
+async def test_only_a_suspended_put_releases_its_intent(
+    client: _RecordingVoiceDraftClient,
+    expected: VoiceDraftMirrorOutcome,
+    calls: list[str],
+) -> None:
+    """A suspended PUT is its own outcome and the only one that undoes the intent (#3122)."""
+    ledger = _IntentLedger()
+
+    outcome = await mirror_voice_draft(
+        client, _DRAFT, record_intent=ledger.record, release_intent=ledger.release
+    )
+
+    assert outcome is expected
+    assert ledger.calls == calls
+    assert outcome.dialled is (expected in {"stored", "degraded"})
+
+
+@pytest.mark.asyncio
+async def test_a_withheld_mirror_is_its_own_outcome_and_releases_nothing() -> None:
+    """An owed withdrawal withholds the PUT; nothing was staged, so nothing is released."""
+    client = _RecordingVoiceDraftClient()
+    ledger = _IntentLedger(admit=False)
+
+    outcome = await mirror_voice_draft(
+        client, _DRAFT, record_intent=ledger.record, release_intent=ledger.release
+    )
+
+    assert outcome is VoiceDraftMirrorOutcome.WITHHELD
+    assert ledger.calls == ["record"]
+    assert client.upserts == []
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_mirror_without_a_releaser_still_reports_suspended() -> None:
+    """The release hook is optional; the outcome alone still says nothing left."""
+    outcome = await mirror_voice_draft(_SuspendedVoiceDraftClient(), _DRAFT)
+
+    assert outcome is VoiceDraftMirrorOutcome.SUSPENDED
+    assert not outcome.dialled
 
 
 @pytest.mark.asyncio

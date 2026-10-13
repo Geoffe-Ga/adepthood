@@ -32,7 +32,7 @@ from services import marginalia as marginalia_service
 from services.account_egress_barrier import account_egress_barrier
 from services.botmason import STUB_MODEL_NAME, STUB_PROSE_PREFIX, LLMResponse
 from services.creek_vault_client import LocalFallbackCreekVaultClient
-from services.creek_vault_voice_drafts import voice_draft_external_id
+from services.creek_vault_voice_drafts import MirrorIntent, voice_draft_external_id
 from tests.support.barrier_arrivals import BARRIER_ARRIVAL_TIMEOUT_SECONDS, BarrierArrivals
 from tests.vault_client_doubles import RECORDED_VAULT, bind_every_account_to_a_recorded_vault
 
@@ -1082,3 +1082,84 @@ async def test_message_edit_on_an_intimate_entry_never_waits_on_owed_withdrawals
     still_owed = await _obligation(db_session, note_id)
     assert still_owed is not None
     assert still_owed.state == VoiceDraftRetractionState.PENDING
+
+
+_CONFIRMED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+_PRIOR_ATTEMPTS = 3
+
+
+async def _set_state(session: AsyncSession, note_id: int, state: VoiceDraftRetractionState) -> None:
+    row = await _obligation(session, note_id)
+    assert row is not None
+    row.state = state
+    if state is VoiceDraftRetractionState.CONFIRMED:
+        row.confirmed_at = _CONFIRMED_AT
+        row.attempt_count = _PRIOR_ATTEMPTS
+    session.add(row)
+    await session.commit()
+
+
+def _intent_for(session: AsyncSession, user_id: int, entry_id: int, note_id: int) -> MirrorIntent:
+    return MirrorIntent(
+        session, user_id=user_id, entry_id=entry_id, marginalia_id=note_id, destination=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_releasing_a_rearmed_intent_restores_the_confirmed_row(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A suspended re-mirror of a once-withdrawn draft leaves it confirmed, as it was (#3122)."""
+    _headers, user_id = await _signup(async_client, "release_rearmed")
+    entry_id, note_id = await _seed_note(db_session, user_id, essay=_ESSAY)
+    await _set_state(db_session, note_id, VoiceDraftRetractionState.CONFIRMED)
+    intent = _intent_for(db_session, user_id, entry_id, note_id)
+
+    assert await intent.record() is True
+    rearmed = await _obligation(db_session, note_id)
+    assert rearmed is not None
+    assert rearmed.state == VoiceDraftRetractionState.MIRROR_INTENT
+    await intent.release()
+
+    restored = await _obligation(db_session, note_id)
+    assert restored is not None
+    assert restored.state == VoiceDraftRetractionState.CONFIRMED
+    assert restored.attempt_count == _PRIOR_ATTEMPTS
+    assert restored.confirmed_at is not None
+    assert restored.confirmed_at.replace(tzinfo=UTC) == _CONFIRMED_AT
+
+
+@pytest.mark.asyncio
+async def test_release_leaves_a_row_a_privacy_mutation_has_since_claimed(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A row turned pending after staging is governed by that mutation, so release keeps it."""
+    _headers, user_id = await _signup(async_client, "release_claimed")
+    entry_id, note_id = await _seed_note(db_session, user_id)
+    intent = _intent_for(db_session, user_id, entry_id, note_id)
+
+    assert await intent.record() is True
+    await _set_state(db_session, note_id, VoiceDraftRetractionState.PENDING)
+    await intent.release()
+
+    kept = await _obligation(db_session, note_id)
+    assert kept is not None
+    assert kept.state == VoiceDraftRetractionState.PENDING
+
+
+@pytest.mark.asyncio
+async def test_release_without_a_staged_intent_changes_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An attempt that was withheld staged nothing, so its release cannot drop an owed row."""
+    _headers, user_id = await _signup(async_client, "release_withheld")
+    entry_id, note_id = await _seed_note(db_session, user_id, essay=_ESSAY)
+    await _set_state(db_session, note_id, VoiceDraftRetractionState.PENDING)
+    intent = _intent_for(db_session, user_id, entry_id, note_id)
+
+    assert await intent.record() is False
+    await intent.release()
+
+    owed = await _obligation(db_session, note_id)
+    assert owed is not None
+    assert owed.state == VoiceDraftRetractionState.PENDING

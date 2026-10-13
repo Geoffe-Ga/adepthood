@@ -24,10 +24,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
@@ -50,6 +52,7 @@ from models.habit import Habit
 from models.journal_entry import JournalClassification, JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.promoted_quote import PromotedQuote
+from models.voice_draft_retraction import VoiceDraftRetraction
 from services import frequency_classification
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
@@ -657,6 +660,118 @@ async def test_a_suspended_vault_send_emits_no_shadow_until_resumed(
 
     assert recorder.methods().count("PUT") == 1
     assert _shadowed_operations(caplog, chain.review_id) == [LineageOperation.VAULT_WRITE.value]
+    _assert_no_canary_in_logs(caplog)
+
+
+class _FailingDraftRecorder(_VaultRecorder):
+    """A recorder whose Voice Draft PUT reaches the vault and then fails or loses its answer."""
+
+    def __init__(self, failure: str) -> None:
+        super().__init__()
+        self._failure = failure
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.method != "PUT":
+            return super().__call__(request)
+        self.requests.append(request)
+        if self._failure == "lost_ack":
+            raise httpx.ReadTimeout("synthetic lost acknowledgement", request=request)
+        return httpx.Response(HTTPStatus.SERVICE_UNAVAILABLE, json={"status": "error"})
+
+
+async def _ask_letter(client: AsyncClient, headers: dict[str, str], note_id: int) -> None:
+    essay = await client.post(
+        f"/journal/marginalia/{note_id}/essay",
+        json={"price_acknowledged": True},
+        headers=headers,
+    )
+    assert essay.status_code == HTTPStatus.OK, essay.text
+
+
+async def _mirror_intents(session: AsyncSession, user_id: int) -> list[int]:
+    """The marginalia ids this writer has a recorded Voice Draft offer for."""
+    result = await session.execute(
+        select(VoiceDraftRetraction.marginalia_id).where(VoiceDraftRetraction.user_id == user_id)
+    )
+    marginalia_ids = sorted(int(note_id) for note_id in result.scalars().all())
+    await session.commit()
+    return marginalia_ids
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_voice_draft_mirror_keeps_no_intent_and_no_shadow(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A mirror the operator switch refused owes nothing; the next real mirror records once.
+
+    Driven through the real HTTP adapter (#3122, mirroring #3107). Under
+    ``PRIVACY_SUSPEND_VAULT_SEND`` the letter is still served, but the vault
+    sees no PUT, no retraction intent survives for a draft that never left, and
+    no ``voice_draft_mirror`` shadow is logged. Once the switch is lifted, the
+    next letter's mirror dials once and records exactly one intent and one
+    shadow.
+    """
+    monkeypatch.setattr(marginalia_service, "generate_response", _CapturingLLM())
+    recorder = _VaultRecorder()
+    vault = await handshaken_vault(recorder)
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id = await _signup(async_client, "lineage_suspended_mirror")
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+    suspended_note = await _seed_note(db_session, entry_id=chain.review_id, user_id=user_id)
+    resumed_note = await _seed_note(db_session, entry_id=chain.review_id, user_id=user_id)
+
+    suspend_vault(monkeypatch)
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        await _ask_letter(async_client, headers, suspended_note)
+
+    assert "PUT" not in recorder.methods()
+    assert await _mirror_intents(db_session, user_id) == []
+    assert _shadowed_operations(caplog, chain.review_id) == [LineageOperation.ESSAY.value]
+
+    monkeypatch.delenv(VAULT_SEND_SUSPEND_ENV_VAR)
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        await _ask_letter(async_client, headers, resumed_note)
+
+    assert recorder.methods().count("PUT") == 1
+    assert await _mirror_intents(db_session, user_id) == [resumed_note]
+    assert _shadowed_operations(caplog, chain.review_id) == sorted(
+        op.value for op in (LineageOperation.ESSAY, LineageOperation.VOICE_DRAFT_MIRROR)
+    )
+    _assert_no_canary_in_logs(caplog)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["server_error", "lost_ack"])
+async def test_a_failed_voice_draft_mirror_keeps_its_intent_and_shadow(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failure: str,
+) -> None:
+    """A PUT that was dialled may have landed, so its intent and shadow both stay (#3122)."""
+    monkeypatch.setattr(marginalia_service, "generate_response", _CapturingLLM())
+    recorder = _FailingDraftRecorder(failure)
+    vault = await handshaken_vault(recorder)
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    headers, user_id = await _signup(async_client, f"lineage_failed_mirror_{failure}")
+    chain = await seed_folded_lineage(db_session, user_id=user_id)
+    note_id = await _seed_note(db_session, entry_id=chain.review_id, user_id=user_id)
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO):
+        await _ask_letter(async_client, headers, note_id)
+
+    assert "PUT" in recorder.methods()
+    assert await _mirror_intents(db_session, user_id) == [note_id]
+    assert _shadowed_operations(caplog, chain.review_id) == sorted(
+        op.value for op in (LineageOperation.ESSAY, LineageOperation.VOICE_DRAFT_MIRROR)
+    )
     _assert_no_canary_in_logs(caplog)
 
 

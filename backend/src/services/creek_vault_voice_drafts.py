@@ -23,6 +23,7 @@ represents owner-supplied documents and would train the wrong voice.
 
 from __future__ import annotations
 
+import enum
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
@@ -41,6 +42,7 @@ from domain.creek_vault import (
     CreekVaultError,
     CreekVaultPipelineClient,
     CreekVaultVoiceDraftClient,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     VaultVoiceDraftRequest,
     tier_ceiling_for,
@@ -83,6 +85,7 @@ RETRACTION_TRANSITION_EVENT = "creek vault voice draft obligation transition"
 RETRACTION_BACKLOG_EVENT = "creek vault voice draft retraction backlog"
 _SWEEP_SKIPPED_EVENT = "creek vault voice draft retraction sweep skipped"
 _MIRROR_WITHHELD_EVENT = "creek vault voice draft mirror withheld"
+_MIRROR_SUSPENDED_EVENT = "creek vault voice draft mirror suspended"
 
 #: Every ``extra`` key this module may log. Ids are opaque, states and codes are
 #: closed vocabularies, counts and ages are integers: no essay, body, title,
@@ -156,12 +159,38 @@ class EntryRef:
     entry_id: int
 
 
+class VoiceDraftMirrorOutcome(enum.StrEnum):
+    """How one mirror attempt ended; exactly one is always returned.
+
+    ``DEGRADED`` and ``SUSPENDED`` are deliberately distinct (#3122, as #3107
+    made them for journal writes). ``DEGRADED`` means the PUT was dialled and
+    its answer was lost or negative, so the draft *may* be in the vault and the
+    attempt counts as sent. ``SUSPENDED`` means the operator's
+    ``PRIVACY_SUSPEND_VAULT_SEND`` switch refused the one PUT at the adapter's
+    request site, before the wire, so nothing left the server and nothing is
+    owed. ``NOT_OFFERED`` (an intimate tier, or no vault that takes drafts) and
+    ``WITHHELD`` (an earlier withdrawal still owed) never reached a PUT either.
+    """
+
+    NOT_OFFERED = "not_offered"
+    WITHHELD = "withheld"
+    SUSPENDED = "suspended"
+    DEGRADED = "degraded"
+    STORED = "stored"
+
+    @property
+    def dialled(self) -> bool:
+        """Whether this attempt put the draft on the wire, so it may be in the vault."""
+        return self in {VoiceDraftMirrorOutcome.DEGRADED, VoiceDraftMirrorOutcome.STORED}
+
+
 async def mirror_voice_draft(
     client: CreekVaultVoiceDraftClient,
     draft: VoiceDraftCopy,
     *,
     record_intent: Callable[[], Awaitable[bool]] | None = None,
-) -> None:
+    release_intent: Callable[[], Awaitable[None]] | None = None,
+) -> VoiceDraftMirrorOutcome:
     """Make one upsert of a non-intimate generated essay, after recording the intent.
 
     The tier guard runs before the handshake so an intimate essay never reaches
@@ -173,20 +202,28 @@ async def mirror_voice_draft(
     then withheld rather than republishing over that obligation. A Creek fault
     or an unreadable success is recorded and dropped, never retried -- its
     intent row keeps any later withdrawal honest.
+
+    A PUT the operator's vault-send suspension refused before the wire is the
+    one exception (#3122): it provably sent nothing, so ``release_intent``
+    undoes the intent this attempt staged rather than leaving a withdrawal owed
+    for a draft that never left the server.
     """
     tier = tier_ceiling_for(draft.classification)
     if not _expressible_on_the_wire(tier) or not await _supports_voice_drafts(client):
-        return
+        return VoiceDraftMirrorOutcome.NOT_OFFERED
     external_id = voice_draft_external_id(draft.owner_user_id, draft.marginalia_id)
     if not await _intent_recorded(record_intent, external_id):
-        return
+        return VoiceDraftMirrorOutcome.WITHHELD
     request = VaultVoiceDraftRequest(
         external_id=external_id,
         content=draft.essay,
         tier=tier,
         tier_ceiling=tier,
     )
-    await _put_draft(client, request)
+    outcome = await _put_draft(client, request)
+    if outcome is VoiceDraftMirrorOutcome.SUSPENDED and release_intent is not None:
+        await release_intent()
+    return outcome
 
 
 async def _intent_recorded(
@@ -202,27 +239,38 @@ async def _intent_recorded(
     return False
 
 
-async def _put_draft(client: CreekVaultVoiceDraftClient, request: VaultVoiceDraftRequest) -> None:
-    """Attempt the one PUT, logging a content-free outcome; never raises a vault error."""
+async def _put_draft(
+    client: CreekVaultVoiceDraftClient, request: VaultVoiceDraftRequest
+) -> VoiceDraftMirrorOutcome:
+    """Attempt the one PUT, logging a content-free outcome; never raises a vault error.
+
+    :class:`VaultSendSuspendedError` is matched ahead of its transient parent
+    and is not a degrade: there is no fault to chase, so it logs at INFO under
+    its own event.
+    """
     external_id = request.external_id
     try:
         result = await client.upsert_voice_draft(request)
+    except VaultSendSuspendedError:
+        _LOGGER.info(_MIRROR_SUSPENDED_EVENT, extra={"external_id": external_id})
+        return VoiceDraftMirrorOutcome.SUSPENDED
     except CreekVaultError:
         _LOGGER.warning(
             _MIRROR_DEGRADED_EVENT,
             extra={"external_id": external_id, "reason": "vault_error"},
         )
-        return
+        return VoiceDraftMirrorOutcome.DEGRADED
     if not result.stored:
         _LOGGER.warning(
             _MIRROR_DEGRADED_EVENT,
             extra={"external_id": external_id, "reason": "not_stored"},
         )
-        return
+        return VoiceDraftMirrorOutcome.DEGRADED
     _LOGGER.info(
         _MIRROR_STORED_EVENT,
         extra={"external_id": external_id, "action": result.action},
     )
+    return VoiceDraftMirrorOutcome.STORED
 
 
 async def _absence_answer(client: CreekVaultVoiceDraftClient) -> RetractionFailureCode | None:
@@ -359,6 +407,146 @@ def _may_rearm(row: VoiceDraftRetraction, destination: str | None) -> bool:
     return row.state == _MIRROR_INTENT and row.destination == destination
 
 
+@dataclass(frozen=True)
+class _IntentSnapshot:
+    """An existing row's mutable fields, as they stood before a mirror re-armed it."""
+
+    state: str
+    journal_entry_id: int
+    destination: str | None
+    attempt_count: int
+    safe_failure_code: str | None
+    next_attempt_at: datetime | None
+    confirmed_at: datetime | None
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, row: VoiceDraftRetraction) -> _IntentSnapshot:
+        """Capture ``row`` before it is re-armed."""
+        return cls(
+            state=row.state,
+            journal_entry_id=row.journal_entry_id,
+            destination=row.destination,
+            attempt_count=row.attempt_count,
+            safe_failure_code=row.safe_failure_code,
+            next_attempt_at=row.next_attempt_at,
+            confirmed_at=row.confirmed_at,
+            updated_at=row.updated_at,
+        )
+
+    def restore(self, row: VoiceDraftRetraction) -> None:
+        """Put ``row`` back exactly as it was captured."""
+        row.state = self.state
+        row.journal_entry_id = self.journal_entry_id
+        row.destination = self.destination
+        row.attempt_count = self.attempt_count
+        row.safe_failure_code = self.safe_failure_code
+        row.next_attempt_at = self.next_attempt_at
+        row.confirmed_at = self.confirmed_at
+        row.updated_at = self.updated_at
+
+
+def _rearm(row: VoiceDraftRetraction, *, entry_id: int, destination: str | None) -> None:
+    """Reset an existing row to a fresh intent for ``destination``."""
+    row.state = _MIRROR_INTENT
+    row.journal_entry_id = entry_id
+    row.destination = destination
+    row.attempt_count = 0
+    row.safe_failure_code = None
+    row.next_attempt_at = None
+    row.confirmed_at = None
+    row.updated_at = _utcnow()
+
+
+class MirrorIntent:
+    """One mirror attempt's intent row: staged before the PUT, released if it never left.
+
+    :meth:`record` is what :func:`record_mirror_intent` does, and remembers what
+    it changed. :meth:`release` undoes exactly that change -- deleting a row it
+    created, or restoring a row it re-armed -- and is called only when the
+    operator's vault-send suspension refused the PUT before the wire (#3122),
+    so a draft that never left the server owes no withdrawal.
+    """
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: int,
+        entry_id: int,
+        marginalia_id: int,
+        destination: str | None,
+    ) -> None:
+        """Bind the attempt to one (account, entry, note, destination)."""
+        self._session = session
+        self._user_id = user_id
+        self._entry_id = entry_id
+        self._marginalia_id = marginalia_id
+        self._destination = destination
+        self._staged = False
+        self._prior: _IntentSnapshot | None = None
+
+    async def _row(self) -> VoiceDraftRetraction | None:
+        return await _intent_row(
+            self._session, user_id=self._user_id, marginalia_id=self._marginalia_id
+        )
+
+    async def record(self) -> bool:
+        """Durably record that this essay is about to be offered to the destination.
+
+        Commits before returning, so the PUT that follows holds no pooled
+        connection and a crash after Creek stores the draft still leaves a
+        local trace. Upserts rather than skipping: a confirmed row is re-armed,
+        so a future re-mirror is never untracked. Returns ``False`` -- withhold
+        the PUT -- while an earlier withdrawal for this draft is still owed.
+        """
+        session = self._session
+        row = await self._row()
+        prior = None if row is None else _IntentSnapshot.of(row)
+        if row is None:
+            row = VoiceDraftRetraction(
+                user_id=self._user_id,
+                journal_entry_id=self._entry_id,
+                marginalia_id=self._marginalia_id,
+                destination=self._destination,
+            )
+        elif not _may_rearm(row, self._destination):
+            await session.commit()
+            return False
+        else:
+            _rearm(row, entry_id=self._entry_id, destination=self._destination)
+        session.add(row)
+        try:
+            await session.commit()
+        except IntegrityError:
+            # A concurrent writer recorded this draft first; its row governs.
+            await session.rollback()
+            return False
+        self._staged, self._prior = True, prior
+        _log_transition(row.id, None if prior is None else prior.state, _MIRROR_INTENT)
+        return True
+
+    async def release(self) -> None:
+        """Undo this attempt's staging, unless a concurrent mutation has since claimed the row.
+
+        A row no longer in ``mirror_intent`` was turned pending by a privacy
+        mutation that now governs it, so it is left alone. Commits.
+        """
+        if not self._staged:
+            return
+        self._staged = False
+        session = self._session
+        row = await self._row()
+        if row is not None and row.state == _MIRROR_INTENT:
+            if self._prior is None:
+                await session.delete(row)
+            else:
+                self._prior.restore(row)
+                session.add(row)
+                _log_transition(row.id, _MIRROR_INTENT, self._prior.state)
+        await session.commit()
+
+
 async def record_mirror_intent(
     session: AsyncSession,
     *,
@@ -369,42 +557,17 @@ async def record_mirror_intent(
 ) -> bool:
     """Durably record that this essay is about to be offered to ``destination``.
 
-    Commits before returning, so the PUT that follows holds no pooled
-    connection and a crash after Creek stores the draft still leaves a local
-    trace. Upserts rather than skipping: a confirmed row is re-armed, so a
-    future re-mirror is never untracked. Returns ``False`` -- withhold the PUT
-    -- while an earlier withdrawal for this draft is still owed.
+    The one-shot form of :meth:`MirrorIntent.record`, for callers that will
+    never need to release what they staged.
     """
-    row = await _intent_row(session, user_id=user_id, marginalia_id=marginalia_id)
-    previous = None if row is None else row.state
-    if row is None:
-        row = VoiceDraftRetraction(
-            user_id=user_id,
-            journal_entry_id=entry_id,
-            marginalia_id=marginalia_id,
-            destination=destination,
-        )
-    elif not _may_rearm(row, destination):
-        await session.commit()
-        return False
-    else:
-        row.state = _MIRROR_INTENT
-        row.journal_entry_id = entry_id
-        row.destination = destination
-        row.attempt_count = 0
-        row.safe_failure_code = None
-        row.next_attempt_at = None
-        row.confirmed_at = None
-        row.updated_at = _utcnow()
-    session.add(row)
-    try:
-        await session.commit()
-    except IntegrityError:
-        # A concurrent writer recorded this draft first; its row governs.
-        await session.rollback()
-        return False
-    _log_transition(row.id, previous, _MIRROR_INTENT)
-    return True
+    intent = MirrorIntent(
+        session,
+        user_id=user_id,
+        entry_id=entry_id,
+        marginalia_id=marginalia_id,
+        destination=destination,
+    )
+    return await intent.record()
 
 
 async def mark_entry_retractions_pending(
