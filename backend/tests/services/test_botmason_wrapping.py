@@ -444,7 +444,6 @@ _TEST_OPENAI_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist se
 
 def _configure_openai_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", _TEST_OPENAI_KEY)
 
 
 class TestGenerateResponseExceptionContract:
@@ -459,7 +458,7 @@ class TestGenerateResponseExceptionContract:
             patch.object(botmason_mod, "_call_openai", broken_call),
             pytest.raises(TypeError) as excinfo,
         ):
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=_TEST_OPENAI_KEY)
         assert not isinstance(excinfo.value, LLMProviderError)
 
     @pytest.mark.asyncio
@@ -471,7 +470,7 @@ class TestGenerateResponseExceptionContract:
             patch.object(botmason_mod, "_call_openai", broken_call),
             pytest.raises(KeyError) as excinfo,
         ):
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=_TEST_OPENAI_KEY)
         assert not isinstance(excinfo.value, LLMProviderError)
 
     @pytest.mark.asyncio
@@ -490,7 +489,7 @@ class TestGenerateResponseExceptionContract:
             patch.object(botmason_mod, "_call_openai", broken_call),
             pytest.raises(RuntimeError) as excinfo,
         ):
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=_TEST_OPENAI_KEY)
         assert not isinstance(excinfo.value, LLMProviderError)
 
     @pytest.mark.asyncio
@@ -511,7 +510,7 @@ class TestGenerateResponseExceptionContract:
             patch.object(botmason_mod, "_call_openai", broken_call),
             pytest.raises(LLMProviderError) as excinfo,
         ):
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=_TEST_OPENAI_KEY)
         assert excinfo.value.__cause__ is original
 
     @pytest.mark.asyncio
@@ -524,7 +523,7 @@ class TestGenerateResponseExceptionContract:
             patch.object(botmason_mod, "_call_openai", broken_call),
             pytest.raises(LLMProviderError) as excinfo,
         ):
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=_TEST_OPENAI_KEY)
         assert excinfo.value.__cause__ is original
 
     @pytest.mark.asyncio
@@ -538,7 +537,7 @@ class TestGenerateResponseExceptionContract:
             patch.object(botmason_mod, "_call_openai", broken_call),
             pytest.raises(HTTPException) as excinfo,
         ):
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=_TEST_OPENAI_KEY)
         assert excinfo.value.status_code == 402
 
     @pytest.mark.asyncio
@@ -553,7 +552,7 @@ class TestGenerateResponseExceptionContract:
             patch.object(botmason_mod, "_call_openai", broken_call),
             pytest.raises(LLMProviderError) as excinfo,
         ):
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=_TEST_OPENAI_KEY)
         assert excinfo.value is original
         assert excinfo.value.args[0] == "orig"
 
@@ -561,10 +560,15 @@ class TestGenerateResponseExceptionContract:
     async def test_missing_api_key_raises_llm_provider_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Missing ``LLM_API_KEY`` normalizes to LLMProviderError, not a bare RuntimeError."""
+        """No writer's key is an LLMProviderError (``llm_key_required``), not a RuntimeError.
+
+        Even with the server's own ``LLM_API_KEY`` set: since ADR 0009 phase (a)
+        (#3067) nothing reads it.
+        """
         monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-        monkeypatch.delenv("LLM_API_KEY", raising=False)
-        with pytest.raises(LLMProviderError, match="LLM_API_KEY"):
+        monkeypatch.setenv("LLM_API_KEY", _TEST_OPENAI_KEY)
+        monkeypatch.delenv(botmason_mod.STUB_SEAM_ENV_VAR, raising=False)
+        with pytest.raises(LLMProviderError, match="llm_key_required"):
             await generate_response("hi", [])
 
     def test_get_model_bad_model_raises_llm_provider_error(
@@ -870,7 +874,7 @@ class TestGenerateResponseVisionCapabilityError:
         image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/png")
 
         with pytest.raises(LLMVisionUnsupportedError):
-            await generate_response("describe", [], images=[image])
+            await generate_response("describe", [], api_key=_TEST_OPENAI_KEY, images=[image])
 
     @pytest.mark.asyncio
     async def test_vision_unsupported_error_is_an_llm_provider_error(
@@ -883,7 +887,7 @@ class TestGenerateResponseVisionCapabilityError:
         image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/png")
 
         with pytest.raises(LLMProviderError) as excinfo:
-            await generate_response("describe", [], images=[image])
+            await generate_response("describe", [], api_key=_TEST_OPENAI_KEY, images=[image])
         assert isinstance(excinfo.value, LLMVisionUnsupportedError)
 
     @pytest.mark.asyncio
@@ -905,7 +909,7 @@ class TestGenerateResponseVisionCapabilityError:
         image = ImagePayload(data=_FAKE_JPEG_B64, media_type="image/png")
 
         with pytest.raises(LLMVisionUnsupportedError) as excinfo:
-            await generate_response("describe", [], images=[image])
+            await generate_response("describe", [], api_key=_TEST_OPENAI_KEY, images=[image])
         assert type(excinfo.value) is LLMVisionUnsupportedError
 
     @pytest.mark.asyncio
@@ -919,5 +923,5 @@ class TestGenerateResponseVisionCapabilityError:
         image = ImagePayload(data=sensitive_data, media_type="image/png")
 
         with pytest.raises(LLMVisionUnsupportedError) as excinfo:
-            await generate_response("describe", [], images=[image])
+            await generate_response("describe", [], api_key=_TEST_OPENAI_KEY, images=[image])
         assert sensitive_data not in str(excinfo.value)

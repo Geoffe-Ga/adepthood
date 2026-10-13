@@ -279,7 +279,12 @@ _IDENTITY_LEAD_IN: Final = "Google and Apple"
 def _llm_provider(
     rid: RecipientId, legal_name: str, provider: str, site: DialSite, models: frozenset[str]
 ) -> Recipient:
-    """A language-model provider: operator key, user key (BYOK), and the e2e probe."""
+    """A language-model provider, reached only with the user's own key (BYOK).
+
+    ADR 0009 phase (a) (#3067): no request carrying a person's content is sent
+    on the operator's account, so there is no operator-account scope, and the
+    end-to-end provider probe that dialled with the server's key is retired.
+    """
     return Recipient(
         id=rid,
         legal_name=legal_name,
@@ -293,21 +298,9 @@ def _llm_provider(
         policy_lead_in="The language-model provider",
         scopes=(
             Scope(
-                ScopeKind.OPERATOR_ACCOUNT,
-                _CONTENT,
-                f"BOTMASON_PROVIDER={provider} with the server's LLM_API_KEY",
-                conditional_on="BOTMASON_PROVIDER",
-            ),
-            Scope(
                 ScopeKind.USER_OWNED_ACCOUNT,
                 _CONTENT_AND_KEY,
                 f"an X-LLM-API-Key header carrying a {legal_name} key (BYOK)",
-            ),
-            Scope(
-                ScopeKind.TEST_SEAM,
-                _CONTENT,
-                "a prompt carrying the armed provider-probe token; refused in production",
-                conditional_on="BOTMASON_PROVIDER_PROBE_TOKEN",
             ),
         ),
     )

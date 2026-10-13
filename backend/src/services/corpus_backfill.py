@@ -69,10 +69,11 @@ that entry is left unmarked, the sweep stops there, and what it genuinely
 reached before the refusal is recorded honestly. The stamp is written *after*
 the offer for this reason, which makes the property general -- anything that
 stops an offer leaves the entry where it was, not one step further back. Note
-whose problem it is: this path classifies under the deployment's key rather
-than the account's, so nobody the writer is can settle that bill, and the
-signal it produces is a WARNING an operator reads rather than anything on a
-response.
+whose problem it is: this path never carries a key of the writer's own, so
+since ADR 0009 phase (a) (#3067) it reaches no cloud provider at all and every
+offer degrades to unclassified. A spent-balance refusal could only come from a
+broken rule, which is why the signal it produces is a WARNING an operator
+reads rather than anything on a response.
 
 **Past the bound nothing is silently dropped.** The sweep reports how many
 entries it did not reach, logs it, and picks up somewhere new next time: a

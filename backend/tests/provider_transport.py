@@ -17,6 +17,7 @@ so the two providers need their own transports and their own request types.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any, cast
 
 import anthropic
@@ -33,6 +34,17 @@ OPENAI_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
 ANTHROPIC_KEY = "sk-ant-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
 OPENAI_MODEL = "gpt-4o-mini"
 ANTHROPIC_MODEL = "claude-sonnet-5"
+_KEY_FOR_PROVIDER = {"openai": OPENAI_KEY, "anthropic": ANTHROPIC_KEY}
+
+
+def armed_key() -> str:
+    """The writer's own key for the provider the last ``use_*`` armed.
+
+    Since ADR 0009 phase (a) (#3067) a provider is reached only with the
+    writer's own key: the server's ``LLM_API_KEY`` is not read. So a test that
+    drives the SDK through a mock transport passes this as ``api_key``.
+    """
+    return _KEY_FOR_PROVIDER[os.environ["BOTMASON_PROVIDER"]]
 
 
 class TransportStub:
@@ -83,7 +95,6 @@ def use_openai(
         return real_client(**cast("dict[str, Any]", kwargs))
 
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", OPENAI_KEY)
     monkeypatch.setenv("LLM_MODEL", OPENAI_MODEL)
     monkeypatch.setattr(botmason.openai, "AsyncOpenAI", _factory)
     return stub
@@ -109,7 +120,6 @@ def use_anthropic(
         return real_client(**cast("dict[str, Any]", kwargs))
 
     monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
-    monkeypatch.setenv("LLM_API_KEY", ANTHROPIC_KEY)
     monkeypatch.setenv("LLM_MODEL", ANTHROPIC_MODEL)
     monkeypatch.setattr(botmason.anthropic, "AsyncAnthropic", _factory)
     return stub

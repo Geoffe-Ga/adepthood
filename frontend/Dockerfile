@@ -72,12 +72,22 @@ ENV EXPO_PUBLIC_GUMROAD_PRODUCT_URL=$EXPO_PUBLIC_GUMROAD_PRODUCT_URL
 ARG EXPO_PUBLIC_GUMROAD_HELP_URL
 ENV EXPO_PUBLIC_GUMROAD_HELP_URL=$EXPO_PUBLIC_GUMROAD_HELP_URL
 
+# Export, then stamp every script and stylesheet in the built index.html with
+# its sha384 Subresource Integrity hash; the stamp fails the build if any
+# served asset is left unhashed, mismatched, inline or foreign (the same two
+# steps as `npm run web:build`). Then render nginx.conf's enforced CSP: its
+# connect-src names the API origin (and the Sentry origin, when a DSN is set)
+# from the same EXPO_PUBLIC_* values the bundle was just built with, and the
+# render refuses to produce a conf without an https API origin. ADR 0009
+# phase (b), #3067.
 RUN npx expo export --platform web
+RUN node web-hardening/sri.js stamp dist
+RUN node web-hardening/csp.js nginx.conf nginx.rendered.conf
 
 # ---- Serve stage ----
 FROM nginx:1.27-alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/nginx.rendered.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

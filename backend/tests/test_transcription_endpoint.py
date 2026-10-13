@@ -107,7 +107,7 @@ async def test_production_stub_provider_is_refused_before_wallet_deduction(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("payer", ["server_provider", "byok_on_stub"])
+@pytest.mark.parametrize("payer", ["byok_on_real_provider", "byok_on_stub"])
 async def test_text_only_model_is_422_before_slot_or_wallet_deduction(
     async_client: AsyncClient,
     db_session: AsyncSession,
@@ -116,18 +116,17 @@ async def test_text_only_model_is_422_before_slot_or_wallet_deduction(
 ) -> None:
     """A model that cannot see images is refused before the slot, the charge or a dial.
 
-    The payer gate admits both cases -- a server provider with credits, and a
-    personal key on a stub server -- so this is the route's own pre-charge
-    ``model_lacks_vision`` guard answering, through the real
-    ``vision_provider_available`` with the model reported text-only.
+    The payer gate admits both cases -- a personal key on a server configured
+    with a real provider, and one on a stub server (a keyless request is
+    refused ``llm_key_required`` first since ADR 0009 phase (a)) -- so this is
+    the route's own pre-charge ``model_lacks_vision`` guard answering, through
+    the real ``vision_provider_available`` with the model reported text-only.
     """
     transport = use_openai(monkeypatch, HTTPStatus.OK, {})
     monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
-    headers = await _signup(async_client, f"text_only_{payer}")
+    headers = {**await _signup(async_client, f"text_only_{payer}"), "X-LLM-API-Key": OPENAI_KEY}
     if payer == "byok_on_stub":
         monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
-        monkeypatch.delenv("LLM_API_KEY", raising=False)
-        headers = {**headers, "X-LLM-API-Key": OPENAI_KEY}
     monkeypatch.setattr(botmason_service, "supports_vision", lambda _provider, _model: False)
     preflight = AsyncMock()
     monkeypatch.setattr("routers.transcription.preflight_deduction", preflight)
