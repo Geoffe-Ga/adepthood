@@ -13,12 +13,15 @@ was offered the entry, and only that vault's confirmation clears the marker. A
 replaced connection answers "unknown id, withdrawn" for an id it never saw, so
 trusting it would report a withdrawal while the old vault still holds the copy.
 
-Known pre-migration limit: an entry ingested before ``vault_destination``
-existed carries ``vault_ref`` with a NULL destination. Nothing records which
-vault received it, so its withdrawal is still trusted from whichever vault is
-connected now -- after a reconnect that is the old false confirmation. It is
-pinned by ``test_legacy_unbound_marker_is_withdrawn_from_the_current_vault``
-and left for an owner decision rather than widened here.
+A pre-binding copy -- an entry ingested before ``vault_destination`` existed,
+so it carries ``vault_ref`` with a NULL destination -- is never confirmed
+(#3095, owner decision on #3092 escalation 6). Nothing records which vault
+received it, and a replaced vault answers "unknown id, withdrawn" for an id it
+never saw. The connected vault is still asked, because it may be the one that
+holds the copy, but its answer is discarded: the marker stays and the result
+is ``False`` (``legacy_unbound``). The writer is told the copy may remain in a
+previously connected vault and can delete the page here only, which keeps an
+``unconfirmed`` obligation bound to no vault -- one no vault can ever clear.
 
 After a reconnect or disconnect, a copy bound to the old vault is never
 dialled and never confirmed: the Intimate reclassification and DELETE answer a
@@ -121,9 +124,12 @@ async def withdraw_journal_copy(
     remote copy and needs no call. A recorded destination that differs from
     ``destination`` -- the vault currently connected, ``None`` for none -- is
     never dialled: the copy lives elsewhere, so the marker stays and the answer
-    is ``False`` (``destination_changed``). Otherwise the session is committed
-    before the HTTP call so no pooled connection rides across Creek latency,
-    and the marker is cleared only on Creek's confirmation.
+    is ``False`` (``destination_changed``). A pre-binding copy (no recorded
+    destination) is asked of the connected vault but never confirmed by it:
+    the marker stays and the answer is ``False`` (``legacy_unbound``).
+    Otherwise the session is committed before the HTTP call so no pooled
+    connection rides across Creek latency, and the marker is cleared only on
+    Creek's confirmation.
     """
     if _holds_no_remote_copy(entry):
         await _clear_stale_tags(session, entry)
@@ -132,13 +138,44 @@ async def withdraw_journal_copy(
     if entry_id is None:
         raise RuntimeError("persisted vault reference requires a journal entry id")
     bound_elsewhere = entry.vault_destination not in {None, destination}
+    unbound = is_pre_binding_copy(entry)
     await session.commit()
     if bound_elsewhere:
         return _degraded(entry_id, "destination_changed")
+    if unbound:
+        return await _ask_without_trusting(client, entry_id)
+    return await _withdraw_and_clear(session, entry, client, entry_id)
+
+
+async def _withdraw_and_clear(
+    session: AsyncSession, entry: JournalEntry, client: CreekVaultClient, entry_id: int
+) -> bool:
+    """Withdraw a copy bound to the connected vault; clear its marker only on confirmation."""
     if not await withdraw_journal_from_vault(client, entry_id=entry_id):
         return False
     await _clear_marker(session, entry)
     return True
+
+
+async def _ask_without_trusting(client: CreekVaultClient, entry_id: int) -> bool:
+    """Ask the connected vault to withdraw a pre-binding copy, then discard its answer.
+
+    The vault may be the one that holds the copy, so it is asked; it may as
+    easily be a replacement answering for an id it never saw, so a "withdrawn"
+    is never recorded or logged as a confirmation. Always ``False``.
+    """
+    if await _withdrawal_is_supported(client, entry_id):
+        await _withdrawal_is_confirmed(client, entry_id)
+    return _degraded(entry_id, "legacy_unbound")
+
+
+def is_pre_binding_copy(entry: JournalEntry) -> bool:
+    """Whether ``entry``'s copy predates destination binding, so no vault can confirm it.
+
+    Such a copy carries ``vault_ref`` but no ``vault_destination``: it was
+    accepted by some vault before Adepthood recorded which one (#3095).
+    """
+    return entry.vault_ref is not None and entry.vault_destination is None
 
 
 async def _clear_marker(session: AsyncSession, entry: JournalEntry) -> None:

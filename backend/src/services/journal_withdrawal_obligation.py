@@ -33,6 +33,7 @@ from models.journal_withdrawal_obligation import (
 )
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
 from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.creek_vault_withdraw import is_pre_binding_copy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -141,6 +142,9 @@ class CopyLocation(enum.StrEnum):
     PREVIOUS_VAULT = "previous_vault"
     #: No vault is connected now; the one that was holds the copy.
     DISCONNECTED_VAULT = "disconnected_vault"
+    #: The copy predates destination binding, so no record says which vault
+    #: holds it; it may remain in a previously connected one (#3095).
+    UNRECORDED_VAULT = "unrecorded_vault"
 
 
 #: The stable 503 detail each location answers with. ``vault_withdrawal_pending``
@@ -149,6 +153,7 @@ WITHDRAWAL_PENDING_DETAILS: Final[dict[CopyLocation, str]] = {
     CopyLocation.CONNECTED_VAULT: "vault_withdrawal_pending",
     CopyLocation.PREVIOUS_VAULT: "vault_withdrawal_previous_vault",
     CopyLocation.DISCONNECTED_VAULT: "vault_withdrawal_disconnected_vault",
+    CopyLocation.UNRECORDED_VAULT: "vault_withdrawal_unrecorded_vault",
 }
 
 
@@ -179,11 +184,15 @@ async def copy_location(
 
     ``destination`` is the connected vault's fingerprint and
     ``vault_connected`` whether this request resolved a vault it can dial at
-    all. With none connected, every owed copy is in the one that was.
+    all. A page whose own copy predates destination binding is in a vault
+    nothing recorded, whatever is connected now (#3095); no vault can confirm
+    it. With none connected, every owed copy is in the one that was.
     Otherwise a copy recorded to a different vault is in a previous one;
-    anything else -- including a legacy copy with no recorded vault -- is the
-    connected vault's to confirm. Reads only; does not commit.
+    anything else is the connected vault's to confirm. Reads only; does not
+    commit.
     """
+    if is_pre_binding_copy(entry):
+        return CopyLocation.UNRECORDED_VAULT
     if not vault_connected:
         return CopyLocation.DISCONNECTED_VAULT
     owed = await _owed_destinations(session, entry)
@@ -233,18 +242,18 @@ async def erase_with_unconfirmed_copy(
     session: AsyncSession,
     entry: JournalEntry,
     *,
-    destination: str | None,
     location: CopyLocation,
 ) -> None:
     """Erase the page here and keep a content-free ``unconfirmed`` obligation (#3094). Commits.
 
     Called only after the vault holding the copy could not confirm it absent.
-    The obligation is bound to the vault the copy was recorded to -- or, for a
-    legacy copy that recorded none, to the vault connected now (``destination``),
-    the same guess its ordinary withdrawal already makes -- so only that vault's
-    later confirmation can clear it. A page whose own copy is already gone owes
-    only its essays, whose obligations are already durable; its journal
-    obligation, if an earlier DELETE left one, is settled.
+    The obligation is bound to the vault the copy was recorded to, so only that
+    vault's later confirmation can clear it. A pre-binding copy recorded none,
+    and its obligation is bound to none -- never guessed to be the vault
+    connected now -- so no vault can ever report it withdrawn (#3095). A page
+    whose own copy is already gone owes only its essays, whose obligations are
+    already durable; its journal obligation, if an earlier DELETE left one, is
+    settled.
     """
     entry_id = _entry_id(entry)
     entry.deleted_at = _utcnow()
@@ -255,7 +264,7 @@ async def erase_with_unconfirmed_copy(
             user_id=entry.user_id,
             entry_id=entry_id,
             state=JournalWithdrawalState.UNCONFIRMED,
-            destination=entry.vault_destination or destination,
+            destination=entry.vault_destination,
         )
     else:
         await settle_confirmed(session, user_id=entry.user_id, entry_id=entry_id)
@@ -292,7 +301,7 @@ async def erase_here(
 ) -> CopyLocation:
     """Locate the unconfirmed copy, erase the page here, and return the location. Commits."""
     location = await locate_owed_copy(session, entry, destination, client)
-    await erase_with_unconfirmed_copy(session, entry, destination=destination, location=location)
+    await erase_with_unconfirmed_copy(session, entry, location=location)
     return location
 
 

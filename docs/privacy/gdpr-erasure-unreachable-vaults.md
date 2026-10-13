@@ -74,9 +74,13 @@ confirm, this is an ordinary deletion. Otherwise:
   backups of the vault). Creek's own erasure contract covers these once it is
   asked (Creek#1854), but it can only be asked through a connection.
 - A **legacy copy with no recorded vault** (ingested before destination binding
-  existed). If it is erased with no vault connected, no vault can ever be
-  proven to hold it. Its obligation is recorded with no destination and is
-  **never** confirmed automatically.
+  existed, 2026-10-07). No vault can ever be proven to hold it, so no vault's
+  answer is ever trusted for it (#3095): the connected vault is still asked to
+  withdraw it, but the page's withdrawal is reported `unconfirmed`, the 503 is
+  `vault_withdrawal_unrecorded_vault`, and the person is told a copy made
+  before that date may remain in a vault they connected earlier. Erasing it
+  here records an obligation with no destination, which is **never**
+  confirmed, by the sweep or any vault.
 
 ## What we keep: the obligation
 
@@ -144,10 +148,12 @@ decided.
 - **Backup restore.** A restore from a backup taken before the erase reapplies
   the page's deletion tombstone (B08 restore suppression). It does not recreate
   the obligation row: tombstones carry no obligations.
-- **Legacy unbound copies.** As above, they are never auto-confirmed. While the
-  page is still live, its ordinary withdrawal still trusts the vault connected
-  now (the pre-existing limit pinned by
-  `test_legacy_unbound_marker_is_withdrawn_from_the_current_vault`).
+- **Legacy unbound copies.** As above, they are never confirmed, live or
+  erased (#3095, pinned by
+  `test_legacy_unbound_marker_is_never_confirmed_by_the_current_vault` and
+  `test_a_pre_binding_copy_is_erased_unconfirmed_and_says_so`). A DELETE of
+  such a page therefore never completes on its own: the person takes "delete
+  here only" and deletes the old copy in that vault themselves.
 
 ## Open decisions (owner)
 
