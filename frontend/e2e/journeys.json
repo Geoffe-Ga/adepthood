@@ -670,12 +670,17 @@
   },
   {
     "id": "journal.write-under-vault-send-suspension",
-    "description": "While the operator's PRIVACY_SUSPEND_VAULT_SEND switch is on, a writer with a connected Creek vault saves or edits a Personal page (#3107). The page is saved locally; the vault adapter refuses the ingest before the wire, so the write is recorded as suspended -- not degraded -- and the page owes nothing: no vault destination is bound and no VAULT_WRITE lineage shadow is logged. Deleting that page later completes at once (204, no withdrawal dial, no obligation row), even if the vault has since been disconnected. Once the switch is lifted, the next save really sends, binds the destination and records the shadow exactly once. Uncovered because no lane spec drives the operator switch against the out-of-process contract fake; pinned meanwhile by backend/tests/test_vault_destination_binding.py, backend/tests/test_privacy_lineage.py and backend/tests/test_creek_vault_write.py.",
+    "description": "While the operator's PRIVACY_SUSPEND_VAULT_SEND switch is on, a writer with a connected Creek vault saves or edits a Personal page (#3107). The page is saved locally; the vault adapter refuses the ingest before the wire, so the write is recorded as suspended -- not degraded -- and the page owes nothing: no vault destination is bound and no VAULT_WRITE lineage shadow is logged. Deleting that page later completes at once (204, no withdrawal dial, no obligation row), even if the vault has since been disconnected. Once the switch is lifted, the next save really sends, binds the destination and records the shadow exactly once. A first essay letter asked for under the switch is the same (#3122): the letter is kept locally, and its Voice Draft mirror leaves no VoiceDraftRetraction intent and no VOICE_DRAFT_MIRROR shadow, while a mirror PUT that was dialled and failed (a 5xx or a lost acknowledgement) keeps both. Uncovered because no lane spec drives the operator switch against the out-of-process contract fake; pinned meanwhile by backend/tests/test_vault_destination_binding.py, backend/tests/test_privacy_lineage.py, backend/tests/test_creek_vault_write.py and backend/tests/test_voice_draft_mirror_suspension.py.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["journal"],
-      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "DELETE /journal/{entry_id}"],
-      "tables": ["journalentry", "journalwithdrawalobligation"]
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["journalentry", "journalwithdrawalobligation", "voicedraftretraction"]
     },
     "status": "uncovered",
     "issue": 3107
