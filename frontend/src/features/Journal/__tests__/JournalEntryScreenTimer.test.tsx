@@ -3,6 +3,9 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
+
+import { WRITING_TIMER_CLEARANCE } from '../JournalEntry.styles';
 
 /**
  * Where the writing timer lives on the page, and what it has to survive.
@@ -172,6 +175,28 @@ describe('JournalEntryScreen — the timer and the resonance button are both in 
    * flow (#3004) — is pinned structurally in `writingTimerLayout.test.tsx` and
    * `GetResonanceButton.test.tsx`.
    */
+  it('reserves Finish and Resonance clearance before, during and after a session', async () => {
+    jest.useFakeTimers();
+    const view = renderScreen();
+    fireEvent.changeText(view.getByTestId('journal-body-input'), 'I noticed the willow.');
+    await settle();
+    const expectClearance = () => {
+      expect(StyleSheet.flatten(view.getByTestId('journal-page').props.style).paddingBottom).toBe(
+        WRITING_TIMER_CLEARANCE,
+      );
+      expect(view.getByTestId('journal-finish-button').props.accessibilityState.disabled).toBe(
+        false,
+      );
+      expect(view.queryByTestId('get-resonance-button')).not.toBeNull();
+    };
+    expectClearance();
+    fireEvent.press(view.getByTestId('writing-timer-start'));
+    expectClearance();
+    await settle(TWENTY_MINUTES_MS);
+    expect(view.queryByTestId('writing-session-banner')).not.toBeNull();
+    expectClearance();
+  });
+
   it('starts a session from the pill while the resonance button is up', async () => {
     jest.useFakeTimers();
     const { getByTestId, queryByTestId } = renderScreen();

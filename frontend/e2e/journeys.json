@@ -1498,12 +1498,12 @@
   },
   {
     "id": "journal.idle-writing-timer-clears-the-entry-body",
-    "description": "At the browser lane's fixed 1280x720 desktop viewport, a writer opens a fresh page and writes while the timer is idle. With the page's own scroller held at the top, the body portion visible through that viewport and the idle pill share no area: the expanded choice sits in flow below the page rather than at a fixed viewport offset over the flex-grown field (#2787). Starting it preserves the existing compact desktop treatment, measured as a rail no wider than the 44dp minimum touch target. The component layout suite separately pins that the compact/running shape stays absolute at its existing bottom offset while the expanded idle shape is in flow.",
+    "description": "At 1280x720 the floating glass timer leaves the visible writing field unobscured. Its idle choice and running rail never shrink the sheet. Finish and Get Resonance remain hit-testable while a session runs and beneath its bounded finished-session note; finishing still reaches the server-backed reading view (#3131).",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["auth"],
-      "routes": ["POST /auth/signup"],
-      "tables": ["user"]
+      "client": ["auth", "journal"],
+      "routes": ["POST /auth/signup", "POST /journal/", "PATCH /journal/{entry_id}"],
+      "tables": ["user", "journalentry"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-writing-timer.browser.e2e.test.ts"

@@ -917,3 +917,17 @@ export const showcaseShadow = {
   shadowRadius: 22,
   elevation: 8,
 } as const;
+
+/** Shared translucent chrome: a warm wash, faint edge and soft portable lift. */
+export const glass = {
+  pill: {
+    backgroundColor: colors.mystical.glowLight,
+    borderColor: surface.hairline,
+    borderWidth: 1,
+    ...surfaceShadow.card,
+  },
+  web:
+    Platform.OS === 'web'
+      ? ({ backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' } as unknown as ViewStyle)
+      : null,
+};

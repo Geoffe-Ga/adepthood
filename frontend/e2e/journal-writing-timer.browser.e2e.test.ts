@@ -66,4 +66,76 @@ test('the idle timer does not cover the entry body at 1280x720', async ({ page }
   await expect(page.getByTestId('writing-timer-stop')).toBeVisible();
   const runningPill = await boxOf(page.getByTestId('writing-timer-pill'), 'running timer pill');
   expect(runningPill.width, 'the running timer left its 44dp desktop rail').toBeLessThanOrEqual(44);
+  expect(overlapArea(visibleBody, runningPill), 'the running timer covers the writing field').toBe(
+    0,
+  );
 });
+
+/** Scroll the page to its true end, then hit-test both edges after layout settles. */
+async function expectReachable(page: Page, testId: string): Promise<void> {
+  const control = page.getByTestId(testId);
+  await expect(control).toBeEnabled();
+  if (testId === 'get-resonance-button') {
+    await expect(control.locator('..')).toHaveCSS('opacity', '1');
+  }
+  await expect
+    .poll(
+      async () => {
+        await page.getByTestId('journal-page-scroll').evaluate((node) => {
+          node.scrollTop = node.scrollHeight;
+        });
+        return control.evaluate((node) => {
+          const box = node.getBoundingClientRect();
+          const x = box.left + box.width / 2;
+          return [box.top + 2, box.bottom - 2].map((y) => {
+            const hit = document.elementFromPoint(x, y);
+            return {
+              clear: hit !== null && (hit === node || node.contains(hit)),
+              covering: hit?.closest('[data-testid]')?.getAttribute('data-testid') ?? hit?.tagName,
+              x,
+              y,
+            };
+          });
+        });
+      },
+      { message: `${testId} must clear the floating band by its entire box` },
+    )
+    .toEqual([expect.objectContaining({ clear: true }), expect.objectContaining({ clear: true })]);
+}
+
+for (const viewport of [
+  { width: 1280, height: 720 },
+  { width: 390, height: 844 },
+]) {
+  test(`Finish and Resonance stay reachable at ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(viewport);
+    await openWritingPage(page);
+    await page.clock.install();
+    const sheet = page.getByTestId('journal-sheet');
+    const idleSheet = await boxOf(sheet, 'idle sheet');
+    await page.clock.fastForward(4_000);
+    await expectReachable(page, 'journal-finish-button');
+    await expectReachable(page, 'get-resonance-button');
+    await page.screenshot({ path: testInfo.outputPath('idle-timer.png') });
+    await page.getByTestId('writing-timer-start').click();
+    await page.clock.fastForward(4_000);
+    await expectReachable(page, 'journal-finish-button');
+    await expectReachable(page, 'get-resonance-button');
+    expect((await boxOf(sheet, 'running sheet')).height).toBe(idleSheet.height);
+    await page.screenshot({ path: testInfo.outputPath('running-timer.png') });
+
+    await page.clock.fastForward(20 * 60_000);
+    await expect(page.getByTestId('writing-session-banner')).toBeVisible();
+    await expectReachable(page, 'journal-finish-button');
+    await expectReachable(page, 'get-resonance-button');
+    expect((await boxOf(sheet, 'finished sheet')).height).toBe(idleSheet.height);
+    const note = await boxOf(page.getByTestId('writing-session-banner'), 'finished note');
+    expect(note.width).toBeLessThanOrEqual(680);
+    await page.screenshot({ path: testInfo.outputPath('finished-note.png') });
+
+    await page.getByTestId('journal-finish-button').click();
+    await expect(page.getByTestId('journal-edit-button')).toBeVisible();
+  });
+}

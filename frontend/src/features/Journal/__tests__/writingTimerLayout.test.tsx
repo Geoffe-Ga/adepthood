@@ -15,7 +15,7 @@ import type { WritingSessionResult } from '../writingSession';
 import WritingSessionBanner from '../WritingSessionBanner';
 import WritingTimer from '../WritingTimer';
 
-import { touchTarget } from '@/design/tokens';
+import { journalLayout, touchTarget } from '@/design/tokens';
 
 function flat(style: StyleProp<ViewStyle>): ViewStyle {
   return StyleSheet.flatten(style);
@@ -44,13 +44,13 @@ function dp(value: unknown): number {
  * timer keeps its offset above the page's lower edge and nothing floats beside
  * it to share or fight over that band.
  */
-describe('the writing timer uses flow at rest and floats only after it starts', () => {
-  it('keeps the expanded idle pill in flow while the resonance button stays in flow', () => {
+describe('the writing timer floats in every state', () => {
+  it('floats the expanded idle pill while resonance stays in flow', () => {
     const timer = render(<WritingTimer onComplete={jest.fn()} />);
     const resonance = render(<GetResonanceButton visible onPress={jest.fn()} />);
 
-    expect(flat(timer.root.props.style).position).toBeUndefined();
-    expect(flat(timer.root.props.style).bottom).toBeUndefined();
+    expect(flat(timer.root.props.style).position).toBe('absolute');
+    expect(flat(timer.root.props.style).bottom).toBe(RESONANCE_BUTTON_CLEARANCE);
     expect(flat(resonance.root.props.style).position).not.toBe('absolute');
   });
 
@@ -148,12 +148,9 @@ describe('the finished-session note clears what floats over it', () => {
     };
     const view = render(<WritingSessionBanner result={result} onDismiss={jest.fn()} />);
 
-    // The note is an in-flow box at the bottom of the same column the timer
-    // floats over; without this it is the Close target that ends up underneath
-    // the opaque pill, and the offers a later lane hangs in its children slot
-    // with it.
-    expect(flat(view.root.props.style).marginBottom).toBeGreaterThanOrEqual(
-      RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT,
-    );
+    // The floating band handles vertical stacking; the note only owns its reading measure.
+    expect(flat(view.root.props.style).maxWidth).toBe(journalLayout.pageMaxWidth);
+    expect(flat(view.root.props.style).alignSelf).toBe('center');
+    expect(flat(view.root.props.style).marginBottom).toBeLessThan(WRITING_TIMER_PILL_MAX_HEIGHT);
   });
 });

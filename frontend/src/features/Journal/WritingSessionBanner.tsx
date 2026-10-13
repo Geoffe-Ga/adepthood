@@ -2,7 +2,7 @@
  * ``WritingSessionBanner`` — one sentence about a writing session that ran its
  * length, and a way to put it away.
  *
- * Inline, never a modal: the writer has just finished writing and the page is
+ * A floating note, never a modal: the writer has just finished writing and the page is
  * theirs, so nothing seizes it. The note states what happened and offers only
  * dismissal — no count of sessions, no praise, and no invitation to start
  * another, because a finished session is not a reason to begin one.
@@ -37,7 +37,6 @@
 import React, { createContext, useCallback, useContext, useRef } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_PILL_MAX_HEIGHT } from './JournalEntry.styles';
 import type { WritingSessionResult } from './writingSession';
 import {
   WRITING_SESSION_DISMISS,
@@ -50,7 +49,7 @@ import {
   SPACING,
   colors,
   editorialType,
-  journalSheet,
+  journalLayout,
   spacing,
   touchTarget,
 } from '@/design/tokens';
@@ -67,25 +66,18 @@ export function useFocusBannerClose(): () => void {
 export interface WritingSessionBannerProps {
   result: WritingSessionResult;
   onDismiss: () => void;
-  /** Whether the timer occupies its floating rail beneath this note. */
-  clearsFloatingTimer?: boolean;
   children?: React.ReactNode;
 }
 
 function WritingSessionBanner({
   result,
   onDismiss,
-  clearsFloatingTimer = true,
   children,
 }: WritingSessionBannerProps): React.JSX.Element {
   const closeRef = useRef<View>(null);
   const focusClose = useCallback(() => moveAccessibilityFocus(closeRef.current), []);
   return (
-    <View
-      style={[styles.banner, clearsFloatingTimer && styles.bannerWithFloatingTimer]}
-      accessibilityLiveRegion="polite"
-      testID="writing-session-banner"
-    >
+    <View style={styles.banner} accessibilityLiveRegion="polite" testID="writing-session-banner">
       <Text style={styles.summary}>{writingSessionSummary(result.elapsedMinutes)}</Text>
       <FocusCloseContext.Provider value={focusClose}>{children}</FocusCloseContext.Provider>
       <TouchableOpacity
@@ -104,16 +96,11 @@ function WritingSessionBanner({
 }
 
 const styles = StyleSheet.create({
-  /**
-   * Warm paper tone in the page's own margin rhythm — a note, not an alert.
-   *
-   * While the timer floats, the larger bottom margin is load-bearing rather
-   * than rhythm: without it the pill paints across the Close target and any
-   * offer in the children slot. Once the idle timer expands back into flow,
-   * only the ordinary note-to-control rhythm remains.
-   */
+  /** A bounded paper note, stacked above the pill inside its floating band. */
   banner: {
-    marginHorizontal: journalSheet.deskPaddingH,
+    width: '100%',
+    maxWidth: journalLayout.pageMaxWidth,
+    alignSelf: 'center',
     marginTop: spacing(1),
     marginBottom: spacing(1),
     paddingHorizontal: SPACING.md,
@@ -122,9 +109,6 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.sheetEdge,
-  },
-  bannerWithFloatingTimer: {
-    marginBottom: RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT,
   },
   summary: {
     ...editorialType.note,

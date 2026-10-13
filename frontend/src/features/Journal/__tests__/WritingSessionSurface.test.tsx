@@ -4,10 +4,11 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import { RESONANCE_BUTTON_CLEARANCE } from '../JournalEntry.styles';
+import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from '../JournalEntry.styles';
 import { DEFAULT_WRITING_MINUTES } from '../writingSession';
 import WritingSessionSurface from '../WritingSessionSurface';
 
+import { SPACING } from '@/design/tokens';
 import type { IntervalHandle } from '@/features/Practice/engine/types';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 
@@ -91,23 +92,35 @@ describe('WritingSessionSurface', () => {
     expect(queryByTestId('writing-timer-compact')).not.toBeNull();
   });
 
-  it('drops floating-only banner clearance when the idle timer is expanded into flow', () => {
+  it('keeps the note inside one floating band when the idle timer expands', () => {
     const { getByTestId } = renderSurface();
-
     fireEvent.press(getByTestId('writing-timer-start'));
     tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
-
-    const floatingMargin = StyleSheet.flatten(
-      getByTestId('writing-session-banner').props.style,
-    ).marginBottom;
-    expect(floatingMargin).toBeGreaterThanOrEqual(RESONANCE_BUTTON_CLEARANCE);
-
     fireEvent.press(getByTestId('writing-timer-compact'));
+    expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style).position).toBe(
+      'absolute',
+    );
+    expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style).bottom).toBe(
+      RESONANCE_BUTTON_CLEARANCE,
+    );
+    expect(
+      StyleSheet.flatten(getByTestId('writing-session-banner').props.style).marginBottom,
+    ).toBeLessThan(RESONANCE_BUTTON_CLEARANCE);
+  });
 
-    const inFlowMargin = StyleSheet.flatten(
-      getByTestId('writing-session-banner').props.style,
-    ).marginBottom;
-    expect(inFlowMargin).toBeLessThan(RESONANCE_BUTTON_CLEARANCE);
+  it('reserves the measured note and timer band without shrinking the sheet', () => {
+    const onClearanceChange = jest.fn();
+    const { getByTestId } = render(<WritingSessionSurface onClearanceChange={onClearanceChange} />);
+    fireEvent(getByTestId('writing-session-band'), 'layout', {
+      nativeEvent: { layout: { height: 400 } },
+    });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(
+      400 + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
+    );
+    fireEvent(getByTestId('writing-session-band'), 'layout', {
+      nativeEvent: { layout: { height: 40 } },
+    });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(WRITING_TIMER_CLEARANCE);
   });
 
   it('replaces an earlier note rather than stacking a second one', () => {

@@ -39,7 +39,7 @@ import HeldWordsLeaveDialog from './HeldWordsLeaveDialog';
 import HighlightedBody from './HighlightedBody';
 import type { FocusSpan } from './highlightSegments';
 import { JournalScreenDrawer } from './JournalDrawer';
-import styles from './JournalEntry.styles';
+import styles, { WRITING_TIMER_CLEARANCE } from './JournalEntry.styles';
 import {
   LOADED_TIER_STATE,
   carriedTierEscalation,
@@ -3760,13 +3760,13 @@ function JournalPageSurface({
   bodyPlaceholder,
   narrow,
   focus,
-  timerFloating,
+  writingClearance,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   narrow: boolean;
   focus: FocusScrollHost;
-  timerFloating: boolean;
+  writingClearance: number;
 }): React.JSX.Element {
   const [layoutTick, bumpLayoutTick] = useReducer((tick: number) => tick + 1, 0);
   const onPageLayout = focus.onPageLayout;
@@ -3784,7 +3784,7 @@ function JournalPageSurface({
       style={[
         styles.page,
         narrow && styles.pageNarrow,
-        ctl.editGate.editMode && timerFloating && styles.pageWithFloatingAction,
+        ctl.editGate.editMode && { paddingBottom: writingClearance },
       ]}
       testID="journal-page"
     >
@@ -3800,14 +3800,14 @@ function JournalPage({
   ctl,
   bodyPlaceholder,
   focusSpan,
-  timerFloating,
+  writingClearance,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   /** A quote the reader arrived to see; read mode scrolls it into view. */
   focusSpan?: FocusSpan;
-  /** Whether the timer currently occupies the floating rail over the page. */
-  timerFloating: boolean;
+  /** Measured floating note and timer band; the editor always reserves its minimum. */
+  writingClearance: number;
 }) {
   const narrow = useWindowDimensions().width < NARROW_BREAKPOINT;
   const settle = useEntrance();
@@ -3833,7 +3833,7 @@ function JournalPage({
             bodyPlaceholder={bodyPlaceholder}
             narrow={narrow}
             focus={focus}
-            timerFloating={timerFloating}
+            writingClearance={writingClearance}
           />
         </ScrollView>
       </Animated.View>
@@ -4261,12 +4261,12 @@ function EntryComposeRow({
   ctl,
   bodyPlaceholder,
   focusSpan,
-  timerFloating,
+  writingClearance,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   focusSpan?: FocusSpan;
-  timerFloating: boolean;
+  writingClearance: number;
 }): React.JSX.Element {
   return (
     <View style={styles.composeRow} testID="journal-compose-row">
@@ -4274,7 +4274,7 @@ function EntryComposeRow({
         ctl={ctl}
         bodyPlaceholder={bodyPlaceholder}
         focusSpan={focusSpan}
-        timerFloating={timerFloating}
+        writingClearance={writingClearance}
       />
       <ReflectionSourcesDock reflection={ctl.reflection} />
     </View>
@@ -4558,11 +4558,11 @@ type WritingLaunchParam = NonNullable<RootStackParamList['JournalEntry']>['writi
 function EntryWritingSurfaces({
   ctl,
   launch,
-  onTimerFloatingChange,
+  onWritingClearanceChange,
 }: {
   ctl: Controller;
   launch: WritingLaunchParam;
-  onTimerFloatingChange: (_floating: boolean) => void;
+  onWritingClearanceChange: (_clearance: number) => void;
 }): React.JSX.Element | null {
   const session = useQuickLaunchedSession(launch);
   // Above the edit-mode return, beside the practice hook it wraps: both kinds
@@ -4575,13 +4575,13 @@ function EntryWritingSurfaces({
       initialMinutes={session.initialMinutes}
       autoStart={session.autoStart}
       onSession={onSession}
-      onFloatingChange={onTimerFloatingChange}
+      onClearanceChange={onWritingClearanceChange}
       renderOffer={session.launched ? renderLaunchedSessionNote : renderSessionOffer}
     />
   );
 }
 
-/** Keep the page inset and timer mount in one placement-aware subtree. */
+/** Keep scroll reachability aligned with the floating band's measured height. */
 function EntryWritingCanvas({
   ctl,
   bodyPlaceholder,
@@ -4593,19 +4593,23 @@ function EntryWritingCanvas({
   focusSpan?: FocusSpan;
   launch: WritingLaunchParam;
 }): React.JSX.Element {
-  // The idle expanded timer is a normal sibling below the page; only its
-  // compact/running mount needs a matching content inset inside the page.
-  const [timerFloating, setTimerFloating] = useState(false);
+  // Reserve the timer before its first layout, then include a finished note
+  // at its measured height so every offer and completion control remains reachable.
+  const [writingClearance, setWritingClearance] = useState(WRITING_TIMER_CLEARANCE);
   return (
     <>
       <EntryComposeRow
         ctl={ctl}
         bodyPlaceholder={bodyPlaceholder}
         focusSpan={focusSpan}
-        timerFloating={timerFloating}
+        writingClearance={writingClearance}
       />
       <ReflectionComposer reflection={ctl.reflection} />
-      <EntryWritingSurfaces ctl={ctl} launch={launch} onTimerFloatingChange={setTimerFloating} />
+      <EntryWritingSurfaces
+        ctl={ctl}
+        launch={launch}
+        onWritingClearanceChange={setWritingClearance}
+      />
     </>
   );
 }
