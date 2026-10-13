@@ -155,7 +155,6 @@ from services.creek_vault_reflect import (
     select_reflection_llm,
 )
 from services.creek_vault_voice_drafts import (
-    MirrorOutcome,
     VoiceDraftCopy,
     mark_entry_retractions_pending,
     mirror_recorded_voice_draft,
@@ -3438,7 +3437,7 @@ async def _mirror_cached_essay(
         await ensure_account_live(session, entry.user_id)
         if await withdrawal_refusal(session, entry) is not None:
             return cached
-        outcome = await mirror_recorded_voice_draft(
+        await mirror_recorded_voice_draft(
             session,
             clients.vault_client,
             VoiceDraftCopy(
@@ -3447,15 +3446,9 @@ async def _mirror_cached_essay(
                 essay=essay,
                 classification=entry.classification,
             ),
-            entry_id=cast("int", entry.id),
+            entry=entry,
             destination=await resolved_vault_destination(session, entry.user_id),
         )
-        if outcome is MirrorOutcome.DIALLED:
-            # Shadow only (#3059), for a PUT that went out -- stored, refused or
-            # unacknowledged. One the vault-send switch refused sent nothing, so
-            # it is not counted, the way #3107 treats a journal write (#3122).
-            await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
-            await session.commit()
     return cached
 
 

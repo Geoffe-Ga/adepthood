@@ -21,6 +21,7 @@ switch refuses (#3075).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from http import HTTPStatus
@@ -42,7 +43,7 @@ from domain.creek_vault import (
     VaultVoiceDraftResult,
 )
 from main import app
-from models.journal_entry import JournalClassification
+from models.journal_entry import JournalClassification, JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
 from services import marginalia as marginalia_service
@@ -332,7 +333,7 @@ async def test_a_suspended_remirror_restores_the_row_it_rearmed(
             essay=_ESSAY,
             classification=JournalClassification.PERSONAL,
         ),
-        entry_id=review_id,
+        entry=await _entry(db_session, review_id),
         destination=_DESTINATION,
     )
 
@@ -343,3 +344,66 @@ async def test_a_suspended_remirror_restores_the_row_it_rearmed(
         for row in await _intents(db_session, user_id)
     ]
     assert after == before
+
+
+async def _entry(session: AsyncSession, entry_id: int) -> JournalEntry:
+    entry = await session.get(JournalEntry, entry_id)
+    assert entry is not None
+    return entry
+
+
+class _InterruptedDraftVault(_SuspendedDraftVault):
+    """A vault whose draft PUT is dialled and then interrupted by ``failure``."""
+
+    def __init__(self, failure: BaseException) -> None:
+        super().__init__()
+        self._failure = failure
+
+    async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
+        self.upserts.append(request)
+        raise self._failure
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [asyncio.CancelledError(), RuntimeError("synthetic fault mid-PUT")],
+    ids=["cancelled", "unexpected_error"],
+)
+async def test_an_interrupted_put_still_keeps_the_intent_and_counts_the_shadow(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    failure: BaseException,
+) -> None:
+    """A PUT that may have gone out is counted even when it never returns normally.
+
+    Cancellation or an error that is not a vault error propagates unchanged,
+    but only after the intent is kept and the ``VOICE_DRAFT_MIRROR`` shadow is
+    recorded: under-counting egress is the unsafe direction for the lineage log.
+    """
+    _headers, user_id = await _signup(async_client, f"mirror_interrupted_{type(failure).__name__}")
+    review_id, note_id = await _tainted_note(db_session, user_id)
+    vault = _InterruptedDraftVault(failure)
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO), pytest.raises(type(failure)):
+        await mirror_recorded_voice_draft(
+            db_session,
+            vault,
+            VoiceDraftCopy(
+                owner_user_id=user_id,
+                marginalia_id=note_id,
+                essay=_ESSAY,
+                classification=JournalClassification.PERSONAL,
+            ),
+            entry=await _entry(db_session, review_id),
+            destination=_DESTINATION,
+        )
+
+    assert len(vault.upserts) == 1
+    intents = await _intents(db_session, user_id)
+    assert [(row.marginalia_id, row.state) for row in intents] == [
+        (note_id, VoiceDraftRetractionState.MIRROR_INTENT)
+    ]
+    assert _mirror_shadows(caplog, review_id) == 1

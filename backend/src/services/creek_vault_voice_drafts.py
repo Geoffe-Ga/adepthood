@@ -69,6 +69,7 @@ from services.creek_vault_withdraw import (
     withdraw_unconfirmed_copy,
 )
 from services.journal_withdrawal_obligation import open_obligation, settle_confirmed
+from services.privacy_lineage import LineageOperation, observe_entry_lineage
 from services.voice_draft_privacy import voice_draft_privacy
 
 _LOGGER = logging.getLogger(__name__)
@@ -237,10 +238,10 @@ async def mirror_recorded_voice_draft(
     client: CreekVaultVoiceDraftClient,
     draft: VoiceDraftCopy,
     *,
-    entry_id: int,
+    entry: JournalEntry,
     destination: str | None,
 ) -> MirrorOutcome:
-    """Mirror ``draft`` with a durable intent, dropping that intent if nothing was sent.
+    """Mirror ``draft`` with a durable intent and shadow; drop both if nothing was sent.
 
     The intent is committed before the PUT, so a crash or a lost acknowledgement
     still leaves the withdrawal it would owe on record -- a dialled PUT keeps
@@ -248,12 +249,29 @@ async def mirror_recorded_voice_draft(
     refused before the wire offered nothing, so the staged intent is dropped
     (or the row restored to what it was) rather than leaving the background
     sweep retracting a draft the vault never received (#3122, after #3107).
+
+    The ``VOICE_DRAFT_MIRROR`` lineage shadow (#3059, observation only) is
+    counted for every attempt that staged an intent and was not refused by the
+    switch: one that returned, and one that raised or was cancelled while the
+    PUT may have been on the wire. The exception still propagates; counting it
+    is the safe direction for an egress log.
     """
-    stager = _IntentStager(session, draft, entry_id=entry_id, destination=destination)
-    outcome = await mirror_voice_draft(client, draft, record_intent=stager)
+    stager = _IntentStager(session, draft, entry_id=cast("int", entry.id), destination=destination)
+    outcome: MirrorOutcome | None = None
+    try:
+        outcome = await mirror_voice_draft(client, draft, record_intent=stager)
+    finally:
+        if stager.staged is not None and outcome is not MirrorOutcome.SUSPENDED:
+            await _count_mirror_egress(session, entry)
     if outcome is MirrorOutcome.SUSPENDED and stager.staged is not None:
         await drop_staged_mirror_intent(session, stager.staged)
     return outcome
+
+
+async def _count_mirror_egress(session: AsyncSession, entry: JournalEntry) -> None:
+    """Record the mirror's lineage shadow and commit, so no connection is held after it."""
+    await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
+    await session.commit()
 
 
 async def _intent_recorded(
