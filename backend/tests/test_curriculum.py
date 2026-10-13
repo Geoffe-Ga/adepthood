@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -15,6 +16,7 @@ from curriculum import (
     manifestation,
     stage_curriculum,
 )
+from scripts.check_wavelength_terms import APP_AUTHORED, read_canonical_terms
 
 CANONICAL_PHASE_ORDER = (
     WavelengthPhase.RISING,
@@ -401,6 +403,7 @@ _RUNBOOK_REQUIREMENTS = (
     "python -m scripts.sync_content",
     "CONTENT_VERSION",
     "python -m scripts.build_stage_correspondence --check",
+    "python -m scripts.check_wavelength_terms",
     "export_openapi.py --check",
     "### Supersessions",
     "stage_correspondence_supersessions.json",
@@ -433,3 +436,66 @@ def test_the_runbook_check_is_scoped_to_its_own_section() -> None:
     """A token that appears only after the section ends does not satisfy it."""
     doc = f"{_RUNBOOK_HEADING}\n\nre-pin first.\n\n## Consumers\n\nRollback\n"
     assert "Rollback" not in _runbook_section(doc)
+
+
+# ── Rx/OD phase terms vs the canonical Modes CSV (#3135) ────────────────
+
+#: The canonical Rx/OD terms, vendored byte-for-byte by ``scripts.sync_content``.
+_MODES_CSV_PATH = (
+    Path(__file__).resolve().parents[1] / "content" / "curriculum" / "modes_of_the_wavelength.csv"
+)
+
+#: Stages whose phase terms the Modes CSV defines (Clear Light has no row).
+_CSV_BACKED_STAGES = range(1, 10)
+
+#: The one stage whose six pairs are app-authored, pending an upstream row.
+_APP_AUTHORED_STAGE = 10
+
+
+def _normalised(term: str) -> str:
+    """Case-fold and collapse whitespace, the comparison the drift gate uses."""
+    return " ".join(term.split()).casefold()
+
+
+@pytest.mark.parametrize("stage_number", _CSV_BACKED_STAGES)
+def test_phase_names_match_the_canonical_modes_csv(stage_number: int) -> None:
+    """Every Rx/OD name the Map shows equals the Modes CSV's Medicine/Toxic cell."""
+    canonical = read_canonical_terms(_MODES_CSV_PATH)
+    stage = stage_curriculum(stage_number)
+    terms = canonical[_normalised(stage.spiral_dynamics_color)]
+    for phase_manifestation in stage.manifestations:
+        phase = phase_manifestation.phase.value
+        rx, od = terms[(phase, "integrated")], terms[(phase, "shadow")]
+        assert _normalised(phase_manifestation.integrated.name) == _normalised(rx), (
+            f"stage {stage_number} {phase} Rx"
+        )
+        assert _normalised(phase_manifestation.shadow.name) == _normalised(od), (
+            f"stage {stage_number} {phase} OD"
+        )
+
+
+def test_teal_no_longer_mirrors_yellow() -> None:
+    """The #3135 regression: Teal's twelve names were Yellow's, byte for byte."""
+    yellow = stage_curriculum(7).manifestations
+    teal = stage_curriculum(8).manifestations
+    assert teal[0].integrated.name == "Epiphany"
+    assert teal[0].shadow.name == "Delusion"
+    assert yellow[0].integrated.name == "Rebellion"
+    assert yellow[0].shadow.name == "Mischief"
+    assert {m.integrated.name for m in yellow}.isdisjoint({m.integrated.name for m in teal})
+
+
+def _raw_stage(stage_number: int) -> dict[str, Any]:
+    """Return one stage of the dataset as raw JSON (keys the loader ignores included)."""
+    stages = _dataset_payload()["stages"]
+    assert isinstance(stages, list)
+    found: dict[str, Any] = next(s for s in stages if s["stage_number"] == stage_number)
+    return found
+
+
+def test_clear_light_phase_pairs_are_marked_app_authored() -> None:
+    """Clear Light has no Modes CSV row, so its pairs must say they are app copy."""
+    canonical = read_canonical_terms(_MODES_CSV_PATH)
+    clear_light = _raw_stage(_APP_AUTHORED_STAGE)
+    assert _normalised(clear_light["spiral_dynamics_color"]) not in canonical
+    assert {m.get("source") for m in clear_light["manifestations"]} == {APP_AUTHORED}
