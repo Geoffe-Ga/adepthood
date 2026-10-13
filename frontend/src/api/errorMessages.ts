@@ -35,9 +35,10 @@ const PASSWORD_TOO_LONG =
 // Shared by the signup form's ``license_required`` and the social exchanges'
 // ``needs_license`` so the two roads to "we need your key" read identically.
 const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to continue.';
-// One wallet pays for chat, resonance readings and a note's first letter
-// (#623). Shared by the ``payment_required`` code and the bare 402 fallback so
-// a spent month reads the same whichever road reported it.
+// One wallet (#623). Since ADR 0009 phase (a) (#3067) it pays only for a
+// reading the writer's vault answers; letters and page reading need the
+// writer's own key. Shared by the ``payment_required`` code and the bare 402
+// fallback so a spent month reads the same whichever road reported it.
 /**
  * The two payer refusals (#3096). Every AI feature -- a reading, a letter,
  * completion checks, a page read -- is refused before anything is spent unless a

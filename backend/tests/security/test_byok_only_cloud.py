@@ -407,7 +407,7 @@ async def test_the_classifier_degrades_without_a_key_and_dials_with_one(
     assert cloud_ready.requests() == 1
 
 
-# --- B07 provenance: a credit debit stands only beside a non-cloud receipt -----
+# --- B07 provenance: a credit debit stands only beside a vault-answered receipt -
 
 
 def _vault_with_note() -> ReflectingVaultClient:
