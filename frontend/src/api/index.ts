@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { DirectVendorError, readImageDirect } from './byokDirect';
 import { flattenGoalCompletions } from './flattenGoalCompletions';
 import { isDeviceKnownOffline, setNetworkOnlineGetter } from './networkSignal';
 import {
@@ -127,8 +128,9 @@ import {
   type FeedbackTriageSummaryT,
 } from './schemas';
 import { createTokenRotation, type RecoveryMode } from './tokenRotation';
+import { classifyTranscription } from './transcriptionContract';
 
-import { API_BASE_URL } from '@/config';
+import { API_BASE_URL, KEYLESS_PAGE_READ_REACHES_SERVER } from '@/config';
 import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 import { DEFAULT_TIMEZONE, dayKeyToInstant } from '@/utils/dateUtils';
@@ -265,7 +267,6 @@ export type MediaType = 'image/jpeg' | 'image/png' | 'image/webp';
 export type TranscriptionErrorKind =
   | 'invalid_image'
   | 'image_too_large'
-  | 'model_lacks_vision'
   // The server read the image but got nothing usable back: no text in it, or
   // the model declined. Neither is billed, and a fresh shot is the next move.
   | 'no_text_found'
@@ -274,11 +275,11 @@ export type TranscriptionErrorKind =
   // No personal key, on a server with nothing credits could buy (#3096): only a
   // key of the writer's own can read the page, so it is terminal until one is added.
   | 'key_required'
-  // A spent *provider* balance, which `wallet_exhausted` (our own monthly
-  // metering) is not: its remedy is the API key, not the next monthly reset.
-  // Split by whose key it was, because that decides who can act.
+  // A spent *provider* balance on the writer's own key, which `wallet_exhausted`
+  // (our own monthly metering) is not: its remedy is topping up that key's
+  // account, not the next monthly reset. The server's own key never pays for a
+  // page (ADR 0009 phase (a), #3067), so there is no server-balance sibling.
   | 'credit_exhausted'
-  | 'service_credit_exhausted'
   | 'rate_limited'
   | 'provider_error'
   | 'network'
@@ -1813,10 +1814,12 @@ export interface JournalListParams {
   offset?: number;
 }
 
-/** Optional bring-your-own-key header for the LLM endpoints. */
+/** Optional bring-your-own-key header for the LLM endpoints that still relay it. */
 // Resolve the bring-your-own-key header: an explicit per-call key wins, else the
 // key registered by the BYOK provider (ApiKeyContext) at call time so rotations
-// apply immediately. Empty/absent → no header (backend falls back to its env).
+// apply immediately. Empty/absent → no header, and the server refuses the
+// request ``llm_key_required`` unless the writer's vault answers it. Page
+// reading never uses this: the device calls the vendor itself (#3067).
 const byokHeaders = (apiKey?: string | null): Record<string, string> | undefined => {
   // `undefined` means "use the session's current key" for legacy callers.
   // Explicit `null` pins a disclosed server-paid request even if key hydration
@@ -1828,7 +1831,6 @@ const byokHeaders = (apiKey?: string | null): Record<string, string> | undefined
 /** Statuses this endpoint answers with more than one distinct condition. */
 const TRANSCRIBE_PAYMENT_REQUIRED = 402;
 const TRANSCRIBE_UNPROCESSABLE = 422;
-const TRANSCRIBE_SERVICE_UNAVAILABLE = 503;
 
 /** One status's `detail` sub-map, paired with what an unlisted detail means. */
 interface TranscribeDetailRule {
@@ -1840,7 +1842,7 @@ interface TranscribeDetailRule {
  * Per-status `detail` rules: the endpoint reuses one status for several distinct
  * conditions, so the status alone cannot classify them. A 402 is a spent monthly
  * wallet, a spent provider balance, or a missing key; a 422 is a bad image, a
- * text-only model, or an unusable read (no text found, or a refused read); a 503 is a spent server balance or a genuine outage. The 422
+ * text-only model, or an unusable read (no text found, or a refused read). The 422
  * fallback also absorbs the Pydantic array-detail case that `extractErrorDetail`
  * collapses to `'Request failed'`.
  */
@@ -1857,15 +1859,10 @@ const TRANSCRIBE_DETAIL_RULES: Record<number, TranscribeDetailRule> = {
   [TRANSCRIBE_UNPROCESSABLE]: {
     kinds: {
       image_too_large: 'image_too_large',
-      model_lacks_vision: 'model_lacks_vision',
       no_text_found: 'no_text_found',
       transcription_refused: 'transcription_refused',
     },
     fallback: 'invalid_image',
-  },
-  [TRANSCRIBE_SERVICE_UNAVAILABLE]: {
-    kinds: { llm_service_credit_exhausted: 'service_credit_exhausted' },
-    fallback: 'unknown',
   },
 };
 
@@ -1907,6 +1904,48 @@ function toTranscriptionError(err: unknown): TranscriptionError {
   // Schema drift (ApiValidationError) and everything unforeseen collapse here.
   const status = err instanceof ApiValidationError ? err.status : null;
   return new TranscriptionError('unknown', status, err);
+}
+
+/**
+ * A direct vendor failure in the page-read taxonomy. Every kind but one is the
+ * same word on both sides; a stored key naming no vendor never left the device,
+ * and the writer has nothing more specific to do about it than about any other
+ * unforeseen failure. No `cause`: see {@link DirectVendorError}'s PRIVACY note.
+ */
+function directToTranscriptionError(err: unknown): TranscriptionError {
+  if (!(err instanceof DirectVendorError)) return new TranscriptionError('unknown', null);
+  const kind: TranscriptionErrorKind = err.kind === 'unrecognised_key' ? 'unknown' : err.kind;
+  return new TranscriptionError(kind, err.status);
+}
+
+/**
+ * Read one page with the writer's own key, from this device straight to that
+ * key's vendor (ADR 0009 phase (a), #3067). Neither the key nor the page goes
+ * to Adepthood: the only request it sees is the content-free admission, which
+ * answers 503 `ai_suspended` while an operator has switched external AI off for
+ * a privacy incident (#3075). Admission fails closed -- the page is not sent
+ * when Adepthood cannot be asked -- and a reply that is no text or a refusal is
+ * its typed kind, never the page's text, exactly as the server judged it.
+ */
+async function transcribePageDirect(
+  key: string,
+  page: { imageBase64: string; mediaType: MediaType },
+  token: string | undefined,
+): Promise<TranscribePageT> {
+  try {
+    await request<void>('/journal/transcribe-page/direct-admission', { method: 'POST', token });
+  } catch (err: unknown) {
+    throw toTranscriptionError(err);
+  }
+  let text: string;
+  try {
+    text = await readImageDirect(key, page, { timeoutMs: TRANSCRIBE_TIMEOUT_MS });
+  } catch (err: unknown) {
+    throw directToTranscriptionError(err);
+  }
+  const verdict = classifyTranscription(text);
+  if (verdict !== 'transcribed') throw new TranscriptionError(verdict, null);
+  return { text };
 }
 
 /** HTTP statuses the upload endpoint answers with, mapped to a stable kind. */
@@ -2081,27 +2120,36 @@ export const journal = {
     });
   },
   /**
-   * Transcribe the text in one captured image (a page, a screenshot, a photo of
-   * a screen) from base64. Stateless: it persists nothing and just returns the
-   * OCR'd text; an image with no text, or a declined read, is a typed 422
-   * (`no_text_found` / `transcription_refused`) and is not charged. Charges one wallet unit,
-   * so it is deliberately NON-idempotent — there is no auto-retry and callers
-   * must not resend on transient failure without user intent. Supports BYOK via
-   * the optional api key. PRIVACY: the image payload is never logged, and a
-   * {@link TranscriptionError} message never carries it. A 402 disambiguates a
-   * spent wallet (`wallet_exhausted`) from a missing key (`key_required`).
+   * Transcribe one image of text -- a handwritten or typed page, a screenshot, a
+   * photo of a screen -- from base64. Stateless: it persists nothing and just
+   * returns the text; an image with no text, or a declined read, is a typed
+   * failure (`no_text_found` / `transcription_refused`), never the page's text.
+   *
+   * With the writer's own key -- passed explicitly, else the one the BYOK
+   * provider registered -- the page goes from this device straight to that key's
+   * vendor ({@link transcribePageDirect}); neither the key nor the page reaches
+   * Adepthood (ADR 0009 phase (a), #3067). Without one it is refused
+   * `key_required` on the device and sent nowhere -- except in a development
+   * build, whose local server's stub test seam can answer it. Deliberately
+   * NON-idempotent: no auto-retry, and callers must not resend on a transient
+   * failure without the writer asking. PRIVACY: the image payload is never
+   * logged, and a {@link TranscriptionError} message never carries it.
    */
   async transcribePage(
     { imageBase64, mediaType }: { imageBase64: string; mediaType: MediaType },
     token?: string,
     apiKey?: string,
   ): Promise<TranscribePageT> {
+    const key = apiKey === undefined ? (llmApiKeyGetter?.() ?? null) : apiKey;
+    if (key) return transcribePageDirect(key, { imageBase64, mediaType }, token);
+    // Outside a development build the server can only refuse a keyless page,
+    // so it is refused here and the page goes nowhere.
+    if (!KEYLESS_PAGE_READ_REACHES_SERVER) throw new TranscriptionError('key_required', null);
     try {
       return await request<TranscribePageT>('/journal/transcribe-page', {
         method: 'POST',
         body: { image_base64: imageBase64, media_type: mediaType },
         token,
-        headers: byokHeaders(apiKey),
         timeoutMs: TRANSCRIBE_TIMEOUT_MS,
         schema: transcribePageSchema as unknown as z.ZodType<TranscribePageT>,
       });

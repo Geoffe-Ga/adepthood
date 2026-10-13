@@ -1512,9 +1512,7 @@ def _log_resonance_outcome(
 class _ResonancePassContext:
     """What the literary pass needs beyond the prompt itself.
 
-    ``byok`` records whose key paid for the call, which is what decides how a
-    spent provider balance is reported — a bill the caller can settle, or one
-    only an operator can. ``care`` is the standby surface a distress-flagged
+    ``care`` is the standby surface a distress-flagged
     entry falls back to when the pass fails, so care never depends on the LLM.
     ``spent`` is the optional deduction a failure path must compensate. It is
     ``None`` when the caller's own key pays, otherwise it committed before the
@@ -1525,7 +1523,6 @@ class _ResonancePassContext:
 
     session: AsyncSession
     care: CareResponse | None
-    byok: bool
     user_id: int
     spent: SpendResult | None
     trace: _FailedGeneration
@@ -1617,7 +1614,7 @@ async def _generate_marginalia_or_error(
         await _refund_failed_pass(
             context.session, context.user_id, context.spent, trace=context.trace
         )
-        raise credit_exhausted_error(exc, byok=context.byok) from exc
+        raise credit_exhausted_error(exc) from exc
     except LLMProviderError as exc:
         await _refund_failed_pass(
             context.session, context.user_id, context.spent, trace=context.trace
@@ -2445,7 +2442,6 @@ async def _run_admitted_resonance(
             _ResonancePassContext(
                 session=session,
                 care=care,
-                byok=byok_key is not None,
                 user_id=current_user,
                 spent=spent,
                 trace=trace,
@@ -3530,7 +3526,7 @@ async def _cache_essay(
     charge = _EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
     settled = False
     try:
-        essay = await _dial_essay(llm, note, body, prior_letters, byok=byok_key is not None)
+        essay = await _dial_essay(llm, note, body, prior_letters)
         await _settle_essay(session, note, essay, llm, charge)
         settled = True
     finally:
@@ -3571,8 +3567,6 @@ async def _dial_essay(
     note: Marginalia,
     body: str,
     prior_letters: list[str],
-    *,
-    byok: bool,
 ) -> str | None:
     """Ask the provider for the letter, mapping its failures to HTTP errors.
 
@@ -3593,7 +3587,7 @@ async def _dial_essay(
             prior_drafts=prior_letters,
         )
     except LLMCreditExhaustedError as exc:
-        raise credit_exhausted_error(exc, byok=byok) from exc
+        raise credit_exhausted_error(exc) from exc
     except LLMProviderError as exc:
         raise bad_gateway("llm_provider_error") from exc
 

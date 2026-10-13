@@ -139,14 +139,6 @@ def test_only_the_exact_word_true_arms_the_seam(
     assert botmason.stub_seam_armed() is (value.strip().lower() == "true")
 
 
-def test_vision_is_unavailable_on_an_unarmed_stub(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Transcription cannot fall through to a canned page outside the seam."""
-    disarm_stub_seam(monkeypatch)
-    monkeypatch.setenv("ENV", "development")
-
-    assert botmason.vision_provider_available(None) is False
-
-
 # --- the boot: the seam never fronts real users --------------------------------
 
 
