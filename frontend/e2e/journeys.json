@@ -654,7 +654,7 @@
   },
   {
     "id": "journal.delete-with-unreachable-vault",
-    "description": "A writer whose page reached a Creek vault they have since replaced or disconnected deletes that page (#3094, #3098). The DELETE never dials the new vault and answers a 503 that says, in content-free relational terms, where the copy is: vault_withdrawal_previous_vault or vault_withdrawal_disconnected_vault. The shelf keeps the page, says why, and offers reconnect first (opening vault settings) or \"I can't reach it\", which calls POST /journal/{entry_id}/erase-locally: the page is erased here -- gone from read, list and export -- a content-free unconfirmed obligation is kept bound to the old vault, and the plain receipt says a copy may remain there and must be deleted there; nothing reports it withdrawn. Reconnecting the old vault later lets the background sweep confirm and clear the obligation. Uncovered because no lane spec yet drives two vault connections for one account against the out-of-process contract fake; pinned meanwhile by backend/tests/test_journal_unreachable_vault.py, backend/tests/test_journal_delete_completion.py, backend/tests/test_vault_destination_binding.py and the Jest suites JournalShelfScreenDelete.test.tsx, JournalEntryScreenPrivacy.test.tsx and api/__tests__/journalErasure.test.ts.",
+    "description": "A writer whose page reached a Creek vault they have since replaced or disconnected deletes that page (#3094, #3098). The DELETE never dials the new vault and answers a 503 that says, in content-free relational terms, where the copy is: vault_withdrawal_previous_vault or vault_withdrawal_disconnected_vault. The shelf keeps the page, says why, and offers reconnect first (opening vault settings) or \"I can't reach it\", which calls POST /journal/{entry_id}/erase-locally: the page is erased here -- gone from read, list and export -- a content-free unconfirmed obligation is kept bound to the old vault, and the plain receipt says a copy may remain there and must be deleted there; nothing reports it withdrawn. Reconnecting the old vault later lets the background sweep confirm and clear the obligation. A page copied to a vault before destination binding (#3095) recorded no vault at all: the connected vault is still asked but its answer is never trusted, so the DELETE (and an Intimate reclassification) answers vault_withdrawal_unrecorded_vault, the shelf tells the person plainly that a copy made before October 7, 2026 may remain in a vault they connected earlier, and \"I can't reach it\" erases the page here with an unconfirmed obligation bound to no vault -- a receipt naming unrecorded_vault that no vault can ever clear. Uncovered because no lane spec yet drives two vault connections for one account against the out-of-process contract fake; pinned meanwhile by backend/tests/test_journal_unreachable_vault.py, backend/tests/test_journal_delete_completion.py, backend/tests/test_vault_destination_binding.py and the Jest suites JournalShelfScreenDelete.test.tsx, JournalEntryScreenPrivacy.test.tsx and api/__tests__/journalErasure.test.ts.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["journal"],
@@ -679,6 +679,18 @@
     },
     "status": "uncovered",
     "issue": 3107
+  },
+  {
+    "id": "journal.care-under-ai-suspension",
+    "description": "While the operator's PRIVACY_SUSPEND_EXTERNAL_AI switch is on, a writer whose non-intimate page screens as acute distress asks for resonance (#3120). The local, model-free distress screen runs before the suspension refusal, so the answer is the care-only 200 -- the care surface, no marginalia, unspent balances -- with no provider built or dialled, no charge, no generation slot and no usage row. A page that is not flagged still gets the 503 ai_suspended refusal. Uncovered because no lane spec drives the operator switch; pinned meanwhile at the route by backend/tests/incident/test_privacy_suspension.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": ["POST /journal/{entry_id}/resonance"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 3120
   },
   {
     "id": "journal.intimate-reclassification-withdraws-copies",
@@ -1498,12 +1510,21 @@
   },
   {
     "id": "journal.idle-writing-timer-clears-the-entry-body",
-    "description": "At 1280x720 the floating glass timer leaves the visible writing field unobscured. Its idle choice and running rail never shrink the sheet. Finish and Get Resonance remain hit-testable while a session runs and beneath its bounded finished-session note; finishing still reaches the server-backed reading view (#3131).",
+    "description": "At 1280x720 the floating glass timer leaves the visible writing field unobscured. Its idle choice and running rail never shrink the sheet; expanded options remain inside the paper around the desktop rail breakpoint. Finish and Get Resonance remain hit-testable while a session runs and beneath its bounded finished-session note. A 390x640 phone with sixteen server-created habits can scroll to the first and last choices, cancel, and close without covering either page action, then links its final minute-counting habit over the real API and reads the persisted choice back. Finishing still reaches the server-backed reading view (#3131).",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["auth", "journal"],
-      "routes": ["POST /auth/signup", "POST /journal/", "PATCH /journal/{entry_id}"],
-      "tables": ["user", "journalentry"]
+      "client": ["auth", "journal", "habits", "uiFlags"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /habits/",
+        "GET /habits/",
+        "PATCH /ui-flags",
+        "GET /ui-flags"
+      ],
+      "tables": ["user", "journalentry", "habit", "goal", "useruiflags"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-writing-timer.browser.e2e.test.ts"

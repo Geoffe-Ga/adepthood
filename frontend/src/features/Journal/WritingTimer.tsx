@@ -365,6 +365,7 @@ function useWritingConfig(minutes: number): MeditationTimerConfig {
 }
 
 interface TimerPillProps {
+  expandedRail: boolean;
   compact: boolean;
   docked: boolean;
   idle: boolean;
@@ -392,6 +393,7 @@ function TimerReadout({ view, docked }: { view: TimerView; docked: boolean }): R
 
 /** The paper pill itself, shared by its expanded and desk-side mounts. */
 function TimerPill({
+  expandedRail,
   compact,
   docked,
   idle,
@@ -407,6 +409,7 @@ function TimerPill({
       style={[
         styles.pill,
         compact ? styles.pillCompact : styles.pillExpanded,
+        !compact && expandedRail && styles.pillExpandedRail,
         docked ? styles.pillDocked : null,
       ]}
       pointerEvents="auto"
@@ -438,10 +441,12 @@ function TimerPill({
 function TimerTrack({
   compact,
   docked,
+  expandedRail,
   children,
 }: {
   compact: boolean;
   docked: boolean;
+  expandedRail: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   if (docked) {
@@ -454,7 +459,7 @@ function TimerTrack({
   if (compact) return <>{children}</>;
   return (
     <View
-      style={styles.expandedTrack}
+      style={[styles.expandedTrack, expandedRail && styles.expandedRail]}
       pointerEvents="box-none"
       testID="writing-timer-expanded-track"
     >
@@ -467,6 +472,7 @@ function TimerTrack({
 function TimerMount({
   compact,
   docked,
+  expandedRail,
   idle,
   onExpand,
   withinBand,
@@ -474,6 +480,7 @@ function TimerMount({
 }: {
   compact: boolean;
   docked: boolean;
+  expandedRail: boolean;
   idle: boolean;
   onExpand: () => void;
   withinBand: boolean;
@@ -503,7 +510,7 @@ function TimerMount({
       pointerEvents="box-none"
       testID="writing-timer-wrapper"
     >
-      <TimerTrack compact={compact} docked={docked}>
+      <TimerTrack compact={compact} docked={docked} expandedRail={expandedRail}>
         {mountedPill}
       </TimerTrack>
     </View>
@@ -538,11 +545,10 @@ function WritingTimer({
   withinBand = false,
   deps = NO_DEPS,
 }: WritingTimerProps): React.JSX.Element {
-  const viewportWidth = useWindowDimensions().width;
   const [minutes, setMinutes] = useState(initialMinutes);
   const [state, controls] = useRitualEngine(useWritingConfig(minutes), deps);
   const { compact, collapse, expand } = useCompactPill(state.status);
-  const desktopRail = viewportWidth >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
+  const desktopRail = useWindowDimensions().width >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
   const docked = compact && desktopRail;
   const view = describeTimer({
     status: state.status,
@@ -561,12 +567,14 @@ function WritingTimer({
   return (
     <TimerMount
       compact={compact}
-      docked={desktopRail}
+      docked={docked}
+      expandedRail={desktopRail}
       idle={state.status === 'idle'}
       onExpand={expand}
       withinBand={withinBand}
     >
       <TimerPill
+        expandedRail={desktopRail}
         compact={compact}
         docked={docked}
         idle={state.status === 'idle'}
@@ -619,6 +627,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: journalSheet.deskPaddingH,
   },
+  /** Expanded options stay on the paper's trailing edge, clear of the body. */
+  expandedRail: {
+    maxWidth: JOURNAL_SHEET_MAX_WIDTH,
+    alignSelf: 'center',
+    alignItems: 'flex-end',
+    paddingHorizontal: 0,
+  },
   /**
    * A column of fixed-height rows, spanning the band rather than sizing itself
    * to its contents. Deliberately NOT a wrapping row: laid out that way the
@@ -639,6 +654,11 @@ const styles = StyleSheet.create({
   pillExpanded: {
     width: '100%',
     maxWidth: journalLayout.pageMaxWidth,
+  },
+  pillExpandedRail: {
+    // Fit the margin and its page inset without entering the writing column.
+    width: journalLayout.marginColumnWidth + journalLayout.pageHorizontalPadding,
+    paddingHorizontal: SPACING.sm,
   },
   pillCompact: {
     minWidth: 180,

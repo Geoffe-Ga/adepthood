@@ -206,15 +206,16 @@ POLICY: Mapping[str, TablePolicy] = {
     "gumroadsale": TablePolicy(
         disposition=Disposition.ANONYMISE,
         rationale=(
-            "A purchase receipt. The link to the account is cleared, but the "
-            "row itself stays and so does the buyer's address on it — this is "
-            "the one identifier that deliberately survives a deletion. It has "
-            "to: the address is how a paid-for licence or token pack is "
-            "matched to whoever bought it (services.token_packs), so erasing "
-            "it would silently confiscate something the person paid for if "
-            "they ever came back. Retention of a payment record is also the "
-            "ordinary GDPR Art. 17(3) carve-out. Nothing in the row points at "
-            "an account any more."
+            "A purchase receipt. The link to the account is cleared and the "
+            "row itself stays: retention of a payment record is the ordinary "
+            "GDPR Art. 17(3) carve-out. On every sale linked to the account "
+            "(its licence binding or its token-pack credit), the buyer's "
+            "email and Gumroad's raw payload are blanked and anonymised_at "
+            "stamped, as the owner ratified (#3063 AC15); the licence key, "
+            "not the address, is what reclaims a licence afterwards. A sale "
+            "never linked to an account keeps its email, because that "
+            "address is its only claim path. Nothing in the row points at an "
+            "account any more."
         ),
         clear_columns=("token_pack_credited_user_id",),
     ),

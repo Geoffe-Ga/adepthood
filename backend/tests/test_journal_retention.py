@@ -12,9 +12,9 @@ entry -- including the next one somebody adds -- has a row the purge must deal
 with. The assertions then read the action off ``entry_dependants`` rather than
 off a hand-kept list.
 
-It has no schedule and no default window: the window is a required parameter,
-because choosing one is a promise to users that belongs to the owner (#3063
-AC15, AC18).
+Its default window is the owner's ratified lifetime for a soft-deleted page:
+the backup bound, 97 days while dumps kept under the older 90-day retention
+are held (#3063 AC15, ratified 2026-10-13). Nothing schedules it (AC18).
 """
 
 from __future__ import annotations
@@ -30,11 +30,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, col
 
 from domain.retention import PurgeAction, entry_dependants
-from domain.retention_stores import BACKUP_LEGS
+from domain.retention_stores import BACKUP_LEGS, HELD_BACKUP_BOUND_DAYS
 from models.journal_entry import JournalEntry
 from models.user import User
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
-from services.journal_retention import PURGE_MIN_RETENTION_DAYS, purge_soft_deleted_entries
+from services.journal_retention import (
+    PURGE_DEFAULT_RETENTION_DAYS,
+    PURGE_MIN_RETENTION_DAYS,
+    purge_soft_deleted_entries,
+)
 from tests.helpers.account_seed import SeedAccount, seed_one_row_everywhere, seed_shared_tables
 from tests.helpers.telemetry_canaries import SHORT_CANARY, assert_no_canary
 
@@ -245,18 +249,20 @@ async def test_purge_skips_entries_with_an_unconfirmed_withdrawal(
 
 
 @pytest.mark.asyncio
-async def test_purge_requires_admin_and_explicit_window(
+async def test_purge_requires_admin_and_a_positive_window(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """Non-admins are refused; the window is mandatory and must be positive."""
+    """Non-admins are refused, with or without a window; a window must be positive.
+
+    The window is no longer mandatory: it defaults to the ratified lifetime
+    (see ``test_the_route_defaults_to_the_ratified_window``).
+    """
     _, plain = await _signup(async_client, "plain")
     resp = await async_client.post(_PURGE, params={"older_than_days": _WINDOW_DAYS}, headers=plain)
     assert resp.status_code == HTTPStatus.FORBIDDEN
+    assert (await async_client.post(_PURGE, headers=plain)).status_code == HTTPStatus.FORBIDDEN
 
     headers = await _admin(async_client, db_session)
-    assert (await async_client.post(_PURGE, headers=headers)).status_code == (
-        HTTPStatus.UNPROCESSABLE_ENTITY
-    )
     resp = await async_client.post(_PURGE, params={"older_than_days": 0}, headers=headers)
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
@@ -305,10 +311,13 @@ def test_purge_floor_covers_every_backup_legs_oldest_live_copy() -> None:
     assert BACKUP_LEGS, "no backup leg is inventoried -- this property is vacuous"
     for leg in BACKUP_LEGS:
         assert leg.retention_days + leg.interval_days <= PURGE_MIN_RETENTION_DAYS, leg.key
-    assert (
-        max(leg.retention_days + leg.interval_days for leg in BACKUP_LEGS)
-        == PURGE_MIN_RETENTION_DAYS
+    # The floor is today's legs or the copies still held under an older, longer
+    # retention, whichever is older -- and never more than that.
+    floor = max(
+        HELD_BACKUP_BOUND_DAYS,
+        *(leg.retention_days + leg.interval_days for leg in BACKUP_LEGS),
     )
+    assert floor == PURGE_MIN_RETENTION_DAYS
 
 
 @pytest.mark.asyncio
@@ -331,6 +340,18 @@ async def test_purge_refuses_a_window_shorter_than_the_longest_backup(
         _PURGE, params={"older_than_days": PURGE_MIN_RETENTION_DAYS}, headers=headers
     )
     assert resp.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_the_route_defaults_to_the_ratified_window(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Called with no window, the purge uses the owner's ratified lifetime: the floor."""
+    headers = await _admin(async_client, db_session)
+    resp = await async_client.post(_PURGE, headers=headers)
+    assert resp.status_code == HTTPStatus.OK
+    assert resp.json()["older_than_days"] == PURGE_DEFAULT_RETENTION_DAYS
+    assert PURGE_DEFAULT_RETENTION_DAYS == PURGE_MIN_RETENTION_DAYS
 
 
 _GRANDCHILD = "zz_note_annotation"

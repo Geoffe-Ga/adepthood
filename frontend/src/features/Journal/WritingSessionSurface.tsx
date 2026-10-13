@@ -48,6 +48,8 @@ import type { EngineDeps } from '@/features/Practice/engine/types';
 export interface WritingSessionSurfaceProps {
   /** The length the timer opens at; the writer can change it before starting. */
   initialMinutes?: number;
+  /** Keep floating controls inside the writing desk when Sources occupy a side pane. */
+  rightInset?: number;
   /**
    * Begin the session on mount, because the page was opened in order to run it.
    *
@@ -113,6 +115,7 @@ function useBandClearance(onClearanceChange: WritingSessionSurfaceProps['onClear
 
 function WritingSessionSurface({
   initialMinutes,
+  rightInset = 0,
   autoStart,
   renderOffer,
   onSession,
@@ -135,32 +138,45 @@ function WritingSessionSurface({
   }, []);
   return (
     <View
-      style={styles.band}
+      style={[styles.band, { right: rightInset }]}
       pointerEvents="box-none"
-      onLayout={reportLayout}
       testID="writing-session-band"
     >
-      {note === null ? null : (
-        <WritingSessionBanner result={note.result} onDismiss={dismiss}>
-          {renderOffer === undefined ? null : (
-            <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
-          )}
-        </WritingSessionBanner>
-      )}
-      <WritingTimer
-        initialMinutes={initialMinutes}
-        autoStart={autoStart}
-        onComplete={record}
-        withinBand
-        deps={deps}
-      />
+      <View
+        style={styles.content}
+        pointerEvents="box-none"
+        onLayout={reportLayout}
+        testID="writing-session-band-content"
+      >
+        {note === null ? null : (
+          <WritingSessionBanner result={note.result} onDismiss={dismiss}>
+            {renderOffer === undefined ? null : (
+              <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
+            )}
+          </WritingSessionBanner>
+        )}
+        <WritingTimer
+          initialMinutes={initialMinutes}
+          autoStart={autoStart}
+          onComplete={record}
+          withinBand
+          deps={deps}
+        />
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  content: {
+    flexShrink: 1,
+    maxHeight: '100%',
+  },
   band: {
     position: 'absolute',
+    // Leave the upper half for the page's actions; long offers scroll below.
+    top: '50%',
+    justifyContent: 'flex-end',
     left: 0,
     right: 0,
     bottom: RESONANCE_BUTTON_CLEARANCE,

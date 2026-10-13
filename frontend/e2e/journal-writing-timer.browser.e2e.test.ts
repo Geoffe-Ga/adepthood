@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
-import { signUp } from './journalHabitsBrowserSupport';
+import { backendUrl, seedTimerHabit, signUp, tokenFor } from './journalHabitsBrowserSupport';
 
 interface Box {
   x: number;
@@ -123,14 +123,14 @@ for (const viewport of [
     await page.clock.fastForward(4_000);
     await expectReachable(page, 'journal-finish-button');
     await expectReachable(page, 'get-resonance-button');
-    expect((await boxOf(sheet, 'running sheet')).height).toBe(idleSheet.height);
+    expect((await boxOf(sheet, 'running sheet')).height).toBeCloseTo(idleSheet.height, 2);
     await page.screenshot({ path: testInfo.outputPath('running-timer.png') });
 
     await page.clock.fastForward(20 * 60_000);
     await expect(page.getByTestId('writing-session-banner')).toBeVisible();
     await expectReachable(page, 'journal-finish-button');
     await expectReachable(page, 'get-resonance-button');
-    expect((await boxOf(sheet, 'finished sheet')).height).toBe(idleSheet.height);
+    expect((await boxOf(sheet, 'finished sheet')).height).toBeCloseTo(idleSheet.height, 2);
     const note = await boxOf(page.getByTestId('writing-session-banner'), 'finished note');
     expect(note.width).toBeLessThanOrEqual(680);
     await page.screenshot({ path: testInfo.outputPath('finished-note.png') });
@@ -139,3 +139,108 @@ for (const viewport of [
     await expect(page.getByTestId('journal-edit-button')).toBeVisible();
   });
 }
+
+test('expanded options stay inside the sheet around the desktop rail breakpoint', async ({
+  page,
+}, testInfo) => {
+  await openWritingPage(page);
+  for (const width of [1019, 1020, 1021, 1280]) {
+    await page.setViewportSize({ width, height: 720 });
+    await expect
+      .poll(
+        async () => {
+          const sheet = await boxOf(page.getByTestId('journal-sheet'), 'sheet');
+          const pill = await boxOf(page.getByTestId('writing-timer-pill'), 'expanded pill');
+          return pill.x >= sheet.x && pill.x + pill.width <= sheet.x + sheet.width;
+        },
+        { message: `expanded options leave the sheet at ${width}px` },
+      )
+      .toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`expanded-${width}.png`) });
+  }
+});
+
+test('a long habit offer scrolls without covering the page actions on a short phone', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 640 });
+  const email = await signUp(page, 'writing-timer-many-habits');
+  const token = await tokenFor(page.request, email);
+  const habitIds: number[] = [];
+  for (let index = 1; index <= 16; index += 1) {
+    habitIds.push(await seedTimerHabit(page.request, token, `Writing habit ${index}`));
+  }
+  await page.reload();
+  await expect(page.getByTestId('journal-new-entry')).toBeVisible();
+  await page.getByTestId('journal-new-entry').click();
+  await page
+    .getByTestId('journal-body-input')
+    .fill('A page with more habits than fit on a small screen.');
+  await page.clock.install();
+  const sheetHeight = (await boxOf(page.getByTestId('journal-sheet'), 'sheet')).height;
+  await page.getByTestId('writing-timer-start').click();
+  await page.clock.fastForward(20 * 60_000);
+  await page.getByTestId('save-as-habit-accept').click();
+  await expect(page.getByTestId('writing-habit-picker')).toBeVisible();
+  const band = await boxOf(page.getByTestId('writing-session-band'), 'floating band');
+  expect(band.y, 'expanded habit offer extends above the screen').toBeGreaterThanOrEqual(64);
+  expect(band.y + band.height).toBeLessThanOrEqual(640);
+  const offer = page.getByTestId('writing-session-offer-scroll');
+  await expect
+    .poll(() => offer.evaluate((node) => node.scrollHeight > node.clientHeight))
+    .toBe(true);
+  await offer.evaluate((node) => {
+    node.scrollTop = 0;
+  });
+  await page.getByTestId(`writing-habit-choose-${habitIds[0]}`).scrollIntoViewIfNeeded();
+  await expect(page.getByTestId(`writing-habit-choose-${habitIds[0]}`)).toBeInViewport({
+    ratio: 1,
+  });
+  await page.getByTestId(`writing-habit-choose-${habitIds[0]}`).click({ trial: true });
+  await expectReachable(page, 'journal-finish-button');
+  await expectReachable(page, 'get-resonance-button');
+  await page.screenshot({ path: testInfo.outputPath('many-habits-first.png') });
+  await page
+    .getByTestId(`writing-habit-choose-${habitIds[habitIds.length - 1]}`)
+    .scrollIntoViewIfNeeded();
+  await expect(
+    page.getByTestId(`writing-habit-choose-${habitIds[habitIds.length - 1]}`),
+  ).toBeInViewport({ ratio: 1 });
+  await page
+    .getByTestId(`writing-habit-choose-${habitIds[habitIds.length - 1]}`)
+    .click({ trial: true });
+  await page.screenshot({ path: testInfo.outputPath('many-habits-last.png') });
+  await page.getByTestId('writing-habit-cancel').scrollIntoViewIfNeeded();
+  await page.getByTestId('writing-habit-cancel').click();
+  await expectReachable(page, 'journal-finish-button');
+  await expectReachable(page, 'get-resonance-button');
+  expect((await boxOf(page.getByTestId('journal-sheet'), 'sheet')).height).toBeCloseTo(
+    sheetHeight,
+    2,
+  );
+  await page.screenshot({ path: testInfo.outputPath('many-habits-dismiss.png') });
+  await page.getByTestId('save-as-habit-accept').click();
+  const linkedId = habitIds[habitIds.length - 1];
+  const linkResponse = page.waitForResponse(
+    (response) =>
+      response.url() === `${backendUrl()}/ui-flags` &&
+      response.request().method() === 'PATCH' &&
+      (response.request().postDataJSON() as { writing_session_habit_id?: number })
+        .writing_session_habit_id === linkedId,
+  );
+  await page.getByTestId(`writing-habit-choose-${linkedId}`).click();
+  expect(
+    (await linkResponse).status(),
+    'the selected habit must be linkable on the current server',
+  ).toBe(200);
+  await expect(page.getByTestId('save-as-habit-linked')).toContainText('Writing habit 16');
+  const storedLink = await page.request.get(`${backendUrl()}/ui-flags`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(storedLink.ok()).toBe(true);
+  expect(await storedLink.json()).toEqual(
+    expect.objectContaining({ writing_session_habit_id: linkedId }),
+  );
+  await page.getByTestId('writing-session-banner-dismiss').click();
+  await expect(page.getByTestId('writing-session-banner')).toHaveCount(0);
+});

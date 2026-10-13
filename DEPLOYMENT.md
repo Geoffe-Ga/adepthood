@@ -463,14 +463,15 @@ Two independent legs, because each one fails in a way the other survives.
 | Leg | Mechanism | Schedule | Retention | Survives |
 | --- | --- | --- | --- | --- |
 | Platform | Railway volume backup, configured per-database in the service's **Backups** tab | Daily | 6 days | Dropped table, bad migration, accidental delete |
-| Off-host | `pg_dump -Fc`, encrypted, copied off Railway | Weekly | 90 days | Railway account loss, project deletion, region loss |
+| Off-host | `pg_dump -Fc`, encrypted, copied off Railway | Weekly | 30 days | Railway account loss, project deletion, region loss |
 
-Retention values for both legs (a shorter off-host window; the platform leg
-unchanged), and for every other undecided store, are proposed for owner review in
-[docs/privacy/retention-proposal.md](docs/privacy/retention-proposal.md)
-(*DRAFT, #3063; not ratified*). The values in the table above stay in force
-until the owner ratifies a change. A shorter off-host retention does not lower
-the journal purge floor until every dump kept under the old one has been pruned.
+The owner ratified both legs' retention on 2026-10-13 (#3063 AC15): the platform
+leg unchanged, the off-host leg lowered from 90 days to 30. The decision record
+is [docs/privacy/retention-proposal.md](docs/privacy/retention-proposal.md).
+The shorter off-host retention does **not** lower the journal purge floor: it
+stays at 97 days (90 + 7) until every dump kept under the old 90-day retention
+has been pruned, locally and at the off-host destination. Lowering it to 37
+days is a separate, later change, made only once that is confirmed.
 
 **Railway's own backups are not off-host in the sense that matters.** They are
 copy-on-write volume backups restorable only **into the same project and
@@ -530,16 +531,16 @@ custom format (`-Fc`) is required: it is what `pg_restore` reads, it compresses,
 and it lets you restore selectively.
 
 **Prune expired dumps on every weekly run.** *DRAFT for owner review (#3063);
-where the off-host copies live is still undecided.* "Kept 90 days" is only true
+where the off-host copies live is still undecided.* "Kept 30 days" is only true
 if someone deletes the older ones. Once this run's dump is verified, delete every
-dump older than 90 days, locally and at the off-host destination:
+dump older than 30 days, locally and at the off-host destination:
 ```bash
-# Local copies older than the 90-day retention, to the minute: an age in whole
+# Local copies older than the 30-day retention, to the minute: an age in whole
 # days would round down and keep a dump a day too long. Runs only when this
 # run's dump verified and encrypted (DUMP_OK=1 above); a failed run deletes
 # nothing.
 [ "$DUMP_OK" = 1 ] && \
-  find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mmin +$((90 * 24 * 60)) -delete
+  find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mmin +$((30 * 24 * 60)) -delete
 ```
 Then, only once the new copy is confirmed present at the off-host destination,
 remove the same-aged `adepthood-*.dump.gpg` files there with that store's own

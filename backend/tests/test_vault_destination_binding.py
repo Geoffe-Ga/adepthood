@@ -66,6 +66,8 @@ _KEY_B = "key-b-0123456789"  # pragma: allowlist secret
 # (#3094): the vault connected before, or the one disconnected.
 _PREVIOUS_DETAIL = {"detail": "vault_withdrawal_previous_vault"}
 _DISCONNECTED_DETAIL = {"detail": "vault_withdrawal_disconnected_vault"}
+# A copy made before destination binding has no recorded vault at all (#3095).
+_UNRECORDED_DETAIL = {"detail": "vault_withdrawal_unrecorded_vault"}
 
 
 class _DraftAwareVault(SequencedVaultClient):
@@ -497,14 +499,19 @@ async def test_reconnected_vault_never_confirms_old_copy_on_delete(
 
 
 @pytest.mark.asyncio
-async def test_legacy_unbound_marker_is_withdrawn_from_the_current_vault(
-    async_client: AsyncClient, db_session: AsyncSession
+async def test_legacy_unbound_marker_is_never_confirmed_by_the_current_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Known pre-migration limit: a NULL-destination ref still trusts whichever vault is connected.
+    """A pre-binding copy is asked of the connected vault but never reported withdrawn (#3095).
 
-    Rows ingested before destination binding carry no fingerprint, so there is
-    nothing to compare. Pinned so that closing this (#3060 finding 13) is a
-    deliberate change rather than an accident.
+    Rows ingested before destination binding carry no fingerprint, so nothing
+    says which vault received them, and a replaced vault answers "unknown id,
+    withdrawn" for an id it never saw. Owner decision (#3092 escalation 6,
+    option c): the connected vault is still asked -- it may be the one that
+    holds the copy -- but its answer is never trusted. The marker stays, and
+    the 503 says the copy predates the record of where copies went.
     """
     headers, user_id = await _signup(async_client, "dest_legacy_unbound")
     await store_vault_config(db_session, user_id, vault_url=_VAULT_B, api_key=_KEY_B)
@@ -517,11 +524,78 @@ async def test_legacy_unbound_marker_is_withdrawn_from_the_current_vault(
     entry_id = entry.id
     vault = SequencedVaultClient()
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    caplog.set_level(logging.INFO)
+
+    status, body = await _patch_intimate(async_client, entry_id, headers)
+
+    assert status == HTTPStatus.SERVICE_UNAVAILABLE
+    assert body == _UNRECORDED_DETAIL
+    assert vault.withdraw_calls == [entry_id], "the connected vault is still asked"
+    row = await _entry(db_session, entry_id)
+    assert row.vault_ref == "legacy-ref", "a legacy copy is never recorded withdrawn"
+    assert row.vault_destination is None
+    reasons = [getattr(record, "reason", None) for record in caplog.records]
+    assert "legacy_unbound" in reasons
+    assert not any(
+        record.getMessage() == "creek vault journal withdrawal confirmed"
+        for record in caplog.records
+    )
+    assert not any("A legacy page." in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_editing_a_pre_binding_page_never_binds_it_to_the_current_vault(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An edit re-sends a legacy page but never adopts the connected vault as its home (#3095).
+
+    The original copy may sit in a vault connected before this one. Binding
+    the marker to the vault connected now would let that vault's confirmation
+    report the page withdrawn while the old copy remains.
+    """
+    headers, user_id = await _signup(async_client, "dest_legacy_edit")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_B, api_key=_KEY_B)
+    entry = JournalEntry(
+        sender="user", user_id=user_id, message="A legacy page.", vault_ref="legacy-ref"
+    )
+    db_session.add(entry)
+    await db_session.commit()
+    assert entry.id is not None
+    entry_id = entry.id
+    vault = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+
+    edited = await async_client.patch(
+        f"/journal/{entry_id}", json={"message": "A legacy page, revised."}, headers=headers
+    )
+    assert edited.status_code == HTTPStatus.OK, edited.text
+    assert (await _entry(db_session, entry_id)).vault_destination is None
+
+    status, body = await _patch_intimate(async_client, entry_id, headers)
+
+    assert status == HTTPStatus.SERVICE_UNAVAILABLE
+    assert body == _UNRECORDED_DETAIL
+    assert (await _entry(db_session, entry_id)).vault_ref is not None
+
+
+@pytest.mark.asyncio
+async def test_bound_marker_still_clears_on_its_own_vaults_confirmation(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Regression for #3095: a copy bound to the connected vault is withdrawn exactly as before."""
+    headers, user_id = await _signup(async_client, "dest_bound_regression")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_A, api_key=_KEY_A)
+    vault = SequencedVaultClient()
+    app.dependency_overrides[get_creek_vault_client] = lambda: vault
+    entry_id = await _create_public_entry(async_client, headers)
 
     status, _body = await _patch_intimate(async_client, entry_id, headers)
 
     assert status == HTTPStatus.OK
     assert vault.withdraw_calls == [entry_id]
+    row = await _entry(db_session, entry_id)
+    assert row.vault_ref is None
+    assert row.vault_destination is None
 
 
 @pytest.mark.asyncio

@@ -15,7 +15,7 @@ import type { WritingSessionResult } from '../writingSession';
 import WritingSessionBanner from '../WritingSessionBanner';
 import WritingTimer from '../WritingTimer';
 
-import { journalLayout, touchTarget } from '@/design/tokens';
+import { colors, journalLayout, touchTarget } from '@/design/tokens';
 
 function flat(style: StyleProp<ViewStyle>): ViewStyle {
   return StyleSheet.flatten(style);
@@ -45,6 +45,13 @@ function dp(value: unknown): number {
  * it to share or fight over that band.
  */
 describe('the writing timer floats in every state', () => {
+  it('uses opaque paper on native where no backdrop blur protects the readout', () => {
+    const timer = render(<WritingTimer onComplete={jest.fn()} />);
+    expect(flat(timer.getByTestId('writing-timer-pill').props.style).backgroundColor).toBe(
+      colors.paper.background,
+    );
+  });
+
   it('floats the expanded idle pill while resonance stays in flow', () => {
     const timer = render(<WritingTimer onComplete={jest.fn()} />);
     const resonance = render(<GetResonanceButton visible onPress={jest.fn()} />);

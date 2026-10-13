@@ -23,8 +23,9 @@ suppression can no longer re-delete it. That is safe only when no backup still
 alive holds the entry *undeleted*. Each backup leg keeps a copy for its
 retention and prunes it on a later run, so its oldest live copy is at most
 retention plus one interval old
-(:data:`~domain.retention_stores.OLDEST_LIVE_BACKUP_DAYS`, today 90 + 7 for the
-weekly off-host dump). An entry soft-deleted longer ago than that was already
+(:data:`~domain.retention_stores.OLDEST_LIVE_BACKUP_DAYS`, today 90 + 7: the
+weekly off-host dumps still held under the 90-day retention, which outlast the
+ratified 30-day one until they age out). An entry soft-deleted longer ago than that was already
 stamped deleted in every copy still alive, and restoring any of them brings it
 back hidden.
 
@@ -34,8 +35,9 @@ the manual weekly prune for the off-host leg. A dump kept past its retention,
 or a retention raised without raising the constants (pinned to DEPLOYMENT.md
 by a drift test), breaks it. Below the floor the purge refuses.
 
-There is no schedule and no default window: when, and how old beyond the
-floor, are owner decisions (#3063 AC15, AC18). Logs carry counts only.
+The route's default window is the owner's ratified lifetime for a soft-deleted
+page, which is the floor itself (#3063 AC15, 2026-10-13). There is no schedule:
+when it runs is still an owner decision (AC18). Logs carry counts only.
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ from sqlmodel import SQLModel
 from domain.retention import (
     ENTRY_PURGE_BLOCKERS,
     ENTRY_TABLE,
+    SOFT_DELETED_ENTRY_RETENTION_DAYS,
     EntryDependant,
     PurgeAction,
     entry_dependant_gaps,
@@ -67,6 +70,10 @@ logger = logging.getLogger(__name__)
 
 #: The shortest window the purge accepts (see the module docstring).
 PURGE_MIN_RETENTION_DAYS: Final = OLDEST_LIVE_BACKUP_DAYS
+
+#: The route's default window: the lifetime the owner ratified for a
+#: soft-deleted page on 2026-10-13 (#3063 AC15), which is that same floor.
+PURGE_DEFAULT_RETENTION_DAYS: Final = SOFT_DELETED_ENTRY_RETENTION_DAYS
 
 #: Entries purged per transaction, so one sweep never holds a long write lock.
 PURGE_BATCH_SIZE: Final = 200

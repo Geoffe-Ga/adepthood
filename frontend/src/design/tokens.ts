@@ -918,10 +918,10 @@ export const showcaseShadow = {
   elevation: 8,
 } as const;
 
-/** Shared translucent chrome: a warm wash, faint edge and soft portable lift. */
+/** Blurred translucent web chrome, with opaque paper when native blur is absent. */
 export const glass = {
   pill: {
-    backgroundColor: colors.mystical.glowLight,
+    backgroundColor: Platform.OS === 'web' ? colors.mystical.glowLight : colors.paper.background,
     borderColor: surface.hairline,
     borderWidth: 1,
     ...surfaceShadow.card,

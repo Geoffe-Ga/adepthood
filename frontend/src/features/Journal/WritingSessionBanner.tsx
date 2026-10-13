@@ -35,7 +35,7 @@
  * which is always mounted while the note is.
  */
 import React, { createContext, useCallback, useContext, useRef } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import type { WritingSessionResult } from './writingSession';
 import {
@@ -79,7 +79,13 @@ function WritingSessionBanner({
   return (
     <View style={styles.banner} accessibilityLiveRegion="polite" testID="writing-session-banner">
       <Text style={styles.summary}>{writingSessionSummary(result.elapsedMinutes)}</Text>
-      <FocusCloseContext.Provider value={focusClose}>{children}</FocusCloseContext.Provider>
+      <ScrollView
+        style={styles.offerScroll}
+        keyboardShouldPersistTaps="handled"
+        testID="writing-session-offer-scroll"
+      >
+        <FocusCloseContext.Provider value={focusClose}>{children}</FocusCloseContext.Provider>
+      </ScrollView>
       <TouchableOpacity
         ref={closeRef}
         style={styles.dismiss}
@@ -98,6 +104,8 @@ function WritingSessionBanner({
 const styles = StyleSheet.create({
   /** A bounded paper note, stacked above the pill inside its floating band. */
   banner: {
+    flexShrink: 1,
+    minHeight: 0,
     width: '100%',
     maxWidth: journalLayout.pageMaxWidth,
     alignSelf: 'center',
@@ -109,6 +117,10 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.sheetEdge,
+  },
+  offerScroll: {
+    flexGrow: 0,
+    flexShrink: 1,
   },
   summary: {
     ...editorialType.note,

@@ -111,13 +111,13 @@ describe('WritingSessionSurface', () => {
   it('reserves the measured note and timer band without shrinking the sheet', () => {
     const onClearanceChange = jest.fn();
     const { getByTestId } = render(<WritingSessionSurface onClearanceChange={onClearanceChange} />);
-    fireEvent(getByTestId('writing-session-band'), 'layout', {
+    fireEvent(getByTestId('writing-session-band-content'), 'layout', {
       nativeEvent: { layout: { height: 400 } },
     });
     expect(onClearanceChange).toHaveBeenLastCalledWith(
       400 + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
     );
-    fireEvent(getByTestId('writing-session-band'), 'layout', {
+    fireEvent(getByTestId('writing-session-band-content'), 'layout', {
       nativeEvent: { layout: { height: 40 } },
     });
     expect(onClearanceChange).toHaveBeenLastCalledWith(WRITING_TIMER_CLEARANCE);

@@ -54,6 +54,7 @@ _T0 = datetime(2026, 10, 8, 12, 0, tzinfo=UTC)
 
 _PREVIOUS = {"detail": "vault_withdrawal_previous_vault"}
 _DISCONNECTED = {"detail": "vault_withdrawal_disconnected_vault"}
+_UNRECORDED = {"detail": "vault_withdrawal_unrecorded_vault"}
 
 _STANDARD_RECORD_KEYS = frozenset(
     logging.LogRecord("n", logging.INFO, "p", 1, "m", None, None).__dict__
@@ -428,6 +429,65 @@ async def test_a_copy_with_no_recorded_vault_is_never_confirmed_by_any_vault(
     owed = await _obligation(db_session, entry_id)
     assert owed is not None
     assert owed.state == JournalWithdrawalState.UNCONFIRMED
+
+
+@pytest.mark.asyncio
+async def test_a_pre_binding_copy_is_erased_unconfirmed_and_says_so(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A copy made before vaults were recorded is never reported withdrawn by any vault (#3095).
+
+    Vault B is connected and answers every withdrawal "withdrawn" -- as a vault
+    does for an id it never saw. The DELETE still answers the unrecorded-vault
+    503, the erase receipt names the unrecorded vault, and the obligation is
+    bound to no vault, so B's later answers can never clear it.
+    """
+    headers, user_id = await _signup(async_client, "unreach_pre_binding")
+    await store_vault_config(db_session, user_id, vault_url=_VAULT_B, api_key=_KEY_B)
+    destination_b = await vault_destination_fingerprint(db_session, user_id)
+    entry = JournalEntry(
+        sender="user", user_id=user_id, message=_BODY, title=_TITLE, vault_ref="legacy-ref"
+    )
+    db_session.add(entry)
+    await db_session.commit()
+    assert entry.id is not None
+    entry_id = entry.id
+    vault_b = _use(DraftVault())
+    caplog.set_level(logging.DEBUG)
+
+    refused = await async_client.delete(f"/journal/{entry_id}", headers=headers)
+
+    assert refused.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert refused.json() == _UNRECORDED
+    assert (await _entry(db_session, entry_id)).deleted_at is None
+
+    erased = await async_client.post(f"/journal/{entry_id}/erase-locally", headers=headers)
+
+    assert erased.status_code == HTTPStatus.OK, erased.text
+    assert erased.json() == {
+        "entry_id": entry_id,
+        "remote_copy": "unconfirmed",
+        "copy_location": "unrecorded_vault",
+    }
+    assert vault_b.withdrawals, "the connected vault is still asked; it may hold the copy"
+    owed = await _obligation(db_session, entry_id)
+    assert owed is not None
+    assert owed.state == JournalWithdrawalState.UNCONFIRMED
+    assert owed.destination is None, "never guessed to be the vault connected now"
+
+    await _sweep(db_session, vault_b, destination=destination_b)
+
+    still_owed = await _obligation(db_session, entry_id)
+    assert still_owed is not None
+    assert still_owed.state == JournalWithdrawalState.UNCONFIRMED
+    assert still_owed.confirmed_at is None
+    for record in caplog.records:
+        extras = set(record.__dict__) - _STANDARD_RECORD_KEYS
+        rendered = f"{record.getMessage()} {[record.__dict__[key] for key in extras]}"
+        assert _BODY not in rendered
+        assert _TITLE not in rendered
 
 
 @pytest.mark.asyncio

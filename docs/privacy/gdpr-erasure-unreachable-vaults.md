@@ -74,9 +74,13 @@ confirm, this is an ordinary deletion. Otherwise:
   backups of the vault). Creek's own erasure contract covers these once it is
   asked (Creek#1854), but it can only be asked through a connection.
 - A **legacy copy with no recorded vault** (ingested before destination binding
-  existed). If it is erased with no vault connected, no vault can ever be
-  proven to hold it. Its obligation is recorded with no destination and is
-  **never** confirmed automatically.
+  existed, 2026-10-07). No vault can ever be proven to hold it, so no vault's
+  answer is ever trusted for it (#3095): the connected vault is still asked to
+  withdraw it, but the page's withdrawal is reported `unconfirmed`, the 503 is
+  `vault_withdrawal_unrecorded_vault`, and the person is told a copy made
+  before that date may remain in a vault they connected earlier. Erasing it
+  here records an obligation with no destination, which is **never**
+  confirmed, by the sweep or any vault.
 
 ## What we keep: the obligation
 
@@ -128,16 +132,18 @@ Nothing anywhere reports a copy withdrawn while its row is `unconfirmed`.
 
 The table is registered in all three registries:
 
-- `domain/retention.py`: `until_account_deletion`, `ratified=False`.
+- `domain/retention.py`: `fixed_days` (30 days after confirmation; open states
+  exempt), `ratified=True`.
 - `domain/account_deletion.py`: erased with the account, as
   `voicedraftretraction` is.
 - `domain/data_export.py`: omitted from export as housekeeping.
 
-These are placeholders consistent with B08's existing ones. They are not
-decided. Proposed values for owner review (30 days after confirmation for a
-`confirmed` row, and an open row kept until confirmed) are in
-[retention-proposal.md](retention-proposal.md), along with the separate
-question of whether an `unconfirmed` row should outlive account deletion.
+The owner ratified the row's lifetime on 2026-10-13: a `confirmed` row is kept
+30 days after confirmation, and an open row is never eligible until confirmed
+(`domain/retention.py` now carries `fixed_days` with those exemptions; no sweep
+applies it yet). The decision is recorded in
+[retention-proposal.md](retention-proposal.md). Whether an `unconfirmed` row
+should outlive account deletion was not part of that decision and stays open.
 
 ## Known limits
 
@@ -147,10 +153,12 @@ question of whether an `unconfirmed` row should outlive account deletion.
 - **Backup restore.** A restore from a backup taken before the erase reapplies
   the page's deletion tombstone (B08 restore suppression). It does not recreate
   the obligation row: tombstones carry no obligations.
-- **Legacy unbound copies.** As above, they are never auto-confirmed. While the
-  page is still live, its ordinary withdrawal still trusts the vault connected
-  now (the pre-existing limit pinned by
-  `test_legacy_unbound_marker_is_withdrawn_from_the_current_vault`).
+- **Legacy unbound copies.** As above, they are never confirmed, live or
+  erased (#3095, pinned by
+  `test_legacy_unbound_marker_is_never_confirmed_by_the_current_vault` and
+  `test_a_pre_binding_copy_is_erased_unconfirmed_and_says_so`). A DELETE of
+  such a page therefore never completes on its own: the person takes "delete
+  here only" and deletes the old copy in that vault themselves.
 
 ## Open decisions (owner)
 

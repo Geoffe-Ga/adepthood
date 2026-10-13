@@ -60,7 +60,10 @@ import QuoteInclusionHint from './QuoteInclusionHint';
 import QuoteSelectionSurface, { type CodePointSpan } from './QuoteSelectionSurface';
 import { readingScrollStyle } from './readingSurfaceStyles';
 import { formatQuotePrefill } from './reflectionCopy';
-import ReflectionSourcesPanel from './ReflectionSourcesPanel';
+import ReflectionSourcesPanel, {
+  SIDE_PANE_BREAKPOINT,
+  SOURCES_PANE_OCCUPIED_WIDTH,
+} from './ReflectionSourcesPanel';
 import { useRefreshAfterEdit } from './refreshAfterEdit';
 import { isStoredAs, replayReconcilePatch, type SentPage } from './replayReconcile';
 import ResonanceEssayModal from './ResonanceEssayModal';
@@ -4565,6 +4568,11 @@ function EntryWritingSurfaces({
   onWritingClearanceChange: (_clearance: number) => void;
 }): React.JSX.Element | null {
   const session = useQuickLaunchedSession(launch);
+  const width = useWindowDimensions().width;
+  const rightInset =
+    ctl.reflection.active && ctl.reflection.sourcesOpen && width >= SIDE_PANE_BREAKPOINT
+      ? SOURCES_PANE_OCCUPIED_WIDTH
+      : 0;
   // Above the edit-mode return, beside the practice hook it wraps: both kinds
   // of page finish through this one handler, so a linked habit is checked off
   // on either (#2861).
@@ -4572,6 +4580,7 @@ function EntryWritingSurfaces({
   if (!ctl.editGate.editMode) return null;
   return (
     <WritingSessionSurface
+      rightInset={rightInset}
       initialMinutes={session.initialMinutes}
       autoStart={session.autoStart}
       onSession={onSession}

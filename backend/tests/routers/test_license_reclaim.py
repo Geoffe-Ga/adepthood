@@ -49,8 +49,11 @@ CONTROL_EMAIL = "control-holder@example.com"
 PASSWORD = "securepassword123"  # pragma: allowlist secret
 LICENSE_USES = 1
 DETAIL_INVALID_LICENSE = "invalid_license"
-# The only column a deleted account's address may survive in: the receipt.
-SURVIVING_EMAIL_COLUMNS = {"gumroadsale.email"}
+# Where a deleted account's address may survive here: nowhere. Every sale the
+# first account holds is linked to it (the licence binding, the seeded
+# token-pack credit), so deletion blanks the address on each receipt (#3063
+# AC15). Only a sale never linked to an account keeps its email.
+SURVIVING_EMAIL_COLUMNS: set[str] = set()
 
 
 @pytest.fixture(autouse=True)
@@ -242,7 +245,8 @@ async def test_reclaiming_a_key_transfers_access_and_nothing_else(
     The first account is given a row in every table the schema allows before
     it is erased. Afterwards the reclaiming account must look exactly like a
     control account created with a different key: the same set of populated
-    user references, no more; the old address surviving only on the receipt;
+    user references, no more; the old address surviving nowhere, not even on
+    the receipts it was linked to;
     an empty wallet. The control account exists before the deletion so the
     test database cannot hand the erased id straight back to the reclaimer.
     """
