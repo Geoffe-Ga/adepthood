@@ -3943,7 +3943,7 @@
         "type": "object"
       },
       "JournalErasureReceipt": {
-        "description": "What ``POST /journal/{id}/erase-locally`` did, in closed, content-free terms.\n\nThe page is always gone from Adepthood when this is returned.\n``remote_copy`` is ``confirmed_absent`` only when the vault holding the copy\nconfirmed it absent; otherwise it is ``unconfirmed`` and ``copy_location``\nsays, relative to the vault connected now, where a copy may remain. There\nis deliberately no \"withdrawn\" value: a copy nobody confirmed is not one.",
+        "description": "What ``POST /journal/{id}/erase-locally`` did, in closed, content-free terms.\n\nThe page is always gone from Adepthood when this is returned.\n``remote_copy`` is ``confirmed_absent`` only when the vault holding the copy\nconfirmed it absent; otherwise it is ``unconfirmed`` and ``copy_location``\nsays, relative to the vault connected now, where a copy may remain --\n``unrecorded_vault`` for a copy made before Adepthood recorded which vault\nreceived it, which no vault can ever confirm (#3095). There is\ndeliberately no \"withdrawn\" value: a copy nobody confirmed is not one.",
         "properties": {
           "copy_location": {
             "anyOf": [
@@ -3951,7 +3951,8 @@
                 "enum": [
                   "connected_vault",
                   "previous_vault",
-                  "disconnected_vault"
+                  "disconnected_vault",
+                  "unrecorded_vault"
                 ],
                 "type": "string"
               },

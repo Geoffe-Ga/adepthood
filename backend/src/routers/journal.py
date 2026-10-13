@@ -160,6 +160,7 @@ from services.creek_vault_voice_drafts import (
     mirror_voice_draft,
     record_mirror_intent,
 )
+from services.creek_vault_withdraw import is_pre_binding_copy
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -502,7 +503,9 @@ async def _bind_vault_destination(
     Intimate entry is withheld from the wire before any dial. An entry whose
     earlier copy is owed to a *different* vault keeps that marker and is not
     offered to the new one: a single marker cannot describe two copies, and
-    the owed one wins.
+    the owed one wins. A pre-binding copy is re-sent but never bound: its
+    original may sit in an earlier vault, so adopting the connected one would
+    let that vault report it withdrawn (#3095).
 
     The fingerprint comes from the same config read that built the request's
     client (:func:`resolved_vault_destination`), so a reconnect landing after
@@ -518,11 +521,20 @@ async def _bind_vault_destination(
             extra={"entry_id": entry.id, "reason": "destination_changed"},
         )
         return _Binding.WITHHOLD
-    if entry.vault_destination is not None or destination is None:
+    if _keeps_its_binding(entry, destination):
         return _Binding.UNCHANGED
     entry.vault_destination = destination
     session.add(entry)
     return _Binding.BOUND
+
+
+def _keeps_its_binding(entry: JournalEntry, destination: str | None) -> bool:
+    """Whether this send leaves ``entry``'s destination as it is.
+
+    It is already bound, there is no vault to bind to, or its copy predates
+    binding and so must never adopt the vault connected now (#3095).
+    """
+    return entry.vault_destination is not None or destination is None or is_pre_binding_copy(entry)
 
 
 def _binding_without_a_dial(entry: JournalEntry, vault_client: CreekVaultClient) -> _Binding | None:

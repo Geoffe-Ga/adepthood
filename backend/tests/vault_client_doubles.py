@@ -22,6 +22,9 @@ Not named ``test_*``, so pytest collects nothing from it — the
 
 from __future__ import annotations
 
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from domain.creek_vault import (
     CreekCapabilityUnsupportedError,
     VaultClassificationPass,
@@ -30,6 +33,7 @@ from domain.creek_vault import (
     VaultLinkStage,
     VaultPipelineJob,
 )
+from routers import journal as journal_router
 
 _UNSERVED = "this vault double does not serve the batch pipeline"
 
@@ -63,3 +67,23 @@ class NoPipelineVaultDouble:
         is.
         """
         raise CreekCapabilityUnsupportedError(_UNSERVED)
+
+
+#: The opaque fingerprint :func:`bind_every_account_to_a_recorded_vault` answers.
+RECORDED_VAULT = "d" * 32
+
+
+def bind_every_account_to_a_recorded_vault(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Make the journal router resolve every account's vault to :data:`RECORDED_VAULT`.
+
+    In production a dialable vault client always comes from a recorded vault.
+    A test that serves a scripted double without storing a connection would
+    otherwise send every copy with no recorded destination -- exactly a
+    pre-binding copy, which no vault may ever confirm withdrawn (#3095).
+    """
+
+    async def _recorded(_session: AsyncSession, _user_id: int) -> str:
+        return RECORDED_VAULT
+
+    monkeypatch.setattr(journal_router, "resolved_vault_destination", _recorded)
+    return RECORDED_VAULT
