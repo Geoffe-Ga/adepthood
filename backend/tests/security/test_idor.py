@@ -65,6 +65,7 @@ from models.prompt_response import PromptResponse
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user import User
+from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
 from security.idempotency import hash_idem_key
 from services.journal_retention import PURGE_MIN_RETENTION_DAYS
@@ -2413,6 +2414,150 @@ async def test_idor_ui_flags_writing_habit_link_missing_habit_404s_and_persists_
     stored = await _ui_flags_row(db_session, user_id)
     assert stored.writing_session_habit_id is None
     assert stored.has_seen_welcome is False
+
+
+async def _practice_habit_link(db_session: AsyncSession, user_practice_id: int) -> int | None:
+    """Read a selection's stored habit link from storage, not the identity map."""
+    row = await db_session.get(UserPractice, user_practice_id, populate_existing=True)
+    assert row is not None
+    return row.habit_id
+
+
+@pytest.mark.asyncio
+async def test_idor_practice_habit_link_foreign_habit_returns_403_and_changes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bob cannot point his practice at Alice's habit (#3151).
+
+    ``PATCH /user-practices/{id}/habit`` carries ``habit_id`` in the body, so the
+    path dependency that proves Bob owns the selection says nothing about the
+    habit. An unguarded write would let Bob's sessions check in against a
+    stranger's habit. The refusal is 403 -- Alice's habit exists -- it is
+    audited, and Bob's prior link survives.
+    """
+    alice_headers, _alice_id = await _signup(async_client, "alice_practice_link")
+    bob_headers, bob_id = await _signup(async_client, "bob_practice_link")
+    alice_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=alice_headers
+    )
+    bob_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=bob_headers
+    )
+    alice_habit_id = int(alice_habit.json()["id"])
+    bob_habit_id = int(bob_habit.json()["id"])
+    bob_practice_id = await _create_user_practice(async_client, db_session, bob_headers, bob_id)
+    own = await async_client.patch(
+        f"/user-practices/{bob_practice_id}/habit",
+        json={"habit_id": bob_habit_id},
+        headers=bob_headers,
+    )
+    assert own.status_code == HTTPStatus.OK
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.patch(
+            f"/user-practices/{bob_practice_id}/habit",
+            json={"habit_id": alice_habit_id},
+            headers=bob_headers,
+        )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+    assert await _practice_habit_link(db_session, bob_practice_id) == bob_habit_id
+
+    denials = _denial_records(caplog)
+    assert len(denials) == 1, "expected exactly one resource_access_denied audit log entry"
+    assert getattr(denials[0], "resource", None) == "habit"
+    assert getattr(denials[0], "resource_id", None) == alice_habit_id
+    assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
+async def test_idor_practice_habit_link_foreign_non_timer_habit_is_403_not_422(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Ownership is decided before the unit rule (#3151).
+
+    Alice's habit counts ``units``, which the link guard would refuse with a
+    422 -- but answering 422 to Bob would tell him what Alice's goals measure.
+    The refusal is the same 403, and Bob's selection stays unlinked.
+    """
+    alice_headers, _alice_id = await _signup(async_client, "alice_units_practice")
+    bob_headers, bob_id = await _signup(async_client, "bob_units_practice")
+    alice_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    alice_habit_id = int(alice_habit.json()["id"])
+    bob_practice_id = await _create_user_practice(async_client, db_session, bob_headers, bob_id)
+
+    attack = await async_client.patch(
+        f"/user-practices/{bob_practice_id}/habit",
+        json={"habit_id": alice_habit_id},
+        headers=bob_headers,
+    )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+    assert await _practice_habit_link(db_session, bob_practice_id) is None
+
+
+@pytest.mark.asyncio
+async def test_idor_practice_habit_link_on_foreign_practice_returns_403_and_changes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Bob cannot rewire Alice's practice, even to a habit of his own (#3151).
+
+    The path's selection is resolved first: Alice's is 403 to Bob, and her
+    existing link to her own habit is untouched.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_practice_owner")
+    bob_headers, _bob_id = await _signup(async_client, "bob_practice_rewire")
+    alice_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=alice_headers
+    )
+    bob_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=bob_headers
+    )
+    alice_habit_id = int(alice_habit.json()["id"])
+    alice_practice_id = await _create_user_practice(
+        async_client, db_session, alice_headers, alice_id
+    )
+    await async_client.patch(
+        f"/user-practices/{alice_practice_id}/habit",
+        json={"habit_id": alice_habit_id},
+        headers=alice_headers,
+    )
+
+    for body in ({"habit_id": int(bob_habit.json()["id"])}, {"habit_id": None}):
+        attack = await async_client.patch(
+            f"/user-practices/{alice_practice_id}/habit", json=body, headers=bob_headers
+        )
+        assert attack.status_code == HTTPStatus.FORBIDDEN
+
+    assert await _practice_habit_link(db_session, alice_practice_id) == alice_habit_id
+
+
+@pytest.mark.asyncio
+async def test_idor_practice_habit_link_missing_habit_404s_and_persists_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A link to a habit nobody owns is 404, unaudited, and writes nothing."""
+    headers, user_id = await _signup(async_client, "carol_practice_link")
+    user_practice_id = await _create_user_practice(async_client, db_session, headers, user_id)
+
+    with caplog.at_level(logging.WARNING):
+        probe = await async_client.patch(
+            f"/user-practices/{user_practice_id}/habit",
+            json={"habit_id": _DEFINITELY_MISSING_ID},
+            headers=headers,
+        )
+
+    assert probe.status_code == HTTPStatus.NOT_FOUND
+    assert _denial_records(caplog) == []
+    assert await _practice_habit_link(db_session, user_practice_id) is None
 
 
 @pytest.mark.asyncio

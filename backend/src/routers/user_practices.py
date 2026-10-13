@@ -19,6 +19,7 @@ from dependencies.ownership import require_owned_user_practice
 from dependencies.timezone import current_user_timezone
 from domain.constants import TOTAL_STAGES
 from domain.dates import today_in_tz
+from domain.habit_links import link_practice_habit
 from domain.practice_resolution import effective_config, effective_name
 from domain.stage_authority import open_through
 from domain.stage_progress import get_user_progress
@@ -37,6 +38,7 @@ from schemas.practice import (
     UserPracticeCreate,
     UserPracticeCustomize,
     UserPracticeDetail,
+    UserPracticeHabitLink,
     UserPracticeResponse,
 )
 from schemas.practice_mode_config import ModeConfigAdapter
@@ -317,6 +319,7 @@ def _user_practice_payload(user_practice: UserPractice) -> dict[str, Any]:
         "end_date": user_practice.end_date,
         "custom_name": user_practice.custom_name,
         "mode_config_override": user_practice.mode_config_override,
+        "habit_id": user_practice.habit_id,
     }
 
 
@@ -699,3 +702,33 @@ async def customize_user_practice(
         effective_config=cfg,
         sessions_page=sessions_page,
     )
+
+
+@router.patch("/{user_practice_id}/habit", response_model=UserPracticeResponse)
+async def link_user_practice_habit(
+    payload: UserPracticeHabitLink,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_practice: Annotated[UserPractice, Depends(require_owned_user_practice)],
+) -> UserPracticeResponse:
+    """Link this practice to the habit its sessions count toward, or unlink it (#3151).
+
+    The selection is the caller's own via ``require_owned_user_practice``. A
+    ``habit_id`` is then authorised by :func:`domain.habit_links.link_practice_habit`
+    -- 404 missing, audited 403 another user's, then 422 unless its goals count
+    minutes or sessions per day or per week -- and ``null`` clears the link. A
+    refusal writes nothing. The link is per practice, so two practices can feed
+    two habits; the journal's own link stays on ``/ui-flags``.
+    """
+    await link_practice_habit(session, user_practice, payload.habit_id)
+    await session.commit()
+    await session.refresh(user_practice)
+    logger.info(
+        "user_practice_habit_linked",
+        extra={
+            "user_practice_id": user_practice.id,
+            "user_id": user_practice.user_id,
+            "habit_id": user_practice.habit_id,
+        },
+    )
+    (response,) = await _build_list_response(session, [user_practice])
+    return response
