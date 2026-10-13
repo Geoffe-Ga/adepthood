@@ -521,17 +521,38 @@ def test_botmason_provider_logged_at_boot(
     assert any("botmason_provider" in m and "openai" in m for m in messages)
 
 
-def test_stub_in_production_errors_loudly(
+def test_stub_in_production_is_not_an_error(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Stub in production must be an explicit, visible choice — never silent."""
+    """Since ADR 0009 phase (a) no configured provider answers a keyless request.
+
+    So ``stub`` in production is no longer a forgotten setting: every
+    deployment refuses a keyless app-provider request alike, and saying
+    otherwise would tell an operator to set a key nothing reads.
+    """
     monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
     monkeypatch.setenv("ENV", "production")
-    caplog.set_level(logging.ERROR, logger="main")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    caplog.set_level(logging.INFO, logger="main")
     _log_botmason_provider()
-    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
-    assert any("botmason_stub_in_production" in r.getMessage() for r in errors)
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+    assert not any("botmason_stub_in_production" in r.getMessage() for r in caplog.records)
+
+
+def test_a_server_llm_api_key_is_reported_unused_by_name_only(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A deployment still carrying ``LLM_API_KEY`` is told nothing reads it (#3067)."""
+    secret = "sk-ant-sentinel-server-key-never-logged"  # pragma: allowlist secret
+    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
+    monkeypatch.setenv("LLM_API_KEY", secret)
+    caplog.set_level(logging.INFO, logger="main")
+    _log_botmason_provider()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("llm_api_key_unused" in m for m in warnings), warnings
+    assert all(secret not in r.getMessage() for r in caplog.records)
 
 
 def test_stub_in_development_does_not_warn(
@@ -540,6 +561,7 @@ def test_stub_in_development_does_not_warn(
 ) -> None:
     monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
     monkeypatch.setenv("ENV", "development")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
     caplog.set_level(logging.INFO, logger="main")
     _log_botmason_provider()
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]

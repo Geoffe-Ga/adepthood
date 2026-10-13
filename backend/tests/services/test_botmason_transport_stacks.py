@@ -51,7 +51,7 @@ from services.botmason import (
     LLMProviderError,
     generate_response,
 )
-from tests.provider_transport import use_anthropic, use_openai
+from tests.provider_transport import armed_key, use_anthropic, use_openai
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -155,7 +155,7 @@ class TestARealTransportFailureIsCoveredByTheCatch:
             raises=httpx2.ConnectError("connection reset by peer"),
         )
         with pytest.raises(LLMProviderError) as excinfo:
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=armed_key())
 
         assert stub.request_count == _EXPECTED_ATTEMPTS
         assert isinstance(excinfo.value.__cause__, openai.APIConnectionError)
@@ -177,7 +177,7 @@ class TestARealTransportFailureIsCoveredByTheCatch:
             raises=httpx.ConnectError("connection reset by peer"),
         )
         with pytest.raises(LLMProviderError) as excinfo:
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=armed_key())
 
         assert stub.request_count == _EXPECTED_ATTEMPTS
         assert isinstance(excinfo.value.__cause__, anthropic.APIConnectionError)
@@ -205,7 +205,7 @@ class TestARealTransportFailureIsCoveredByTheCatch:
             raises=httpx2.ConnectError("connection reset by peer"),
         )
         with pytest.raises(LLMProviderError) as excinfo:
-            await generate_response("hi", [])
+            await generate_response("hi", [], api_key=armed_key())
 
         assert stub.request_count == _EXPECTED_ATTEMPTS
         raw = _raw_transport_cause(excinfo.value)

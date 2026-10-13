@@ -30,6 +30,8 @@ from domain.retention_stores import (
     STORES,
     Days,
     Store,
+    StoreProposal,
+    TodayComparison,
     Unknown,
     inventory_findings,
 )
@@ -137,6 +139,10 @@ def test_findings_fire_on_a_blank_question(monkeypatch: pytest.MonkeyPatch) -> N
         controller=retention_stores.Controller.ADEPTHOOD,
         deadline=Unknown(open_question="we should check this sometime"),
         evidence="nowhere",
+        # Proposed, so the untracked question is the only finding under test.
+        proposal=StoreProposal(
+            deadline=None, rationale="synthetic", compared_to_today=TodayComparison.SAME
+        ),
     )
     monkeypatch.setattr(retention_stores, "STORES", (*STORES, blank))
     findings = inventory_findings()

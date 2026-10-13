@@ -65,8 +65,7 @@ describe('the BYOK disclosure is constrained by the implementation', () => {
 
     expect(journal).toContain('Header(alias="X-LLM-API-Key"');
     expect(transcription).toContain('Header(alias="X-LLM-API-Key"');
-    expect(llm).toContain('user_key = _validated_header_key(header_value)');
-    expect(llm).toContain('return user_key');
+    expect(llm).toContain('return _validated_header_key(header_value)');
     expect(llm.match(/key = _resolve_api_key\(api_key\)/g)?.length).toBe(2);
     expect(llm).toContain('never persisted, logged, or echoed back');
   });

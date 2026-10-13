@@ -168,8 +168,8 @@ In the backend service's **Variables** tab, add:
 | `SECRET_KEY` | *(see below)* | Yes |
 | `JOURNAL_ENCRYPTION_KEYS` | *(see below)* | Yes — the backend refuses to boot in production without it (production meaning `ENV=production` *or* Railway's `RAILWAY_ENVIRONMENT_NAME=production`) |
 | `PROD_DOMAIN` | `https://app.yourdomain.example` | Yes |
-| `BOTMASON_PROVIDER` | `stub` | Yes (`stub` starts with AI features available to writers' own keys only: every request without one is refused `402 llm_key_required`, credits included — see the variable reference) |
-| `LLM_API_KEY` | *(your API key)* | Only if provider is `openai` or `anthropic` |
+| `BOTMASON_PROVIDER` | `stub` | Yes (reported in the boot log only. AI features are available to writers' own keys only: every app-provider request without one is refused `402 llm_key_required`, credits included, whatever this names — ADR 0009 phase (a); see the variable reference) |
+| `LLM_API_KEY` | *(leave unset)* | No — not read since ADR 0009 phase (a) (#3067); the boot log warns `llm_api_key_unused` while one is set |
 | `LLM_MODEL` | *(model name)* | No (sensible defaults built in) |
 | `WEB_CONCURRENCY` | `2` | No (default: 2). Rate-limit state is per worker process, so every limit -- the ambient floor, burst floors, the per-client ceiling and each declared route limit -- is effectively `WEB_CONCURRENCY` x its stated budget per deployment |
 | `TRUSTED_PROXY_CIDRS` | *(Railway's ingress range)* | Recommended — without it every client shares one rate-limit bucket and https redirects break; the per-client 600/minute ceiling then becomes a site-wide 600/minute across the whole API |
@@ -246,6 +246,16 @@ The following files are already in the repo:
   Expo web export, copies the resulting `dist/` into an nginx image
 - **`frontend/nginx.conf`** — SPA routing (all routes fall back to
   `index.html`), gzip compression, aggressive caching for fingerprinted assets
+  and an enforced Content-Security-Policy. The checked-in file is a template:
+  the image build renders its `connect-src` with `frontend/web-hardening/csp.js`,
+  which takes the API origin from `EXPO_PUBLIC_API_BASE_URL` (and the Sentry
+  origin from `EXPO_PUBLIC_SENTRY_DSN`, when set) and refuses to build without
+  an https API origin. Change the API origin and the policy follows on the
+  next build; there is nothing to edit by hand
+- **`frontend/web-hardening/sri.js`** — run by `npm run web:build` after
+  `expo export`: stamps every script and stylesheet in the built `index.html`
+  with a `sha384` Subresource Integrity hash and fails the build if any served
+  asset is unhashed, mismatched, inline or from another origin
 - **`frontend/metro.config.js`** — Enables Node package exports resolution
   (required for `react-native-web` to resolve `styleq` subpath imports)
 - **`frontend/.dockerignore`** — Excludes `node_modules`, tests, etc. from
@@ -454,6 +464,13 @@ Two independent legs, because each one fails in a way the other survives.
 | --- | --- | --- | --- | --- |
 | Platform | Railway volume backup, configured per-database in the service's **Backups** tab | Daily | 6 days | Dropped table, bad migration, accidental delete |
 | Off-host | `pg_dump -Fc`, encrypted, copied off Railway | Weekly | 90 days | Railway account loss, project deletion, region loss |
+
+Retention values for both legs (a shorter off-host window; the platform leg
+unchanged), and for every other undecided store, are proposed for owner review in
+[docs/privacy/retention-proposal.md](docs/privacy/retention-proposal.md)
+(*DRAFT, #3063; not ratified*). The values in the table above stay in force
+until the owner ratifies a change. A shorter off-host retention does not lower
+the journal purge floor until every dump kept under the old one has been pruned.
 
 **Railway's own backups are not off-host in the sense that matters.** They are
 copy-on-write volume backups restorable only **into the same project and
@@ -869,10 +886,10 @@ are being written in the clear.
 | `SECRET_KEY` | Yes | `replace-me` | JWT signing key. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `JOURNAL_ENCRYPTION_KEYS` | Yes in prod | *(empty)* | Comma-separated urlsafe-base64 Fernet keys encrypting journal text at rest. The first encrypts, every listed key can decrypt. Empty means plaintext columns, so production without it refuses to boot and refuses encrypted-column writes (production is `ENV=production` or `RAILWAY_ENVIRONMENT_NAME=production`); outside production empty is the normal local state. Rotation is finished by `scripts.journal_encryption_sweep`, not by later writes. An invalid key fails fast in every environment. See [Journal Encryption at Rest](#journal-encryption-at-rest). |
 | `PROD_DOMAIN` | In prod/staging | — | Comma-separated HTTPS origins for CORS. Every live frontend origin must appear; this deployment's web origin is in [Production origins](#production-origins). |
-| `BOTMASON_PROVIDER` | No | `stub` | AI backend: `stub`, `openai`, or `anthropic`. `stub` means **no server-side provider**: it never generates text for a writer (#3096). A request carrying the writer's own key (`X-LLM-API-Key`) still reaches that key's provider; every other AI request -- resonance pass, letter, completion check, page transcription -- is refused `402 llm_key_required` before anything is charged, credits included, and frequency classification degrades. On a real provider, a request with no personal key is admitted only while the account has BotMason credits (free monthly messages or a purchased balance); otherwise it is refused `402 insufficient_offerings`, also free. The canned stub answer survives only as the `BOTMASON_STUB_SEAM` test seam below. |
+| `BOTMASON_PROVIDER` | No | `stub` | Reported in the boot log; nothing else reads it since ADR 0009 phase (a) (#3067). A cloud model is reached only with the writer's own key (`X-LLM-API-Key`, whose prefix selects the provider). Every other AI request -- resonance pass, letter, completion check, page transcription -- is refused `402 llm_key_required` before anything is charged, credits included, unless the writer's own vault answers it. Credits pay only when the caller's vault answers; whether the vault itself uses a cloud model is the vault's boundary (`CREEK_DOWNSTREAM_MODEL`, under the Creek deployment's `CREEK_CLOUD_CONSENT`), and is not yet verified per receipt -- a known gap escalated to the owner (a managed vault with `CREEK_CLOUD_CONSENT` could answer from a cloud model on an operator-held key); frequency classification and corpus backfill degrade to unclassified with no cloud call. `openai` or `anthropic` here no longer makes the server pay for anyone. The canned stub answer survives only as the `BOTMASON_STUB_SEAM` test seam below. |
 | `BOTMASON_STUB_SEAM` | Never in prod | *(unset)* | Test seam only. Exactly `true` lets the canned BotMason stub answer keyless requests on a `stub` server, as the backend suite (`backend/conftest.py`) and the end-to-end lane (`frontend/e2e/globalSetup.ts`) need. Anything else leaves it off. With it armed, the backend boots only with `ENV` set **explicitly** to `development` or `e2e` (an unset `ENV` refuses: it cannot tell a laptop from an unlabelled host) and with no platform variable present (`RAILWAY_ENVIRONMENT_NAME`, `RAILWAY_ENVIRONMENT`, `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_PUBLIC_DOMAIN`, whatever their value). Production, staging, previews and a mistyped `ENV` all refuse to boot, because the stub hands writers text-replaced sentences presented as a reflection (#3096). |
-| `LLM_API_KEY` | If not stub | — | API key for the chosen LLM provider |
-| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve).  Server-paid requests refuse `claude-opus-5`, `claude-opus-4-7` and `gpt-4-turbo` (`SERVER_PAID_REFUSED_MODELS`, #623: the resonance-economy decision record rules "refuse non-cost-bounded models on the server-paid path (no multiplier)"): a charged pass, letter or page is refunded and answers `502 llm_provider_error`, and the uncharged server-paid features (frequency classification, completion detection) degrade. A user's own key (BYOK) still reaches those models. |
+| `LLM_API_KEY` | No | — | **Not read** since ADR 0009 phase (a) (#3067): no request carrying a person's content is sent on the server's own provider account, and no other use of it exists. Leave it unset; while one is set the boot log warns `llm_api_key_unused` (by name, never the value). Sentry still scrubs the name. |
+| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve).  Applies to the provider the writer's own key selects. #623's server-paid refusal of `claude-opus-5`, `claude-opus-4-7` and `gpt-4-turbo` is subsumed by ADR 0009 phase (a): nothing is server-paid, so a keyless request reaches no model; a writer's own key (BYOK) still reaches those models. |
 | `BOTMASON_DAILY_GENERATION_CEILING` | No | `100` | Charged generations (resonance passes, first essay letters, page transcriptions) one user may make per UTC day, net of refunded failures; past it a request answers `429 daily_generation_limit_reached` with `Retry-After` set to the seconds until 00:00 UTC, and nothing is charged. The default is the owner-ratified "configurable launch ceiling of 100 charged generations/day/user" (#623). Parsed like `BOTMASON_MONTHLY_CAP`: unset, empty, malformed or negative means 100. `0` is an emergency brake that refuses every charged generation. BYOK generations are never charged, so never counted. Counted from `walletaudit` in the database, so it holds across every worker and ignores the rate-limit kill switch. Because BYOK bypasses it, `0` does not stop external inference: `PRIVACY_SUSPEND_EXTERNAL_AI` is the control that also stops BYOK calls. |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes. All rate-limit state lives in each worker's memory (there is no shared store), so the effective per-deployment budget of every limit -- ambient floor, burst floors, per-client ceiling, declared route limits -- is `WEB_CONCURRENCY` x the stated limit . That includes the per-user generation limit of 5 resonance or essay generations per minute (#623): it is per worker, so a deployment admits up to `WEB_CONCURRENCY` x 5 per user per minute. The other two generation guardrails are not: the cap of 2 concurrent generations per user (a `generationslot` lease row) and the daily ceiling above are both database-backed and hold across workers |
 | `ALLOWED_HOSTS` | Recommended in prod | *(empty)* | Comma-separated hostnames this deploy answers as, canonical one **first**. The authority half of the same question `TRUSTED_PROXY_CIDRS` answers for the scheme: both halves of every absolute URL the app mints are otherwise written by the caller, most visibly the router's trailing-slash `307`, which is answered before any auth check runs. A request naming an unlisted host is **not rejected** — its authority is replaced with the first entry and it proceeds normally, so a platform health prober whose `Host` you cannot predict still gets its `200` and nothing needs a path exemption; the original `Host` is recorded on that request's access-log line as `original_host`. Left empty, nothing is settled and behaviour is exactly as before, which is what keeps local dev, Expo and LAN addresses working unconfigured. Entries are bare hostnames with an optional port (`api.example.com`, `localhost:8000`) — no scheme, path or userinfo. Matching ignores the port; the substitution is verbatim. Wildcards are refused, not supported: this variable also names the host a non-matching request is settled onto, and a pattern has no single host to substitute. A malformed entry refuses the boot on every `ENV`; an unset one only warns, and only in production. |
@@ -1307,6 +1324,13 @@ unreachable. A 503 from an application route does not — see the next section
 for the other one.
 
 ### When the shared AI balance runs out
+
+**Since ADR 0009 phase (a) (#3067) this should not happen:** no request is
+sent on the server's own provider account, so there is no shared balance to
+run out. If `llm_service_credit_exhausted` is ever logged, a call was made with
+the server's key, which phase (a) forbids for a person's content: treat it as a
+privacy incident (`docs/ops/privacy-incident-response.md`), not a billing one.
+The rest of this section describes the signal as it was before phase (a).
 
 `llm_service_credit_exhausted` is the one application-route `503` that is not a
 database problem, and it is the only outage in this app that no amount of

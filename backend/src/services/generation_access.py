@@ -16,17 +16,20 @@ refusal is free: no wallet change, no audit row, no slot, no usage row.
 A refusal reuses the 402 details the client already routes to its "add credits
 or a key" surface, so this adds no parallel shape:
 
-* ``llm_key_required`` -- no personal key, and the server has nothing credits
-  could buy (a ``stub`` deployment without the test seam, or a real provider
-  with no server key). Only a key of the writer's own can answer.
+* ``llm_key_required`` -- no personal key, and the request would be answered by
+  the app's provider. Only a key of the writer's own can answer it.
 * ``insufficient_offerings`` -- no personal key, and neither wallet bucket has a
   unit left.
 
-What this does **not** change: the server's ``LLM_API_KEY`` still pays for a
-credit-funded request on a real provider. Removing that app-key fallback for
-anything carrying a person's content is ADR 0009 phase (a); when it lands,
-:func:`services.botmason.server_generation_available` is the one predicate that
-narrows, and this gate's ``llm_key_required`` arm then covers it unchanged.
+ADR 0009 phase (a) (#3067): the server's ``LLM_API_KEY`` never pays for a
+request carrying a person's content, so credits buy nothing on the app-provider
+path. :func:`services.botmason.server_generation_available` is the one predicate
+that says so -- true only for the armed stub test seam -- and this gate's
+``llm_key_required`` arm covers every keyless app-provider request. Credits pay
+only when the caller's vault answers (``app_provider=False``); whether the vault
+itself uses a cloud model is the vault's boundary (``CREEK_DOWNSTREAM_MODEL``,
+under the Creek deployment's ``CREEK_CLOUD_CONSENT``), and is not yet verified
+per receipt -- a known gap escalated to the owner (ADR 0009 Decision item 4).
 """
 
 from __future__ import annotations
@@ -66,8 +69,9 @@ async def require_ai_payer(
     ``supplied_key`` is the raw ``X-LLM-API-Key`` header: a well-formed key is a
     payer by itself (a malformed one is the usual 400). Without one the request
     needs credits, and -- when ``app_provider`` says the app's own provider
-    would answer rather than the caller's vault -- a server able to answer at
-    all. Reads only; spends nothing.
+    would answer rather than the caller's vault -- is refused, because no cloud
+    model answers a person's content without their own key (only the armed
+    stub test seam is admitted). Reads only; spends nothing.
     """
     if resolve_chat_api_key(supplied_key) is not None:
         return

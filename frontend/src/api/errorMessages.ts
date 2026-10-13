@@ -35,20 +35,28 @@ const PASSWORD_TOO_LONG =
 // Shared by the signup form's ``license_required`` and the social exchanges'
 // ``needs_license`` so the two roads to "we need your key" read identically.
 const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to continue.';
-// One wallet pays for chat, resonance readings and a note's first letter
-// (#623). Shared by the ``payment_required`` code and the bare 402 fallback so
-// a spent month reads the same whichever road reported it.
+// One wallet (#623). Since ADR 0009 phase (a) (#3067) it pays only for a
+// reading the writer's vault answers; letters and page reading need the
+// writer's own key. Shared by the ``payment_required`` code and the bare 402
+// fallback so a spent month reads the same whichever road reported it.
 /**
  * The two payer refusals (#3096). Every AI feature -- a reading, a letter,
  * completion checks, a page read -- is refused before anything is spent unless a
  * key of the writer's own or BotMason credits can pay for it. Each line names the
  * way forward and says nothing was charged. Exported so the transcription
  * surface, which keeps its own closed taxonomy, renders the same words.
+ *
+ * Since ADR 0009 phase (a) (#3067) credits pay only when the writer's vault
+ * answers, which is a resonance reading; letters and page reading always go to
+ * the app's provider and need the writer's own key. DRAFT for owner review:
+ * no privacy promise (B24, #3076 gates those).
  */
 export const INSUFFICIENT_OFFERINGS_COPY =
-  "You're out of BotMason credits, so nothing was charged. Add more credits, or add your own OpenAI or Anthropic API key in Settings — readings, letters and page reading all draw from the same pool.";
+  "You're out of BotMason credits, so nothing was charged. Credits pay only for readings your vault answers; letters and page reading need your own OpenAI or Anthropic API key, which you can add in Settings.";
+// DRAFT for owner review (ADR 0009 phase (a), #3067): says plainly that credits
+// no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
 export const LLM_KEY_REQUIRED_COPY =
-  'BotMason can only answer here with an API key of your own, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.';
+  "BotMason's cloud AI needs an API key of your own — credits don't pay for it — so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.";
 
 const MONTHLY_FREE_MESSAGES_USED =
   "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";

@@ -62,43 +62,57 @@ function pythonStrings(snippet: string): string[] {
   );
 }
 
+/** An integer constant declared `NAME: Final = <int>` in `retention_stores.py`. */
+function integerConstant(constants: Map<string, number>, name: string | undefined): number {
+  const value = name === undefined ? undefined : constants.get(name);
+  if (value === undefined) {
+    throw new Error(`retention_stores.py names ${String(name)}, not an integer constant`);
+  }
+  return value;
+}
+
 /**
  * `OLDEST_LIVE_BACKUP_DAYS` as `retention_stores.py` computes it: the largest
- * `retention_days + interval_days` across `BACKUP_LEGS`. Each step of that
- * derivation is matched, so a backend change to its shape fails here instead of
- * being silently mis-read.
+ * of each `BACKUP_LEGS` entry's `retention_days + interval_days` and the held
+ * bound `HELD_BACKUP_BOUND_DAYS` (copies still kept under an older, longer
+ * off-host retention). Each step of that derivation is matched, so a backend
+ * change to its shape fails here instead of being silently mis-read.
  */
 function backendOldestLiveBackupDays(): number {
   matchOne(
     RETENTION_STORES,
-    /^OLDEST_LIVE_BACKUP_DAYS: Final = max\(leg\.oldest_live_copy_days for leg in BACKUP_LEGS\)$/m,
+    /^OLDEST_LIVE_BACKUP_DAYS: Final = oldest_live_backup_days\(BACKUP_LEGS, HELD_BACKUP_BOUND_DAYS\)$/m,
     'OLDEST_LIVE_BACKUP_DAYS',
+  );
+  matchOne(
+    RETENTION_STORES,
+    /^def oldest_live_backup_days\(legs: .+, held_bound_days: int\) -> int:\n(?:(?: {4}.*)?\n)*? {4}return max\(held_bound_days, \*\(leg\.oldest_live_copy_days for leg in legs\)\)$/m,
+    'oldest_live_backup_days',
   );
   matchOne(
     RETENTION_STORES,
     /def oldest_live_copy_days\(self\) -> int:\n(?: {8}.*\n)*? {8}return self\.retention_days \+ self\.interval_days$/m,
     'oldest_live_copy_days',
   );
-  const constants = new Map(
-    Array.from(RETENTION_STORES.matchAll(/^([A-Z_]+): Final = (\d+)$/gm), (match) => [
-      match[1],
-      Number(match[2]),
-    ]),
+  const constants = new Map<string, number>(
+    Array.from(RETENTION_STORES.matchAll(/^([A-Z_]+): Final = (\d+)$/gm), (match) =>
+      match[1] === undefined ? [] : [[match[1], Number(match[2])] as const],
+    ).flat(),
   );
   const legs = Array.from(
     RETENTION_STORES.matchAll(
       /BackupLeg\(\s*key="[^"]+",\s*retention_days=([A-Z_]+),\s*interval_days=([A-Z_]+),/g,
     ),
-    (match) => {
-      const [retention, interval] = [constants.get(match[1]), constants.get(match[2])];
-      if (retention === undefined || interval === undefined) {
-        throw new Error(`a backup leg names ${match[1]} / ${match[2]}, not integer constants`);
-      }
-      return retention + interval;
-    },
+    (match) => integerConstant(constants, match[1]) + integerConstant(constants, match[2]),
   );
   if (legs.length === 0) throw new Error('retention_stores.py declares no BackupLeg');
-  return Math.max(...legs);
+  const [heldRetention, heldInterval] = matchOne(
+    RETENTION_STORES,
+    /^HELD_BACKUP_BOUND_DAYS: Final = ([A-Z_]+ \+ [A-Z_]+)$/m,
+    'HELD_BACKUP_BOUND_DAYS',
+  ).split(' + ');
+  const held = integerConstant(constants, heldRetention) + integerConstant(constants, heldInterval);
+  return Math.max(held, ...legs);
 }
 
 // One of these phrases must sit in the same sentence as each statement of the

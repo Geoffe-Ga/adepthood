@@ -15,6 +15,7 @@ import {
 import ConfirmDialog from '../Habits/components/ConfirmDialog';
 
 import { BYOK_DETAIL_DISCLOSURE } from './byokDisclosure';
+import { NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY } from './byokOnlyCopy';
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
 import {
   LOCAL_MODEL_OFF_NOTE,
@@ -191,8 +192,6 @@ const KeyInputRow = ({
 );
 
 const REMOVE_KEY_DIALOG_TITLE = 'Remove API key?';
-const REMOVE_KEY_DIALOG_BODY =
-  'Adepthood will use its own shared key instead, if one is set up. You can add your own key again whenever you like.';
 const REMOVE_KEY_CANCEL_LABEL = 'Cancel';
 const REMOVE_KEY_CONFIRM_LABEL = 'Remove';
 
@@ -311,7 +310,7 @@ const KeyDisclosure = ({ apiKey, localModel }: KeyDisclosureProps): React.JSX.El
     <Text style={settingsFormStyles.body}>{BYOK_DETAIL_DISCLOSURE}</Text>
     {!apiKey && !localModel && (
       <Text style={styles.hint} testID="no-key-hint">
-        No key saved yet. BotMason will use the shared server key if one is configured.
+        {NO_KEY_HINT}
       </Text>
     )}
   </>

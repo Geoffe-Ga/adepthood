@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Final
 
 import pytest
 from fastapi import HTTPException
-from sqlmodel import col, select
+from sqlmodel import select
 
 from main import validate_stub_seam_config
 from models.generation_slot import GenerationSlot
@@ -293,7 +293,12 @@ async def test_gate_refuses_an_empty_wallet_without_a_key(
     *,
     app_provider: bool,
 ) -> None:
-    """No credits and no key is refused whichever side would have answered."""
+    """No credits and no key is refused whichever side would have answered.
+
+    On a configured server provider the app-provider side is refused for the
+    key alone (ADR 0009 phase (a), #3067): credits buy no cloud call, so the
+    wallet is never the question there. The vault side still asks for credits.
+    """
     configure_server_provider(monkeypatch)
     _, user_id, _ = await signup(async_client, f"gate_empty_{app_provider}")
     await empty_wallet(db_session, monkeypatch, user_id)
@@ -302,7 +307,7 @@ async def test_gate_refuses_an_empty_wallet_without_a_key(
         await require_ai_payer(db_session, user_id, None, app_provider=app_provider)
 
     assert raised.value.status_code == HTTPStatus.PAYMENT_REQUIRED
-    assert raised.value.detail == CREDITS_OR_KEY_REQUIRED
+    assert raised.value.detail == (KEY_REQUIRED if app_provider else CREDITS_OR_KEY_REQUIRED)
 
 
 @pytest.mark.asyncio
@@ -383,8 +388,12 @@ async def test_empty_wallet_without_a_key_is_refused_before_any_slot(
     monkeypatch: pytest.MonkeyPatch,
     route: str,
 ) -> None:
-    """No credits and no key: 402 before the minute bucket, the slot, the wallet or a dial."""
-    configure_server_provider(monkeypatch)
+    """No credits and no key: 402 before the minute bucket, the slot, the wallet or a dial.
+
+    The suite's armed stub seam is the one keyless app-provider source left
+    after ADR 0009 phase (a) (#3067), so it is what leaves the wallet as the
+    question here; a configured server provider would refuse for the key alone.
+    """
     stub = arm_anthropic(monkeypatch)
     minute = record_minute_bucket(monkeypatch)
     admitted = record_admission(monkeypatch)
@@ -433,23 +442,29 @@ async def test_a_personal_key_proceeds_on_a_stub_server_with_an_empty_wallet(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["resonance", "essay", "detect"])
-async def test_credits_on_a_real_provider_proceed_as_today(
+async def test_credits_on_a_real_provider_buy_no_cloud_call(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     route: str,
 ) -> None:
-    """With credits and a configured server provider, the route dials as it always has."""
+    """With credits and a configured server provider, a keyless route dials nothing (#3067).
+
+    Before ADR 0009 phase (a) this dialled on the server's own key and charged
+    the wallet. Now it is refused ``llm_key_required`` for free.
+    """
     configure_server_provider(monkeypatch)
     stub = arm_anthropic(monkeypatch)
     headers, user_id, _ = await signup(async_client, f"credits_{route}")
+    before_wallet = await wallet(db_session, user_id)
+    before_audit = await count_rows(db_session, WalletAudit)
 
     resp = await _call_route(route, async_client, db_session, headers, user_id)
 
-    assert resp.status_code == HTTPStatus.OK, resp.text
-    assert stub.request_count >= 1
-    usage = await db_session.execute(select(LLMUsageLog).where(col(LLMUsageLog.user_id) == user_id))
-    assert all(row.provider != botmason.STUB_PROVIDER_NAME for row in usage.scalars().all())
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json() == {"detail": KEY_REQUIRED}
+    assert stub.request_count == 0
+    await _assert_refused_for_free(db_session, user_id, before_wallet, before_audit)
 
 
 # --- care never depends on the payer ------------------------------------------
