@@ -65,15 +65,15 @@
   },
   {
     "id": "welcome.first-run-walkthrough-to-journal",
-    "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
+    "description": "A fresh account reads all four Welcome panels naming the journal floor, independently chosen depths and a one-minute habit kept for three weeks (#3103). At 390x844 and 1280x720, every body, privacy note and pager control stays in view. Begin and Skip each hand the reader to the Journal shelf through its real GET /journal/ request, and a reload proves the walkthrough dismissal persists. The browser spec saves all eight panel screenshots for visual inspection.",
     "crosses": {
       "screen": "frontend/src/features/Welcome/WelcomeScreen.tsx",
       "client": ["journal"],
       "routes": ["GET /journal/"],
       "tables": ["journalentry"]
     },
-    "status": "uncovered",
-    "issue": 2399
+    "status": "covered",
+    "coveredBy": "frontend/e2e/welcome.browser.e2e.test.ts"
   },
   {
     "id": "habits.create-check-in-streak",
