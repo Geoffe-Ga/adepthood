@@ -8,21 +8,53 @@ lifetime is a legal question.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
+from domain import retention
+from domain.retention import (
+    RETENTION,
+    ProposalClock,
+    RetentionProposal,
+    TodayComparison,
+)
 from scripts.retention_report import main
 
 
-def test_report_exits_zero_and_lists_unratified(capsys: pytest.CaptureFixture[str]) -> None:
-    """The report runs and names the payment record as unratified."""
+def test_report_exits_zero_and_shows_the_ratified_periods(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The report runs; every lifetime is ratified, and each store shows its period."""
     assert main([]) == 0
     out = capsys.readouterr().out
     assert "gumroadsale" in out
-    unratified = out.split("Unratified", 1)[1]
-    assert "gumroadsale" in unratified
-    assert "fly_volume_snapshots" in out
-    gumroad = next(line for line in unratified.splitlines() if "gumroadsale" in line)
-    assert "proposed:" in gumroad
+    unratified = out.split("Unratified", 1)[1].split("Stores outside", 1)[0]
+    assert unratified.splitlines()[1:] == ["  none", ""]
+    snapshots = next(line for line in out.splitlines() if "fly_volume_snapshots" in line)
+    assert "ratified: 1 days" in snapshots
+    creek = next(line for line in out.splitlines() if "creek_ledger" in line)
+    assert "ratified: no fixed period" in creek
+
+
+def test_report_lists_an_undecided_rule_with_its_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The worklist still names the next undecided lifetime, with what is proposed."""
+    proposal = RetentionProposal(
+        days=1,
+        clock=ProposalClock.ROW_CREATED,
+        trigger="the attempt",
+        rationale="synthetic",
+        compared_to_today=TodayComparison.SHORTER,
+    )
+    undecided = replace(RETENTION["loginattempt"], ratified=False, proposal=proposal)
+    monkeypatch.setattr(retention, "RETENTION", {**RETENTION, "loginattempt": undecided})
+    assert main([]) == 0
+    unratified = capsys.readouterr().out.split("Unratified", 1)[1]
+    line = next(line for line in unratified.splitlines() if "loginattempt" in line)
+    assert "proposed: 1 day after the attempt" in line
 
 
 def test_report_exits_nonzero_on_a_registry_gap(

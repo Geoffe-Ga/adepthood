@@ -1,26 +1,28 @@
-"""Every undecided lifetime carries a concrete proposal, and nothing acts on one (#3063 AC15).
+"""The owner's ratified retention periods are the registry's rules (#3063 AC15).
 
 The registry (:mod:`domain.retention`) and the store inventory
-(:mod:`domain.retention_stores`) mark lifetimes the owner has not decided as
-``ratified=False`` or as an :class:`~domain.retention_stores.Unknown`. The owner
-asked for proposed values to review, so each such row now carries a proposal:
-a day count, a structured clock it counts from, a declared comparison with
-today, and a one-line rationale. The owner reviews them in
-``docs/privacy/retention-proposal.md``.
+(:mod:`domain.retention_stores`) once carried a *proposal* next to every
+lifetime the owner had not decided. On 2026-10-13 the owner ratified every
+proposed row as written, conditions included (PR #3155, comment 6151018235),
+and the ratification was carried out by the doc's own procedure: the value
+was written into the rule or store, the proposal's ``exempt_states`` and
+``redact_columns`` copied onto the rule, ``ratified`` set, and the proposal
+deleted. ``docs/privacy/retention-proposal.md`` records the decision.
 
-These tests hold three properties:
+These tests hold four properties:
 
-* **complete** -- every unratified rule, every store whose deadline is unknown,
-  and every backup leg carries a proposal with a rationale, and each detector is
-  proven to fire;
-* **honest** -- each proposal's declared comparison with today is checked
-  against what the rule and its clock imply (so a proposal that keeps rows past
-  their account's erasure must say ``longer``); open obligations are never
-  eligible; a lowered backup retention cannot lower the purge floor while older
-  dumps are still held; the doc table carries exactly the code's numbers;
-* **inert** -- a proposal is a value for review, not a window. No module
-  outside the two registries reads one, the sweeps still run on today's
-  windows, and nothing was ratified along the way.
+* **ratified** -- every ratified row carries exactly the owner's value and
+  conditions, no proposal is left, and nothing is unratified;
+* **guarded** -- the machinery still bites for the next undecided lifetime: an
+  unratified rule without a proposal, a ratified rule that keeps one, and a
+  sweeping rule that drops a condition its table requires are each reported,
+  and a proposal's declared comparison with today is still checked;
+* **honest** -- open obligations are never eligible, a shorter backup
+  retention cannot lower the purge floor while older dumps are still held, the
+  existing sweeps run on the ratified windows, and the doc table carries
+  exactly the code's numbers;
+* **inert proposals** -- a future proposal stays a value for review: no module
+  outside the two registries may read one.
 """
 
 from __future__ import annotations
@@ -45,9 +47,11 @@ from domain.retention import (
     REDACT_INSTEAD_OF_DELETE,
     RETENTION,
     ProposalClock,
+    RetentionKind,
     RetentionProposal,
     RetentionRule,
     TodayComparison,
+    conditional,
     fixed_days,
     implied_comparison,
     proposal_findings,
@@ -55,6 +59,7 @@ from domain.retention import (
     retention_report,
     swept_by,
     unratified_rules,
+    until_account_deletion,
 )
 from domain.retention_stores import (
     BACKUP_LEGS,
@@ -63,10 +68,10 @@ from domain.retention_stores import (
     OFFHOST_DUMP_INTERVAL_DAYS,
     OFFHOST_DUMP_RETENTION_DAYS,
     OLDEST_LIVE_BACKUP_DAYS,
-    PROPOSED_OFFHOST_DUMP_DAYS,
     STORES,
     Days,
     Hours,
+    RatifiedPeriod,
     Store,
     StoreProposal,
     Unknown,
@@ -79,31 +84,44 @@ from models.vault_activation import TEARDOWN_STATES, VaultActivationState
 from models.voice_draft_retraction import VoiceDraftRetractionState
 from routers.admin import cleanup_energy_plans, purge_journal_entries
 from services.energy import ENERGY_PLAN_RETENTION_DAYS
-from services.journal_retention import PURGE_MIN_RETENTION_DAYS
+from services.journal_retention import PURGE_DEFAULT_RETENTION_DAYS, PURGE_MIN_RETENTION_DAYS
 
 _BACKEND_SRC = Path(__file__).resolve().parents[2] / "src"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PROPOSAL_DOC = _REPO_ROOT / "docs" / "privacy" / "retention-proposal.md"
 
-# The exact set of lifetimes still awaiting the owner. Proposing values must
-# not ratify any of them; ratifying one is the owner's edit, and it shrinks
-# this set in the same change.
-_UNRATIFIED = frozenset(
-    {
-        "accountdeletionaudit",
-        "energyplan",
-        "gumroadsale",
-        "journalentry (soft-deleted)",
-        "journalwithdrawalobligation",
-        "llmusagelog",
-        "loginattempt",
-        "practicesharelink",
-        "restoremarker",
-        "revokedtoken",
-        "vaultteardownreceipt",
-        "voicedraftretraction",
-    }
-)
+# The owner's decision, as ratified on 2026-10-13: each row's kind and period.
+# A row an operator sweep already serves is ``swept_by`` with the ratified
+# window as its default; every other row is a ``fixed_days`` period that no
+# sweep applies yet (#3063 AC18).
+_RATIFIED_RULES: dict[str, tuple[RetentionKind, int]] = {
+    "accountdeletionaudit": (RetentionKind.FIXED_DAYS, 365),
+    "energyplan": (RetentionKind.SWEPT_BY, 7),
+    "gumroadsale": (RetentionKind.FIXED_DAYS, 180),
+    "journalentry (soft-deleted)": (RetentionKind.SWEPT_BY, 97),
+    "journalwithdrawalobligation": (RetentionKind.FIXED_DAYS, 30),
+    "llmusagelog": (RetentionKind.FIXED_DAYS, 90),
+    "loginattempt": (RetentionKind.FIXED_DAYS, 30),
+    "practicesharelink": (RetentionKind.FIXED_DAYS, 30),
+    "restoremarker": (RetentionKind.FIXED_DAYS, 365),
+    "revokedtoken": (RetentionKind.FIXED_DAYS, 1),
+    "vaultteardownreceipt": (RetentionKind.FIXED_DAYS, 90),
+    "voicedraftretraction": (RetentionKind.FIXED_DAYS, 30),
+}
+
+# The store periods ratified the same day; ``None`` is "no fixed period".
+_RATIFIED_STORES: dict[str, Days | None] = {
+    "railway_platform_backup": Days(6),
+    "offhost_pg_dump": Days(30),
+    "application_logs": Days(30),
+    "fly_volume_snapshots": Days(1),
+    "creek_vault_volume": None,
+    "creek_embeddings_cache": None,
+    "creek_ledger": None,
+    "client_device_cache": None,
+    "manual_vaults": None,
+    "model_vendor_copies": None,
+}
 
 # Only the two registries may name a proposal or a proposed constant. A sweep,
 # purge or route that read one would start deleting on a value nobody ratified.
@@ -114,13 +132,17 @@ _PROPOSAL_HOMES = frozenset({"domain/retention.py", "domain/retention_stores.py"
 _TABLE_ROW = re.compile(r"^\|(?P<cells>.+)\|\s*$")
 _LEADING_COUNT = re.compile(r"^(?P<count>\d+) (?P<unit>day|days|hour|hours)\b")
 _NO_PERIOD = "no fixed period"
+_SEPARATOR_CHARS = frozenset("- :")
+_HEADER_FIRST_CELL = "Store"
 _FIRST_CELL = 0
 _PERIOD_CELL = 2
 _COMPARISON_CELL = 3
 _DOC_COLUMNS = 6
+_DECISION = "2026-10-13"
+_DECISION_LINK = "6151018235"
 
 # A proposal that would keep an obligation 90 days past its account's erasure:
-# the case the review table raises as a separate, longer-than-today question.
+# the case the decision record leaves open (AC21-22) as a longer-than-today one.
 _AFTER_ERASURE_DAYS = 90
 
 
@@ -134,78 +156,207 @@ def _all_rules() -> list[tuple[str, RetentionRule]]:
     return rules
 
 
-def _proposal(name: str) -> RetentionProposal:
-    """The live proposal on a top-level rule."""
-    proposal = RETENTION[name].proposal
-    assert proposal is not None, name
-    return proposal
+def _patch_rule(monkeypatch: pytest.MonkeyPatch, name: str, rule: RetentionRule) -> None:
+    """Swap one top-level rule in the live registry for the test's duration."""
+    monkeypatch.setattr(retention, "RETENTION", {**RETENTION, name: rule})
 
 
-def _with_proposal(
-    monkeypatch: pytest.MonkeyPatch, name: str, proposal: RetentionProposal | None
-) -> None:
-    """Swap one rule's proposal in the live registry for the test's duration."""
-    patched = dict(RETENTION)
-    patched[name] = replace(RETENTION[name], proposal=proposal)
-    monkeypatch.setattr(retention, "RETENTION", patched)
+def _soft_deleted() -> RetentionRule:
+    nested = RETENTION["journalentry"].soft_deleted
+    assert nested is not None
+    return nested
 
 
-def _with_store_proposal(
-    monkeypatch: pytest.MonkeyPatch, key: str, proposal: StoreProposal | None
-) -> None:
-    """Swap one store's proposal in the live inventory for the test's duration."""
-    stores = tuple(replace(s, proposal=proposal) if s.key == key else s for s in STORES)
-    monkeypatch.setattr(retention_stores, "STORES", stores)
+def _patch_soft_deleted(monkeypatch: pytest.MonkeyPatch, nested: RetentionRule) -> None:
+    """Swap the journal entry's soft-delete rule for the test's duration."""
+    entry = replace(RETENTION["journalentry"], soft_deleted=nested)
+    _patch_rule(monkeypatch, "journalentry", entry)
+
+
+def _proposal(
+    days: int,
+    *,
+    clock: ProposalClock = ProposalClock.ROW_CREATED,
+    compared: TodayComparison = TodayComparison.SHORTER,
+    exempt: frozenset[str] = frozenset(),
+) -> RetentionProposal:
+    """A synthetic proposal: none is live now that every row is ratified."""
+    return RetentionProposal(
+        days=days,
+        clock=clock,
+        trigger="t",
+        rationale="r",
+        compared_to_today=compared,
+        exempt_states=exempt,
+    )
+
+
+def _undecided(name: str, proposal: RetentionProposal | None) -> RetentionRule:
+    """``name``'s rule as it would read before a decision: unratified, carrying ``proposal``."""
+    return replace(RETENTION[name], ratified=False, proposal=proposal)
 
 
 def _store(key: str) -> Store:
     return next(s for s in STORES if s.key == key)
 
 
+def _patch_store(monkeypatch: pytest.MonkeyPatch, edited: Store) -> None:
+    """Swap one store (matched by key) in the live inventory for the test's duration."""
+    stores = tuple(edited if s.key == edited.key else s for s in STORES)
+    monkeypatch.setattr(retention_stores, "STORES", stores)
+
+
 # --------------------------------------------------------------------------
-# Complete
+# Ratified
 # --------------------------------------------------------------------------
 
 
-def test_nothing_was_ratified_by_proposing() -> None:
-    """The owner ratifies; proposing values leaves every placeholder unratified."""
-    assert set(unratified_rules()) == _UNRATIFIED
-
-
-def test_every_unratified_rule_carries_a_proposal_and_a_rationale() -> None:
-    """Each undecided lifetime has a day count, a structured clock, a comparison and why."""
-    assert proposal_findings() == ()
+def test_every_ratified_row_carries_the_owners_value() -> None:
+    """Each row the owner ratified is ratified, proposal-free, and has its period."""
     rules = dict(_all_rules())
-    for name in _UNRATIFIED:
-        proposal = rules[name].proposal
-        assert proposal is not None, name
-        assert proposal.days > 0, name
-        assert isinstance(proposal.clock, ProposalClock), name
-        assert isinstance(proposal.compared_to_today, TodayComparison), name
-        assert proposal.trigger.strip(), name
-        assert proposal.rationale.strip(), name
+    for name, (kind, days) in _RATIFIED_RULES.items():
+        rule = rules[name]
+        assert rule.ratified, name
+        assert rule.proposal is None, name
+        assert rule.kind is kind, name
+        assert rule.days == days, name
+
+
+def test_nothing_is_left_undecided() -> None:
+    """No rule is unratified, so no proposal is owed, and none lingers."""
+    assert unratified_rules() == ()
+    assert proposal_findings() == ()
+    assert all(rule.proposal is None for _, rule in _all_rules())
+
+
+def test_each_conditional_row_carries_its_conditions_onto_the_rule() -> None:
+    """The proposals' conditions survive ratification as data on the rule itself."""
+    for table, states in NEVER_ELIGIBLE_STATES.items():
+        assert RETENTION[table].exempt_states == states, table
+    for table, columns in REDACT_INSTEAD_OF_DELETE.items():
+        assert RETENTION[table].redact_columns == columns, table
+    conditional = set(NEVER_ELIGIBLE_STATES) | set(REDACT_INSTEAD_OF_DELETE)
+    for name, rule in _all_rules():
+        if name not in conditional:
+            assert rule.exempt_states == frozenset(), name
+            assert rule.redact_columns == (), name
+
+
+def test_the_sale_rule_counts_from_the_built_anonymisation_stamp() -> None:
+    """Gumroad: the clock is a real column, and an unlinked sale is said to keep its email."""
+    sale = RETENTION["gumroadsale"]
+    columns = SQLModel.metadata.tables["gumroadsale"].c
+    assert "anonymised_at" in columns
+    assert "anonymised_at" in sale.trigger
+    assert all(column in columns for column in sale.redact_columns)
+    assert "never linked" in sale.rationale
+    assert "re-matched" in sale.rationale
+
+
+def test_every_store_row_carries_the_owners_period() -> None:
+    """Each ratified store carries its period and no proposal; none is undecided."""
+    assert inventory_findings() == ()
+    for key, deadline in _RATIFIED_STORES.items():
+        store = _store(key)
+        assert store.ratified is not None, key
+        assert store.ratified.deadline == deadline, key
+        assert store.ratified.rationale.strip(), key
+    for store in STORES:
+        assert store.proposal is None, store.key
+
+
+def test_application_logs_keep_the_shorter_vendor_setting() -> None:
+    """Ratified as written: 30 days *or the vendor's current setting, whichever is shorter*."""
+    logs = _store("application_logs")
+    assert logs.ratified is not None
+    assert "whichever is shorter" in logs.ratified.rationale
+    assert isinstance(logs.deadline, Unknown), "today's vendor retention is still unverified"
+
+
+# --------------------------------------------------------------------------
+# Guarded: the detectors still fire for the next undecided lifetime
+# --------------------------------------------------------------------------
 
 
 def test_an_unratified_rule_without_a_proposal_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The completeness check fires: dropping one proposal is a named finding."""
-    _with_proposal(monkeypatch, "gumroadsale", None)
-    findings = proposal_findings()
-    assert len(findings) == 1
-    assert "gumroadsale" in findings[0]
+    """The completeness check fires: an undecided lifetime must carry a proposal."""
+    _patch_rule(monkeypatch, "loginattempt", _undecided("loginattempt", None))
+    assert proposal_findings() == ("loginattempt is unratified but carries no proposal",)
 
 
 def test_an_unproposed_soft_delete_rule_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     """Nested soft-delete rules are held to the same standard as top-level ones."""
-    entry = RETENTION["journalentry"]
-    assert entry.soft_deleted is not None
-    stripped = dict(RETENTION)
-    stripped["journalentry"] = replace(
-        entry, soft_deleted=replace(entry.soft_deleted, proposal=None)
-    )
-    monkeypatch.setattr(retention, "RETENTION", stripped)
+    _patch_soft_deleted(monkeypatch, replace(_soft_deleted(), ratified=False))
     assert any("journalentry (soft-deleted)" in f for f in proposal_findings())
+
+
+def test_a_ratified_rule_cannot_keep_a_proposal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ratifying means the proposal became the rule; a leftover one is reported."""
+    # Otherwise faithful to the rule (same window and clock, same redaction),
+    # so the leftover itself is the only finding.
+    stale = replace(
+        _proposal(180, compared=TodayComparison.SAME),
+        redact_columns=REDACT_INSTEAD_OF_DELETE["gumroadsale"],
+    )
+    leftover = replace(RETENTION["gumroadsale"], proposal=stale)
+    _patch_rule(monkeypatch, "gumroadsale", leftover)
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert "ratified but still carries a proposal" in findings[0]
+
+
+@pytest.mark.parametrize("table", sorted(NEVER_ELIGIBLE_STATES))
+def test_a_ratified_rule_that_drops_its_exemption_is_reported(
+    monkeypatch: pytest.MonkeyPatch, table: str
+) -> None:
+    """A rule without its exemption would expire open obligations; that is a finding."""
+    _patch_rule(monkeypatch, table, replace(RETENTION[table], exempt_states=frozenset()))
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert table in findings[0]
+    for state in NEVER_ELIGIBLE_STATES[table]:
+        assert state in findings[0]
+
+
+def test_a_ratified_rule_that_exempts_only_some_open_states_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exempting ``pending_delete`` but not ``unconfirmed`` still expires open rows."""
+    partial = replace(
+        RETENTION["journalwithdrawalobligation"], exempt_states=frozenset({"pending_delete"})
+    )
+    _patch_rule(monkeypatch, "journalwithdrawalobligation", partial)
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert "unconfirmed" in findings[0]
+    assert "pending_delete" not in findings[0]
+
+
+def test_a_ratified_sale_rule_that_deletes_instead_of_redacting_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropping the redaction would delete the receipt rather than blank the buyer."""
+    _patch_rule(monkeypatch, "gumroadsale", replace(RETENTION["gumroadsale"], redact_columns=()))
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert "redact" in findings[0]
+
+
+def test_a_plain_fixed_days_rule_is_reported_for_a_conditional_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ratification edit done wrong: the constructor without the conditions."""
+    plain = fixed_days(30, trigger="vault confirmation", rationale="r", ratified=True)
+    monkeypatch.setattr(retention, "RETENTION", {"voicedraftretraction": plain})
+    findings = proposal_findings()
+    assert len(findings) == 1
+    assert "mirror_intent" in findings[0]
+
+    kept = conditional(plain, exempt_states=NEVER_ELIGIBLE_STATES["voicedraftretraction"])
+    monkeypatch.setattr(retention, "RETENTION", {"voicedraftretraction": kept})
+    assert proposal_findings() == ()
 
 
 def test_a_proposal_needs_a_positive_period_and_a_reason() -> None:
@@ -228,68 +379,27 @@ def test_a_proposal_needs_a_positive_period_and_a_reason() -> None:
         bare(1, " ", "r")
 
 
-def test_every_undecided_store_and_backup_leg_carries_a_proposal() -> None:
-    """Unknown store deadlines and both backup legs (AC15) carry a proposal."""
-    assert inventory_findings() == ()
-    backup_keys = {leg.key for leg in BACKUP_LEGS}
-    proposed_stores = [s for s in STORES if isinstance(s.deadline, Unknown) or s.key in backup_keys]
-    assert len(proposed_stores) > len(backup_keys), "no unknown store is proposed -- vacuous"
-    for store in proposed_stores:
-        assert store.proposal is not None, store.key
-        assert store.proposal.rationale.strip(), store.key
-
-
-def test_an_unknown_store_without_a_proposal_is_reported(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The store-side completeness check fires on an undecided deadline."""
-    _with_store_proposal(monkeypatch, "application_logs", None)
-    findings = inventory_findings()
-    assert len(findings) == 1
-    assert "application_logs" in findings[0]
-    assert "undecided deadline" in findings[0]
-
-
-def test_a_backup_leg_without_a_proposal_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A backup leg's deadline is known, but its retention is still AC15's to decide."""
-    _with_store_proposal(monkeypatch, "offhost_pg_dump", None)
-    findings = inventory_findings()
-    assert len(findings) == 1
-    assert "backup leg 'offhost_pg_dump'" in findings[0]
-
-
-def test_a_store_proposal_needs_a_rationale() -> None:
-    """A blank store rationale cannot be constructed, so the report never shows one."""
-    with pytest.raises(ValueError, match="rationale"):
-        StoreProposal(deadline=None, rationale="  ", compared_to_today=TodayComparison.SAME)
-
-
-# --------------------------------------------------------------------------
-# Honest: declared comparisons are checked against the rule
-# --------------------------------------------------------------------------
-
-
 def test_a_proposal_keeping_an_obligation_past_erasure_is_longer_than_today(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The reviewer's case: 90 days after erasure on a table erased with the account.
+    """The open question (AC21-22): 90 days after erasure on a table erased with the account.
 
     Declared ``shorter`` it is a finding; only an explicit ``longer`` passes.
     """
-    after_erasure = replace(
-        _proposal("journalwithdrawalobligation"),
-        days=_AFTER_ERASURE_DAYS,
+    before = until_account_deletion("synthetic", ratified=False)
+    after_erasure = _proposal(
+        _AFTER_ERASURE_DAYS,
         clock=ProposalClock.AFTER_ACCOUNT_DELETION,
-        trigger="account deletion",
+        exempt=NEVER_ELIGIBLE_STATES["journalwithdrawalobligation"],
     )
-    _with_proposal(monkeypatch, "journalwithdrawalobligation", after_erasure)
+    _patch_rule(monkeypatch, "journalwithdrawalobligation", replace(before, proposal=after_erasure))
     findings = proposal_findings()
     assert len(findings) == 1
     assert "journalwithdrawalobligation" in findings[0]
     assert "longer" in findings[0]
 
     declared = replace(after_erasure, compared_to_today=TodayComparison.LONGER)
-    _with_proposal(monkeypatch, "journalwithdrawalobligation", declared)
+    _patch_rule(monkeypatch, "journalwithdrawalobligation", replace(before, proposal=declared))
     assert proposal_findings() == ()
 
 
@@ -298,13 +408,7 @@ def test_a_proposal_longer_than_a_known_window_must_say_so(
 ) -> None:
     """A sweep with a known window is compared number to number."""
     today = 30
-    longer = RetentionProposal(
-        days=today + 1,
-        clock=ProposalClock.ROW_CREATED,
-        trigger="creation",
-        rationale="r",
-        compared_to_today=TodayComparison.SHORTER,
-    )
+    longer = _proposal(today + 1)
     rule = proposed(
         swept_by("POST /x", trigger="creation", rationale="r", days=today, ratified=False),
         longer,
@@ -322,38 +426,23 @@ def test_a_proposal_longer_than_a_known_window_must_say_so(
 def test_an_after_erasure_clock_on_a_windowed_table_is_longer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Energy plans have a 30-day window, but a clock from erasure outlives the account.
-
-    energyplan is erased with its account (an ERASE table that is not
-    'until account deletion'), so 7 days after erasure is longer than today
-    whatever the window says.
-    """
-    after_erasure = replace(
-        _proposal("energyplan"), clock=ProposalClock.AFTER_ACCOUNT_DELETION, trigger="erasure"
-    )
-    _with_proposal(monkeypatch, "energyplan", after_erasure)
+    """Energy plans are erased with their account, so any clock from erasure outlives it."""
+    after_erasure = _proposal(1, clock=ProposalClock.AFTER_ACCOUNT_DELETION)
+    _patch_rule(monkeypatch, "energyplan", _undecided("energyplan", after_erasure))
     findings = proposal_findings()
     assert len(findings) == 1
     assert "energyplan" in findings[0]
     assert "longer" in findings[0]
 
-    declared = replace(after_erasure, compared_to_today=TodayComparison.LONGER)
-    _with_proposal(monkeypatch, "energyplan", declared)
-    assert proposal_findings() == ()
-
 
 def test_an_after_erasure_clock_on_a_soft_deleted_entry_is_longer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The ERASE-disposition branch: a sweep with no window on an erased table."""
-    entry = RETENTION["journalentry"]
-    nested = entry.soft_deleted
-    assert nested is not None
-    assert nested.proposal is not None
-    after_erasure = replace(nested.proposal, clock=ProposalClock.AFTER_ACCOUNT_DELETION)
-    patched = dict(RETENTION)
-    patched["journalentry"] = replace(entry, soft_deleted=replace(nested, proposal=after_erasure))
-    monkeypatch.setattr(retention, "RETENTION", patched)
+    """The ERASE-disposition branch, on the nested soft-delete rule."""
+    after_erasure = _proposal(1, clock=ProposalClock.AFTER_ACCOUNT_DELETION)
+    _patch_soft_deleted(
+        monkeypatch, replace(_soft_deleted(), ratified=False, proposal=after_erasure)
+    )
     findings = proposal_findings()
     assert len(findings) == 1
     assert "journalentry (soft-deleted)" in findings[0]
@@ -364,76 +453,89 @@ def test_a_proposal_on_another_clock_than_the_window_cannot_be_compared(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A creation-keyed window and an event-keyed proposal are not comparable numbers."""
-    other_clock = replace(_proposal("energyplan"), clock=ProposalClock.ROW_EVENT)
+    other_clock = _proposal(1, clock=ProposalClock.ROW_EVENT)
     assert (
         implied_comparison("energyplan", RETENTION["energyplan"], other_clock)
         is TodayComparison.UNKNOWN
     )
-    _with_proposal(monkeypatch, "energyplan", other_clock)
+    _patch_rule(monkeypatch, "energyplan", _undecided("energyplan", other_clock))
     findings = proposal_findings()
     assert len(findings) == 1
     assert "unknown" in findings[0]
 
 
-def test_a_ratified_obligation_rule_must_keep_its_exemption(
+def test_a_proposal_that_drops_open_obligations_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ratifying the 30-day proposal as a plain fixed_days rule would expire open rows."""
-    plain = fixed_days(
-        _proposal("journalwithdrawalobligation").days,
-        trigger="vault confirmation",
-        rationale="ratified",
-        ratified=True,
-    )
-    monkeypatch.setattr(retention, "RETENTION", {"journalwithdrawalobligation": plain})
+    """A future confirmed-only proposal without its exemption would expire open rows."""
+    before = until_account_deletion("synthetic", ratified=False)
+    _patch_rule(monkeypatch, "journalwithdrawalobligation", replace(before, proposal=_proposal(30)))
     findings = proposal_findings()
     assert len(findings) == 1
     assert "pending_delete" in findings[0]
-
-    kept = replace(plain, exempt_states=NEVER_ELIGIBLE_STATES["journalwithdrawalobligation"])
-    monkeypatch.setattr(retention, "RETENTION", {"journalwithdrawalobligation": kept})
-    assert proposal_findings() == ()
+    assert "unconfirmed" in findings[0]
 
 
-def test_a_ratified_sale_rule_must_keep_its_redaction(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ratifying the sale proposal as row deletion would drop the receipt itself."""
-    plain = fixed_days(
-        _proposal("gumroadsale").days, trigger="anonymisation", rationale="r", ratified=True
+def test_an_undecided_store_without_a_period_or_proposal_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown deadline owes a ratified period or a proposal."""
+    _patch_store(monkeypatch, replace(_store("application_logs"), ratified=None))
+    findings = inventory_findings()
+    assert len(findings) == 1
+    assert "application_logs" in findings[0]
+    assert "undecided deadline" in findings[0]
+
+
+def test_a_backup_leg_without_a_period_or_proposal_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A backup leg's retention is the owner's decision, so it must be ratified or proposed."""
+    _patch_store(monkeypatch, replace(_store("offhost_pg_dump"), ratified=None))
+    findings = inventory_findings()
+    assert len(findings) == 1
+    assert "backup leg 'offhost_pg_dump'" in findings[0]
+
+
+def test_a_ratified_store_cannot_keep_a_proposal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store side of the ratification procedure: the proposal is deleted."""
+    leftover = StoreProposal(
+        deadline=Days(30), rationale="r", compared_to_today=TodayComparison.UNKNOWN
     )
-    monkeypatch.setattr(retention, "RETENTION", {"gumroadsale": plain})
-    findings = proposal_findings()
+    _patch_store(monkeypatch, replace(_store("application_logs"), proposal=leftover))
+    findings = inventory_findings()
     assert len(findings) == 1
-    assert "redact" in findings[0]
-
-    kept = replace(plain, redact_columns=REDACT_INSTEAD_OF_DELETE["gumroadsale"])
-    monkeypatch.setattr(retention, "RETENTION", {"gumroadsale": kept})
-    assert proposal_findings() == ()
+    assert "ratified but still carries a proposal" in findings[0]
 
 
-def test_the_sale_proposal_redacts_exactly_the_required_columns() -> None:
-    """The proposal and the table-level constraint name the same columns."""
-    assert _proposal("gumroadsale").redact_columns == REDACT_INSTEAD_OF_DELETE["gumroadsale"]
-
-
-def test_a_ratified_rule_cannot_keep_a_proposal(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ratifying means the proposal became the rule; a leftover one is reported."""
-    ratified = replace(RETENTION["gumroadsale"], ratified=True)
-    monkeypatch.setattr(retention, "RETENTION", {"gumroadsale": ratified})
-    findings = proposal_findings()
+def test_a_ratified_backup_leg_must_be_the_runbooks_retention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A leg's ratified period is a live rule: it is the deadline the runbook prunes at."""
+    drifted = RatifiedPeriod(deadline=Days(OFFHOST_DUMP_RETENTION_DAYS + 1), rationale="r")
+    _patch_store(monkeypatch, replace(_store("offhost_pg_dump"), ratified=drifted))
+    findings = inventory_findings()
     assert len(findings) == 1
-    assert "ratified" in findings[0]
+    assert "offhost_pg_dump" in findings[0]
+    assert "runbook" in findings[0]
+
+
+def test_a_ratified_period_needs_a_rationale() -> None:
+    """A blank ratified rationale cannot be constructed, so the report never shows one."""
+    with pytest.raises(ValueError, match="rationale"):
+        RatifiedPeriod(deadline=None, rationale="  ")
 
 
 def test_a_store_proposal_longer_than_today_must_say_so(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A store proposal may not quietly lengthen a known deadline."""
+    """A future store proposal may not quietly lengthen a known deadline."""
     longer = StoreProposal(
         deadline=Days(OFFHOST_DUMP_RETENTION_DAYS + 1),
         rationale="r",
         compared_to_today=TodayComparison.SHORTER,
     )
-    _with_store_proposal(monkeypatch, "offhost_pg_dump", longer)
+    _patch_store(monkeypatch, replace(_store("offhost_pg_dump"), ratified=None, proposal=longer))
     findings = inventory_findings()
     assert len(findings) == 1
     assert "longer" in findings[0]
@@ -442,33 +544,24 @@ def test_a_store_proposal_longer_than_today_must_say_so(
 def test_a_proposal_against_an_unknown_deadline_cannot_claim_to_be_shorter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Application logs: today's vendor retention is unverified, so 30 days is 'unknown'.
-
-    Claiming ``shorter`` (or ``same``) is a finding; the live row says ``unknown``.
-    """
-    logs = _store("application_logs")
-    assert logs.proposal is not None
-    assert logs.proposal.compared_to_today is TodayComparison.UNKNOWN
-    assert "whichever is shorter" in logs.proposal.rationale
-    claimed = replace(logs.proposal, compared_to_today=TodayComparison.SHORTER)
-    _with_store_proposal(monkeypatch, "application_logs", claimed)
+    """Against an unverified vendor default, a period can only be 'unknown'."""
+    claimed = StoreProposal(
+        deadline=Days(30), rationale="r", compared_to_today=TodayComparison.SHORTER
+    )
+    _patch_store(monkeypatch, replace(_store("application_logs"), ratified=None, proposal=claimed))
     findings = inventory_findings()
     assert len(findings) == 1
     assert "unknown" in findings[0]
 
 
-def test_no_live_proposal_is_longer_than_today() -> None:
-    """Every real proposal is shorter, the same, or explicitly not comparable."""
-    for name, rule in _all_rules():
-        if rule.proposal is not None:
-            assert rule.proposal.compared_to_today is not TodayComparison.LONGER, name
-    for store in STORES:
-        if store.proposal is not None:
-            assert store.proposal.compared_to_today is not TodayComparison.LONGER, store.key
+def test_a_store_proposal_needs_a_rationale() -> None:
+    """A blank store rationale cannot be constructed, so the report never shows one."""
+    with pytest.raises(ValueError, match="rationale"):
+        StoreProposal(deadline=None, rationale="  ", compared_to_today=TodayComparison.SAME)
 
 
 # --------------------------------------------------------------------------
-# Honest: conditions are data, not prose
+# Honest: conditions are data, and the backup bound holds
 # --------------------------------------------------------------------------
 
 
@@ -491,69 +584,28 @@ def test_never_eligible_states_match_the_models() -> None:
     assert dict(NEVER_ELIGIBLE_STATES) == expected
 
 
-def test_open_obligations_are_never_eligible() -> None:
-    """Each conditional proposal exempts exactly its table's open states."""
-    for table, states in NEVER_ELIGIBLE_STATES.items():
-        assert _proposal(table).exempt_states == states, table
-
-
-def test_a_proposal_that_drops_open_obligations_is_reported(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A confirmed-only proposal without its exemption would expire open rows."""
-    unconditional = replace(_proposal("journalwithdrawalobligation"), exempt_states=frozenset())
-    _with_proposal(monkeypatch, "journalwithdrawalobligation", unconditional)
-    findings = proposal_findings()
-    assert len(findings) == 1
-    assert "pending_delete" in findings[0]
-    assert "unconfirmed" in findings[0]
-
-
-def test_the_sale_proposal_redacts_real_columns_and_names_the_schema_it_needs() -> None:
-    """Gumroad: the clock's anonymisation stamp is built, so no schema is still required.
-
-    The proposal redacts existing columns rather than deleting the receipt,
-    its clock column now exists, and it states the trade-off.
-    """
-    sale = _proposal("gumroadsale")
-    columns = SQLModel.metadata.tables["gumroadsale"].c
-    assert sale.clock is ProposalClock.AFTER_ACCOUNT_DELETION
-    assert sale.redact_columns == ("email", "raw_payload")
-    assert all(column in columns for column in sale.redact_columns)
-    assert "anonymised_at" in columns
-    assert sale.requires_schema is None
-    assert "re-matched" in sale.rationale
-    assert "to confirm" in sale.rationale
-
-
-def test_tombstone_bearing_proposals_outlive_the_backup_bound() -> None:
+def test_tombstone_bearing_rules_outlive_the_backup_bound() -> None:
     """A soft-deleted page and an erasure receipt are restore tombstones (AC9-10)."""
-    entry = RETENTION["journalentry"].soft_deleted
-    assert entry is not None
-    assert entry.proposal is not None
-    assert entry.proposal.days >= PURGE_MIN_RETENTION_DAYS
-    assert _proposal("accountdeletionaudit").days >= OLDEST_LIVE_BACKUP_DAYS
+    soft_deleted_days = _soft_deleted().days
+    assert soft_deleted_days is not None
+    assert soft_deleted_days >= PURGE_MIN_RETENTION_DAYS
+    receipt_days = RETENTION["accountdeletionaudit"].days
+    assert receipt_days is not None
+    assert receipt_days >= OLDEST_LIVE_BACKUP_DAYS
 
 
-def test_a_shorter_backup_retention_cannot_lower_the_purge_floor_while_old_dumps_are_held() -> None:
-    """Ratifying 30-day dumps must not drop the floor to 37 while 90-day dumps exist.
+def test_the_ratified_thirty_day_dumps_leave_the_floor_at_the_held_bound() -> None:
+    """The off-host leg is now 30 days, and the floor is still 97, not 37.
 
     The floor is the maximum of today's legs and the bound of copies still held
     under the older retention, so lowering the leg alone leaves it at 97.
     """
-    ratified = tuple(
-        replace(leg, retention_days=PROPOSED_OFFHOST_DUMP_DAYS)
-        if leg.key == "offhost_pg_dump"
-        else leg
-        for leg in BACKUP_LEGS
-    )
-    assert oldest_live_backup_days(ratified, HELD_BACKUP_BOUND_DAYS) == HELD_BACKUP_BOUND_DAYS
+    assert Days(OFFHOST_DUMP_RETENTION_DAYS) == _RATIFIED_STORES["offhost_pg_dump"]
+    assert HELD_OFFHOST_DUMP_RETENTION_DAYS > OFFHOST_DUMP_RETENTION_DAYS
     assert HELD_BACKUP_BOUND_DAYS == (HELD_OFFHOST_DUMP_RETENTION_DAYS + OFFHOST_DUMP_INTERVAL_DAYS)
-    # HELD may only be lowered in a separate, later change, once every dump kept
-    # under the older (longer) retention has been pruned -- never to match a
-    # freshly lowered OFFHOST in the same change.
-    assert HELD_OFFHOST_DUMP_RETENTION_DAYS >= OFFHOST_DUMP_RETENTION_DAYS
-    assert OLDEST_LIVE_BACKUP_DAYS >= HELD_BACKUP_BOUND_DAYS
+    assert oldest_live_backup_days(BACKUP_LEGS, HELD_BACKUP_BOUND_DAYS) == HELD_BACKUP_BOUND_DAYS
+    assert max(leg.oldest_live_copy_days for leg in BACKUP_LEGS) < HELD_BACKUP_BOUND_DAYS
+    assert OLDEST_LIVE_BACKUP_DAYS == HELD_BACKUP_BOUND_DAYS
     assert PURGE_MIN_RETENTION_DAYS == OLDEST_LIVE_BACKUP_DAYS
 
 
@@ -592,45 +644,67 @@ def _load_variant(
     return module
 
 
-def test_ratifying_thirty_day_dumps_keeps_the_floor_at_the_held_bound(
+def test_the_held_bound_alone_is_what_keeps_the_floor_at_97(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The ratification edit itself: OFFHOST lowered to 30, HELD left at 90.
+    """Lowering HELD to the new retention -- the separate, later change -- gives 37.
 
-    Both the oldest-live-copy bound and the journal purge floor built on it stay
-    at the held bound (97), not the 37 the new retention alone would give.
+    Proves the 97 rests on the held copies and not on a leg, so the guard above
+    is not vacuous: the day the held dumps are pruned and HELD is lowered, the
+    floor and the purge's minimum fall with it.
     """
     stores_path = _BACKEND_SRC / "domain" / "retention_stores.py"
-    ratified = _load_variant(
+    lowered = _load_variant(
         monkeypatch,
-        "retention_stores_ratified",
+        "retention_stores_held_lowered",
         stores_path,
         (
-            f"\nOFFHOST_DUMP_RETENTION_DAYS: Final = {OFFHOST_DUMP_RETENTION_DAYS}\n",
-            f"\nOFFHOST_DUMP_RETENTION_DAYS: Final = {PROPOSED_OFFHOST_DUMP_DAYS}\n",
+            f"\nHELD_OFFHOST_DUMP_RETENTION_DAYS: Final = {HELD_OFFHOST_DUMP_RETENTION_DAYS}\n",
+            "\nHELD_OFFHOST_DUMP_RETENTION_DAYS: Final = OFFHOST_DUMP_RETENTION_DAYS\n",
         ),
     )
-    assert ratified.OFFHOST_DUMP_RETENTION_DAYS == PROPOSED_OFFHOST_DUMP_DAYS
-    assert ratified.OLDEST_LIVE_BACKUP_DAYS == HELD_BACKUP_BOUND_DAYS
+    lowered_bound = OFFHOST_DUMP_RETENTION_DAYS + OFFHOST_DUMP_INTERVAL_DAYS
+    assert lowered_bound == lowered.OLDEST_LIVE_BACKUP_DAYS
 
-    monkeypatch.setitem(sys.modules, "domain.retention_stores", ratified)
+    monkeypatch.setitem(sys.modules, "domain.retention_stores", lowered)
     purge = _load_variant(
         monkeypatch,
-        "journal_retention_ratified",
+        "journal_retention_held_lowered",
         _BACKEND_SRC / "services" / "journal_retention.py",
         ("PURGE_BATCH_SIZE: Final = 200\n", "PURGE_BATCH_SIZE: Final = 200\n"),
     )
-    assert purge.PURGE_MIN_RETENTION_DAYS == HELD_BACKUP_BOUND_DAYS
+    assert lowered_bound == purge.PURGE_MIN_RETENTION_DAYS
 
 
-def test_report_shows_each_proposal_and_its_comparison() -> None:
-    """The on-demand worklist puts the proposal next to each unratified rule."""
-    report = retention_report()
-    gumroad = next(line for line in report.splitlines() if line.startswith("gumroadsale"))
-    assert f"proposed: {_proposal('gumroadsale').days} days" in gumroad
-    assert "[shorter than today]" in gumroad
-    ratified = next(line for line in report.splitlines() if line.startswith("habit:"))
-    assert "proposed" not in ratified
+# --------------------------------------------------------------------------
+# Honest: the existing sweeps run on the ratified windows
+# --------------------------------------------------------------------------
+
+
+def test_the_energy_plan_sweep_defaults_to_the_ratified_window() -> None:
+    """The operator sweep that already existed now uses the owner's 7 days."""
+    assert RETENTION["energyplan"].days == ENERGY_PLAN_RETENTION_DAYS
+    default = inspect.signature(cleanup_energy_plans).parameters["older_than_days"].default
+    assert default == ENERGY_PLAN_RETENTION_DAYS
+
+
+def test_the_journal_purge_defaults_to_the_ratified_window() -> None:
+    """The purge had no default because the window was undecided; now it is the bound."""
+    assert _soft_deleted().days == PURGE_DEFAULT_RETENTION_DAYS == PURGE_MIN_RETENTION_DAYS
+    default = inspect.signature(purge_journal_entries).parameters["older_than_days"].default
+    assert default == PURGE_DEFAULT_RETENTION_DAYS
+
+
+def test_report_marks_ratified_rules_and_unswept_periods() -> None:
+    """The on-demand report shows each ratified period and that no sweep applies it yet."""
+    lines = retention_report().splitlines()
+    gumroad = next(line for line in lines if line.startswith("gumroadsale"))
+    assert "fixed_days, 180 days" in gumroad
+    assert "[ratified]" in gumroad
+    assert "no sweep applies it yet" in gumroad
+    assert not any("proposed" in line for line in lines)
+    energy = next(line for line in lines if line.startswith("energyplan"))
+    assert "no sweep applies it yet" not in energy
 
 
 # --------------------------------------------------------------------------
@@ -639,15 +713,19 @@ def test_report_shows_each_proposal_and_its_comparison() -> None:
 
 
 def _doc_rows(text: str) -> dict[str, list[str]]:
-    """The proposal doc's table rows, keyed by their first cell (backticks stripped)."""
+    """The doc's table rows, keyed by their first cell (backticks stripped)."""
     rows: dict[str, list[str]] = {}
     for line in text.splitlines():
         match = _TABLE_ROW.match(line)
         if match is None:
             continue
         cells = [cell.strip() for cell in match.group("cells").split("|")]
-        if len(cells) == _DOC_COLUMNS:
-            rows[cells[_FIRST_CELL].strip("`")] = cells
+        first = cells[_FIRST_CELL]
+        if len(cells) != _DOC_COLUMNS or set(first) <= _SEPARATOR_CHARS:
+            continue
+        if first == _HEADER_FIRST_CELL:
+            continue
+        rows[first.strip("`")] = cells
     return rows
 
 
@@ -677,29 +755,31 @@ def test_the_period_parser_rejects_a_longer_number_containing_the_right_one() ->
     assert _leading_period("no fixed period") is None
 
 
-def test_the_owner_doc_lists_every_proposal_with_the_codes_values() -> None:
-    """The review table and the registry cannot drift apart."""
+def test_the_owner_doc_records_every_ratified_row_with_the_codes_values() -> None:
+    """The decision record and the registry cannot drift apart, in either direction."""
     text = _PROPOSAL_DOC.read_text(encoding="utf-8")
-    assert "DRAFT" in text
-    assert "not ratified" in text.lower()
+    assert "DRAFT" not in text
+    assert _DECISION in text
+    assert _DECISION_LINK in text
     rows = _doc_rows(text)
-    for name, rule in _all_rules():
-        if rule.proposal is None:
-            continue
-        assert name in rows, f"{name} has a proposal but no row in {_PROPOSAL_DOC.name}"
-        assert _leading_period(rows[name][_PERIOD_CELL]) == (rule.proposal.days, "day"), name
-        assert rows[name][_COMPARISON_CELL] == rule.proposal.compared_to_today.value, name
-    for store in STORES:
-        if store.proposal is None:
-            continue
-        assert store.key in rows, f"{store.key} has a proposal but no row"
-        cells = rows[store.key]
-        assert _leading_period(cells[_PERIOD_CELL]) == _store_period(store.proposal.deadline)
-        assert cells[_COMPARISON_CELL] == store.proposal.compared_to_today.value, store.key
+    rules = dict(_all_rules())
+    stores = {store.key: store for store in STORES}
+    assert set(rows) == set(_RATIFIED_RULES) | set(_RATIFIED_STORES)
+    for name in _RATIFIED_RULES:
+        assert rules[name].ratified, name
+        assert _leading_period(rows[name][_PERIOD_CELL]) == (rules[name].days, "day"), name
+    for key in _RATIFIED_STORES:
+        ratified = stores[key].ratified
+        assert ratified is not None, key
+        assert _leading_period(rows[key][_PERIOD_CELL]) == _store_period(ratified.deadline), key
+    for name, cells in rows.items():
+        comparison = cells[_COMPARISON_CELL]
+        assert comparison in {c.value for c in TodayComparison}, name
+        assert comparison != TodayComparison.LONGER.value, f"{name}: ratified longer than before"
 
 
 # --------------------------------------------------------------------------
-# Inert
+# Inert proposals
 # --------------------------------------------------------------------------
 
 
@@ -741,7 +821,7 @@ def test_the_proposal_scanner_is_not_vacuous() -> None:
 
 
 def test_no_application_code_reads_a_proposal() -> None:
-    """Until ratified, a proposal is never a window any sweep, purge or route uses."""
+    """A future proposal is never a window any sweep, purge or route uses."""
     offenders: dict[str, set[str]] = {}
     for path in sorted(_BACKEND_SRC.rglob("*.py")):
         relative = path.relative_to(_BACKEND_SRC).as_posix()
@@ -753,29 +833,15 @@ def test_no_application_code_reads_a_proposal() -> None:
     assert offenders == {}
 
 
-def test_sweeps_still_run_on_todays_windows() -> None:
-    """Proposing shorter values deletes nothing sooner today.
-
-    The energy-plan sweep keeps its 30-day default (its proposal is shorter),
-    the journal purge keeps no default at all, and the off-host leg still
-    carries today's 90 days, not the proposed 30.
-    """
-    assert _proposal("energyplan").days < ENERGY_PLAN_RETENTION_DAYS
-    default = inspect.signature(cleanup_energy_plans).parameters["older_than_days"].default
-    assert default == ENERGY_PLAN_RETENTION_DAYS
-
-    purge_window = inspect.signature(purge_journal_entries).parameters["older_than_days"]
-    assert purge_window.default is inspect.Parameter.empty
-
-    offhost = _store("offhost_pg_dump")
-    assert offhost.proposal is not None
-    assert offhost.proposal.deadline == Days(PROPOSED_OFFHOST_DUMP_DAYS)
-    assert PROPOSED_OFFHOST_DUMP_DAYS < OFFHOST_DUMP_RETENTION_DAYS
-    assert offhost.deadline == Days(OFFHOST_DUMP_RETENTION_DAYS)
+def test_no_proposed_constant_survives_ratification() -> None:
+    """Ratifying moved every PROPOSED_* value into a rule; none is left to drift."""
+    for module in (retention, retention_stores):
+        leftovers = [name for name in vars(module) if name.startswith(_PROPOSED_PREFIX)]
+        assert leftovers == [], module.__name__
 
 
-def test_store_is_constructible_without_a_proposal() -> None:
-    """A store whose deadline is known needs no proposal (the default is none)."""
+def test_store_is_constructible_without_a_decision() -> None:
+    """A store whose deadline is known needs neither a period nor a proposal."""
     store = Store(
         key="k",
         description="d",
@@ -784,3 +850,4 @@ def test_store_is_constructible_without_a_proposal() -> None:
         evidence="e",
     )
     assert store.proposal is None
+    assert store.ratified is None

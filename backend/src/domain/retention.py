@@ -25,14 +25,22 @@ Each rule carries:
 * ``ratified``: whether the owner has decided this lifetime. Ratification is
   independent of kind. A lifetime that is a promise to users, or a legal
   question, stays ``ratified=False`` until the owner decides it (#3063 AC15),
-  and :func:`unratified_rules` is the worklist;
+  and :func:`unratified_rules` is the worklist. On 2026-10-13 the owner
+  ratified every lifetime that was open, so the worklist is empty;
 * ``proposal``: on an unratified rule, the lifetime proposed for the owner to
   ratify -- a day count, the event it counts from, and a one-line rationale
   (:class:`RetentionProposal`). A proposal is a value for review, **never** a
   window: no sweep, purge or route reads it, and a test pins that. Ratifying a
-  rule means writing its proposal into the rule itself and dropping the
-  proposal. The owner reviews them in ``docs/privacy/retention-proposal.md``,
-  and :func:`proposal_findings` keeps every unratified rule proposed.
+  rule means writing its proposal into the rule itself, copying its
+  conditions (``exempt_states``, ``redact_columns``) onto the rule, and
+  dropping the proposal. :func:`proposal_findings` keeps every unratified rule
+  proposed, and every sweeping rule carrying its table's conditions. The
+  decision record is ``docs/privacy/retention-proposal.md``.
+
+A ratified ``fixed_days`` period is the decided lifetime, not yet a deletion:
+nothing applies one until a scheduled sweep exists (#3063 AC18). A period an
+existing operator sweep applies is ``swept_by`` that sweep, with the ratified
+window as its default.
 
 What this registry does **not** cover: copies outside this database (backups,
 logs, devices, the Creek vault). Those are inventoried as data in
@@ -60,7 +68,8 @@ CONTROLLER_ADEPTHOOD = "adepthood"
 
 #: Mirrors ``services.energy.ENERGY_PLAN_RETENTION_DAYS`` (that module is
 #: impure, so this one cannot import it). The registry test pins the two equal.
-ENERGY_PLAN_SWEEP_DAYS = 30
+#: Ratified 2026-10-13: a week covers any retried request (#3063 AC15).
+ENERGY_PLAN_SWEEP_DAYS = 7
 #: Mirrors ``models.feedback.FEEDBACK_RETENTION_DAYS``; pinned equal by test.
 FEEDBACK_SWEEP_DAYS = 180
 
@@ -68,37 +77,35 @@ ENERGY_PLAN_SWEEP = "POST /admin/maintenance/energy-plans"
 FEEDBACK_SWEEP = "POST /admin/maintenance/feedback-reports"
 JOURNAL_ENTRY_PURGE = "POST /admin/maintenance/journal-entries"
 
-# Proposed lifetimes for the owner to ratify (#3063 AC15). Values for review
-# only: nothing deletes on them (see RetentionProposal). Rationales live on the
-# rules below and in docs/privacy/retention-proposal.md.
+# Lifetimes the owner ratified on 2026-10-13 (#3063 AC15; PR #3155, comment
+# 6151018235), each as proposed. Rationales live on the rules below and in
+# docs/privacy/retention-proposal.md.
 #: An erasure receipt must outlive every backup (it is the restore tombstone)
 #: and still answer "did the erasure run?" for a year.
-PROPOSED_ERASURE_RECEIPT_DAYS = 365
-#: Energy plans are re-read for a retried request and included in the export.
-PROPOSED_ENERGY_PLAN_DAYS = 7
-#: A deleted account's buyer email outlives it by an assumed dispute window
-#: (to confirm; a legal question).
-PROPOSED_SALE_EMAIL_DAYS = 180
+ERASURE_RECEIPT_RETENTION_DAYS = 365
+#: An anonymised purchase receipt is kept for an assumed dispute window after
+#: its buyer's identifiers are blanked at account deletion.
+ANONYMISED_SALE_RETENTION_DAYS = 180
 #: A soft-deleted page is kept exactly as long as some live backup may still
 #: hold it undeleted -- the journal purge's own floor. That bound includes the
 #: copies still held under a retention since lowered
-#: (``retention_stores.HELD_BACKUP_BOUND_DAYS``), so ratifying a shorter backup
-#: retention does not lower it until the old copies have aged out.
-PROPOSED_SOFT_DELETED_ENTRY_DAYS = OLDEST_LIVE_BACKUP_DAYS
+#: (``retention_stores.HELD_BACKUP_BOUND_DAYS``), so the ratified 30-day dumps
+#: do not lower it until the 90-day-era copies have aged out.
+SOFT_DELETED_ENTRY_RETENTION_DAYS = OLDEST_LIVE_BACKUP_DAYS
 #: A confirmed withdrawal record is a short-lived receipt.
-PROPOSED_CONFIRMED_OBLIGATION_DAYS = 30
+CONFIRMED_OBLIGATION_RETENTION_DAYS = 30
 #: Metering covers the cost-alert window plus provider invoice reconciliation.
-PROPOSED_USAGE_LOG_DAYS = 90
+USAGE_LOG_RETENTION_DAYS = 90
 #: Sign-in attempts serve lockout (15 minutes) and short abuse investigation.
-PROPOSED_LOGIN_ATTEMPT_DAYS = 30
+LOGIN_ATTEMPT_RETENTION_DAYS = 30
 #: A share link that stopped working is kept briefly, then removed.
-PROPOSED_DEAD_SHARE_LINK_DAYS = 30
+DEAD_SHARE_LINK_RETENTION_DAYS = 30
 #: A restore marker guards one restore's reapply.
-PROPOSED_RESTORE_MARKER_DAYS = 365
+RESTORE_MARKER_RETENTION_DAYS = 365
 #: A revoked token's row is useless once the token itself has expired.
-PROPOSED_REVOKED_TOKEN_GRACE_DAYS = 1
+REVOKED_TOKEN_GRACE_DAYS = 1
 #: A confirmed teardown receipt spans a few vendor billing cycles.
-PROPOSED_TEARDOWN_RECEIPT_DAYS = 90
+TEARDOWN_RECEIPT_RETENTION_DAYS = 90
 
 _ACCOUNT_DELETION = "account deletion"
 _SWEEP_ROUTE = re.compile(r"^(GET|POST|PUT|PATCH|DELETE) /\S+$")
@@ -109,7 +116,9 @@ class RetentionKind(enum.StrEnum):
 
     #: Rows live until the owning account is erased, and no longer.
     UNTIL_ACCOUNT_DELETION = "until_account_deletion"
-    #: Rows live a fixed number of days after the trigger.
+    #: Rows live a fixed number of days after the trigger: a ratified period
+    #: that no sweep applies yet (#3063 AC18). Once a sweep does, the rule is
+    #: ``SWEPT_BY`` it.
     FIXED_DAYS = "fixed_days"
     #: Rows are removed by an operator-invoked sweep route.
     SWEPT_BY = "swept_by"
@@ -233,6 +242,20 @@ def fixed_days(days: int, *, trigger: str, rationale: str, ratified: bool) -> Re
     )
 
 
+def conditional(
+    rule: RetentionRule,
+    *,
+    exempt_states: frozenset[str] = frozenset(),
+    redact_columns: tuple[str, ...] = (),
+) -> RetentionRule:
+    """``rule`` under a sweep's conditions, copied from its proposal on ratification.
+
+    Rows in ``exempt_states`` are never eligible; ``redact_columns``, when set,
+    are blanked when the clock starts and the receipt itself kept for the period.
+    """
+    return replace(rule, exempt_states=exempt_states, redact_columns=redact_columns)
+
+
 def swept_by(
     route: str,
     *,
@@ -289,6 +312,9 @@ def shared_catalogue(rationale: str) -> RetentionRule:
     )
 
 
+_RATIFIED = " Ratified 2026-10-13 (#3063 AC15)."
+_NOT_YET_SWEPT = " No sweep applies it yet (#3063 AC18)."
+
 _DERIVED_FROM_ENTRY = (
     " Rows anchored to a soft-deleted entry live as long as that entry does (see "
     "journalentry's soft-deleted rule): the soft delete hides them, and only the operator "
@@ -299,20 +325,15 @@ _DERIVED_FROM_ENTRY = (
 # The registry. One explicit entry per table, alphabetical for review.
 # --------------------------------------------------------------------------
 RETENTION: Mapping[str, RetentionRule] = {
-    "accountdeletionaudit": indefinite(
-        "The content-free receipt that an erasure ran (surrogate id, instant, row "
-        "counts). It is also the account tombstone a restore is suppressed with, so "
-        "it has to outlive the longest backup; no bound has been chosen (#3063 AC17).",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_ERASURE_RECEIPT_DAYS,
-            clock=ProposalClock.ROW_CREATED,
-            compared_to_today=TodayComparison.SHORTER,
-            trigger="the receipt's creation, at account deletion",
-            rationale="Content-free and names nobody; as the restore tombstone it must "
-            "outlive the oldest live backup copy, and a year still answers a support or "
-            "regulator question about whether an erasure ran.",
-        ),
+    "accountdeletionaudit": fixed_days(
+        ERASURE_RECEIPT_RETENTION_DAYS,
+        trigger="the receipt's creation, at account deletion",
+        rationale="The content-free receipt that an erasure ran (surrogate id, instant, "
+        "row counts). It names nobody; as the account tombstone a restore is suppressed "
+        "with, it must outlive the oldest live backup copy, and a year still answers a "
+        "support or regulator question about whether an erasure ran. Where the "
+        "tombstone file itself is kept is still open (#3063 AC17)." + _RATIFIED + _NOT_YET_SWEPT,
+        ratified=True,
     ),
     "authidentity": until_account_deletion("Social sign-in links of a live account."),
     "completionsuggestion": until_account_deletion(
@@ -327,25 +348,15 @@ RETENTION: Mapping[str, RetentionRule] = {
     "corpusinvitationstate": until_account_deletion("Corpus invitation state."),
     "corpussweep": until_account_deletion("Content-free counts of corpus grants."),
     "coursestage": shared_catalogue("The shared 36-week curriculum."),
-    "energyplan": proposed(
-        swept_by(
-            ENERGY_PLAN_SWEEP,
-            trigger="plan creation",
-            days=ENERGY_PLAN_SWEEP_DAYS,
-            rationale="Energy plans have no TTL; the operator sweep removes plans older than "
-            "its window. The window is an internal default, not a published promise.",
-            ratified=False,
-        ),
-        RetentionProposal(
-            days=PROPOSED_ENERGY_PLAN_DAYS,
-            clock=ProposalClock.ROW_CREATED,
-            compared_to_today=TodayComparison.SHORTER,
-            trigger="plan creation",
-            rationale="A stored plan is re-read to answer a retried request with the same "
-            "idempotency key, and it is included in the owner's export; a week covers any "
-            "retry, and older plans would leave the export too (a plan is cheap to "
-            "regenerate from the habits it was built from).",
-        ),
+    "energyplan": swept_by(
+        ENERGY_PLAN_SWEEP,
+        trigger="plan creation",
+        days=ENERGY_PLAN_SWEEP_DAYS,
+        rationale="A stored plan is re-read to answer a retried request with the same "
+        "idempotency key, and it is included in the owner's export; a week covers any "
+        "retry, and older plans leave the export too (a plan is cheap to regenerate "
+        "from the habits it was built from). The operator sweep's default window is "
+        "the ratified week; nothing schedules the sweep (#3063 AC18)." + _RATIFIED,
     ),
     "entitlement": until_account_deletion("The account's course access grant."),
     "feedbacknote": swept_by(
@@ -375,103 +386,81 @@ RETENTION: Mapping[str, RetentionRule] = {
     "goalgroup": until_account_deletion(
         "The account's own goal groupings; shared templates carry no account.",
     ),
-    "gumroadsale": indefinite(
-        "A purchase receipt, anonymised on account deletion but keeping the buyer's "
-        "email so a paid-for licence can be re-matched. No deadline exists; payment "
-        "retention is a legal question for the owner (#3063 AC15).",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_SALE_EMAIL_DAYS,
-            clock=ProposalClock.AFTER_ACCOUNT_DELETION,
-            compared_to_today=TodayComparison.SHORTER,
-            trigger="the sale's anonymisation at deletion of the account it was linked to",
-            redact_columns=("email", "raw_payload"),
-            rationale="Trade-off: after redaction a returning buyer can no longer be "
-            "re-matched to the licence or pack they paid for. 180 days is assumed to "
-            "cover typical refund and card-dispute windows (to confirm; some dispute "
-            "codes run longer), and whether Gumroad's own record suffices, and how long "
-            "the amounts must be kept for bookkeeping, are legal questions. A sale never "
-            "linked to an account keeps its email, since that is its only claim path.",
+    "gumroadsale": conditional(
+        fixed_days(
+            ANONYMISED_SALE_RETENTION_DAYS,
+            trigger="gumroadsale.anonymised_at, stamped when account deletion blanks a sale "
+            "linked to the deleted account (its licence binding or token-pack credit)",
+            rationale="A purchase receipt. At account deletion the buyer's email and "
+            "Gumroad's raw payload are blanked on every linked sale and the receipt kept, "
+            "180 days from that instant. Trade-off: after redaction a returning buyer can "
+            "no longer be re-matched by address to the licence or pack they paid for (the "
+            "licence key still reclaims a licence). 180 days is assumed to cover typical "
+            "refund and card-dispute windows; the owner ratified it with the legal and "
+            "bookkeeping questions still to confirm. A sale never linked to an account "
+            "keeps its email, since that is its only claim path, and is never stamped."
+            + _RATIFIED
+            + _NOT_YET_SWEPT,
+            ratified=True,
         ),
+        redact_columns=("email", "raw_payload"),
     ),
     "habit": until_account_deletion("The account's habits."),
     "invitationsignal": until_account_deletion("Which invitations the account saw."),
     "journalentry": until_account_deletion(
         "The writing. A live entry lives until the account is erased.",
-        soft_deleted=proposed(
-            swept_by(
-                JOURNAL_ENTRY_PURGE,
-                trigger="soft delete",
-                rationale="A soft-deleted entry (BUG-JOURNAL-007) is hidden from every read "
-                "path but kept, with its derivatives, until account deletion or until an "
-                "operator runs the purge. The purge refuses a window shorter than the "
-                "age of the oldest live backup copy, has no default window, and nothing "
-                "schedules it; both are owner decisions (#3063 AC15, AC18).",
-                ratified=False,
-            ),
-            RetentionProposal(
-                days=PROPOSED_SOFT_DELETED_ENTRY_DAYS,
-                clock=ProposalClock.ROW_EVENT,
-                compared_to_today=TodayComparison.SHORTER,
-                trigger="soft delete",
-                rationale="Kept only as the restore tombstone: purge (with its derivatives) "
-                "as soon as no live backup copy can still hold the page undeleted -- "
-                "exactly the purge's own floor, which falls only after copies kept under "
-                "an older, longer backup retention have aged out.",
-            ),
+        soft_deleted=swept_by(
+            JOURNAL_ENTRY_PURGE,
+            trigger="soft delete",
+            days=SOFT_DELETED_ENTRY_RETENTION_DAYS,
+            rationale="A soft-deleted entry (BUG-JOURNAL-007) is hidden from every read "
+            "path and kept only as the restore tombstone: the purge removes it, with its "
+            "derivatives, once no live backup copy can still hold the page undeleted -- "
+            "the purge's own floor, which falls only after copies kept under an older, "
+            "longer backup retention have aged out. That window is the purge's default; "
+            "nothing schedules the purge (#3063 AC18), so until it runs the entry stays "
+            "until account deletion." + _RATIFIED,
         ),
     ),
-    "journalwithdrawalobligation": until_account_deletion(
-        "Content-free obligation to withdraw a journal page's copy from a vault: "
-        "``pending_delete`` while a requested deletion waits on the vault, "
-        "``unconfirmed`` after the writer deleted the page here because the vault "
-        "holding the copy was out of reach (#3094), ``confirmed`` once that vault "
-        "confirmed absence. Not a foreign key into the entry, so a purge of the "
-        "soft-deleted page never erases the record that a copy may remain. Erased "
-        "with the account today; how long a confirmed or unconfirmed row is kept, and "
-        "whether an unconfirmed one should outlive erasure, are owner decisions "
-        "(#3063 AC21-22, #3094). Plan: docs/privacy/gdpr-erasure-unreachable-vaults.md.",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_CONFIRMED_OBLIGATION_DAYS,
-            clock=ProposalClock.ROW_EVENT,
-            compared_to_today=TodayComparison.SHORTER,
+    "journalwithdrawalobligation": conditional(
+        fixed_days(
+            CONFIRMED_OBLIGATION_RETENTION_DAYS,
             trigger="vault confirmation (confirmed rows only)",
-            exempt_states=frozenset({"pending_delete", "unconfirmed"}),
-            rationale="An open (pending_delete or unconfirmed) row is kept until its vault "
-            "confirms the copy gone, because it must outlive the copy it tracks; once "
-            "confirmed it is only a receipt, and 30 days answers a follow-up question.",
+            rationale="Content-free obligation to withdraw a journal page's copy from a vault: "
+            "``pending_delete`` while a requested deletion waits on the vault, "
+            "``unconfirmed`` after the writer deleted the page here because the vault "
+            "holding the copy was out of reach (#3094), ``confirmed`` once that vault "
+            "confirmed absence. Not a foreign key into the entry, so a purge of the "
+            "soft-deleted page never erases the record that a copy may remain. An open row "
+            "is never eligible: it must outlive the copy it tracks. A confirmed row is only "
+            "a receipt, kept 30 days. Every row is still erased with the account; whether an "
+            "unconfirmed one should outlive erasure is open (#3063 AC21-22, #3094). Plan: "
+            "docs/privacy/gdpr-erasure-unreachable-vaults.md." + _RATIFIED + _NOT_YET_SWEPT,
+            ratified=True,
         ),
+        exempt_states=frozenset({"pending_delete", "unconfirmed"}),
     ),
     "licensebinding": until_account_deletion("The claim tying a sale to this account."),
-    "llmusagelog": until_account_deletion(
-        "Per-request AI metering rows. Kept for the account's whole life; whether "
-        "metering should expire sooner is an owner decision (#3063 AC15).",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_USAGE_LOG_DAYS,
-            clock=ProposalClock.ROW_CREATED,
-            compared_to_today=TodayComparison.SHORTER,
-            trigger="the metered call",
-            rationale="Content-free cost rows; 90 days covers the 30-day cost-alert window "
-            "and reconciliation against two monthly provider invoices. All-time admin "
-            "totals would become 90-day totals.",
-        ),
+    "llmusagelog": fixed_days(
+        USAGE_LOG_RETENTION_DAYS,
+        trigger="the metered call",
+        rationale="Per-request AI metering rows, content-free; 90 days covers the 30-day "
+        "cost-alert window and reconciliation against two monthly provider invoices. "
+        "Accepted side effect: the all-time admin totals become 90-day totals."
+        + _RATIFIED
+        + _NOT_YET_SWEPT,
+        ratified=True,
     ),
-    "loginattempt": until_account_deletion(
-        "Sign-in attempts with the typed address and IP. No expiry exists; a shorter "
-        "lifetime is an owner decision (#3063 AC15). Attempts against an address that "
-        "never had an account are swept by nothing.",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_LOGIN_ATTEMPT_DAYS,
-            clock=ProposalClock.ROW_CREATED,
-            compared_to_today=TodayComparison.SHORTER,
-            trigger="the attempt",
-            rationale="A typed address and IP are personal data; lockout reads only the "
-            "last 15 minutes, and 30 days is enough to investigate a credential-stuffing "
-            "run (common security-log practice) -- for unknown addresses too.",
-        ),
+    "loginattempt": fixed_days(
+        LOGIN_ATTEMPT_RETENTION_DAYS,
+        trigger="the attempt",
+        rationale="Sign-in attempts with the typed address and IP, which are personal "
+        "data. Lockout reads only the last 15 minutes, and 30 days is enough to "
+        "investigate a credential-stuffing run (common security-log practice). Applies "
+        "to attempts against an address that never had an account too."
+        + _RATIFIED
+        + _NOT_YET_SWEPT,
+        ratified=True,
     ),
     "marginalia": until_account_deletion(
         "Margin notes on the account's entries, encrypted at rest." + _DERIVED_FROM_ENTRY,
@@ -490,19 +479,14 @@ RETENTION: Mapping[str, RetentionRule] = {
     "practicerecipestep": until_account_deletion("Steps of the account's recipes."),
     "practicesession": until_account_deletion("Every sit the account logged."),
     "practicesessionspend": until_account_deletion("Wallet spend for the account's sessions."),
-    "practicesharelink": indefinite(
-        "A share link survives its creator's deletion, anonymised, because recipients "
-        "may hold the URL. No expiry exists.",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_DEAD_SHARE_LINK_DAYS,
-            clock=ProposalClock.ROW_EVENT,
-            compared_to_today=TodayComparison.SHORTER,
-            trigger="the link stopping working (expired, revoked or used up)",
-            rationale="A dead link serves no recipient; 30 days lets the redeem endpoint "
-            "keep saying 'expired' rather than 'not found' for a while. A live link with "
-            "no expiry keeps working as today, because recipients may hold it.",
-        ),
+    "practicesharelink": fixed_days(
+        DEAD_SHARE_LINK_RETENTION_DAYS,
+        trigger="the link stopping working (expired, revoked or used up)",
+        rationale="A share link survives its creator's deletion, anonymised, because "
+        "recipients may hold the URL. A dead link serves no recipient; 30 days lets the "
+        "redeem endpoint keep saying 'expired' rather than 'not found' for a while. A "
+        "live link with no expiry never stops working, so it is kept." + _RATIFIED + _NOT_YET_SWEPT,
+        ratified=True,
     ),
     "practicetag": until_account_deletion("Tags the account defined."),
     "promotedquote": until_account_deletion(
@@ -510,33 +494,27 @@ RETENTION: Mapping[str, RetentionRule] = {
     ),
     "promptdismissal": until_account_deletion("Prompts the account set aside."),
     "promptresponse": until_account_deletion("Answers to the weekly prompts."),
-    "restoremarker": indefinite(
-        "Content-free operator record of each restore's reapply. It must outlive "
-        "the cutover it guards; no bound has been chosen (#3063 AC17).",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_RESTORE_MARKER_DAYS,
-            clock=ProposalClock.ROW_EVENT,
-            compared_to_today=TodayComparison.SHORTER,
+    "restoremarker": conditional(
+        fixed_days(
+            RESTORE_MARKER_RETENTION_DAYS,
             trigger="the reapply completing (never while RESTORE_ID still names it)",
-            exempt_states=frozenset({"in_progress"}),
-            rationale="Names no person at all; it refuses a second reapply after cutover, "
-            "a risk that does not fade with time, so a year covers any realistic "
-            "follow-up and the startup gate must stop naming it first.",
+            rationale="Content-free operator record of each restore's reapply; it names no "
+            "person at all. It refuses a second reapply after cutover, a risk that does not "
+            "fade with time, so a year covers any realistic follow-up. An in_progress marker "
+            "is never eligible, and nor is one the startup gate's RESTORE_ID still names."
+            + _RATIFIED
+            + _NOT_YET_SWEPT,
+            ratified=True,
         ),
+        exempt_states=frozenset({"in_progress"}),
     ),
-    "revokedtoken": indefinite(
-        "Opaque JWT ids and their expiry. Content-free, but nothing sweeps a row once "
-        "its token has expired.",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_REVOKED_TOKEN_GRACE_DAYS,
-            clock=ProposalClock.ROW_EVENT,
-            compared_to_today=TodayComparison.SHORTER,
-            trigger="the revoked token's own expiry (expires_at)",
-            rationale="Once a token has expired, decoding already rejects it on its expiry "
-            "(exp) check, so the deny-list row protects nothing; one day absorbs clock skew.",
-        ),
+    "revokedtoken": fixed_days(
+        REVOKED_TOKEN_GRACE_DAYS,
+        trigger="the revoked token's own expiry (expires_at)",
+        rationale="Opaque JWT ids and their expiry, content-free. Once a token has "
+        "expired, decoding already rejects it on its expiry (exp) check, so the "
+        "deny-list row protects nothing; one day absorbs clock skew." + _RATIFIED + _NOT_YET_SWEPT,
+        ratified=True,
     ),
     "stagecontent": shared_catalogue("Shared curriculum chapters."),
     "stageprogress": until_account_deletion("Where the account had reached."),
@@ -551,37 +529,32 @@ RETENTION: Mapping[str, RetentionRule] = {
     "vaultactivation": until_account_deletion("Content-free managed-vault provisioning handle."),
     "vaultpipelinefollowup": until_account_deletion("Content-free scheduling marker."),
     "vaultpipelinerun": until_account_deletion("Content-free vault pipeline progress."),
-    "vaultteardownreceipt": indefinite(
-        "Detached, content-free Creek teardown receipt kept so operations can prove no "
-        "billable allocation survived. No bound has been chosen.",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_TEARDOWN_RECEIPT_DAYS,
-            clock=ProposalClock.ROW_EVENT,
-            compared_to_today=TodayComparison.SHORTER,
+    "vaultteardownreceipt": conditional(
+        fixed_days(
+            TEARDOWN_RECEIPT_RETENTION_DAYS,
             trigger="teardown confirmation (an unconfirmed receipt stays until confirmed)",
-            exempt_states=frozenset({"deleting", "failed"}),
-            rationale="Content-free and names no account; once confirmed it only has to "
-            "be reconciled against the vault vendor's invoices, which three monthly "
-            "billing cycles cover.",
+            rationale="Detached, content-free Creek teardown receipt kept so operations can "
+            "prove no billable allocation survived; it names no account. Once confirmed it "
+            "only has to be reconciled against the vault vendor's invoices, which three "
+            "monthly billing cycles cover. A deleting or failed receipt is never eligible."
+            + _RATIFIED
+            + _NOT_YET_SWEPT,
+            ratified=True,
         ),
+        exempt_states=frozenset({"deleting", "failed"}),
     ),
-    "voicedraftretraction": until_account_deletion(
-        "Content-free obligation to withdraw a mirrored essay from a vault. Erased with "
-        "the account today; whether a pending obligation should outlive erasure, and "
-        "what deadline it carries, is an owner decision (#3063 AC21-22). Never purged "
-        "with a soft-deleted entry while unconfirmed.",
-        ratified=False,
-        proposal=RetentionProposal(
-            days=PROPOSED_CONFIRMED_OBLIGATION_DAYS,
-            clock=ProposalClock.ROW_EVENT,
-            compared_to_today=TodayComparison.SHORTER,
+    "voicedraftretraction": conditional(
+        fixed_days(
+            CONFIRMED_OBLIGATION_RETENTION_DAYS,
             trigger="vault confirmation (confirmed rows only)",
-            exempt_states=frozenset({"mirror_intent", "pending"}),
-            rationale="As for journal pages: an unsettled row is kept until its vault "
-            "confirms the essay gone, and it blocks the purge meanwhile; a confirmed row "
-            "is only a receipt, kept 30 days.",
+            rationale="Content-free obligation to withdraw a mirrored essay from a vault. As "
+            "for journal pages: an unsettled row is kept until its vault confirms the essay "
+            "gone, and it blocks the purge meanwhile; a confirmed row is only a receipt, kept "
+            "30 days. Every row is still erased with the account; whether a pending one "
+            "should outlive erasure is open (#3063 AC21-22)." + _RATIFIED + _NOT_YET_SWEPT,
+            ratified=True,
         ),
+        exempt_states=frozenset({"mirror_intent", "pending"}),
     ),
     "walletaudit": until_account_deletion("The account's wallet ledger."),
 }
@@ -662,8 +635,9 @@ NEVER_ELIGIBLE_STATES: Mapping[str, frozenset[str]] = {
     "voicedraftretraction": frozenset({"mirror_intent", "pending"}),
 }
 
-#: Tables whose bounded lifetime blanks columns rather than deleting the row:
-#: the purchase receipt stays, the buyer's identifiers go.
+#: Tables whose identifying columns are blanked when the lifetime's clock starts,
+#: rather than the row deleted then: the purchase receipt stays, the buyer's
+#: identifiers go (``services.account_deletion`` blanks them at erasure).
 REDACT_INSTEAD_OF_DELETE: Mapping[str, tuple[str, ...]] = {
     "gumroadsale": ("email", "raw_payload"),
 }
@@ -818,12 +792,14 @@ def proposal_findings() -> tuple[str, ...]:
 
 
 def _describe(rule: RetentionRule) -> str:
-    """One rule as ``kind[, N days][, via route]``."""
+    """One rule as ``kind[, N days][, via route]``, flagging a period nothing applies."""
     parts = [rule.kind.value]
     if rule.days is not None:
         parts.append(f"{rule.days} days")
     if rule.sweep_route is not None:
         parts.append(f"via {rule.sweep_route}")
+    if rule.kind is RetentionKind.FIXED_DAYS:
+        parts.append("no sweep applies it yet (#3063 AC18)")
     return ", ".join(parts)
 
 

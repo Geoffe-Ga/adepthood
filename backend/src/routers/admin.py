@@ -62,7 +62,11 @@ from schemas.privacy_suspension import PrivacySuspensionStatus
 from schemas.vault_activation import VaultTeardownStatus
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 from services.feedback import delete_expired_feedback_reports
-from services.journal_retention import PURGE_MIN_RETENTION_DAYS, purge_soft_deleted_entries
+from services.journal_retention import (
+    PURGE_DEFAULT_RETENTION_DAYS,
+    PURGE_MIN_RETENTION_DAYS,
+    purge_soft_deleted_entries,
+)
 from services.llm_cost_alerts import charged_generation_cost_report
 from services.privacy_suspension import suspension_state
 from services.serving_receipt import build_serving_receipt
@@ -479,7 +483,9 @@ async def cleanup_feedback_reports(
 async def purge_journal_entries(
     session: Annotated[AsyncSession, Depends(get_session)],
     admin: Annotated[User, Depends(require_admin)],
-    older_than_days: Annotated[int, Query(ge=PURGE_MIN_RETENTION_DAYS, le=_MAX_RETENTION_DAYS)],
+    older_than_days: Annotated[
+        int, Query(ge=PURGE_MIN_RETENTION_DAYS, le=_MAX_RETENTION_DAYS)
+    ] = PURGE_DEFAULT_RETENTION_DAYS,
 ) -> JournalEntryPurgeResult:
     """Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.
 
@@ -489,9 +495,9 @@ async def purge_journal_entries(
     and counted as ``blocked``. The window is at least the age of the oldest
     live backup copy (retention plus one backup interval), so -- provided
     backups are expired as DEPLOYMENT.md says -- no live backup holds a purged
-    entry undeleted. It is required -- there is no default,
-    because how long a deleted page is kept is the owner's promise to make
-    (#3063) -- and nothing schedules this route.
+    entry undeleted. The default window is the lifetime the owner ratified for
+    a soft-deleted page (#3063 AC15, 2026-10-13), which is that floor; nothing
+    schedules this route (AC18).
     """
     try:
         result = await purge_soft_deleted_entries(session, older_than_days=older_than_days)

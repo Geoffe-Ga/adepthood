@@ -21,6 +21,7 @@ from typing import Final
 import pytest
 
 from domain.retention_stores import (
+    HELD_OFFHOST_DUMP_RETENTION_DAYS,
     OFFHOST_DUMP_RETENTION_DAYS,
     OLDEST_LIVE_BACKUP_DAYS,
     RAILWAY_PLATFORM_BACKUP_DAYS,
@@ -174,10 +175,18 @@ def test_deletion_copy_drops_the_overclaims(surface: Path) -> None:
 
 @pytest.mark.parametrize("document", _SCHEDULE_DOCUMENTS, ids=lambda path: path.name)
 def test_schedule_documents_name_each_leg_and_who_keeps_the_manual_one(document: Path) -> None:
-    """Both legs' retentions appear, and the off-platform leg is the operator's, by hand."""
+    """Both legs' retentions appear, and the off-platform leg is the operator's, by hand.
+
+    The off-platform figure is the retention the oldest copies *still held*
+    were written under (``HELD_OFFHOST_DUMP_RETENTION_DAYS``), not the shorter
+    one the runbook now prunes at: until those copies age out, the longer
+    figure is the one that is true of every copy, and the ~97-day bound the
+    copy states rests on it. Restating the schedule is the owner's (AC16).
+    """
     copy = _prose(document)
 
-    for days in (RAILWAY_PLATFORM_BACKUP_DAYS, OFFHOST_DUMP_RETENTION_DAYS):
+    assert HELD_OFFHOST_DUMP_RETENTION_DAYS >= OFFHOST_DUMP_RETENTION_DAYS
+    for days in (RAILWAY_PLATFORM_BACKUP_DAYS, HELD_OFFHOST_DUMP_RETENTION_DAYS):
         assert f"{days} days" in copy, f"{document.name} does not name the {days}-day retention"
     assert _MANUAL_LEG in copy, f"{document.name} does not say the off-platform leg is manual"
 
