@@ -60,6 +60,8 @@ _INSIDE_BACKOFF = timedelta(seconds=1)
 _PAST_BACKOFF = timedelta(hours=2)
 _TWO_ATTEMPTS = 2
 _STUCK_ENTRIES = 51
+# The opaque fingerprint of the vault a bound copy was recorded to (#3060, #3095).
+_BOUND_VAULT = "c" * 32
 
 #: Attributes every ``logging.LogRecord`` carries, plus the request trace id the
 #: application's own log filter stamps on every record (``observability``) once
@@ -274,6 +276,33 @@ async def test_sweep_retries_the_intimate_journal_copy(
         user_id=user_id,
         message=_BODY,
         classification=JournalClassification.INTIMATE,
+        vault_ref="vault-ref-bound",
+        vault_destination=_BOUND_VAULT,
+    )
+    db_session.add(entry)
+    await db_session.commit()
+    assert entry.id is not None
+    entry_id = entry.id
+    vault = _DraftVault()
+
+    await _sweep(db_session, vault, _T0, destination=_BOUND_VAULT)
+
+    assert vault.withdrawals == [entry_id]
+    await db_session.refresh(entry)
+    assert entry.vault_ref is None
+
+
+@pytest.mark.asyncio
+async def test_sweep_asks_but_never_clears_a_pre_binding_intimate_copy(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A pre-binding marker is retried against the connected vault but never cleared (#3095)."""
+    _headers, user_id = await _signup(async_client, "recovery_journal_legacy")
+    entry = JournalEntry(
+        sender="user",
+        user_id=user_id,
+        message=_BODY,
+        classification=JournalClassification.INTIMATE,
         vault_ref="vault-ref-legacy",
     )
     db_session.add(entry)
@@ -282,11 +311,12 @@ async def test_sweep_retries_the_intimate_journal_copy(
     entry_id = entry.id
     vault = _DraftVault()
 
-    await _sweep(db_session, vault, _T0)
+    await _sweep(db_session, vault, _T0, destination=_BOUND_VAULT)
 
     assert vault.withdrawals == [entry_id]
     await db_session.refresh(entry)
-    assert entry.vault_ref is None
+    assert entry.vault_ref == "vault-ref-legacy"
+    assert entry.vault_destination is None
 
 
 @pytest.mark.asyncio
@@ -501,7 +531,8 @@ async def test_crash_after_journal_withdraw_before_clear_is_reconciled(
         user_id=user_id,
         message=_BODY,
         classification=JournalClassification.INTIMATE,
-        vault_ref="vault-ref-legacy",
+        vault_ref="vault-ref-bound",
+        vault_destination=_BOUND_VAULT,
     )
     db_session.add(entry)
     await db_session.commit()
@@ -515,12 +546,12 @@ async def test_crash_after_journal_withdraw_before_clear_is_reconciled(
 
     monkeypatch.setattr(withdraw_module, "withdraw_journal_from_vault", _withdraw_then_crash)
     with pytest.raises(_CrashError):
-        await _sweep(db_session, vault, _T0)
+        await _sweep(db_session, vault, _T0, destination=_BOUND_VAULT)
     monkeypatch.setattr(withdraw_module, "withdraw_journal_from_vault", real_withdraw)
     await db_session.refresh(entry)
-    assert entry.vault_ref == "vault-ref-legacy"
+    assert entry.vault_ref == "vault-ref-bound"
 
-    await _sweep(db_session, vault, _T0 + _INSIDE_BACKOFF)
+    await _sweep(db_session, vault, _T0 + _INSIDE_BACKOFF, destination=_BOUND_VAULT)
 
     assert vault.withdrawals == [entry.id, entry.id]
     await db_session.refresh(entry)

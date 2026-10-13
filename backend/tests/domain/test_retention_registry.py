@@ -46,9 +46,6 @@ from services.energy import ENERGY_PLAN_RETENTION_DAYS
 from tests.helpers.openapi_errors import route_index
 
 _NEW_TABLE = "zz_new"
-# Rules whose lifetime is an open owner/legal decision (#3063 AC15); each must
-# be surfaced as unratified until the owner says otherwise.
-_KNOWN_UNRATIFIED = frozenset({"gumroadsale", "loginattempt", "llmusagelog"})
 _FORBIDDEN_FOR_ERASE = frozenset({RetentionKind.INDEFINITE, RetentionKind.SHARED_CATALOGUE})
 
 
@@ -124,15 +121,23 @@ def test_surviving_tables_cannot_claim_to_die_with_the_account(
 
 
 def test_retained_and_anonymised_tables_declare_bound_or_reason() -> None:
-    """Every surviving table's lifetime is bounded, or an explicit unratified reason."""
-    assert set(unratified_rules()) >= _KNOWN_UNRATIFIED
-    for name, policy in POLICY.items():
-        if policy.disposition is Disposition.ERASE:
-            continue
+    """Every surviving table's lifetime is bounded, shared, or an explicit unratified reason.
+
+    Since the owner ratified the open lifetimes (#3063 AC15, 2026-10-13), every
+    table that outlives its account carries a bounded period or is shared
+    catalogue content; an ``indefinite`` one would have to be unratified.
+    """
+    surviving = [
+        name for name, policy in POLICY.items() if policy.disposition is not Disposition.ERASE
+    ]
+    assert surviving, "no table outlives its account -- this guard is vacuous"
+    for name in surviving:
         rule = RETENTION[name]
         if rule.kind is RetentionKind.INDEFINITE:
             assert rule.rationale.strip(), name
             assert not rule.ratified, f"{name}: an indefinite lifetime is the owner's to ratify"
+            continue
+        assert rule.is_bounded() or rule.kind is RetentionKind.SHARED_CATALOGUE, name
 
 
 def test_indefinite_requires_a_reason() -> None:
@@ -171,13 +176,25 @@ def test_swept_by_rules_name_a_live_route() -> None:
     assert RETENTION["feedbackreport"].days == FEEDBACK_RETENTION_DAYS
 
 
-def test_report_names_every_table_and_flags_the_unratified() -> None:
-    """The generated report is the owner's ratification worklist."""
+def test_report_names_every_table_and_flags_the_unratified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The generated report is the owner's ratification worklist.
+
+    Every lifetime is ratified today, so the flag is proven on a synthetic
+    undecided rule rather than read off the live registry.
+    """
     report = retention_report()
     for name in SQLModel.metadata.tables:
         assert name in report
-    assert "UNRATIFIED" in report
-    gumroad_line = next(line for line in report.splitlines() if line.startswith("gumroadsale"))
+    assert "UNRATIFIED" not in report
+    assert unratified_rules() == ()
+
+    undecided = {**RETENTION, "gumroadsale": indefinite("synthetic", ratified=False)}
+    monkeypatch.setattr(retention, "RETENTION", undecided)
+    gumroad_line = next(
+        line for line in retention_report().splitlines() if line.startswith("gumroadsale")
+    )
     assert "UNRATIFIED" in gumroad_line
 
 

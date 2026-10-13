@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
-import { backendUrl, seedHabit, sessionFor, signUp } from './journalHabitsBrowserSupport';
+import { backendUrl, seedTimerHabit, sessionFor, signUp } from './journalHabitsBrowserSupport';
 
 /**
  * #2861: a finished writing session checks off the habit the writer linked it to.
@@ -84,7 +84,7 @@ test('a finished writing session checks off the habit the writer linked it to', 
   const email = await signUp(page, 'writing-habit-link');
   const { token } = await sessionFor(page.request, email);
   const headers = { Authorization: `Bearer ${token}` };
-  const habitId = await seedHabit(page.request, token, HABIT_NAME);
+  const habitId = await seedTimerHabit(page.request, token, HABIT_NAME);
   const lowTarget = (await readHabit(page.request, headers, habitId)).goals.find(
     (goal) => goal.tier === 'low',
   )?.target;

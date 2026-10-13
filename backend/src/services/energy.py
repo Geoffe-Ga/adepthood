@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 
 # Retention window for persisted plans (durable rows replaced the old 1-hour
 # TTLCache); the cleanup deletes rows older than this. See delete_expired_energy_plans.
-ENERGY_PLAN_RETENTION_DAYS = 30
+# The owner ratified a week on 2026-10-13 (#3063 AC15): it covers any retried
+# request, and a plan is cheap to regenerate. Nothing schedules the cleanup.
+ENERGY_PLAN_RETENTION_DAYS = 7
 
 
 async def _load_owned_habits(

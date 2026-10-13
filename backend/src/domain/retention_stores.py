@@ -16,11 +16,15 @@ pinned equal to the values ``DEPLOYMENT.md`` states by a drift test. Changing
 either is a change to a retention promise and belongs to the owner (#3063 AC15).
 
 A store whose deadline is unknown, and each backup leg (whose retention is
-itself an owner decision, #3063 AC15), also carries a :class:`StoreProposal`:
-a deadline proposed for the owner to ratify, or none where no period is ours
-to set, with a one-line rationale. Proposals are values for review only --
-the constants above, not the proposals, are what the purge floor and the
-runbook use. The owner reviews them in ``docs/privacy/retention-proposal.md``.
+itself an owner decision, #3063 AC15), must carry a decision: a
+:class:`RatifiedPeriod` the owner ratified, or none where no period is ours to
+set; or, while undecided, a :class:`StoreProposal` for review (never both). On
+2026-10-13 the owner ratified every proposed store period, so each such store
+now carries a ratified period. A backup leg's ratified period is the runbook's
+own retention, pinned by :func:`inventory_findings`; any other store's is the
+decided target, which takes effect only once something applies it (a vendor
+setting, a scheduled prune; #3063 AC18, AC19). The decision record is
+``docs/privacy/retention-proposal.md``.
 
 Data only: no I/O, no model, no session.
 """
@@ -34,8 +38,9 @@ from typing import Final
 
 #: Railway's Daily platform backup keeps each snapshot this long (DEPLOYMENT.md).
 RAILWAY_PLATFORM_BACKUP_DAYS: Final = 6
-#: The encrypted off-host ``pg_dump`` is kept this long (DEPLOYMENT.md).
-OFFHOST_DUMP_RETENTION_DAYS: Final = 90
+#: The encrypted off-host ``pg_dump`` is kept this long (DEPLOYMENT.md). The owner
+#: ratified 30 days on 2026-10-13 (#3063 AC15); it was 90.
+OFFHOST_DUMP_RETENTION_DAYS: Final = 30
 
 #: Railway's platform backup runs Daily (DEPLOYMENT.md).
 RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS: Final = 1
@@ -74,17 +79,17 @@ BACKUP_LEGS: tuple[BackupLeg, ...] = (
         key="offhost_pg_dump",
         retention_days=OFFHOST_DUMP_RETENTION_DAYS,
         interval_days=OFFHOST_DUMP_INTERVAL_DAYS,
-        evidence="DEPLOYMENT.md 'What is backed up': Off-host, Weekly, 90 days; pruned "
+        evidence="DEPLOYMENT.md 'What is backed up': Off-host, Weekly, 30 days; pruned "
         "by hand on each weekly run ('Taking an off-host dump', DRAFT prune step)",
     ),
 )
 
 #: The off-host retention the oldest dumps *still held* were written under.
-#: Lowering :data:`OFFHOST_DUMP_RETENTION_DAYS` does not delete the dumps
-#: already kept for longer, so this stays at the old value. It may only be
-#: lowered -- in a separate, later change -- once every dump older than the new
-#: bound (new retention plus one interval) has been pruned. It is never below
-#: :data:`OFFHOST_DUMP_RETENTION_DAYS`.
+#: Lowering :data:`OFFHOST_DUMP_RETENTION_DAYS` to the ratified 30 days did not
+#: delete the dumps already kept for longer, so this stays at the old 90. It may
+#: only be lowered -- in a separate, later change, the owner's -- once every dump
+#: older than the new bound (new retention plus one interval, 37 days) has been
+#: pruned. It is never below :data:`OFFHOST_DUMP_RETENTION_DAYS`.
 HELD_OFFHOST_DUMP_RETENTION_DAYS: Final = 90
 #: The age the oldest still-held copy can reach under that older retention.
 HELD_BACKUP_BOUND_DAYS: Final = HELD_OFFHOST_DUMP_RETENTION_DAYS + OFFHOST_DUMP_INTERVAL_DAYS
@@ -173,18 +178,33 @@ class TodayComparison(enum.StrEnum):
     UNKNOWN = "unknown"
 
 
-# Proposed store deadlines for the owner to ratify (#3063 AC15). Values for
-# review only: nothing prunes or purges on them.
-#: Railway's shortest schedule already: Daily, kept 6 days.
-PROPOSED_PLATFORM_BACKUP_DAYS: Final = RAILWAY_PLATFORM_BACKUP_DAYS
-#: Four weekly off-host copies still cover a month of late-found damage. If
-#: ratified, the purge floor stays at :data:`HELD_BACKUP_BOUND_DAYS` until the
-#: dumps kept under the 90-day retention have aged out.
-PROPOSED_OFFHOST_DUMP_DAYS: Final = 30
+# Store periods the owner ratified on 2026-10-13 (#3063 AC15; PR #3155, comment
+# 6151018235). The two backup legs' are the constants above.
 #: Content-free logs: at most this, or the vendor's current setting if shorter.
-PROPOSED_APPLICATION_LOG_DAYS: Final = 30
+APPLICATION_LOG_RETENTION_DAYS: Final = 30
 #: The vault is a mirror of the journal; a snapshot bridges one day.
-PROPOSED_FLY_SNAPSHOT_DAYS: Final = 1
+FLY_SNAPSHOT_RETENTION_DAYS: Final = 1
+
+
+@dataclass(frozen=True)
+class RatifiedPeriod:
+    """A store period the owner ratified (#3063 AC15).
+
+    ``deadline`` is ``None`` where no time period is ours to set (the device, the
+    user's own vault, a vendor's copy, or a copy that lives exactly until a
+    verified withdrawal). On a backup leg it is the runbook's retention itself;
+    elsewhere it is the decided target, which takes effect only once something
+    applies it.
+    """
+
+    deadline: ProposedDeadline
+    rationale: str
+
+    def __post_init__(self) -> None:
+        """Refuse a ratified period with no recorded reason."""
+        if not self.rationale.strip():
+            msg = "a ratified period must state its rationale"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True)
@@ -217,6 +237,7 @@ class Store:
     controller: Controller
     deadline: Deadline
     evidence: str
+    ratified: RatifiedPeriod | None = None
     proposal: StoreProposal | None = None
 
 
@@ -228,11 +249,10 @@ STORES: tuple[Store, ...] = (
         controller=Controller.RAILWAY,
         deadline=Days(RAILWAY_PLATFORM_BACKUP_DAYS),
         evidence="DEPLOYMENT.md 'What is backed up' (platform leg; enabling it is #3058)",
-        proposal=StoreProposal(
-            deadline=Days(PROPOSED_PLATFORM_BACKUP_DAYS),
+        ratified=RatifiedPeriod(
+            deadline=Days(RAILWAY_PLATFORM_BACKUP_DAYS),
             rationale="Keep: Daily kept 6 days is already Railway's shortest schedule, and "
             "it is the leg that recovers from everyday mistakes.",
-            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -241,13 +261,12 @@ STORES: tuple[Store, ...] = (
         controller=Controller.ADEPTHOOD,
         deadline=Days(OFFHOST_DUMP_RETENTION_DAYS),
         evidence="DEPLOYMENT.md 'What is backed up' (off-host leg)",
-        proposal=StoreProposal(
-            deadline=Days(PROPOSED_OFFHOST_DUMP_DAYS),
+        ratified=RatifiedPeriod(
+            deadline=Days(OFFHOST_DUMP_RETENTION_DAYS),
             rationale="Four weekly copies still cover a month of late-found damage or "
             "platform loss. Transition: the purge floor stays at the held 97-day bound "
             "until every dump kept under the 90-day retention has aged out and been "
             "pruned; only a later change lowers it, to 37.",
-            compared_to_today=TodayComparison.SHORTER,
         ),
     ),
     Store(
@@ -257,13 +276,12 @@ STORES: tuple[Store, ...] = (
         controller=Controller.RAILWAY,
         deadline=Unknown("Railway log retention and Sentry retention unverified (#3064)"),
         evidence="backend/src/observability.py; DEPLOYMENT.md 'Logs'",
-        proposal=StoreProposal(
-            deadline=Days(PROPOSED_APPLICATION_LOG_DAYS),
+        ratified=RatifiedPeriod(
+            deadline=Days(APPLICATION_LOG_RETENTION_DAYS),
             rationale="30 days or the vendor's current setting, whichever is shorter: "
             "content-free by invariant but names account ids, and 30 days is common "
-            "security-log practice (to confirm). Today's vendor retention is unverified, "
-            "so the comparison is unknown (#3064).",
-            compared_to_today=TodayComparison.UNKNOWN,
+            "security-log practice. Today's vendor retention is unverified, so this is "
+            "the target until the vendor setting is checked and applied (#3064).",
         ),
     ),
     Store(
@@ -281,11 +299,10 @@ STORES: tuple[Store, ...] = (
         controller=Controller.USER,
         deadline=Unknown("device-controlled; no server-side deadline possible (#3063)"),
         evidence="frontend/src/storage/userScope.ts; frontend/src/context/AuthContext.tsx",
-        proposal=StoreProposal(
+        ratified=RatifiedPeriod(
             deadline=None,
             rationale="Not ours to set: the device holds it, and it is wiped when another "
             "account signs in.",
-            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -294,11 +311,10 @@ STORES: tuple[Store, ...] = (
         controller=Controller.CREEK,
         deadline=Unknown("withdrawn per entry; account-wide teardown via #3063 AC21-22"),
         evidence="backend/src/services/account_deletion.py vault guidance",
-        proposal=StoreProposal(
+        ratified=RatifiedPeriod(
             deadline=None,
             rationale="Event-bound, not time-bound: a copy lives until its verified "
             "withdrawal or the vault's teardown at account deletion.",
-            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -308,12 +324,11 @@ STORES: tuple[Store, ...] = (
         controller=Controller.FLY,
         deadline=Unknown("#3063 AC19: verify Fly snapshot survival after volume destroy"),
         evidence="Creek creek_mcp/provisioning/fly_pilot_config.py (snapshot_retention: 7)",
-        proposal=StoreProposal(
-            deadline=Days(PROPOSED_FLY_SNAPSHOT_DAYS),
+        ratified=RatifiedPeriod(
+            deadline=Days(FLY_SNAPSHOT_RETENTION_DAYS),
             rationale="The vault mirrors the journal, so a snapshot only bridges a day; "
             "set the vendor's minimum (the pilot keeps 7) and destroy snapshots at "
             "teardown, subject to the AC19 vendor check (#3063).",
-            compared_to_today=TodayComparison.UNKNOWN,
         ),
     ),
     Store(
@@ -322,10 +337,9 @@ STORES: tuple[Store, ...] = (
         controller=Controller.CREEK,
         deadline=Unknown("verified absent per withdrawal; no account deadline (#3063)"),
         evidence="Creek creek_mcp/httpapi/journal.py _verified_absent",
-        proposal=StoreProposal(
+        ratified=RatifiedPeriod(
             deadline=None,
             rationale="Event-bound: vectors go with their entry's verified withdrawal.",
-            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -334,10 +348,9 @@ STORES: tuple[Store, ...] = (
         controller=Controller.CREEK,
         deadline=Unknown("verified absent per withdrawal; no account deadline (#3063)"),
         evidence="Creek creek_mcp/httpapi/journal.py _verified_absent",
-        proposal=StoreProposal(
+        ratified=RatifiedPeriod(
             deadline=None,
             rationale="Event-bound: ledger rows go with their entry's verified withdrawal.",
-            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -346,11 +359,10 @@ STORES: tuple[Store, ...] = (
         controller=Controller.MODEL_VENDOR,
         deadline=Unknown("vendor retention to be established by #3065 (B11)"),
         evidence="docs/legal/privacy-policy.md model-provider section",
-        proposal=StoreProposal(
+        ratified=RatifiedPeriod(
             deadline=None,
             rationale="The vendor's period, not ours; the owner deferred vendor fields to "
             "B11 (#3065).",
-            compared_to_today=TodayComparison.SAME,
         ),
     ),
     Store(
@@ -359,10 +371,9 @@ STORES: tuple[Store, ...] = (
         controller=Controller.USER,
         deadline=Unknown("user-controlled; Adepthood cannot purge it (#3063 AC24)"),
         evidence="backend/src/services/account_deletion.py VAULT_GUIDANCE_CONFIGURED",
-        proposal=StoreProposal(
+        ratified=RatifiedPeriod(
             deadline=None,
             rationale="Not ours to set: the user operates the vault and decides.",
-            compared_to_today=TodayComparison.SAME,
         ),
     ),
 )
@@ -401,20 +412,45 @@ def implied_store_comparison(today: Deadline, proposed: ProposedDeadline) -> Tod
     return _count_comparison(*counts)
 
 
-def _missing_proposal(store: Store) -> list[str]:
-    """A finding when a store owes a proposal: a backup leg, or an undecided deadline."""
+def _missing_decision(store: Store) -> list[str]:
+    """A finding when a store owes a decision: a backup leg, or an undecided deadline."""
     if store.key in _BACKUP_KEYS:
-        return [f"backup leg {store.key!r} carries no proposal (its retention is AC15's)"]
+        return [
+            (
+                f"backup leg {store.key!r} carries neither a ratified period nor a proposal "
+                "(its retention is AC15's)"
+            )
+        ]
     if isinstance(store.deadline, Unknown):
-        return [f"store {store.key!r} has an undecided deadline but no proposal"]
+        return [
+            (
+                f"store {store.key!r} has an undecided deadline but neither a ratified "
+                "period nor a proposal"
+            )
+        ]
     return []
 
 
+def _ratified_findings(store: Store, ratified: RatifiedPeriod) -> list[str]:
+    """Findings for a ratified store: a leftover proposal, or a leg the runbook disagrees with."""
+    findings: list[str] = []
+    if store.proposal is not None:
+        findings.append(f"store {store.key!r} is ratified but still carries a proposal")
+    if store.key in _BACKUP_KEYS and ratified.deadline != store.deadline:
+        findings.append(
+            f"backup leg {store.key!r} is ratified at {ratified.deadline} but the runbook "
+            f"retention is {store.deadline}"
+        )
+    return findings
+
+
 def _proposal_findings(store: Store) -> list[str]:
-    """Findings for a store's proposal: missing where owed, or a misdeclared comparison."""
+    """Findings for a store's decision: missing where owed, stale, or misdeclared."""
+    if store.ratified is not None:
+        return _ratified_findings(store, store.ratified)
     proposal = store.proposal
     if proposal is None:
-        return _missing_proposal(store)
+        return _missing_decision(store)
     implied = implied_store_comparison(store.deadline, proposal.deadline)
     if implied is proposal.compared_to_today:
         return []

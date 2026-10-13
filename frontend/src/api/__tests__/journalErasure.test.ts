@@ -31,6 +31,13 @@ describe('journal.eraseLocally (#3094)', () => {
     expect(init.method).toBe('POST');
   });
 
+  test('accepts the unrecorded vault a pre-binding copy is named by (#3095)', async () => {
+    const receipt = { entry_id: 7, remote_copy: 'unconfirmed', copy_location: 'unrecorded_vault' };
+    mockFetch.mockReturnValueOnce(jsonResponse(receipt));
+
+    await expect(journal.eraseLocally(7, 'token')).resolves.toEqual(receipt);
+  });
+
   test('refuses a receipt that claims a state the server never sends', async () => {
     mockFetch.mockReturnValue(
       jsonResponse({ entry_id: 7, remote_copy: 'withdrawn', copy_location: null }),
