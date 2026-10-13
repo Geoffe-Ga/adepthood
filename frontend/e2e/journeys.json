@@ -65,12 +65,12 @@
   },
   {
     "id": "welcome.first-run-walkthrough-to-journal",
-    "description": "A fresh account reads all four Welcome panels naming the journal floor, independently chosen depths and a one-minute habit kept for three weeks (#3103). At 390x844 and 1280x720, every body, privacy note and pager control stays in view. Begin and Skip each hand the reader to the Journal shelf through its real GET /journal/ request, and a reload proves the walkthrough dismissal persists. The browser spec saves all eight panel screenshots for visual inspection.",
+    "description": "A fresh account reads all four Welcome panels naming the journal floor, independently chosen depths and a one-minute habit kept for three weeks (#3103). At 390x844 and 1280x720, every body, privacy note and pager control stays in view. On a 320x568 phone and with 200% text, each panel scrolls vertically while Skip and Next/Begin remain available. Begin and Skip each hand the reader to the Journal shelf through its real GET /journal/ request. The spec awaits PATCH /ui-flags has_seen_welcome=true before reload and verifies the subsequent GET /ui-flags returns true, proving account-owned persistence. It saves panel screenshots for visual inspection.",
     "crosses": {
       "screen": "frontend/src/features/Welcome/WelcomeScreen.tsx",
-      "client": ["journal"],
-      "routes": ["GET /journal/"],
-      "tables": ["journalentry"]
+      "client": ["journal", "uiFlags"],
+      "routes": ["GET /journal/", "GET /ui-flags", "PATCH /ui-flags"],
+      "tables": ["journalentry", "useruiflags"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/welcome.browser.e2e.test.ts"

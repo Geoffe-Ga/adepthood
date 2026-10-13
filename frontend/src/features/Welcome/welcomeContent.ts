@@ -49,11 +49,11 @@ export const WELCOME_PANELS: readonly WelcomePanel[] = [
   {
     eyebrow: 'A week, lived',
     title: 'How a week works',
-    body: 'Start with one habit, one minute a day, for three weeks. The practice grows from one breath to longer sittings, and the readings give each capacity a name and something to try. Your journal keeps what you notice; the Map shows which capacities are full and which are thin.',
+    body: 'A habit can begin with one minute a day, kept for three weeks. The practice grows from one breath to longer sittings, and the readings give each capacity a name and something to try. Your journal keeps what you notice; the Map lays out the ten capacities and their course stages.',
   },
   {
     eyebrow: 'Ready',
     title: 'Let’s begin',
-    body: 'Press Begin to land on your Journal, your daily home, and put a first thought on the page. From the Habits tab, choose one small habit to keep for three weeks. One minute a day is a place to start.',
+    body: 'Press Begin to land on your Journal, your daily home, and put a first thought on the page. Your journal can be the whole practice. To explore habits, the Habits tab offers one small habit, one minute a day, kept for three weeks. You choose your depth.',
   },
 ] as const;
