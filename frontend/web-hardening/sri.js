@@ -23,7 +23,7 @@
  */
 const { createHash } = require('node:crypto');
 const { existsSync, readdirSync, readFileSync, statSync, writeFileSync } = require('node:fs');
-const { dirname, join, resolve, sep } = require('node:path');
+const { dirname, join, relative, resolve, sep } = require('node:path');
 
 const ALGORITHM = 'sha384';
 const EXIT_OK = 0;
@@ -170,7 +170,7 @@ function tagProblem(dist, page, url, integrity) {
  */
 function auditPage(dist, page) {
   const html = readFileSync(page, 'utf8');
-  const label = page.slice(resolve(dist).length + 1);
+  const label = relative(resolve(dist), resolve(page));
   /** @type {string[]} */
   const problems = [];
   if (countInlineScripts(html) > 0)

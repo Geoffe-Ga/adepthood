@@ -91,7 +91,7 @@ def _dist(tmp_path: Path, index: str = _INDEX) -> Path:
 
 
 def _node(
-    script: Path, *args: str, env: dict[str, str] | None = None
+    script: Path, *args: str, env: dict[str, str] | None = None, cwd: Path | None = None
 ) -> subprocess.CompletedProcess[str]:
     """Run ``script`` under node, never raising on a non-zero exit."""
     node = shutil.which("node")
@@ -103,6 +103,7 @@ def _node(
         check=False,
         timeout=_SUBPROCESS_TIMEOUT_SECONDS,
         env=env,
+        cwd=cwd,
     )
 
 
@@ -203,6 +204,75 @@ def test_verify_refuses_scripts_the_policy_or_the_hash_cannot_cover(
 
     assert result.returncode == _EXIT_VIOLATION
     assert reason in result.stderr
+
+
+def test_problems_name_the_page_when_dist_is_relative(tmp_path: Path) -> None:
+    """Every build path passes ``dist`` relative; the message must still name the page."""
+    _dist(tmp_path)
+
+    result = _node(_SRI, "verify", "dist", cwd=tmp_path)
+
+    assert result.returncode == _EXIT_VIOLATION
+    assert f"sri: index.html: /{_SCRIPT_PATH} has no integrity" in result.stderr
+    assert "sri: :" not in result.stderr
+
+
+_PRELOAD_PATH = "_expo/static/js/web/chunk-89ab.js"
+_FONT_PATH = "assets/font-cd01.woff2"
+
+
+def _preload_dist(tmp_path: Path, link: str) -> Path:
+    """A stamped-ready dist whose page also carries ``link``."""
+    dist = _dist(tmp_path, _INDEX.replace("</head>", f"  {link}\n  </head>"))
+    (dist / _PRELOAD_PATH).write_bytes(b"export const chunk = 1;\n")
+    (dist / _FONT_PATH).parent.mkdir(parents=True)
+    (dist / _FONT_PATH).write_bytes(b"wOF2 font bytes")
+    return dist
+
+
+def test_verify_fails_an_unstamped_modulepreload(tmp_path: Path) -> None:
+    """A modulepreload fetches code, so it needs integrity like a script does."""
+    dist = _preload_dist(tmp_path, f'<link rel="modulepreload" href="/{_PRELOAD_PATH}">')
+    assert _node(_SRI, "stamp", str(dist)).returncode == _EXIT_OK
+    html = (dist / "index.html").read_text(encoding="utf-8")
+    (dist / "index.html").write_text(
+        re.sub(r'(<link rel="modulepreload"[^>]*?) integrity="[^"]*"', r"\1", html),
+        encoding="utf-8",
+    )
+
+    result = _node(_SRI, "verify", str(dist))
+
+    assert result.returncode == _EXIT_VIOLATION
+    assert f"/{_PRELOAD_PATH} has no integrity" in result.stderr
+
+
+def test_verify_fails_a_script_preload_whose_file_changed(tmp_path: Path) -> None:
+    """A stamped preload as=script is checked against its bytes too."""
+    link = f'<link rel="preload" as="script" href="/{_PRELOAD_PATH}">'
+    dist = _preload_dist(tmp_path, link)
+    assert _node(_SRI, "stamp", str(dist)).returncode == _EXIT_OK
+    stamped = (dist / "index.html").read_text(encoding="utf-8")
+    preload = _tag(stamped, r'<link rel="preload"[^>]*>')
+    assert _integrity_of(preload) == _sha384(b"export const chunk = 1;\n")
+    (dist / _PRELOAD_PATH).write_bytes(b"export const chunk = 2;\n")
+
+    result = _node(_SRI, "verify", str(dist))
+
+    assert result.returncode == _EXIT_VIOLATION
+    assert f"/{_PRELOAD_PATH} integrity does not match" in result.stderr
+
+
+def test_a_font_preload_is_left_alone(tmp_path: Path) -> None:
+    """Integrity covers what runs or styles the page; a font preload is not stamped."""
+    link = f'<link rel="preload" as="font" href="/{_FONT_PATH}" crossorigin>'
+    dist = _preload_dist(tmp_path, link)
+
+    result = _node(_SRI, "stamp", str(dist))
+
+    assert result.returncode == _EXIT_OK, result.stderr
+    html = (dist / "index.html").read_text(encoding="utf-8")
+    assert link in html
+    assert _FONT_PATH not in result.stderr
 
 
 def test_verify_fails_a_page_that_serves_no_script(tmp_path: Path) -> None:
