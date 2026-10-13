@@ -59,6 +59,7 @@ from tests.test_account_egress_barrier import (
     signup,
 )
 from tests.test_journal_vault_write import SequencedVaultClient
+from tests.vault_client_doubles import bind_every_account_to_a_recorded_vault
 
 # A server-paid first letter must say the writer saw its price (#623); without
 # it the route answers 409 before it charges or dials anything.
@@ -646,6 +647,7 @@ def _connect_vault(monkeypatch: pytest.MonkeyPatch) -> _RecordingReflectVault:
     alone would leave the caller app-provider-bound and the vault never asked.
     """
     vault = _RecordingReflectVault()
+    bind_every_account_to_a_recorded_vault(monkeypatch)
     monkeypatch.setitem(app.dependency_overrides, get_creek_vault_client, lambda: vault)
     monkeypatch.setitem(
         app.dependency_overrides,

@@ -47,6 +47,7 @@ export const WITHDRAWAL_PENDING_LOCATIONS: Readonly<Record<string, CopyLocation>
   vault_withdrawal_pending: 'connected_vault',
   vault_withdrawal_previous_vault: 'previous_vault',
   vault_withdrawal_disconnected_vault: 'disconnected_vault',
+  vault_withdrawal_unrecorded_vault: 'unrecorded_vault',
 };
 
 /** Reconnect first: the primary way out. */
@@ -64,7 +65,14 @@ const PLACE: Readonly<Record<CopyLocation, string>> = {
   connected_vault: 'your Creek vault',
   previous_vault: 'the Creek vault you were connected to before',
   disconnected_vault: 'the Creek vault you disconnected',
+  unrecorded_vault: 'a Creek vault you connected earlier',
 };
+
+/**
+ * When Adepthood began recording which vault received each copy (#3095). A
+ * copy made before then can never be confirmed gone by any vault.
+ */
+export const VAULT_BINDING_BEGAN = 'October 7, 2026';
 
 /**
  * Said when "delete here only" finds the page already deleted (the background
@@ -76,6 +84,9 @@ export const ALREADY_DELETED_NOTICE = 'This page was already deleted.';
 export function erasureReceiptNotice(receipt: JournalErasureReceipt): string {
   if (receipt.remote_copy === 'confirmed_absent') {
     return 'Deleted. Your Creek vault confirmed its copy is gone too.';
+  }
+  if (receipt.copy_location === 'unrecorded_vault') {
+    return `Deleted from Adepthood. This page was copied to a Creek vault before ${VAULT_BINDING_BEGAN}, before we recorded which vault received it, so a copy may still be in ${PLACE.unrecorded_vault}. We can't confirm it's gone, so please delete it there.`;
   }
   const place = PLACE[receipt.copy_location ?? 'connected_vault'];
   return `Deleted from Adepthood. A copy may still be in ${place}. We couldn't confirm it's gone, so please delete it there.`;

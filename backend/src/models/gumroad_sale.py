@@ -14,6 +14,10 @@ is the exactly-once guard a wallet credit takes before moving any money, and
 claim every refund, dispute, cancellation, and subscription-ended event
 competes for, so a purchase is unwound exactly once no matter how many
 reversal pings Gumroad delivers.
+
+``anonymised_at`` records when account deletion blanked the buyer's identifiers
+on a sale linked to the deleted account (#3063 AC15). It starts the receipt's
+ratified retention clock; a sale never linked to an account is never stamped.
 """
 
 from datetime import UTC, datetime
@@ -73,6 +77,15 @@ class GumroadSale(SQLModel, table=True):
     # both revoke. Sharing one column rather than one per event kind is the
     # point: the second event to arrive has genuinely nothing left to undo.
     revocation_processed_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    # When account deletion blanked ``email`` and ``raw_payload`` on this sale,
+    # because it was linked to the deleted account (a licence binding or a
+    # token-pack credit). NULL means never anonymised: the sale was never
+    # linked, or no linked account has been deleted. The receipt's ratified
+    # retention counts from here (domain.retention, ``gumroadsale``).
+    anonymised_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
