@@ -28,6 +28,11 @@ on:
       - ".github/dependabot.yml"
       - "frontend/package.json"
       - "frontend/package-lock.json"
+      # The web hardening meta-tests (tests/scripts/test_web_build_hardening.py)
+      # and the custody record test run these files; ADR 0009 phase (b).
+      - "frontend/web-hardening/**"
+      - "frontend/nginx.conf"
+      - "frontend/Dockerfile"
   pull_request:
     paths:
       - "backend/**"
@@ -44,6 +49,9 @@ on:
       - ".github/dependabot.yml"
       - "frontend/package.json"
       - "frontend/package-lock.json"
+      - "frontend/web-hardening/**"
+      - "frontend/nginx.conf"
+      - "frontend/Dockerfile"
 
 # One in-flight run per PR. A Ralph lane pushing a fix while CI is still
 # grinding on the previous commit used to leave the stale run to burn to

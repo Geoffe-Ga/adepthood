@@ -88,7 +88,7 @@
     "postinstall": "patch-package",
     "start": "expo start",
     "web": "expo start --web",
-    "web:build": "expo export --platform web",
+    "web:build": "expo export --platform web && node web-hardening/sri.js stamp dist",
     "test": "jest --passWithNoTests",
     "test:e2e": "jest --config jest.e2e.config.js",
     "test:e2e:web": "playwright test --config playwright.config.ts",

@@ -246,6 +246,16 @@ The following files are already in the repo:
   Expo web export, copies the resulting `dist/` into an nginx image
 - **`frontend/nginx.conf`** — SPA routing (all routes fall back to
   `index.html`), gzip compression, aggressive caching for fingerprinted assets
+  and an enforced Content-Security-Policy. The checked-in file is a template:
+  the image build renders its `connect-src` with `frontend/web-hardening/csp.js`,
+  which takes the API origin from `EXPO_PUBLIC_API_BASE_URL` (and the Sentry
+  origin from `EXPO_PUBLIC_SENTRY_DSN`, when set) and refuses to build without
+  an https API origin. Change the API origin and the policy follows on the
+  next build; there is nothing to edit by hand
+- **`frontend/web-hardening/sri.js`** — run by `npm run web:build` after
+  `expo export`: stamps every script and stylesheet in the built `index.html`
+  with a `sha384` Subresource Integrity hash and fails the build if any served
+  asset is unhashed, mismatched, inline or from another origin
 - **`frontend/metro.config.js`** — Enables Node package exports resolution
   (required for `react-native-web` to resolve `styleq` subpath imports)
 - **`frontend/.dockerignore`** — Excludes `node_modules`, tests, etc. from

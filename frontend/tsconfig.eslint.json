@@ -11,6 +11,7 @@
     "__tests__/**/*.ts",
     "__tests__/**/*.tsx",
     "e2e/**/*.ts",
+    "web-hardening/**/*.js",
     "@types/**/*.d.ts",
     "eslint.config.cjs",
     "jest.config.js",
