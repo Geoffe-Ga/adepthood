@@ -2317,7 +2317,12 @@ async def run_resonance(
     # A generation is about to happen: the per-user guardrails (#623) admit it
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
-    require_external_ai_available()
+    # While AI is suspended (#3075) a locally flagged entry still gets care: the
+    # screen is pure and local, so no provider is built or dialled (#3120).
+    try:
+        require_external_ai_available()
+    except HTTPException as suspended:
+        return await care_or_refusal(session, current_user, message, suspended)
     # No personal key and nothing to pay with is refused here, free (#3096); a
     # vault-bound pass is answered by the vault, so it needs no server provider.
     refusal = await payer_refusal(
