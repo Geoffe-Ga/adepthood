@@ -1,8 +1,8 @@
 """Per-goal CRUD API endpoints backed by the database.
 
-The original API only mutated goals via the habits PUT endpoint, but
-``HabitCreate`` does not include goal fields, so target / unit / frequency /
-is_additive could not be edited from the client.  This router fills that
+The original API only mutated goals via the habits PUT endpoint, but that
+endpoint carries no goal fields (``HabitCreate.goals`` is create-only), so
+target / unit / frequency / is_additive could not be edited from the client.  This router fills that
 gap with a single ``PUT /goals/{goal_id}`` endpoint scoped to the parent
 habit's owner.
 """
@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.ownership import require_owned_goal, resolve_owned_goal_group
+from domain.habit_links import assert_units_allowed_if_linked
 from error_responses import build_router
 from models.goal import Goal
 from routers.auth import get_current_user
@@ -51,6 +52,14 @@ async def update_goal(
     """
     if payload.goal_group_id is not None:
         await resolve_owned_goal_group(session, payload.goal_group_id, current_user)
+    # A tier of a timer-fed habit stays on minutes or sessions (#3150).
+    await assert_units_allowed_if_linked(
+        session,
+        user_id=current_user,
+        habit_id=goal.habit_id,
+        target_unit=payload.target_unit,
+        frequency_unit=payload.frequency_unit,
+    )
     for key, value in payload.model_dump().items():
         setattr(goal, key, value)
     session.add(goal)

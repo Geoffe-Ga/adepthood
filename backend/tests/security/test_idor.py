@@ -90,6 +90,17 @@ _HABIT_PAYLOAD: dict[str, object] = {
     "energy_return": 2,
 }
 
+# A habit a timer may log to (#3150): its goals count minutes, per day.
+_TIMER_GOALS: dict[str, object] = {
+    "target_unit": "minutes",
+    "frequency": 1,
+    "frequency_unit": "per_day",
+    "low": 10,
+    "clear": 20,
+    "stretch": 45,
+}
+_LINKABLE_HABIT_PAYLOAD: dict[str, object] = {**_HABIT_PAYLOAD, "goals": _TIMER_GOALS}
+
 _PRACTICE_DEFAULTS: dict[str, object] = {
     "stage_number": 1,
     "name": "Meditation",
@@ -2287,8 +2298,12 @@ async def test_idor_ui_flags_writing_habit_link_foreign_habit_returns_403(
     """
     alice_headers, _alice_id = await _signup(async_client, "alice_link")
     bob_headers, bob_id = await _signup(async_client, "bob_link")
-    alice_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
-    bob_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=bob_headers)
+    alice_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=alice_headers
+    )
+    bob_habit = await async_client.post(
+        "/habits/", json=_LINKABLE_HABIT_PAYLOAD, headers=bob_headers
+    )
     alice_habit_id = int(alice_habit.json()["id"])
     bob_habit_id = int(bob_habit.json()["id"])
     own = await async_client.patch(
@@ -2315,6 +2330,66 @@ async def test_idor_ui_flags_writing_habit_link_foreign_habit_returns_403(
     assert getattr(denials[0], "resource", None) == "habit"
     assert getattr(denials[0], "resource_id", None) == alice_habit_id
     assert getattr(denials[0], "user_id", None) == bob_id
+
+
+@pytest.mark.asyncio
+async def test_idor_ui_flags_link_to_foreign_non_timer_habit_is_403_not_422(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Ownership is decided before the unit rule (#3150).
+
+    Alice's habit counts ``units``, which the link guard would refuse with a
+    422 -- but answering 422 to Bob would tell him what Alice's goals measure.
+    The refusal is the same 403 a timer-unit habit of hers draws, and Bob's row
+    is untouched.
+    """
+    alice_headers, _alice_id = await _signup(async_client, "alice_units_link")
+    bob_headers, bob_id = await _signup(async_client, "bob_units_link")
+    alice_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    alice_habit_id = int(alice_habit.json()["id"])
+
+    attack = await async_client.patch(
+        "/ui-flags", json={"writing_session_habit_id": alice_habit_id}, headers=bob_headers
+    )
+
+    assert attack.status_code == HTTPStatus.FORBIDDEN
+    assert attack.json()["detail"] == "forbidden"
+    stored = await _ui_flags_row(db_session, bob_id)
+    assert stored.writing_session_habit_id is None
+
+
+@pytest.mark.asyncio
+async def test_idor_habit_create_goals_block_carries_no_foreign_id(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``POST /habits/`` ``goals`` names no other row, so it has nothing to authorise (#3150).
+
+    The block is units, cadence and three numbers. It refuses unknown fields,
+    so a forged ``habit_id`` or ``goal_group_id`` cannot ride in it to reparent
+    the new tiers onto a stranger's habit or group: the request is a 422 and
+    no habit is written.
+    """
+    alice_headers, _alice_id = await _signup(async_client, "alice_goals_block")
+    bob_headers, bob_id = await _signup(async_client, "bob_goals_block")
+    alice_habit = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
+    alice_habit_id = int(alice_habit.json()["id"])
+
+    for forged in ({"habit_id": alice_habit_id}, {"goal_group_id": alice_habit_id}):
+        attack = await async_client.post(
+            "/habits/",
+            json={**_HABIT_PAYLOAD, "goals": {**_TIMER_GOALS, **forged}},
+            headers=bob_headers,
+        )
+        assert attack.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+    bob_rows = await db_session.execute(
+        select(Habit).where(col(Habit.user_id) == bob_id).execution_options(populate_existing=True)
+    )
+    assert bob_rows.scalars().all() == []
+    alice_goals = await db_session.execute(select(Goal).where(col(Goal.habit_id) == alice_habit_id))
+    assert len(alice_goals.scalars().all()) == len(("low", "clear", "stretch"))
 
 
 @pytest.mark.asyncio
