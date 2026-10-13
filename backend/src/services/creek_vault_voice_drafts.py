@@ -221,9 +221,16 @@ async def mirror_voice_draft(
         tier_ceiling=tier,
     )
     outcome = await _put_draft(client, request)
+    await _release_if_suspended(outcome, release_intent)
+    return outcome
+
+
+async def _release_if_suspended(
+    outcome: VoiceDraftMirrorOutcome, release_intent: Callable[[], Awaitable[None]] | None
+) -> None:
+    """Undo the staged intent only when the switch refused the PUT before the wire."""
     if outcome is VoiceDraftMirrorOutcome.SUSPENDED and release_intent is not None:
         await release_intent()
-    return outcome
 
 
 async def _intent_recorded(
@@ -421,6 +428,16 @@ class _IntentSnapshot:
     updated_at: datetime
 
     @classmethod
+    def capture(cls, row: VoiceDraftRetraction | None) -> _IntentSnapshot | None:
+        """Capture ``row`` before it is re-armed; ``None`` when there is no row yet."""
+        return None if row is None else cls.of(row)
+
+    @staticmethod
+    def state_of(snapshot: _IntentSnapshot | None) -> str | None:
+        """The captured state, or ``None`` for a row this attempt is creating."""
+        return None if snapshot is None else snapshot.state
+
+    @classmethod
     def of(cls, row: VoiceDraftRetraction) -> _IntentSnapshot:
         """Capture ``row`` before it is re-armed."""
         return cls(
@@ -502,7 +519,7 @@ class MirrorIntent:
         """
         session = self._session
         row = await self._row()
-        prior = None if row is None else _IntentSnapshot.of(row)
+        prior = _IntentSnapshot.capture(row)
         if row is None:
             row = VoiceDraftRetraction(
                 user_id=self._user_id,
@@ -523,7 +540,7 @@ class MirrorIntent:
             await session.rollback()
             return False
         self._staged, self._prior = True, prior
-        _log_transition(row.id, None if prior is None else prior.state, _MIRROR_INTENT)
+        _log_transition(row.id, _IntentSnapshot.state_of(prior), _MIRROR_INTENT)
         return True
 
     async def release(self) -> None:
