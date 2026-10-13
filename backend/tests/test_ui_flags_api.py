@@ -214,6 +214,16 @@ _MISSING_HABIT_ID = 999_999
 # One past the int32 ceiling every row-id field is bounded by.
 _PAST_INT32_MAX = 2**31
 
+# The journal link's default tiers: 10 / 20 / 45 minutes a day.
+_TIMER_GOALS: dict[str, object] = {
+    "target_unit": "minutes",
+    "frequency": 1,
+    "frequency_unit": "per_day",
+    "low": 10,
+    "clear": 20,
+    "stretch": 45,
+}
+
 
 async def _create_habit(client: AsyncClient, headers: dict[str, str], name: str) -> int:
     """Create a habit the caller owns and return its id."""
@@ -225,6 +235,8 @@ async def _create_habit(client: AsyncClient, headers: dict[str, str], name: str)
             "start_date": "2024-01-01",
             "energy_cost": 1,
             "energy_return": 2,
+            # Only a habit on timer units may be linked (#3150).
+            "goals": _TIMER_GOALS,
         },
         headers=headers,
     )
