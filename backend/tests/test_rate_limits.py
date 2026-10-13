@@ -825,10 +825,10 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
 _PATH_PARAM_SENTINEL = "1"
 _PATH_PARAM = re.compile(r"\{[^}]+\}")
 
-# 159 mounted ``APIRoute``s share 133 distinct paths. Pinned so a future router
+# 160 mounted ``APIRoute``s share 134 distinct paths. Pinned so a future router
 # that collapses the walk (the failure mode #2909 itself was) fails here rather
 # than quietly guarding fewer paths than it claims.
-_DISTINCT_MOUNTED_PATHS = 133
+_DISTINCT_MOUNTED_PATHS = 134
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
