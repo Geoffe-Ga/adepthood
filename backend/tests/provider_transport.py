@@ -17,6 +17,7 @@ so the two providers need their own transports and their own request types.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import TYPE_CHECKING, Any, cast
 
@@ -67,10 +68,14 @@ class TransportStub:
         self.body = body if body is not None else {}
         self.raises = raises
         self.request_count = 0
+        #: Each request's parsed JSON body, in arrival order: what the SDK put on the wire.
+        self.bodies: list[dict[str, Any]] = []
 
-    def record(self) -> None:
-        """Count one request, and raise the canned transport failure if there is one."""
+    def record(self, content: bytes = b"") -> None:
+        """Count one request and keep its body, then raise the canned failure if there is one."""
         self.request_count += 1
+        if content:
+            self.bodies.append(cast("dict[str, Any]", json.loads(content)))
         if self.raises is not None:
             raise self.raises
 
@@ -87,7 +92,7 @@ def use_openai(
     real_client = openai.AsyncOpenAI
 
     def _handle(request: httpx2.Request) -> httpx2.Response:
-        stub.record()
+        stub.record(request.content)
         return httpx2.Response(stub.status_code, json=stub.body, request=request)
 
     def _factory(**kwargs: object) -> openai.AsyncOpenAI:
@@ -112,7 +117,7 @@ def use_anthropic(
     real_client = anthropic.AsyncAnthropic
 
     def _handle(request: httpx.Request) -> httpx.Response:
-        stub.record()
+        stub.record(request.content)
         return httpx.Response(stub.status_code, json=stub.body, request=request)
 
     def _factory(**kwargs: object) -> anthropic.AsyncAnthropic:
