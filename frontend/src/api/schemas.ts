@@ -138,12 +138,15 @@ export type AccountDeletionReceiptT = z.infer<typeof accountDeletionReceiptSchem
  * page "here only" did. ``remote_copy`` is ``confirmed_absent`` only when the
  * vault holding the copy confirmed it gone; otherwise it is ``unconfirmed`` and
  * ``copy_location`` says where a copy may remain, relative to the vault
- * connected now. There is no "withdrawn" value on purpose.
+ * connected now; ``unrecorded_vault`` is a copy made before Adepthood recorded
+ * which vault received it, which no vault can confirm (#3095). There is no
+ * "withdrawn" value on purpose.
  */
 export const copyLocationSchema = z.enum([
   'connected_vault',
   'previous_vault',
   'disconnected_vault',
+  'unrecorded_vault',
 ]);
 
 export type CopyLocationT = z.infer<typeof copyLocationSchema>;
