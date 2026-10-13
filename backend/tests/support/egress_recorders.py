@@ -40,6 +40,7 @@ import asyncio
 import enum
 import logging
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from types import ModuleType
 from typing import TYPE_CHECKING, Final
@@ -461,6 +462,10 @@ class TelemetryRecorder:
         return [blob for blob in self.blobs() if carries(blob, canary)]
 
 
+#: The root level a deployment with no ``LOG_LEVEL`` runs at.
+_DEPLOYED_ROOT_LEVEL: Final = logging.INFO
+
+
 def _non_propagating_loggers() -> list[logging.Logger]:
     """Every configured logger whose records would never reach the root handler."""
     return [
@@ -470,19 +475,27 @@ def _non_propagating_loggers() -> list[logging.Logger]:
     ]
 
 
-def install_telemetry_recorder(
+@contextmanager
+def recording_telemetry(
     monkeypatch: pytest.MonkeyPatch, sentry_events: list[dict[str, object]]
-) -> TelemetryRecorder:
+) -> Iterator[TelemetryRecorder]:
     """Attach one handler to the root and to every logger that does not propagate.
 
-    The root is lowered to ``DEBUG`` for the test, so a record no deployment
-    would emit at its default level is still read: the property is that no
-    record carries content, not that none is printed today. ``monkeypatch``
-    restores every handler list and the level afterwards.
+    The root is opened to ``INFO`` while the block runs -- the level
+    ``observability.configure_logging`` opens it to in a deployment that sets no
+    ``LOG_LEVEL`` -- so what is read is what a deployment would emit, including
+    the per-request access records a bare test root (``WARNING``) would drop.
+    ``setLevel`` (rather than assigning the attribute) is what clears the
+    logging module's per-logger level cache, both on the way in and on the way
+    out; ``monkeypatch`` restores every handler list.
     """
     handler = _ListHandler()
     root = logging.getLogger()
-    monkeypatch.setattr(root, "level", logging.DEBUG)
     for logger in (root, *_non_propagating_loggers()):
         monkeypatch.setattr(logger, "handlers", [*logger.handlers, handler])
-    return TelemetryRecorder(handler=handler, sentry_events=sentry_events)
+    previous = root.level
+    root.setLevel(_DEPLOYED_ROOT_LEVEL)
+    try:
+        yield TelemetryRecorder(handler=handler, sentry_events=sentry_events)
+    finally:
+        root.setLevel(previous)

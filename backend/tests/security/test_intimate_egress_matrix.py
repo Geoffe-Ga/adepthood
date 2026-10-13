@@ -14,8 +14,8 @@ Rows are **derived**, not chosen: every route in
 :data:`tests.security.test_egress_barrier_totality.BARRIERED` and every
 detached entry point in ``DETACHED_ENTRY_POINTS`` must have at least one row,
 and :func:`test_every_egress_door_has_a_matrix_row` fails on a door with none.
-Those two sets are themselves derived from the call graph and the live route
-table, so a new egress route lands in this matrix by way of that gate.
+``BARRIERED`` is itself held to the call graph and the live route table by
+that file's gate, so a new egress route lands here by way of both.
 
 Columns are the lifecycle steps the canary can enter an Intimate entry by
 (:class:`Step`): created Intimate, edited while Intimate, reclassified
@@ -88,9 +88,9 @@ from tests.support.egress_recorders import (
     TelemetryRecorder,
     carries,
     corpus_fragments,
-    install_telemetry_recorder,
     record_classifier_inputs,
     record_provider_dials,
+    recording_telemetry,
 )
 from tests.vault_client_doubles import RECORDED_VAULT, bind_every_account_to_a_recorded_vault
 
@@ -580,8 +580,10 @@ async def harness(
         "no module binds the provider dial: the provider recorder would watch nothing"
     )
     record_classifier_inputs(monkeypatch, ledger)
-    with capturing_sentry(monkeypatch) as sentry_events:
-        telemetry = install_telemetry_recorder(monkeypatch, sentry_events)
+    with (
+        capturing_sentry(monkeypatch) as sentry_events,
+        recording_telemetry(monkeypatch, sentry_events) as telemetry,
+    ):
         h = Harness(concurrent_async_client, concurrent_session_factory, ledger, vault, telemetry)
         await h.signup()
         yield h
