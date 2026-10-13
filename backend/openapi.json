@@ -10232,7 +10232,7 @@
             "name": "older_than_days",
             "required": false,
             "schema": {
-              "default": 30,
+              "default": 7,
               "maximum": 36500,
               "minimum": 1,
               "title": "Older Than Days",
@@ -10448,14 +10448,15 @@
     },
     "/admin/maintenance/journal-entries": {
       "post": {
-        "description": "Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.\n\nRemoves their margin notes, promoted passages, completion suggestions and\ncorpus fragments, and clears the metering link, as ``domain.retention``\nderives from the schema. Entries still owing a remote withdrawal are kept\nand counted as ``blocked``. The window is at least the age of the oldest\nlive backup copy (retention plus one backup interval), so -- provided\nbackups are expired as DEPLOYMENT.md says -- no live backup holds a purged\nentry undeleted. It is required -- there is no default,\nbecause how long a deleted page is kept is the owner's promise to make\n(#3063) -- and nothing schedules this route.",
+        "description": "Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.\n\nRemoves their margin notes, promoted passages, completion suggestions and\ncorpus fragments, and clears the metering link, as ``domain.retention``\nderives from the schema. Entries still owing a remote withdrawal are kept\nand counted as ``blocked``. The window is at least the age of the oldest\nlive backup copy (retention plus one backup interval), so -- provided\nbackups are expired as DEPLOYMENT.md says -- no live backup holds a purged\nentry undeleted. The default window is the lifetime the owner ratified for\na soft-deleted page (#3063 AC15, 2026-10-13), which is that floor; nothing\nschedules this route (AC18).",
         "operationId": "purge_journal_entries_admin_maintenance_journal_entries_post",
         "parameters": [
           {
             "in": "query",
             "name": "older_than_days",
-            "required": true,
+            "required": false,
             "schema": {
+              "default": 97,
               "maximum": 36500,
               "minimum": 97,
               "title": "Older Than Days",

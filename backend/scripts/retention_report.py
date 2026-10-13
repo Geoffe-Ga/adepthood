@@ -4,8 +4,10 @@ The report is generated on demand rather than committed, so it never reads as a
 published retention schedule -- publishing one is the owner's decision
 (#3063 AC16). It lists every table's lifetime, flags the rules nobody has
 ratified with the lifetime proposed for each, and lists the non-database
-stores with their deadlines and proposals. The owner reviews the proposals in
-``docs/privacy/retention-proposal.md``; none is in force until ratified.
+stores with their deadlines and their ratified periods (or proposals). The
+owner ratified every open lifetime on 2026-10-13; the decision record is
+``docs/privacy/retention-proposal.md``. A ratified period that no sweep
+applies yet is flagged as such.
 
 Usage, from ``backend/``::
 
@@ -55,19 +57,21 @@ def _deadline(deadline: Deadline) -> str:
     return f"unknown -- {deadline.open_question}"
 
 
-def _proposed(deadline: ProposedDeadline) -> str:
-    """Render one store's proposed deadline for the report."""
+def _period(deadline: ProposedDeadline) -> str:
+    """Render one store's ratified or proposed period for the report."""
     if deadline is None:
         return "no fixed period"
     return _deadline(deadline)
 
 
 def _store_line(store: Store) -> str:
-    """One store, its deadline today, and the deadline proposed for it."""
+    """One store, its deadline today, and its ratified or proposed period."""
     line = f"  {store.key} [{store.controller.value}]: {_deadline(store.deadline)}"
+    if store.ratified is not None:
+        line += f" -- ratified: {_period(store.ratified.deadline)}"
     if store.proposal is not None:
         line += (
-            f" -- proposed: {_proposed(store.proposal.deadline)}"
+            f" -- proposed: {_period(store.proposal.deadline)}"
             f" [{store.proposal.compared_to_today.value} than today]"
         )
     return line
@@ -94,9 +98,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     sys.stdout.write("\n")
     sys.stdout.write("Unratified (owner decision required, #3063 AC15):\n")
     proposed = {line.split(":", 1)[0]: line for line in retention_report().splitlines()}
-    for name in unratified_rules():
+    unratified = unratified_rules()
+    for name in unratified:
         proposal = proposed[name].split(" -- proposed: ", 1)[1]
         sys.stdout.write(f"  {name} -- proposed: {proposal}\n")
+    if not unratified:
+        sys.stdout.write("  none\n")
     sys.stdout.write("\n")
     sys.stdout.write("Stores outside the database:\n")
     for store in STORES:
