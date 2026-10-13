@@ -8,6 +8,7 @@ import { render, fireEvent, waitFor } from '@testing-library/react-native';
 import React, { useSyncExternalStore } from 'react';
 
 import type * as ApiModule from '../../../api';
+import type * as HabitStorageModule from '../../../storage/habitStorage';
 import { useHabitStore } from '../../../store/useHabitStore';
 import HabitsScreen from '../HabitsScreen';
 
@@ -106,6 +107,10 @@ jest.mock('../../../api', () => {
 });
 
 jest.mock('../../../storage/habitStorage', () => ({
+  capturePendingCheckInScope: jest.requireActual<typeof HabitStorageModule>(
+    '../../../storage/habitStorage',
+  ).capturePendingCheckInScope,
+  removePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   saveHabits: jest.fn(() => Promise.resolve(undefined)),
   loadHabits: jest.fn(() => Promise.resolve(null)),
   loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
