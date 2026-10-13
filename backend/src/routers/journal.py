@@ -285,8 +285,10 @@ logger = logging.getLogger(__name__)
 router = build_router(
     prefix="/journal",
     tags=["journal"],
-    # 402 is the wallet's, on the metered reflection paths: ``preflight_deduction``
-    # refuses a spend with no capacity, ``resolve_chat_api_key`` a call with no key.
+    # 402 is a payer refusal: ``require_ai_payer`` / ``payer_refusal`` refuse a
+    # call with no key of the writer's own (``llm_key_required``; no server-key
+    # fallback since ADR 0009 phase (a)), and ``preflight_deduction`` a spend with
+    # no capacity on a vault-answered pass.
     # 429 is the generation guardrails' (#623): the per-user minute bucket, the
     # concurrent slot, and the wallet's daily ceiling.
     extra_statuses=(

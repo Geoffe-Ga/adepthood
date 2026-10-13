@@ -39,7 +39,6 @@ from services.botmason import (
     STUB_PROVIDER_NAME,
     LLMResponse,
     generate_response,
-    get_provider,
     provider_for_api_key,
 )
 
@@ -166,12 +165,14 @@ def attempted_receipt(api_key: str | None) -> InferenceReceipt:
 
     A call that failed after the request went out still carried the writing to
     the provider, so it is recorded as that provider's -- never as an operation
-    that did not run. The provider is the one the call was routed to (a BYOK
-    key selects its own, otherwise the server's configured one); no model is
-    claimed, because none was reported.
+    that did not run. The provider is the one the call was routed to: a BYOK
+    key selects its own, and a keyless call is never routed to a cloud
+    provider (ADR 0009 phase (a), #3067), so it is the stub's -- never the
+    server's configured provider. No model is claimed, because none was
+    reported.
     """
     named = provider_for_api_key(api_key) if api_key else None
-    return _receipt_named(named or get_provider(), None)
+    return _receipt_named(named or STUB_PROVIDER_NAME, None)
 
 
 def receipt_since(usage: Sequence[LLMResponse], mark: int = 0) -> InferenceReceipt | None:

@@ -119,7 +119,6 @@ from services.managed_vault_rollout import (
     load_managed_vault_rollout,
 )
 from services.privacy_suspension import log_suspension_state
-from services.provider_probe import PROVIDER_PROBE_ENV_VAR, armed_probe_token
 from services.restore_suppression import assert_restore_reapplied
 
 logger = logging.getLogger(__name__)
@@ -661,48 +660,8 @@ def validate_stub_seam_config() -> None:
         f"{STUB_SEAM_ENV_VAR} is armed, which lets the canned BotMason stub answer "
         "real requests with text-replaced sentences instead of refusing them. It is "
         "a test seam for the backend suite and the end-to-end lane. Unset "
-        f"{STUB_SEAM_ENV_VAR} to boot; configure BOTMASON_PROVIDER and LLM_API_KEY, "
-        "or rely on writers' own keys, if this deployment is meant to generate."
-    )
-    raise RuntimeError(msg)
-
-
-def validate_provider_probe_config() -> None:
-    """Refuse a production boot while the provider probe is armed.
-
-    :mod:`services.provider_probe` sends one prompt carrying
-    :data:`~services.provider_probe.PROVIDER_PROBE_ENV_VAR`'s token past the stub to a
-    real provider, so the wiring a stub-configured deployment never exercises --
-    key resolution, the SDK, the transport, the retry budget, the classification
-    of whatever comes back -- can be driven end to end. That is what lets the
-    real-wire lane reach a billing refusal on a server with no provider account.
-
-    In front of real users the same seam is a dial selected by the contents of a
-    journal entry, and "do not set this in production" is a runbook line rather
-    than a control. So this is the shape of :func:`validate_email_config` and
-    not of the warn-only trio below it: a state that is fine on a laptop and
-    indefensible on a server refuses the boot rather than logging about it.
-
-    Gated on the *armed* token rather than on the variable's presence, so it
-    agrees with :func:`~services.provider_probe.armed_probe_token`: a value too
-    short to arm anything is not a live seam, and taking a deploy down over one
-    would be a false alarm. Nothing renders the value -- unlike the email
-    backend name, which is a mode selector, this is a secret whose whole
-    security property is that nobody else knows it.
-    """
-    if os.getenv("ENV", "development") != "production":
-        return
-    if armed_probe_token() is None:
-        return
-    msg = (
-        f"{PROVIDER_PROBE_ENV_VAR} is set to a value that arms the BotMason provider "
-        "probe, which sends any prompt carrying that token to a real LLM "
-        "provider instead of to the configured stub. That is a request path "
-        "chosen by the text of a user's journal entry, and it exists for the "
-        "end-to-end lane rather than for a deployment. Unset "
-        f"{PROVIDER_PROBE_ENV_VAR} to boot, and configure BOTMASON_PROVIDER and "
-        "LLM_API_KEY if this deployment is meant to reach a provider at all "
-        "(see backend/.env.example)."
+        f"{STUB_SEAM_ENV_VAR} to boot; writers' own keys are the only way a cloud "
+        "model answers them (ADR 0009 phase (a))."
     )
     raise RuntimeError(msg)
 
@@ -1015,22 +974,22 @@ def _log_egress_barrier_rollout() -> None:
 
 
 def _log_botmason_provider() -> None:
-    """Report the active LLM provider at boot (issue #402).
+    """Report the configured LLM provider at boot (issue #402), and an unused server key.
 
-    Stub-in-production must be an explicit, visible choice. It no longer serves
-    canned text (#3096): every request without a writer's own key is refused
-    with 402 ``llm_key_required``, so a deploy that forgot
-    ``BOTMASON_PROVIDER``/``LLM_API_KEY`` turns credit-funded features off
-    rather than faking them -- and says so here.
+    Under ADR 0009 phase (a) (#3067) no request carrying a person's content is
+    answered on the app's own account: without the writer's own key every
+    app-provider request is refused 402 ``llm_key_required``, whatever
+    ``BOTMASON_PROVIDER`` names. Nothing reads ``LLM_API_KEY`` any more, so a
+    deployment still carrying one is told so once, by name only.
     """
     provider = get_provider()
     logger.info("botmason_provider provider=%s", provider)
-    if provider == "stub" and os.getenv("ENV", "development") == "production":
-        logger.error(
-            "botmason_stub_in_production: BOTMASON_PROVIDER is 'stub' — every "
-            "AI request without the writer's own API key is refused (402 "
-            "llm_key_required), credits included. Set BOTMASON_PROVIDER and "
-            "LLM_API_KEY (see backend/.env.example) if this is unintentional."
+    if os.getenv("LLM_API_KEY", "").strip():
+        logger.warning(
+            "llm_api_key_unused: LLM_API_KEY is set, but no request is paid for "
+            "with the server's own key (ADR 0009 phase (a)); a cloud model is "
+            "reached only with a writer's own key. It can be removed from this "
+            "deployment."
         )
 
 
@@ -1122,13 +1081,7 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # email problem before it has a link problem.
     validate_app_base_url_config()
 
-    # Last refusal of the boot, and the narrowest: the provider probe is a live
-    # seam to a real LLM chosen by the text of a request, built for the
-    # end-to-end lane. It is fine on a laptop and indefensible in front of real
-    # users, so an armed production deploy never goes live.
-    validate_provider_probe_config()
-
-    # The same shape for the SDKs' own redirect: a provider base URL off the
+    # The SDKs' own redirect: a provider base URL off the
     # recipient register would send every reflection's journal content to an
     # unlisted host, so a production deploy carrying one never goes live.
     validate_llm_base_url_config()
@@ -1157,8 +1110,8 @@ async def lifespan(_application: FastAPI) -> AsyncIterator[None]:
     # journal. Say the exact operator state once and fail new activation closed.
     validate_managed_vault_rollout_config()
 
-    # The same shape as the provider probe, for the canned stub: a seam that
-    # answers real people with text-replaced sentences never goes live (#3096).
+    # The canned stub is a test seam: a seam that answers real people with
+    # text-replaced sentences never goes live (#3096).
     # Last of the refusals, so each earlier one still names its own problem.
     validate_stub_seam_config()
 

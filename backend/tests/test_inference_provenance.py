@@ -67,6 +67,7 @@ _LETTER = "Sentinel-letter: a warm letter about bending."
 _PRICED = {"price_acknowledged": True}
 _REAL_MODEL = "claude-test"
 _BYOK = {"X-LLM-API-Key": "sk-ant-test-key-for-provenance"}
+_BYOK_OPENAI = {"X-LLM-API-Key": "sk-test-openai-key-for-provenance"}  # pragma: allowlist secret
 _UNQUOTABLE = "the willow bending all night without once breaking and me awake under it"
 
 
@@ -567,9 +568,8 @@ async def test_a_detection_call_that_failed_is_not_reported_as_never_run(
     monkeypatch: pytest.MonkeyPatch,
     error: LLMProviderError,
 ) -> None:
-    """The entry went to the app provider even though detection failed: say so."""
-    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", "sk-test-server-key-for-provenance")
+    """The entry went to the writer's own provider even though detection failed: say so."""
+    monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
 
     async def _complete(
         prompt: str, history: object, *, system_prompt: str | None, api_key: object
@@ -589,7 +589,9 @@ async def test_a_detection_call_that_failed_is_not_reported_as_never_run(
     await _seed_habit(db_session, username)
     entry_id = await _create_entry(async_client, headers)
 
-    resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
+    resp = await async_client.post(
+        f"/journal/{entry_id}/resonance", headers={**headers, **_BYOK_OPENAI}
+    )
 
     assert resp.status_code == HTTPStatus.OK
     provenance = resp.json()["provenance"]
@@ -668,3 +670,23 @@ async def test_a_letter_on_a_legacy_note_does_not_claim_a_recorded_note_source(
     assert body["essay_source"] == "app_provider"
     assert body["source"] is None
     assert body["receipt_version"] is None
+
+
+def test_a_keyless_attempt_is_never_attributed_to_the_configured_cloud_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A call sent with no writer's key went to the stub, whatever the server names (#3067).
+
+    Before ADR 0009 phase (a) a keyless call dialled ``BOTMASON_PROVIDER`` on the
+    server's key, and a failed one was attributed to it. Now no keyless call
+    reaches a cloud provider, so naming one would be a false receipt.
+    """
+    monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
+
+    keyless = marginalia_service.attempted_receipt(None)
+    keyed = marginalia_service.attempted_receipt("sk-test-openai-key-for-provenance")
+
+    assert keyless.source is MarginaliaSource.DEMO
+    assert keyless.provider is not InferenceProvider.OPENAI
+    assert keyed.source is MarginaliaSource.APP_PROVIDER
+    assert keyed.provider is InferenceProvider.OPENAI
