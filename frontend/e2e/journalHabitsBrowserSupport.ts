@@ -156,8 +156,12 @@ export async function signUp(
  * journal. Whether the welcome is offered again after a log-out is not this
  * helper's question, so it is skipped when it is shown and not required.
  */
-export async function logIn(page: Page, email: string): Promise<void> {
-  await page.goto(`${frontendUrl()}/login`);
+export async function logIn(
+  page: Page,
+  email: string,
+  origin: string = frontendUrl(),
+): Promise<void> {
+  await page.goto(`${origin}/login`);
   await page.getByRole('textbox', { name: 'Email' }).fill(email);
   await page.getByRole('textbox', { name: 'Password', exact: true }).fill(ACCOUNT_PHRASE);
   await page.getByRole('button', { name: 'Log in' }).click();
