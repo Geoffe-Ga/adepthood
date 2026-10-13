@@ -45,12 +45,15 @@ from services.corpus_consent import set_consent
 from services.corpus_ingest import (
     CLASSIFICATION_CALLS_PER_INGEST,
     INGEST_SOURCE,
+    IngestOutcome,
     IngestRequest,
+    IngestResult,
     ingest_content,
     ingest_journal_entry,
     withdraw_journal_entry,
 )
 from services.corpus_store import retrieve_fragments
+from services.reflection_boundary import ReflectionBoundary
 
 _OWNER = 1
 
@@ -138,7 +141,9 @@ async def test_a_consented_entry_becomes_a_fragment_that_names_it(
     await _consent(db_session)
     entry = await _entry(db_session)
 
-    fragment = await ingest_journal_entry(db_session, entry)
+    fragment = await ingest_journal_entry(
+        db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert fragment is not None
@@ -162,7 +167,7 @@ async def test_one_entry_costs_at_most_one_classification_call(
     await _consent(db_session)
     entry = await _entry(db_session)
 
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
 
     assert len(calls) == CLASSIFICATION_CALLS_PER_INGEST == 1
@@ -181,7 +186,9 @@ async def test_without_consent_no_provider_is_contacted_at_all(
     _forbid_provider(monkeypatch)
     entry = await _entry(db_session)
 
-    fragment = await ingest_journal_entry(db_session, entry)
+    fragment = await ingest_journal_entry(
+        db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert fragment is None
@@ -196,7 +203,7 @@ async def test_a_legacy_empty_entry_is_withdrawn_without_provider_contact(
     _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
     await _consent(db_session)
     entry = await _entry(db_session)
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
     assert len(await retrieve_fragments(db_session, user_id=_OWNER)) == 1
 
@@ -205,7 +212,9 @@ async def test_a_legacy_empty_entry_is_withdrawn_without_provider_contact(
     await db_session.commit()
     _forbid_provider(monkeypatch)
 
-    fragment = await ingest_journal_entry(db_session, entry)
+    fragment = await ingest_journal_entry(
+        db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert fragment is None
@@ -226,7 +235,9 @@ async def test_an_intimate_entry_is_never_offered_to_the_classifier(
     await _consent(db_session)
     entry = await _entry(db_session, tier=JournalClassification.INTIMATE)
 
-    fragment = await ingest_journal_entry(db_session, entry)
+    fragment = await ingest_journal_entry(
+        db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert fragment is None
@@ -245,11 +256,11 @@ async def test_re_tiering_an_entry_to_intimate_takes_it_out_of_the_corpus(
     _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
     await _consent(db_session)
     entry = await _entry(db_session)
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
 
     entry.classification = JournalClassification.INTIMATE.value
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
 
     assert await retrieve_fragments(db_session, user_id=_OWNER) == []
@@ -263,11 +274,11 @@ async def test_editing_an_entry_replaces_its_fragment_rather_than_adding_one(
     _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
     await _consent(db_session)
     entry = await _entry(db_session)
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
 
     entry.message = _EDITED_BODY
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
     found = await retrieve_fragments(db_session, user_id=_OWNER)
 
@@ -288,7 +299,9 @@ async def test_a_provider_outage_leaves_the_entry_saved_and_the_corpus_empty(
     await _consent(db_session)
     entry = await _entry(db_session)
 
-    fragment = await ingest_journal_entry(db_session, entry)
+    fragment = await ingest_journal_entry(
+        db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
     saved = await db_session.execute(select(JournalEntry.message))
 
@@ -318,7 +331,7 @@ async def test_a_refusal_to_bill_names_the_account_and_the_provider_and_nothing_
     entry = await _entry(db_session)
 
     with caplog.at_level(logging.WARNING), pytest.raises(LLMCreditExhaustedError):
-        await ingest_journal_entry(db_session, entry)
+        await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
 
     refusals = [r for r in caplog.records if r.message == "corpus_ingest_credit_exhausted"]
     assert [
@@ -344,7 +357,9 @@ async def test_writing_no_frequency_recognised_is_not_worth_a_fragment(
     await _consent(db_session)
     entry = await _entry(db_session)
 
-    fragment = await ingest_journal_entry(db_session, entry)
+    fragment = await ingest_journal_entry(
+        db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert fragment is None
@@ -364,12 +379,12 @@ async def test_a_failed_re_ingest_does_not_leave_the_old_fragment_behind(
     _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
     await _consent(db_session)
     entry = await _entry(db_session)
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
 
     _break_provider(monkeypatch)
     entry.message = _EDITED_BODY
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
 
     assert await retrieve_fragments(db_session, user_id=_OWNER) == []
@@ -389,7 +404,7 @@ async def test_withdrawing_an_entry_clears_what_it_put_in_the_corpus(
     _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
     await _consent(db_session)
     entry = await _entry(db_session)
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
 
     removed = await withdraw_journal_entry(db_session, user_id=_OWNER, entry_id=_id_of(entry))
@@ -409,7 +424,9 @@ async def test_a_soft_deleted_entry_is_not_re_ingested(
     entry = await _entry(db_session)
     entry.deleted_at = datetime.now(UTC)
 
-    fragment = await ingest_journal_entry(db_session, entry)
+    fragment = await ingest_journal_entry(
+        db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert fragment is None
@@ -439,6 +456,7 @@ async def test_an_unsaved_entry_has_nothing_to_be_provenance_for(
             classification=JournalClassification.PERSONAL.value,
             timestamp=datetime.now(UTC),
         ),
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert fragment is None
@@ -489,7 +507,7 @@ async def test_no_pooled_connection_is_held_across_a_journal_entrys_classificati
     entry = await _entry(db_session)
     await db_session.refresh(entry)
 
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
 
     assert in_transaction, "no classification was observed"
     assert not any(in_transaction)
@@ -524,6 +542,7 @@ async def test_no_pooled_connection_is_held_across_an_imported_documents_classif
         request=IngestRequest(
             content=_BODY, tier=JournalClassification.PERSONAL, source=CorpusSource.UPLOAD
         ),
+        boundary=ReflectionBoundary.APP_PROVIDER,
     )
 
     assert in_transaction, "no classification was observed"
@@ -552,18 +571,86 @@ async def test_an_edit_the_classifier_could_not_place_withdraws_the_old_fragment
     _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
     await _consent(db_session)
     entry = await _entry(db_session)
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
 
     _break_provider(monkeypatch)
     entry.message = _EDITED_BODY
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.rollback()
 
     assert await _fragment_bodies(db_session) == []
 
     _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
 
     assert await _fragment_bodies(db_session) == [_EDITED_BODY]
+
+
+# --- the vault boundary (#3156) -------------------------------------------------
+
+
+def _personal(body: str = _BODY) -> IngestRequest:
+    """One personal journal fragment offered to the spine."""
+    return IngestRequest(content=body, tier=JournalClassification.PERSONAL, source=INGEST_SOURCE)
+
+
+@pytest.mark.asyncio
+async def test_a_vault_bound_writer_is_refused_after_consent_and_before_the_dial(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``BOUNDARY_REFUSED`` -- never ``UNCLASSIFIED``, since nothing was asked -- and no row."""
+    _forbid_provider(monkeypatch)
+    await _consent(db_session)
+
+    result = await ingest_content(
+        db_session, user_id=_OWNER, request=_personal(), boundary=ReflectionBoundary.VAULT_BOUND
+    )
+
+    assert result == IngestResult(IngestOutcome.BOUNDARY_REFUSED)
+    assert await retrieve_fragments(db_session, user_id=_OWNER) == []
+
+
+@pytest.mark.asyncio
+async def test_consent_is_still_read_first_for_a_vault_bound_writer(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No consent is ``NO_CONSENT`` whatever the boundary says."""
+    _forbid_provider(monkeypatch)
+
+    result = await ingest_content(
+        db_session, user_id=_OWNER, request=_personal(), boundary=ReflectionBoundary.VAULT_BOUND
+    )
+
+    assert result.outcome is IngestOutcome.NO_CONSENT
+
+
+@pytest.mark.asyncio
+async def test_a_vault_bound_edit_withdraws_the_stale_fragment_and_logs_only_ids(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The corpus stops quoting the old text, nothing new is classified, and the log is ids."""
+    await _consent(db_session)
+    _patch_provider(monkeypatch, _CLASSIFIED_REPLY)
+    entry = await _entry(db_session)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
+    await db_session.commit()
+    _forbid_provider(monkeypatch)
+    caplog.set_level(logging.INFO, logger="services.corpus_ingest")
+
+    entry.message = _EDITED_BODY
+    fragment = await ingest_journal_entry(
+        db_session, entry, boundary=ReflectionBoundary.VAULT_BOUND
+    )
+    await db_session.commit()
+
+    assert fragment is None
+    assert await retrieve_fragments(db_session, user_id=_OWNER) == []
+    records = [r for r in caplog.records if r.getMessage() == "corpus_ingest"]
+    assert [(r.__dict__["outcome"], r.__dict__["fragments_removed"]) for r in records] == [
+        ("boundary_refused", 1)
+    ]
+    for record in records:
+        assert _BODY not in str(record.__dict__)
+        assert _EDITED_BODY not in str(record.__dict__)

@@ -107,6 +107,7 @@ from services.creek_vault_upload import UploadedDocument
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
 from services.higher_self_grounding import GROUNDING_LIMIT, GroundingSource
 from services.journal_encryption import EncryptedString
+from services.reflection_boundary import ReflectionBoundary
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LEGAL_DIR = _REPO_ROOT / "docs" / "legal"
@@ -1147,7 +1148,7 @@ async def test_deleting_one_page_keeps_the_row_and_takes_the_corpus_copy(
     db_session.add(entry)
     await db_session.commit()
     await db_session.refresh(entry)
-    await ingest_journal_entry(db_session, entry)
+    await ingest_journal_entry(db_session, entry, boundary=ReflectionBoundary.APP_PROVIDER)
     await db_session.commit()
     assert await retrieve_fragments(db_session, user_id=_DELETING_ACCOUNT), (
         "the entry never reached the corpus, so the withdrawal below proves nothing"
@@ -1238,7 +1239,12 @@ async def test_granting_consent_sorts_the_writing_that_was_already_there(
     change = await set_consent(
         db_session, user_id=_CONSENTING_ACCOUNT, source=INGEST_SOURCE, granted=True
     )
-    await backfill_after_consent(db_session, user_id=_CONSENTING_ACCOUNT, change=change)
+    await backfill_after_consent(
+        db_session,
+        user_id=_CONSENTING_ACCOUNT,
+        change=change,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
     await db_session.commit()
 
     stored = await retrieve_fragments(db_session, user_id=_CONSENTING_ACCOUNT)

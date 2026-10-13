@@ -69,6 +69,7 @@ from services.botmason import (
     LLMResponse,
     generate_response,
 )
+from services.reflection_boundary import ReflectionBoundary, require_app_provider_boundary
 
 logger = logging.getLogger(__name__)
 
@@ -275,9 +276,16 @@ def _degraded(reason: str) -> FrequencyClassification:
 
 
 async def _reply_within(
-    content: str, *, api_key: str | None, timeout_seconds: float | None
+    content: str,
+    *,
+    boundary: ReflectionBoundary,
+    api_key: str | None,
+    timeout_seconds: float | None,
 ) -> LLMResponse:
     """Ask the provider for a classification, abandoning it at the bound.
+
+    The boundary gate is the first statement, in the same function as the dial,
+    so the structural chokepoint test can see that this dial is gated (#3156).
 
     ``asyncio.wait_for`` cancels the *whole* call, so a caller's bound covers
     the retries and the backoff sleeps inside it as well as the attempt in
@@ -287,6 +295,7 @@ async def _reply_within(
     a cancellation mid-statement would take the caller's open transaction with
     it and lose the fragments already written.
     """
+    require_app_provider_boundary(boundary)
     call = generate_response(
         user_message=content[:MAX_FRAGMENT_CHARS],
         conversation_history=[],
@@ -315,10 +324,11 @@ async def classify_frequencies(
     content: str,
     *,
     classification: str,
+    boundary: ReflectionBoundary,
     api_key: str | None = None,
     timeout_seconds: float | None = None,
 ) -> FrequencyClassification:
-    """Classify ``content`` into the frequency ontology.
+    """Classify ``content`` into the frequency ontology, on the app provider.
 
     Raises :class:`IntimateContentRefusedError` for any tier that is not
     egress-eligible (intimate, unknown, empty -- see
@@ -336,6 +346,18 @@ async def classify_frequencies(
     single piece of writing may treat it as :data:`UNCLASSIFIED` and lose
     nothing by doing so.
 
+    ``boundary`` is the caller's resolved
+    :class:`~services.reflection_boundary.ReflectionBoundary`, required and with
+    no default so that no caller can reach the provider by omission (#3156).
+    This classifier *is* the app provider, so under
+    :attr:`~services.reflection_boundary.ReflectionBoundary.VAULT_BOUND` it
+    raises :class:`~services.reflection_boundary.AppProviderRefusedError` before
+    any dial: a caller with a vault-bound writer answers its own honest refusal
+    first (:func:`services.corpus_ingest.ingest_content`) or asks the vault
+    (:func:`services.frequency_source.select_frequency_classification`), so
+    reaching here vault-bound is a missing check, never a fallback. The tier
+    refusal still comes first, ahead of the boundary.
+
     ``api_key`` is the caller's own key (BYOK), threaded to
     :func:`services.botmason.generate_response` exactly as the chat path does;
     ``None`` falls back to the server-side key.
@@ -349,7 +371,9 @@ async def classify_frequencies(
     if not admits_egress(classification):
         raise IntimateContentRefusedError
     try:
-        response = await _reply_within(content, api_key=api_key, timeout_seconds=timeout_seconds)
+        response = await _reply_within(
+            content, boundary=boundary, api_key=api_key, timeout_seconds=timeout_seconds
+        )
     except LLMCreditExhaustedError as exc:
         # Ordered ahead of the base type or it would never be reached: the
         # subclass exists precisely so this condition keeps its identity past a

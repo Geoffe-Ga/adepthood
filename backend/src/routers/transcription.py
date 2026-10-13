@@ -26,13 +26,14 @@ from fastapi import Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
+from dependencies.creek_vault import resolve_reflection_boundary
 from domain.transcription import (
     TranscriptionVerdict,
     build_transcription_prompt,
     classify_transcription,
 )
 from error_responses import build_router
-from errors import bad_gateway, unprocessable
+from errors import bad_gateway, service_unavailable, unprocessable
 from rate_limit import limiter
 from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
@@ -60,6 +61,12 @@ from services.llm_usage import (
     record_llm_usage,
 )
 from services.privacy_suspension import require_external_ai_available
+from services.reflection_boundary import (
+    REFLECTION_SOURCE_UNAVAILABLE,
+    ReflectionBoundary,
+    VaultSourceUnavailableReason,
+    require_app_provider_boundary,
+)
 from services.wallet import preflight_deduction
 
 logger = logging.getLogger(__name__)
@@ -185,10 +192,45 @@ def _validate_image(image_base64: str, media_type: str) -> ImagePayload:
     return _build_attachment(image_base64, media_type)
 
 
+async def _app_provider_boundary(session: AsyncSession, user_id: int) -> ReflectionBoundary:
+    """Return the caller's boundary, failing a vault-bound page closed before any charge (#3156).
+
+    Resolved from server state alone (:func:`resolve_reflection_boundary`, one
+    indexed read, never a dial), before the image, the payer or the wallet.
+
+    Reading a page is an AI operation on the writer's own writing, and only the
+    app provider can do it: no vault advertises a transcription capability. So a
+    writer whose AI operations are bound to their vault gets the boundary's own
+    503 ``reflection_source_unavailable`` -- nothing charged, nothing dialled --
+    whatever key the request carries, since a key pays for a call and does not
+    consent to one. One WARNING, ids and closed vocabulary only.
+    """
+    boundary = await resolve_reflection_boundary(session, user_id)
+    if boundary is not ReflectionBoundary.VAULT_BOUND:
+        return boundary
+    logger.warning(
+        REFLECTION_SOURCE_UNAVAILABLE,
+        extra={
+            "user_id": user_id,
+            "operation": GenerationFeature.TRANSCRIPTION.value,
+            "reason": VaultSourceUnavailableReason.CAPABILITY_MISSING.value,
+        },
+    )
+    raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
+
+
 async def _run_transcription(
-    session: AsyncSession, image: ImagePayload, resolved_api_key: str | None
+    session: AsyncSession,
+    image: ImagePayload,
+    resolved_api_key: str | None,
+    boundary: ReflectionBoundary,
 ) -> LLMResponse:
     """Run the vision LLM for one page; roll back on any provider error.
+
+    The boundary gate is the first statement, in the same function as the dial
+    (#3156): :func:`transcribe_page` refused a vault-bound caller long before
+    here, so a refusal from the gate is a missing check upstream and a 500,
+    never a dial.
 
     The wallet was deducted only on the server-key path; BYOK has no wallet
     mutation. Every failure branch rolls the transaction back before mapping
@@ -199,6 +241,7 @@ async def _run_transcription(
     balance is permanent rather than the transient upstream failure a 502
     ``llm_provider_error`` invites the reader to retry.
     """
+    require_app_provider_boundary(boundary)
     try:
         return await generate_response(
             "",
@@ -267,8 +310,9 @@ async def transcribe_page(
 
     Stateless: no journal row is written and the metered call carries no
     ``journal_entry_id``. Strict ordering — an operator's external-AI
-    suspension answers 503 ``ai_suspended`` before anything else (#3075), then
-    the image is validated (422 without any charge), then the caller key and
+    suspension answers 503 ``ai_suspended`` before anything else (#3075), then a
+    vault-bound writer is answered 503 ``reflection_source_unavailable`` (#3156),
+    then the image is validated (422 without any charge), then the caller key and
     vision capability are resolved.
     With no personal key, a server with no real provider (402
     ``llm_key_required``) or an empty wallet (402 ``insufficient_offerings``) is
@@ -283,6 +327,7 @@ async def transcribe_page(
     payload or the transcribed text.
     """
     require_external_ai_available()
+    boundary = await _app_provider_boundary(session, current_user)
     image = _validate_image(payload.image_base64, payload.media_type)
     await require_ai_payer(session, current_user, x_llm_api_key)
     byok_key = resolve_chat_api_key(x_llm_api_key)
@@ -294,7 +339,7 @@ async def transcribe_page(
     async with generation_slot(session, current_user):
         spent = None if byok_key is not None else await preflight_deduction(session, current_user)
         key = GenerationKey.for_spend(spent)
-        response = await _run_transcription(session, image, byok_key)
+        response = await _run_transcription(session, image, byok_key, boundary)
         await _reject_unusable_reply(session, response, current_user)
         usage = await record_llm_usage(
             session,

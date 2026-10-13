@@ -206,7 +206,11 @@ async def test_the_operator_classifier_stamps_its_own_provenance(
     """A parsed provider reply is recorded as operator-side, not left blank."""
     _operator_answers(monkeypatch)
 
-    result = await fc.classify_frequencies(_BODY, classification=JournalClassification.PERSONAL)
+    result = await fc.classify_frequencies(
+        _BODY,
+        classification=JournalClassification.PERSONAL,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
 
     assert result.source is fc.ClassificationSource.OPERATOR
     assert result.weights == {_OPERATOR_ONLY_CODE: _OPERATOR_WEIGHT}

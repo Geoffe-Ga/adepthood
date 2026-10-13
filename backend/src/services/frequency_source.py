@@ -243,4 +243,6 @@ async def select_frequency_classification(
         return from_vault
     if boundary is ReflectionBoundary.VAULT_BOUND:
         raise VaultSourceUnavailableError(VaultSourceUnavailableReason.NO_ANSWER)
-    return await classify_frequencies(content, classification=classification, api_key=api_key)
+    return await classify_frequencies(
+        content, classification=classification, boundary=boundary, api_key=api_key
+    )
