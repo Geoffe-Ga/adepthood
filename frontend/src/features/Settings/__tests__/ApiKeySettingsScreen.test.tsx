@@ -9,6 +9,7 @@ import ApiKeySettingsScreen, {
   validateUserApiKey,
 } from '../ApiKeySettingsScreen';
 import { BYOK_DETAIL_DISCLOSURE } from '../byokDisclosure';
+import { NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY } from '../byokOnlyCopy';
 import { BYOK_PROVIDERS, providerForKey } from '../byokProviders';
 import {
   LOCAL_MODEL_SWITCH_DESCRIPTION,
@@ -153,7 +154,7 @@ describe('ApiKeySettingsScreen', () => {
   test('shows a hint when no key is saved yet', () => {
     setApiKeyState({});
     const { getByTestId } = render(<ApiKeySettingsScreen />);
-    expect(getByTestId('no-key-hint')).toBeTruthy();
+    expect(getByTestId('no-key-hint')).toHaveTextContent(NO_KEY_HINT);
   });
 
   test('shows a masked summary of the stored key', () => {
@@ -239,11 +240,7 @@ describe('ApiKeySettingsScreen', () => {
 
     const dialog = view.getByTestId('remove-key-dialog');
     expect(within(dialog).getByText('Remove API key?')).toBeTruthy();
-    expect(
-      within(dialog).getByText(
-        'Adepthood will use its own shared key instead, if one is set up. You can add your own key again whenever you like.',
-      ),
-    ).toBeTruthy();
+    expect(within(dialog).getByText(REMOVE_KEY_DIALOG_BODY)).toBeTruthy();
     const buttons = within(dialog).getAllByRole('button');
     expect(buttons.map((button) => within(button).getByText(/./).props.children)).toEqual([
       'Cancel',

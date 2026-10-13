@@ -36,6 +36,10 @@ class GoalCompletionRequest(BaseModel):
     # ``None`` preserves the idempotent full-target behavior of clients that
     # predate signed unit logging. Explicit values are additive deltas.
     completed_units: float | None = Field(default=None, allow_inf_nan=False)
+    # ``True`` when a journal or practice timer measured the amount (#3150).
+    # Stored on the day's row by the write that creates it; a later write that
+    # accumulates into that row leaves the flag as the first write set it.
+    via_timer: bool = False
 
     @model_validator(mode="after")
     def _validate_explicit_units(self) -> Self:
@@ -83,5 +87,6 @@ async def create_goal_completion(
             completed_on=payload.completed_on,
             completed_units=payload.completed_units,
             idempotency_key=idempotency_key,
+            via_timer=payload.via_timer,
         ),
     )

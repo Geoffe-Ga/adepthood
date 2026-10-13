@@ -95,5 +95,12 @@ echo "=== Web bundle (expo export) ==="
 
 ./node_modules/.bin/expo export --platform web || { echo "✗ Web bundle failed" >&2; exit 1; }
 
+# The enforced CSP's script-src 'self' plus Subresource Integrity (ADR 0009
+# phase (b)): stamp every served script and stylesheet with its sha384 hash and
+# fail if any is left unhashed, mismatched, inline or foreign. Same step the
+# Docker image runs through `npm run web:build`.
+echo "=== Subresource Integrity (web-hardening/sri.js) ==="
+node web-hardening/sri.js stamp dist || { echo "✗ Subresource Integrity check failed" >&2; exit 1; }
+
 echo "✓ Web bundle built"
 exit 0

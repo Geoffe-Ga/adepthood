@@ -55,8 +55,8 @@ from models.user import User
 from models.wallet_audit import WalletAudit
 from routers import journal as journal_router
 from routers import transcription as transcription_router
-from services import botmason
-from services.botmason import LLMProviderError
+from services import botmason, frequency_classification
+from services.botmason import ExternalAISuspendedError, LLMProviderError
 from services.creek_vault_client import HttpCreekVaultClient, carries_content
 from services.creek_vault_upload import upload_external_id
 from services.privacy_suspension import (
@@ -148,7 +148,10 @@ def record_constructions(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 def arm_anthropic(monkeypatch: pytest.MonkeyPatch) -> TransportStub:
-    """A server-paid Anthropic provider over a counting mock transport."""
+    """An Anthropic provider over a counting mock transport.
+
+    Reached only with the writer's own key since ADR 0009 phase (a) (#3067).
+    """
     return use_anthropic(monkeypatch, HTTPStatus.OK, _ANTHROPIC_OK)
 
 
@@ -448,6 +451,45 @@ async def test_free_exits_survive_suspension(
     assert stub.request_count == 0
 
 
+@pytest.mark.asyncio
+async def test_suspended_distressed_entry_still_receives_care(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-intimate distressed entry gets care, not ``ai_suspended`` (#3120).
+
+    Care never depends on the LLM (NORTH-STAR §10), so the local distress screen
+    runs before the suspension refusal: a care-only 200 with no notes, no charge,
+    no slot, no usage row, and no provider dial.
+    """
+    stub = arm_anthropic(monkeypatch)
+    minute = record_minute_bucket(monkeypatch)
+    admitted = record_admission(monkeypatch)
+    headers, user_id, _ = await signup(async_client, "suspended_distress")
+    distress = await seed_entry(db_session, user_id, body=_DISTRESS_BODY)
+    before_wallet = await wallet(db_session, user_id)
+    before_audit = await count_rows(db_session, WalletAudit)
+    suspend_ai(monkeypatch)
+
+    resp = await async_client.post(f"/journal/{distress}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert body["care"] is not None
+    assert body["care"]["resources"]
+    assert body["marginalia"] == []
+    assert body["suggestions"] == []
+    assert body["private"] is False
+    assert await wallet(db_session, user_id) == before_wallet
+    assert await count_rows(db_session, WalletAudit) == before_audit
+    assert await count_rows(db_session, GenerationSlot) == 0
+    assert await count_rows(db_session, LLMUsageLog) == 0
+    assert stub.request_count == 0
+    assert admitted == []
+    assert minute == []
+
+
 # --- T5/T9: the writing itself is never at risk --------------------------------
 
 
@@ -490,10 +532,13 @@ async def test_classification_degrades_under_suspension(
 ) -> None:
     """A consented write that would classify is saved; the classifier simply never dials.
 
-    The control at the end proves the suspended write *would* have dialled: the
-    same request with the switch off reaches the provider.
+    The control at the end proves the suspended write really reached the
+    classifier, and that the switch is what stopped it there: the same request
+    with the switch off is answered (by the suite's armed stub seam, since a
+    keyless classification dials no provider after ADR 0009 phase (a)).
     """
     stub = arm_anthropic(monkeypatch)
+    outcomes = _record_classifier_outcomes(monkeypatch)
     headers, user_id, _ = await signup(async_client, "classified")
     consent = await async_client.put(
         f"/corpus/consent/{CorpusSource.JOURNAL.value}", json={"granted": True}, headers=headers
@@ -510,10 +555,39 @@ async def test_classification_degrades_under_suspension(
     )
     assert stored.scalar_one() == 1
 
+    assert outcomes == [ExternalAISuspendedError.__name__]
+
     monkeypatch.delenv(EXTERNAL_AI_SUSPEND_ENV_VAR)
     control = await async_client.post("/journal/", json={"message": _BODY}, headers=headers)
     assert control.status_code == HTTPStatus.CREATED, control.text
-    assert stub.request_count >= 1
+    assert outcomes[1:] == [botmason.STUB_PROVIDER_NAME]
+    assert stub.request_count == 0
+
+
+def _record_classifier_outcomes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Wrap the classifier's leaf: each call records the answering provider or the error."""
+    outcomes: list[str] = []
+    real = frequency_classification.generate_response
+
+    async def _recording(
+        *,
+        user_message: str,
+        conversation_history: list[dict[str, str]],
+        system_prompt: str | None = None,
+        api_key: str | None = None,
+    ) -> botmason.LLMResponse:
+        try:
+            response = await real(
+                user_message, conversation_history, system_prompt=system_prompt, api_key=api_key
+            )
+        except LLMProviderError as exc:
+            outcomes.append(type(exc).__name__)
+            raise
+        outcomes.append(response.provider)
+        return response
+
+    monkeypatch.setattr(frequency_classification, "generate_response", _recording)
+    return outcomes
 
 
 @pytest.mark.asyncio

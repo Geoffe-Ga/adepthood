@@ -156,8 +156,12 @@ export async function signUp(
  * journal. Whether the welcome is offered again after a log-out is not this
  * helper's question, so it is skipped when it is shown and not required.
  */
-export async function logIn(page: Page, email: string): Promise<void> {
-  await page.goto(`${frontendUrl()}/login`);
+export async function logIn(
+  page: Page,
+  email: string,
+  origin: string = frontendUrl(),
+): Promise<void> {
+  await page.goto(`${origin}/login`);
   await page.getByRole('textbox', { name: 'Email' }).fill(email);
   await page.getByRole('textbox', { name: 'Password', exact: true }).fill(ACCOUNT_PHRASE);
   await page.getByRole('button', { name: 'Log in' }).click();
@@ -243,16 +247,46 @@ export async function seedHabit(
   startDate: string = START_DATE,
   revealed = false,
 ): Promise<number> {
+  return postHabit(request, token, name, {
+    start_date: startDate,
+    ...(revealed ? { revealed: true } : {}),
+  });
+}
+
+/**
+ * The journal link's default tiers: 10 / 20 / 45 minutes a day. The server
+ * only lets a timer link a habit whose goals count minutes or sessions (#3150).
+ */
+const WRITING_TIMER_GOALS = {
+  target_unit: 'minutes',
+  frequency: 1,
+  frequency_unit: 'per_day',
+  low: 10,
+  clear: 20,
+  stretch: 45,
+} as const;
+
+/** Create a habit the writing timer may be linked to: its goals count minutes. */
+export async function seedTimerHabit(
+  request: APIRequestContext,
+  token: string,
+  name: string,
+): Promise<number> {
+  return postHabit(request, token, name, {
+    start_date: START_DATE,
+    goals: WRITING_TIMER_GOALS,
+  });
+}
+
+async function postHabit(
+  request: APIRequestContext,
+  token: string,
+  name: string,
+  fields: Record<string, unknown>,
+): Promise<number> {
   const response = await request.post(`${backendUrl()}/habits/`, {
     headers: { Authorization: `Bearer ${token}` },
-    data: {
-      name,
-      icon: '★',
-      start_date: startDate,
-      energy_cost: 2,
-      energy_return: 4,
-      ...(revealed ? { revealed: true } : {}),
-    },
+    data: { name, icon: '★', energy_cost: 2, energy_return: 4, ...fields },
   });
   if (!response.ok()) throw new Error(`seeding ${name} failed with ${response.status()}`);
   return ((await response.json()) as { id: number }).id;
