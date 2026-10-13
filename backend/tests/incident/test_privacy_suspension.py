@@ -448,6 +448,45 @@ async def test_free_exits_survive_suspension(
     assert stub.request_count == 0
 
 
+@pytest.mark.asyncio
+async def test_suspended_distressed_entry_still_receives_care(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-intimate distressed entry gets care, not ``ai_suspended`` (#3120).
+
+    Care never depends on the LLM (NORTH-STAR §10), so the local distress screen
+    runs before the suspension refusal: a care-only 200 with no notes, no charge,
+    no slot, no usage row, and no provider dial.
+    """
+    stub = arm_anthropic(monkeypatch)
+    minute = record_minute_bucket(monkeypatch)
+    admitted = record_admission(monkeypatch)
+    headers, user_id, _ = await signup(async_client, "suspended_distress")
+    distress = await seed_entry(db_session, user_id, body=_DISTRESS_BODY)
+    before_wallet = await wallet(db_session, user_id)
+    before_audit = await count_rows(db_session, WalletAudit)
+    suspend_ai(monkeypatch)
+
+    resp = await async_client.post(f"/journal/{distress}/resonance", headers=headers)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert body["care"] is not None
+    assert body["care"]["resources"]
+    assert body["marginalia"] == []
+    assert body["suggestions"] == []
+    assert body["private"] is False
+    assert await wallet(db_session, user_id) == before_wallet
+    assert await count_rows(db_session, WalletAudit) == before_audit
+    assert await count_rows(db_session, GenerationSlot) == 0
+    assert await count_rows(db_session, LLMUsageLog) == 0
+    assert stub.request_count == 0
+    assert admitted == []
+    assert minute == []
+
+
 # --- T5/T9: the writing itself is never at risk --------------------------------
 
 
