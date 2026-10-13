@@ -23,7 +23,7 @@ from services.botmason import (
     LLMResponse,
     NoGenerationSourceError,
     generate_response,
-    vision_provider_available,
+    supports_vision,
 )
 from services.llm_pricing import MODEL_PRICING
 from tests.provider_transport import ANTHROPIC_KEY, OPENAI_KEY
@@ -105,10 +105,9 @@ async def test_stub_provider_is_unaffected_under_an_opus_model(
 def test_vision_capability_check_does_not_raise_under_opus(
     monkeypatch: pytest.MonkeyPatch, provider: str, model: str
 ) -> None:
-    """Keyless it is the stub's answer (seam disarmed: none); keyed, the model's own."""
+    """Each uncapped model stays vision-capable for a writer's own key under its own config."""
     _configure(monkeypatch, provider, model)
-    assert vision_provider_available() is False
-    assert vision_provider_available(_KEY_FOR_PROVIDER[provider]) is True
+    assert supports_vision(provider, model) is True
 
 
 def test_the_uncapped_models_stay_allowlisted_and_priced_for_byok() -> None:
