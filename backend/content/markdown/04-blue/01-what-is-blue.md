@@ -18,7 +18,7 @@ This is where the "I" softens into "We." Where self-expression becomes service. 
 
 In the body's map, we've come up from the Solar Plexus to the Heart. Red's power lives in the gut, and it is a power that pushes. Blue's lives in the chest, and it is a power that holds. Two very different muscles, and you need both.
 
-In Spiral Dynamics, Blue is the stage of conformity and order. It's the vMeme of law and hierarchy, of religious institutions and moral codes, of duty and discipline. It's the stage that gave us the Ten Commandments, the Bhagavad Gita, chivalry, and the idea that there's a right way to live—and it's your responsibility to follow it.
+In Spiral Dynamics, Blue is the stage of conformity and order—the value system (Spiral Dynamics calls these "vMemes") of law and hierarchy, of religious institutions and moral codes, of duty and discipline. It's the stage that gave us the Ten Commandments, the Bhagavad Gita, chivalry, and the idea that there's a right way to live—and it's your responsibility to follow it.
 
 Ken Wilber's Integral Theory calls this the "mythic membership" stage—where identity is defined not by personal power (Red) but by role and relationship. You're a good daughter, a loyal employee, a faithful believer, a dutiful citizen. Your worth comes from how well you fulfill the expectations of the group.
 
@@ -32,7 +32,7 @@ Blue teaches you that love is not just a feeling. It's a practice. A commitment.
 
 This is the stage where you learn that vulnerability is strength. That asking for help is not weakness. That belonging is not the same as conformity—it's the felt sense that you *matter* to someone, and someone matters to you, and that mattering is mutual, reciprocal, sacred.
 
-Blue is also where meditation gets real. We're moving from 5 minutes (Purple) and 10 minutes (Red) to **15 minutes of Metta meditation**—loving-kindness practice. This is not casual. This is the beginning of training your heart to stay open even when it wants to close. To radiate warmth even toward the people who've hurt you. To recognize that every being, including you, is worthy of love.
+Blue is also where the sit gets longer. We're moving from 5 minutes (Purple) and 10 minutes (Red) to **15 minutes of Metta meditation**—loving-kindness practice. Those shorter sits were real work; this one just asks more of your attention, and asks it of your heart. This is the beginning of training your heart to stay open even when it wants to close. To radiate warmth even toward the people who've hurt you. To recognize that every being, including you, is worthy of love.
 
 So yes, Blue is about community. But not the hollow kind where you perform belonging to gain approval. The kind where you risk being seen, being honest, being imperfect—and you're loved anyway. That's the gift. That's why Blue matters.
 

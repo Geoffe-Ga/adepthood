@@ -117,12 +117,12 @@ Bottoming Out is not the enemy. It’s the compost heap of the soul—the place 
 
 But if you bring Peak expectations into this valley—if you demand clarity, vitality, creativity, or purpose—then this soft stillness warps into Self-Loathing. You start comparing your low to your previous high, and that contrast becomes unbearable. You feel broken, behind, defective. But the pain doesn’t come from the bottom. It comes from resisting the bottom. From wishing you were somewhere else.
 
-The truth is, there is nothing wrong with being here. This is where healing happens, but only if you allow it. You are not meant to solve everything from this state. You are meant to surrender. To trust that nothing needs to be solved right now. Not your mood. Not your life. Not the whole goddamn world.
+The truth is, there is nothing wrong with being here. This is where healing happens, but only if you allow it. You don’t have to solve anything from this state. The invitation is to surrender. To trust that nothing needs to be solved right now. Not your mood. Not your life. Not the whole goddamn world.
 
 When you let go of striving and stop imagining you’re supposed to be better than this, the bottom becomes a sanctuary.
 It holds you. It swaddles you. It lets you dissolve so you can be re-formed.
 
-The only difference between agony and Convalescence is whether or not you accept that this is exactly where you’re supposed to be.
+Acceptance is what turns the bottom from agony into Convalescence—and some days you won’t manage it. That’s not a failure. It’s the hardest part of this whole Stage, and it’s okay to need help with it.
 
 And if you can—that’s when the healing begins.
 

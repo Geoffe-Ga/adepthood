@@ -40,7 +40,7 @@ This is the high point. Energy is abundant. The team is aligned. The project is 
 
 Experimenting means you set up conditions, run the test, and observe what emerges. You're playful. You're rigorous. You're willing to fail *instructively*—in a way that teaches you something valuable.
 
-This is the scientist in the lab. The startup running an MVP. The artist trying a new technique. You're at peak energy, but you're using that energy to *explore*, not to prove.
+This is the scientist in the lab. The startup shipping a rough first version to see who bites. The artist trying a new technique. You're at peak energy, but you're using that energy to *explore*, not to prove.
 
 But when you're in the Overdose, Peaking becomes **Crusade**. Now you're not experimenting—you're *evangelizing*. You've decided this is The Way, and everyone else needs to get on board or get out of the way. You've mistaken your hypothesis for truth, and you're on a mission to convert the nonbelievers.
 
@@ -74,7 +74,7 @@ You see this in organizations all the time: the leader who insists the new polic
 
 Overlook Details is intellectual dishonesty dressed up as optimism. And it's poison.
 
-The Self-Care Strategy here is simple: *slow down*. Get granular. Pay attention to the details, especially the ones that make you uncomfortable. Write everything down. Bring in a fresh set of eyes. Ask someone you trust to poke holes in your assumptions.
+The Self-Care Strategies for this phase start in the body: a hard workout, or a round of 4/7/8 or box breathing. Then *slow down*. Get granular. Pay attention to the details, especially the ones that make you uncomfortable. Write everything down. Bring in a fresh set of eyes. Ask someone you trust to poke holes in your assumptions.
 
 Data collection is an act of love. It's saying, "I care more about what's true than what I want to be true." And that's the heart of Orange's gift.
 

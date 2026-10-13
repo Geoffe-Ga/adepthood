@@ -14,7 +14,7 @@ media: []
 
 At Teal, the relationship to Free Will transforms radically.
 
-Yellow was the Intentional Actor—someone who could see their conditioning and choose differently. That's real. That's powerful. But it's still limited to the personality self. It's still the ego trying to perfect itself.
+Yellow was the Intentional Actor—someone who could see their conditioning and choose differently. That's real. That's powerful. But it works entirely inside the personality self—the conscious mind choosing better. Teal adds a different instrument, not a better one.
 
 Teal is where you discover that *true* Free Will doesn't belong to the personality. It belongs to the **True Self**—the eternal aspect of you that transcends this incarnation.
 

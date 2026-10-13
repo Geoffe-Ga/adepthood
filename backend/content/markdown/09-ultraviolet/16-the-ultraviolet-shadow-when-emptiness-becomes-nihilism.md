@@ -20,16 +20,16 @@ This is liberating. It means you're not trapped by any identity, any role, any s
 
 But the shadow version of this teaching is: *Nothing matters. It's all meaningless. Why bother?*
 
-This is nihilism. And it's seductive, especially for intellectuals who've seen through the illusions of meaning that previous stages offered.
+This is nihilism. And it's seductive, especially if you're the kind of mind that loves seeing through things.
 
 Red's meaning: power and survival.
 Blue's meaning: belonging and purpose.
 Orange's meaning: achievement and progress.
 Green's meaning: healing and authenticity.
 Yellow's meaning: integration and understanding.
-Teal's meaning: witnessing and presence.
+Teal's meaning: the True Self, and being known by it.
 
-By Ultraviolet, you've seen through all of them. And if you're not careful, you conclude: there is no meaning. It was all a game. A cosmic joke.
+By Ultraviolet, you've seen each of them as one note instead of the whole song. And if you're not careful, you conclude: there is no song. It was all a game. A cosmic joke.
 
 But that's not what emptiness teaches. Emptiness doesn't mean meaningless. It means *ungraspable*. Meaning is not fixed, not inherent, not given—but it's not absent either. It's *created*. Moment by moment. Through your engagement with life.
 

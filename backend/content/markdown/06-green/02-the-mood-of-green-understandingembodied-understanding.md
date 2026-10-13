@@ -24,7 +24,7 @@ When it is **Excessive**, you become **Overwhelmed and Enmeshed**. You feel *eve
 
 The work of Green is to find the balance. To be sensitive without being fragile. To feel deeply without drowning. To honor the body's wisdom without making it a tyrant. To descend into the shadow without getting lost there.
 
-This is Embodied Understanding. Not knowledge *about* the body, but knowledge *as* the body. Not understanding your emotions, but understanding *through* them.
+This is Embodied Understanding: knowledge *as* the body rather than about it. You don't stand outside your emotions and study them from a safe distance. You understand *through* them.
 
 And it starts with the willingness to meet the parts of yourself you've been running from.
 

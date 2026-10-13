@@ -12,13 +12,13 @@ media: []
 
 ## What the Myth Teaches About Green
 
-**You Must Descend**
+**You Choose the Descent**
 
 Inanna didn't go to the underworld because she was forced. She chose it. Something in her knew she was incomplete. That the shining goddess on the throne was only half the story. That to be whole, she had to meet the part of herself she'd been avoiding: the grief, the rage, the powerlessness. Ereshkigal—the shadow sister.
 
 This is Green's first lesson: you can't skip the descent. You can't optimize your way around it. You can't Orange yourself out of shadow work. You have to *choose* to go down. And it won't make sense at first. People will ask, "Why are you doing this? You're successful. You're fine." But you'll know: I'm not whole yet.
 
-**You Must Strip Away the Armor**
+**The Armor Comes Off at the Gates**
 
 Each gate demanded Inanna surrender something. Her crown. Her power. Her identity as queen. By the time she reached the bottom, she had nothing left to hide behind.
 

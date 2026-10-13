@@ -592,13 +592,16 @@ def test_authority_match_ignores_case_and_line_wrapping(workspace: Workspace) ->
 
 
 def test_committed_supersessions_are_exactly_the_ratified_departures() -> None:
-    """The three December 2025 rulings plus the chapter-voiced free-will copy (2026-10)."""
+    """The December 2025 rulings plus the chapter-voiced free-will copy (2026-10).
+
+    Teal's Growing Up stage and free-will archetype left the list at the
+    ``b06a58e`` re-pin (#3135): upstream's CSV adopted both values, so the
+    entries became no-ops.
+    """
     entries = load_supersessions(generator.SUPERSESSIONS_PATH)
     assert {(entry.stage_id, entry.field) for entry in entries} == {
         ("blue", "aspect"),
         ("teal", "aspect"),
-        ("teal", "relationship_to_free_will"),
-        ("teal", "growing_up_stage"),
         ("beige", "free_will_description"),
         ("red", "free_will_description"),
         ("blue", "free_will_description"),

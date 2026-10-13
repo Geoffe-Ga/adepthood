@@ -20,9 +20,9 @@ This is powerful. This is the beginning of awakening.
 
 But Green has a shadow: it can get *stuck* there. It can mistake recognizing conditioning for *healing* it. It can glorify the wound instead of integrating it. It can become so identified with victimhood that it never claims its agency.
 
-The archetype that emerges here is the **Shadow Glorifier**—someone who has done enough inner work to *name* their shadow, but not enough to *integrate* it. They wear their trauma like a badge. They use their sensitivity as a weapon. They demand that the world accommodate their triggers without doing the work to expand their capacity.
+The archetype that shows up here is the **Shadow Glorifier**: what Green looks like when it runs the show unexamined. You've done enough inner work to *name* the shadow, but not enough to *integrate* it. Trauma becomes a badge. Sensitivity becomes a weapon. The world gets asked to accommodate your triggers while the work of expanding your capacity stays undone.
 
-The Shadow Glorifier knows all the language: boundaries, consent, trauma-informed, emotional labor, nervous system dysregulation. And they use it to avoid responsibility. To keep themselves small. To ensure that they never have to risk being powerful.
+The Shadow Glorifier knows all the language: boundaries, consent, trauma-informed, emotional labor, nervous system dysregulation. And it spends every word avoiding responsibility. Keeping you small. Making sure you never have to risk being powerful.
 
 This is Green's trap. It's the person who's been in therapy for a decade and can articulate exactly why they're stuck, but they're still stuck. It's the activist who can name every systemic injustice but never takes action because "the system is too big." It's the spiritual seeker who's done so much shadow work that they've made the shadow their identity.
 

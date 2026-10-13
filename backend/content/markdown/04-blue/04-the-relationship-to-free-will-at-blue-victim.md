@@ -22,7 +22,7 @@ At Blue, you do what you're told. You follow the rules. You meet the expectation
 
 So you sacrifice. You perform. You bend yourself into the shape others need you to be. And somewhere along the way, you forget that you ever had a shape of your own.
 
-This is why Blue's relationship to Free Will is "Victim." Not because Blue people *are* victims in some essential way, but because at this stage, the felt experience is: **I have no choice. I have to do this. If I don't, everything falls apart.**
+This is why Blue's relationship to Free Will is "Victim." Not because anyone *is* a victim in some essential way, but because when this capacity is running the show unexamined, the felt experience is: **I have no choice. I have to do this. If I don't, everything falls apart.**
 
 And here's the twist: some of that is true. In genuinely oppressive systems—abusive families, exploitative workplaces, authoritarian cultures—the cost of non-conformity is real. The threat is not imagined. The cage is not metaphorical.
 

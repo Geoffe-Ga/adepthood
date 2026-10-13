@@ -12,11 +12,11 @@ media: []
 
 ## The Default Habit Deepened: Baby Waterfall Conventions as Life Design
 
-Let's go deeper into why Baby Waterfall Conventions are revolutionary.
+Let's go deeper into why Baby Waterfall Conventions work so well.
 
 Most habit systems focus on big changes: go to the gym, meditate for an hour, completely overhaul your diet. And those changes are valuable. But they require willpower. Motivation. Structure.
 
-Baby Waterfall Conventions are different. They're micro-rituals that take less than 30 seconds. They're so small that resistance can't form. And yet, over time, they rewire your entire relationship to presence.
+Baby Waterfall Conventions are different. They're micro-rituals that take less than 30 seconds. They're so small that resistance mostly doesn't bother showing up. And yet, over time, they change your relationship to presence more than their size suggests.
 
 **The Science of Micro-Habits**
 
@@ -57,7 +57,7 @@ Pick the moments where presence would most serve you. Maybe:
 - Before checking phone (because that's when you usually spiral into reactivity)
 - Before eating (because meals are a chance to slow down)
 - Before meetings (because that's when you need to show up clear)
-- Before difficult conversations (because that's when the witness is most needed)
+- Before difficult conversations (because that's when your True Self is hardest to hear)
 - Before bed (because that sets the tone for sleep)
 
 **Step 3: Design Micro-Rituals for Each Anchor**
@@ -75,6 +75,6 @@ Don't obsess. But for the first month, keep a simple log. Check mark when you re
 
 **Step 5: Add New Conventions Slowly**
 
-Start with 3. Master those for a month. Then add 2 more. By the end of the year, you could have 10-15 conventions woven into your day. That's 20-30 minutes of micro-presence practice, distributed throughout your life, requiring almost zero willpower.
+Start with 3. Live with those for a month. Then add 2 more. By the end of the year, you could have 10-15 conventions woven into your day. That's 20-30 minutes of micro-presence practice, distributed throughout your life, requiring almost zero willpower.
 
-This is how you make presence your baseline. Not through heroic effort. Through tiny, repeated returns.
+This is how presence gets easier to find. Not through heroic effort. Through tiny, repeated returns.

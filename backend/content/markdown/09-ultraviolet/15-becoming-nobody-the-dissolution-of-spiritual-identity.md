@@ -14,7 +14,7 @@ media: []
 
 Here's Ultraviolet's greatest test: Can you let go of being "spiritual"?
 
-You've done the work. You meditate 75 minutes a day. You've integrated the stages. You've cultivated presence. You know things that most people don't know. You've touched states that most people will never touch.
+You've done the work. You sit 45 minutes a day. You've integrated the stages. You've cultivated presence. You know things that most people don't know. You've touched states that most people will never touch.
 
 And there's a seduction there. The seduction of seeing yourself as *advanced*. As *awakened*. As special.
 
@@ -24,7 +24,7 @@ Ultraviolet's work is to dismantle this. To become *nobody*. To release the iden
 
 Because that identity is just another cage. More subtle than the ego of achievement (Orange) or the ego of shadow work (Green), but still a cage.
 
-The teaching is radical: *You are not special for having done this work.* You're just awake to what was always true. And everyone else is equally capable of waking up. They're just at a different point on the path.
+The teaching is radical: *You are not special for having done this work.* You're just awake to what was always true. And everyone else is equally capable of waking up. They're just playing a different chord today.
 
 Humility is not self-deprecation. It's accurate self-assessment. You've developed capacity. Real capacity. But that doesn't make you better. It makes you *responsible*. Responsible to serve. To teach. To hold space for others.
 

@@ -47,11 +47,11 @@ Deep breath, friends.
 
 This is the OPPORTUNITY TO GROUND.
 
-We speak the following when we are attuned to gently tending our own Wavelength, honoring rhythm. Keeping our Highs and Lows aligned with the vibration of our True Self rather than with the patterns that occlude that infinite lovingawareness we truly are at a foundational level.
+When we’re gently tending our own Wavelength, honoring its rhythm—letting the highs and lows run on our True Self’s clock instead of the craving’s—here’s what it sounds like:
 
 “I’d love to prolong the Peak… but I think I’ll fearlessly welcome Contraction, instead.”
 
-This is the time to practice the 5-4-3-2-1 Technique (five things you can see, four you can feel, three you can hear, two you can smell, one you can taste). And then, having grounded yourself, you must make the decision to take a step away from whatever you might have been tempted to overconsume.
+This is the time to practice the 5-4-3-2-1 Technique (five things you can see, four you can feel, three you can hear, two you can smell, one you can taste). And then, once you’re grounded, the choice is yours: take a step back from whatever you were tempted to overconsume.
 
 
 In the face of craving, the 5-4-3-2-1 Technique (or one of its alternatives) can bring you back into your body and make choice possible. So when you’re called by that extra cup of coffee, that shot of tequila, that hit of a spliff, or even that desire to prolong your period of creative productivity past where you have the energy to support it, you can touch grass and choose otherwise.

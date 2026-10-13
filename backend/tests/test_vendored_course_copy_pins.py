@@ -86,7 +86,7 @@ _SUPERSESSION_KEYS = frozenset({"stage_number", "field", "value"})
 #: The ratified supersessions recorded today: stage 4's aspect and stage 8's
 #: color, aspect and free-will archetype (December 2025), plus stage 8's
 #: Growing Up stage, which follows the True Self framing rather than the
-#: CSV's "Nonduality" (2026-10).
+#: CSV's former "Nonduality" (2026-10).
 _EXPECTED_SUPERSESSIONS = frozenset(
     {
         (4, "aspect"),
@@ -112,7 +112,7 @@ _EXPECTED_HEADINGS: tuple[str, ...] = (
     "#### Understanding: Intellectual (Orange, Rationality, The Status Seeker)",
     "#### Understanding; Embodied (Green, Plurality, The Shadow Glorifier)",
     "#### Wisdom: Systems (Yellow, Integrative, The Despairing Analyst)",
-    "#### Wisdom: True Self (Teal, Nonduality, The Adept)",
+    "#### Wisdom: True Self (Teal, True Self Connection, The True Self Embodier)",
     "#### Being: Unity (Ultraviolet, Effortless Being, The Blissy Adept)",
     "#### Awareness: Emptiness (Clear Light, Pure Awareness, Whole Adept)",
 )

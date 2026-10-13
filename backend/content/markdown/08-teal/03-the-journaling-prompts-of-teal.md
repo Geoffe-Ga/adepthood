@@ -16,7 +16,7 @@ Teal's journaling is contemplative. You're not strategizing (Orange) or processi
 
 **Prompt 1: Reflect on Moments of Flow and Presence (At least 4x per week)**
 
-Think back over your day or week. When did you experience genuine presence? When were you so absorbed in what you were doing that the sense of "I" temporarily dissolved?
+Think back over your day or week. When did you experience genuine presence? When were you so absorbed in what you were doing that the usual narrator went quiet and something steadier seemed to be doing the work?
 
 Maybe it was during your practice. Maybe it was while cooking. Maybe it was in conversation, or walking in nature, or creating something.
 

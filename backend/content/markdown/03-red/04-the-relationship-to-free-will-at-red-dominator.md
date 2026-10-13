@@ -42,7 +42,7 @@ Notice what Red adds to the two before it. The Pleasure Seeker moves toward the 
 
 
 
-But when you stay there too long, you don’t evolve. You calcify. You become addicted to force.
+But when the Dominator keeps running the show unexamined, the fire doesn’t grow you. It calcifies you. You get addicted to force.
 
 
 

@@ -26,7 +26,7 @@
 
 [“INHABIT (Feel)”](#inhabit-feel)
 
-[“Pranasynthesis” as the Cure for Depression](#pranasynthesis-as-the-cure-for-depression)
+[“Pranasynthesis”: Taking in Light When You’re Depressed](#pranasynthesis-taking-in-light-when-youre-depressed)
 
 [Tarot in the Foxhole: Inviting in Source via Divination](#tarot-in-the-foxhole-inviting-in-source-via-divination)
 
@@ -107,7 +107,7 @@ Purple’s Shadow: Delusions of Reference and Magical Thinking        30
 
 6. RESTORATION        37
 
-“Pranasynthesis” as the Cure for Depression        38
+“Pranasynthesis”: Taking in Light When You’re Depressed        38
 
 Tarot in the Foxhole: Inviting in Source via Divination        39
 
