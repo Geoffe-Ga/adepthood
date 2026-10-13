@@ -302,12 +302,6 @@ describe('journal.transcribePage error mapping', () => {
       kind: 'image_too_large',
     },
     {
-      name: '422 model_lacks_vision',
-      status: 422,
-      body: { detail: 'model_lacks_vision' },
-      kind: 'model_lacks_vision',
-    },
-    {
       name: '422 no_text_found is its own kind, not invalid_image',
       status: 422,
       body: { detail: 'no_text_found' },
@@ -487,15 +481,17 @@ describe('journal.transcribePage exhausted-balance classification', () => {
     expect(err.kind).toBe('credit_exhausted');
   });
 
-  test('our own spent key gets its own kind, not the catch-all', async () => {
+  test('no 503 is a provider-balance story any more: the server key is retired', async () => {
+    // The server's own key never pays for a page (ADR 0009 phase (a), #3067), so
+    // the 503 it once answered for a spent server balance is gone, and with it
+    // the kind that told the writer "restoring it is ours".
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'llm_service_credit_exhausted' }, 503));
     const err = (await captureError(
       journal.transcribePage({ imageBase64: 'abc', mediaType: 'image/png' }, 'tok'),
     )) as TranscriptionErrorInstance;
 
     expect(err).toBeInstanceOf(TranscriptionError);
-    expect(err.kind).not.toBe('unknown');
-    expect(err.kind).toBe('service_credit_exhausted');
+    expect(err.kind).toBe('unknown');
   });
 
   test('a genuine spent wallet still classifies as wallet_exhausted', async () => {

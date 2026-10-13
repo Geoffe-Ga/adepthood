@@ -267,7 +267,6 @@ export type MediaType = 'image/jpeg' | 'image/png' | 'image/webp';
 export type TranscriptionErrorKind =
   | 'invalid_image'
   | 'image_too_large'
-  | 'model_lacks_vision'
   // The server read the image but got nothing usable back: no text in it, or
   // the model declined. Neither is billed, and a fresh shot is the next move.
   | 'no_text_found'
@@ -276,11 +275,11 @@ export type TranscriptionErrorKind =
   // No personal key, on a server with nothing credits could buy (#3096): only a
   // key of the writer's own can read the page, so it is terminal until one is added.
   | 'key_required'
-  // A spent *provider* balance, which `wallet_exhausted` (our own monthly
-  // metering) is not: its remedy is the API key, not the next monthly reset.
-  // Split by whose key it was, because that decides who can act.
+  // A spent *provider* balance on the writer's own key, which `wallet_exhausted`
+  // (our own monthly metering) is not: its remedy is topping up that key's
+  // account, not the next monthly reset. The server's own key never pays for a
+  // page (ADR 0009 phase (a), #3067), so there is no server-balance sibling.
   | 'credit_exhausted'
-  | 'service_credit_exhausted'
   | 'rate_limited'
   | 'provider_error'
   | 'network'
@@ -1832,7 +1831,6 @@ const byokHeaders = (apiKey?: string | null): Record<string, string> | undefined
 /** Statuses this endpoint answers with more than one distinct condition. */
 const TRANSCRIBE_PAYMENT_REQUIRED = 402;
 const TRANSCRIBE_UNPROCESSABLE = 422;
-const TRANSCRIBE_SERVICE_UNAVAILABLE = 503;
 
 /** One status's `detail` sub-map, paired with what an unlisted detail means. */
 interface TranscribeDetailRule {
@@ -1844,7 +1842,7 @@ interface TranscribeDetailRule {
  * Per-status `detail` rules: the endpoint reuses one status for several distinct
  * conditions, so the status alone cannot classify them. A 402 is a spent monthly
  * wallet, a spent provider balance, or a missing key; a 422 is a bad image, a
- * text-only model, or an unusable read (no text found, or a refused read); a 503 is a spent server balance or a genuine outage. The 422
+ * text-only model, or an unusable read (no text found, or a refused read). The 422
  * fallback also absorbs the Pydantic array-detail case that `extractErrorDetail`
  * collapses to `'Request failed'`.
  */
@@ -1861,15 +1859,10 @@ const TRANSCRIBE_DETAIL_RULES: Record<number, TranscribeDetailRule> = {
   [TRANSCRIBE_UNPROCESSABLE]: {
     kinds: {
       image_too_large: 'image_too_large',
-      model_lacks_vision: 'model_lacks_vision',
       no_text_found: 'no_text_found',
       transcription_refused: 'transcription_refused',
     },
     fallback: 'invalid_image',
-  },
-  [TRANSCRIBE_SERVICE_UNAVAILABLE]: {
-    kinds: { llm_service_credit_exhausted: 'service_credit_exhausted' },
-    fallback: 'unknown',
   },
 };
 

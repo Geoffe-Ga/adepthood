@@ -1321,41 +1321,27 @@ built with, so a deploy that silently shipped stale content is visible without
 opening a shell.
 
 A 503 from `GET /health` or `GET /health/ready` means the database is
-unreachable. A 503 from an application route does not — see the next section
-for the other one.
+unreachable. A 503 from an application route does not: `ai_suspended` is the
+operator's own incident switch (`PRIVACY_SUSPEND_EXTERNAL_AI`), and the
+generation slot fails closed with its own code.
 
-### When the shared AI balance runs out
+### When an AI provider balance runs out
 
-**Since ADR 0009 phase (a) (#3067) this should not happen:** no request is
-sent on the server's own provider account, so there is no shared balance to
-run out. If `llm_service_credit_exhausted` is ever logged, a call was made with
-the server's key, which phase (a) forbids for a person's content: treat it as a
-privacy incident (`docs/ops/privacy-incident-response.md`), not a billing one.
-The rest of this section describes the signal as it was before phase (a).
+**There is no shared balance any more.** Since ADR 0009 phase (a) (#3067) no
+request is sent on the server's own provider account: every vendor call carries
+the writer's own key, and `services.botmason._resolve_api_key` refuses any other
+before a client is built. The `503 llm_service_credit_exhausted` code that once
+reported a spent server balance is retired with it; no route can emit it. If a
+vendor call is ever made on `LLM_API_KEY`, that is a privacy incident
+(`docs/ops/privacy-incident-response.md`), not a billing one.
 
-`llm_service_credit_exhausted` is the one application-route `503` that is not a
-database problem, and it is the only outage in this app that no amount of
-waiting clears: the provider account behind `LLM_API_KEY` has a spent balance or
-a reached spend cap, and every reflection, resonance pass, and page
-transcription that uses the server key fails until someone tops it up.
-
-**The signal.** A `WARNING` on the `services.botmason` logger whose message is
-exactly `llm_service_credit_exhausted`, carrying `provider` and `byok=false`,
-with the provider's own words on the attached exception. Alert on it: it is not
-retried, so it will not repeat on its own the way a transient failure does, and
-one line is the whole notice you get. Its `INFO` sibling
-`llm_credit_exhausted` (`byok=true`) is *not* an outage — that is a user's own
-key coming back empty, and the user has already been told in words they can act
-on. Do not page on it; it is there so that a support question has an answer.
-
-**What users see meanwhile.** Callers using their own key are unaffected. Callers
-on the server key get copy that names the condition, says restoring it is ours,
-and offers pasting their own key in Settings as the way not to wait. Nothing
-about the provider, the account, or the key reaches them.
-
-**The fix.** Add credit (or raise the cap) on the provider account for
-`LLM_API_KEY`, or rotate `LLM_API_KEY` to a funded account and redeploy. No
-code change and no migration; the next request succeeds.
+**A writer's own key coming back empty** is `402 llm_credit_exhausted`, logged
+once at `INFO` on the `services.botmason` logger with `provider` and the
+provider's own words on the attached exception. It is not an outage and not
+retried: the writer has already been told, in words they can act on, to top up
+their own provider account. Do not page on it; it is there so that a support
+question has an answer. A page read is called from the writer's device straight
+to their vendor, so a spent key there never reaches the server or its logs.
 
 ### Verifying allowlisted models still resolve
 
