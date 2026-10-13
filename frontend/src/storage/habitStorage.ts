@@ -200,8 +200,17 @@ export async function removePendingCheckIns(
   if (completed.length === 0 || getActiveUser() !== owner) return;
   await serialize(key, async () => {
     if (getActiveUser() !== owner) return;
-    const current = (await getJsonArrayForUpdate<PendingCheckIn>(key)) ?? [];
-    const remaining = [...current];
+    let current: PendingCheckIn[] | null;
+    try {
+      current = await getJsonArrayForUpdate<PendingCheckIn>(key);
+    } catch (err: unknown) {
+      console.warn(
+        '[storage] transient read during pending check-in cleanup, retaining queue for replay',
+        err,
+      );
+      return;
+    }
+    const remaining = [...(current ?? [])];
     for (const entry of completed) {
       const index = remaining.findIndex((candidate) =>
         entry.operation_id

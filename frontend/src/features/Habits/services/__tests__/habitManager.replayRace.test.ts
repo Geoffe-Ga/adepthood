@@ -13,7 +13,9 @@ import {
 } from '../../../../storage/habitStorage';
 import type { PendingCheckIn } from '../../../../storage/habitStorage';
 import { serialize } from '../../../../storage/serializedWrite';
+import { setUserTimezonePending } from '../../../../storage/userCalendar';
 import { setActiveUser } from '../../../../storage/userScope';
+import { useDroppedCheckInStore } from '../../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import { HABIT_DEFAULTS } from '../../HabitDefaults';
 import { habitManager } from '../habitManager';
@@ -24,6 +26,7 @@ const mockCheckInResult: Awaited<ReturnType<typeof goalCompletions.create>> = {
   reason_code: 'logged',
   day_units: 1,
 };
+const mockStorageRead = jest.mocked(AsyncStorage.getItem).getMockImplementation()!;
 
 jest.mock('../../../../api', () => ({
   ...jest.requireActual<typeof ApiModule>('../../../../api'),
@@ -57,6 +60,7 @@ const queued = (operationId: string, goalId = 1): PendingCheckIn => ({
 beforeEach(async () => {
   await AsyncStorage.clear();
   setActiveUser(1);
+  setUserTimezonePending(1, false);
   useHabitStore.setState({ habits: [], loading: false, error: null });
   jest.mocked(habits.listAll).mockResolvedValue([]);
   jest.mocked(goalCompletions.create).mockResolvedValue(mockCheckInResult);
@@ -65,9 +69,151 @@ beforeEach(async () => {
 afterEach(() => {
   setActiveUser(null);
   jest.restoreAllMocks();
+  jest.mocked(AsyncStorage.getItem).mockImplementation(mockStorageRead);
+  setUserTimezonePending(1, false);
 });
 
 describe('offline queue replay with concurrent writers (#3086)', () => {
+  it('still hydrates the saved quarantine notice while replay waits for a confirmed calendar', async () => {
+    const entry = {
+      ...queued('previously-rejected'),
+      status: 404,
+      dropped_at: '2026-10-13T13:00:00Z',
+    };
+    await recordDroppedCheckIn(entry);
+    useDroppedCheckInStore.getState().setEntries([]);
+    setUserTimezonePending(1, true);
+    await habitManager.loadHabits('UTC', { replayCheckIns: false });
+    expect(useDroppedCheckInStore.getState().entries).toEqual([entry]);
+    expect(goalCompletions.create).not.toHaveBeenCalled();
+  });
+
+  it('defers every refresh caller while auth marks the calendar provisional', async () => {
+    const entry = { ...queued('journal-bootstrap'), timestamp: '2026-10-12T01:00:00Z' };
+    await savePendingCheckIn(entry);
+    setUserTimezonePending(1, true);
+    await habitManager.loadHabits('UTC');
+    expect(goalCompletions.create).not.toHaveBeenCalled();
+    expect(await loadPendingCheckIns()).toEqual([entry]);
+    setUserTimezonePending(1, false);
+    await habitManager.loadHabits('America/Los_Angeles');
+    expect(goalCompletions.create).toHaveBeenCalledWith(
+      expect.objectContaining({ completed_on: '2026-10-11' }),
+      expect.anything(),
+    );
+  });
+
+  it.each(['signed units', 'legacy amount-less'])(
+    'retains an accepted %s operation when cleanup storage is temporarily unreadable',
+    async (kind) => {
+      const entry: PendingCheckIn =
+        kind === 'signed units'
+          ? queued('accepted-before-read-failure')
+          : { goal_id: 1, did_complete: true, timestamp: '2026-10-12T12:00:00Z' };
+      await savePendingCheckIn(entry);
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const read = jest.spyOn(AsyncStorage, 'getItem');
+      jest.mocked(goalCompletions.create).mockImplementationOnce(async () => {
+        read.mockRejectedValueOnce(new Error('storage temporarily unavailable'));
+        return mockCheckInResult;
+      });
+
+      await expect(habitManager.loadHabits('UTC')).resolves.toBeUndefined();
+      expect(await loadPendingCheckIns()).toEqual([entry]);
+      await habitManager.loadHabits('UTC');
+      expect(await loadPendingCheckIns()).toEqual([]);
+      const calls = jest.mocked(goalCompletions.create).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0]).toEqual(calls[1]);
+      if (kind === 'signed units') {
+        expect(calls[0]![1]).toEqual({ idempotencyKey: `log-unit:${entry.operation_id}` });
+      } else {
+        // Amount-less writes are naturally idempotent on (user, goal, day):
+        // backend/tests/test_goal_completions.py::test_same_day_completion_is_idempotent.
+        expect(calls[0]![0]).toEqual({
+          goal_id: 1,
+          did_complete: true,
+          completed_on: '2026-10-12',
+        });
+      }
+    },
+  );
+
+  it('does not post queued timestamps while the bootstrap timezone is provisional', async () => {
+    const entry = { ...queued('waiting-for-zone'), timestamp: '2026-10-12T01:00:00Z' };
+    await savePendingCheckIn(entry);
+    await habitManager.loadHabits('UTC', { replayCheckIns: false });
+    expect(goalCompletions.create).not.toHaveBeenCalled();
+    expect(await loadPendingCheckIns()).toEqual([entry]);
+
+    await habitManager.loadHabits('America/Los_Angeles');
+    expect(goalCompletions.create).toHaveBeenCalledWith(
+      expect.objectContaining({ completed_on: '2026-10-11' }),
+      expect.anything(),
+    );
+  });
+
+  it('uses the latest authoritative zone before a pending queue read reaches the POST', async () => {
+    await savePendingCheckIn({ ...queued('hydrated-zone'), timestamp: '2026-10-12T01:00:00Z' });
+    const started = deferred<void>();
+    const response = deferred<string | null>();
+    const originalRead = mockStorageRead;
+    let held = false;
+    jest.spyOn(AsyncStorage, 'getItem').mockImplementation((key) => {
+      if (key === '@adepthood/pending_checkins#u1' && !held) {
+        held = true;
+        started.resolve();
+        return response.promise;
+      }
+      return originalRead(key);
+    });
+    const first = habitManager.loadHabits('UTC');
+    await started.promise;
+    const second = habitManager.loadHabits('America/Los_Angeles');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    response.resolve(await originalRead('@adepthood/pending_checkins#u1'));
+    await Promise.all([first, second]);
+    expect(goalCompletions.create).toHaveBeenCalledTimes(1);
+    expect(goalCompletions.create).toHaveBeenCalledWith(
+      expect.objectContaining({ completed_on: '2026-10-11' }),
+      expect.anything(),
+    );
+  });
+
+  it('does not let an older refresh finishing late overwrite the latest replay calendar', async () => {
+    await savePendingCheckIn({ ...queued('late-refresh'), timestamp: '2026-10-12T01:00:00Z' });
+    const firstFetchStarted = deferred<void>();
+    const firstFetch = deferred<Awaited<ReturnType<typeof habits.listAll>>>();
+    jest.mocked(habits.listAll).mockImplementationOnce(() => {
+      firstFetchStarted.resolve();
+      return firstFetch.promise;
+    });
+    const queueStarted = deferred<void>();
+    const queueRead = deferred<string | null>();
+    let held = false;
+    jest.spyOn(AsyncStorage, 'getItem').mockImplementation((key) => {
+      if (key === '@adepthood/pending_checkins#u1' && !held) {
+        held = true;
+        queueStarted.resolve();
+        return queueRead.promise;
+      }
+      return mockStorageRead(key);
+    });
+    const first = habitManager.loadHabits('UTC');
+    await firstFetchStarted.promise;
+    const second = habitManager.loadHabits('America/Los_Angeles');
+    await queueStarted.promise;
+    firstFetch.resolve([]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    queueRead.resolve(await mockStorageRead('@adepthood/pending_checkins#u1'));
+    await Promise.all([first, second]);
+    expect(goalCompletions.create).toHaveBeenCalledTimes(1);
+    expect(goalCompletions.create).toHaveBeenCalledWith(
+      expect.objectContaining({ completed_on: '2026-10-11' }),
+      expect.anything(),
+    );
+  });
+
   it.each(['success', 'transient failure'] as const)(
     'preserves an appended tap after a replay %s',
     async (outcome) => {

@@ -43,6 +43,7 @@ import type {
   DroppedCheckInReason,
   PendingCheckIn,
 } from '../../../storage/habitStorage';
+import { isUserTimezonePending } from '../../../storage/userCalendar';
 import { getActiveUser } from '../../../storage/userScope';
 import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
@@ -1116,20 +1117,28 @@ const hydrateDroppedCheckIns = async (owner: number | null): Promise<void> => {
  * BUG-FE-HABIT-205). Same-day replays omit the field so the server
  * stamps real wall-clock time — the online path's genuine-backfill rule.
  */
-const drainPendingCheckIns = async (owner: number | null, tz?: string): Promise<void> => {
+interface ReplayCalendar {
+  zone: string;
+}
+
+const drainPendingCheckIns = async (
+  owner: number | null,
+  calendar: ReplayCalendar,
+): Promise<void> => {
   const scope = capturePendingCheckInScope();
   const pending = await loadPendingCheckIns(scope);
   if (pending.length === 0 || getActiveUser() !== owner) return;
-  // Device zone is the stand-in until auth hydrates the stored zone.
-  const zone = tz ?? detectDeviceTimezone();
-  const today = todayInUserTZ(zone);
   // One clock read and one record read per pass: the policy is pure, and
   // only the head can carry a retry record, so a stale read cannot matter.
   const nowMs = Date.now();
   const headState = await loadCheckInReplayState();
   const completed: PendingCheckIn[] = [];
   for (let i = 0; i < pending.length; i += 1) {
-    if (getActiveUser() !== owner) return;
+    if (getActiveUser() !== owner || isUserTimezonePending(owner)) return;
+    // A newer authoritative calendar can arrive during storage reads or the
+    // preceding POST. Read it immediately before sending each unsent entry.
+    const zone = calendar.zone;
+    const today = todayInUserTZ(zone);
     const step = await replayCheckIn(pending[i]!, zone, today, headState, nowMs, owner);
     if (step === 'stop') {
       await removePendingCheckIns(completed, scope);
@@ -1148,14 +1157,14 @@ const drainPendingCheckIns = async (owner: number | null, tz?: string): Promise<
  * earlier session is only real to the user once the notice can read it.
  */
 const activeReplays = new Map<number | null, Promise<void>>();
+const replayCalendars = new Map<number | null, ReplayCalendar>();
 
-const replayPendingCheckIns = (tz?: string): Promise<void> => {
-  const owner = getActiveUser();
+const replayPendingCheckIns = (owner: number | null, calendar: ReplayCalendar): Promise<void> => {
   const active = activeReplays.get(owner);
   if (active) return active;
   const replay = (async () => {
     try {
-      await drainPendingCheckIns(owner, tz);
+      await drainPendingCheckIns(owner, calendar);
       if (getActiveUser() === owner) await hydrateDroppedCheckIns(owner);
     } finally {
       activeReplays.delete(owner);
@@ -1205,9 +1214,38 @@ let lastKnownTz: string | undefined;
  * cannot say whether what it holds is fresh. A caller about to act on today's
  * server total (the writing-timer check-off, #2861) needs exactly that answer.
  */
-const refreshHabits = async (tz?: string): Promise<boolean> => {
+interface HabitRefreshOptions {
+  /** Read cached/server habits while waiting for the account's calendar. */
+  replayCheckIns?: boolean;
+}
+
+const prepareRefreshCalendar = (tz: string | undefined, options: HabitRefreshOptions) => {
   if (tz !== undefined) lastKnownTz = tz;
   const zone = tz ?? lastKnownTz ?? detectDeviceTimezone();
+  const owner = getActiveUser();
+  const calendar = replayCalendars.get(owner) ?? { zone };
+  const replayReady = options.replayCheckIns !== false && !isUserTimezonePending(owner);
+  // Register at request entry, so an older fetch finishing later cannot
+  // overwrite the calendar carried by a newer authenticated refresh.
+  if (replayReady) {
+    calendar.zone = zone;
+    replayCalendars.set(owner, calendar);
+  }
+  return { owner, calendar, zone, replayReady };
+};
+
+const refreshReplayState = async (
+  owner: number | null,
+  calendar: ReplayCalendar,
+  replayReady: boolean,
+): Promise<void> => {
+  if (getActiveUser() !== owner) return;
+  if (replayReady) await replayPendingCheckIns(owner, calendar);
+  else await hydrateDroppedCheckIns(owner);
+};
+
+const refreshHabits = async (tz?: string, options: HabitRefreshOptions = {}): Promise<boolean> => {
+  const { owner, calendar, zone, replayReady } = prepareRefreshCalendar(tz, options);
   setLoading(true);
   setError(null);
   const cached = await loadCachedHabits();
@@ -1242,12 +1280,12 @@ const refreshHabits = async (tz?: string): Promise<boolean> => {
   // ``return``-ed from the first failure with the successful prefix still
   // in the queue, so on the next load every check-in that had already
   // posted would post AGAIN — silent duplication of the user's streak.
-  await replayPendingCheckIns(zone);
+  await refreshReplayState(owner, calendar, replayReady);
   return fresh;
 };
 
-const loadHabits = async (tz?: string): Promise<void> => {
-  await refreshHabits(tz);
+const loadHabits = async (tz?: string, options?: HabitRefreshOptions): Promise<void> => {
+  await refreshHabits(tz, options);
 };
 
 /**
