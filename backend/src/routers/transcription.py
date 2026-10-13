@@ -12,6 +12,14 @@ rejected, failed, or refused request never bills the wallet.
 Privacy invariant: the base64 payload and the transcribed text are never logged,
 interpolated into an exception message, or otherwise emitted anywhere. Only
 metadata (user id, token count) is logged.
+
+**A writer's own key never reaches this router** (ADR 0009 phase (a), #3067).
+A device holding a key reads the page by calling its vendor directly, after
+asking :func:`direct_admission` -- which carries neither the key nor the page
+-- whether the operator's external-AI incident switch is on. This route takes no
+``X-LLM-API-Key`` header: one sent anyway by a stale client is not declared,
+never read, never forwarded and never logged, so the request is keyless and is
+refused ``llm_key_required`` unless the armed stub test seam answers it.
 """
 
 from __future__ import annotations
@@ -22,7 +30,7 @@ import logging
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import Depends, Header, Request, status
+from fastapi import Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
@@ -38,16 +46,10 @@ from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
 from schemas.transcription import TranscribePageRequest, TranscribePageResponse
 from services.botmason import (
-    LLM_API_KEY_MAX_LENGTH,
     ImagePayload,
-    LLMCreditExhaustedError,
     LLMProviderError,
     LLMResponse,
-    LLMVisionUnsupportedError,
-    credit_exhausted_error,
     generate_response,
-    resolve_chat_api_key,
-    vision_provider_available,
 )
 from services.generation_access import require_ai_payer
 from services.generation_guardrails import generation_slot
@@ -70,10 +72,10 @@ _TRANSCRIPTION_ATTEMPTS = 1
 router = build_router(
     prefix="/journal",
     tags=["journal"],
-    # 402 is a payer refusal: ``require_ai_payer`` refuses a page with no key of
-    # the writer's own (``llm_key_required``; there is no server-key fallback
-    # since ADR 0009 phase (a)), and ``preflight_deduction`` an empty wallet on
-    # the armed stub test seam.
+    # 402 is a payer refusal: this route never holds a key of the writer's own
+    # (a device with one calls its vendor directly), so ``require_ai_payer``
+    # refuses ``llm_key_required`` unless the armed stub test seam answers, and
+    # ``preflight_deduction`` refuses an empty wallet on that seam.
     # 429 is the generation guardrails' (#623): the concurrent slot and the
     # wallet's daily ceiling; 503 is the slot failing closed.
     extra_statuses=(
@@ -185,34 +187,23 @@ def _validate_image(image_base64: str, media_type: str) -> ImagePayload:
     return _build_attachment(image_base64, media_type)
 
 
-async def _run_transcription(
-    session: AsyncSession, image: ImagePayload, resolved_api_key: str | None
-) -> LLMResponse:
-    """Run the vision LLM for one page; roll back on any provider error.
+async def _run_transcription(session: AsyncSession, image: ImagePayload) -> LLMResponse:
+    """Run the keyless vision call for one page; roll back on any provider error.
 
-    The wallet was deducted only on the server-key path; BYOK has no wallet
-    mutation. Every failure branch rolls the transaction back before mapping
-    the error. The two
-    :class:`LLMProviderError` subclasses are checked before their base, each
-    naming a condition a 502 would flatten — a text-only model is a well-formed
-    request the model cannot serve (422 ``model_lacks_vision``), and a spent
-    balance is permanent rather than the transient upstream failure a 502
-    ``llm_provider_error`` invites the reader to retry.
+    No key is ever passed: only the armed stub test seam can answer a keyless
+    call, and the payer gate has already refused one it cannot. The vision and
+    spent-balance arms this once mapped needed a writer's key reaching a vendor
+    from here, which no longer happens -- a device with a key reads the page
+    itself -- so a provider failure is the one condition left, and it rolls the
+    staged debit back before answering 502 ``llm_provider_error``.
     """
     try:
         return await generate_response(
             "",
             [],
             system_prompt=build_transcription_prompt(),
-            api_key=resolved_api_key,
             images=[image],
         )
-    except LLMVisionUnsupportedError as exc:
-        await session.rollback()
-        raise unprocessable("model_lacks_vision") from exc
-    except LLMCreditExhaustedError as exc:
-        await session.rollback()
-        raise credit_exhausted_error(exc, byok=resolved_api_key is not None) from exc
     except LLMProviderError as exc:
         await session.rollback()
         raise bad_gateway("llm_provider_error") from exc
@@ -259,42 +250,38 @@ async def transcribe_page(
     payload: TranscribePageRequest,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    x_llm_api_key: Annotated[
-        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
-    ] = None,
 ) -> TranscribePageResponse:
-    """Transcribe one image of text, charging BotMason only when it pays the provider.
+    """Transcribe one keyless image of text on the armed stub seam, or refuse.
 
     Stateless: no journal row is written and the metered call carries no
     ``journal_entry_id``. Strict ordering — an operator's external-AI
     suspension answers 503 ``ai_suspended`` before anything else (#3075), then
-    the image is validated (422 without any charge), then the caller key and
-    vision capability are resolved.
-    With no personal key, a server with no real provider (402
-    ``llm_key_required``) or an empty wallet (402 ``insufficient_offerings``) is
-    refused before the slot or the wallet is touched (#3096). A valid caller
-    key bypasses both BotMason buckets; otherwise the wallet is deducted (402
-    when out of capacity). A provider failure rolls the transaction back so a
-    failed pass never bills, and so does a reply that is no text or a refusal
-    (422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one
-    row per real, non-stub call) and committed atomically with any charge.
+    the payer gate runs, then the image is validated (422 without any charge).
+    This route holds no key of the writer's own -- a device with one reads the
+    page by calling its vendor directly (ADR 0009 phase (a), #3067) -- so
+    outside the armed stub test seam the gate refuses 402 ``llm_key_required``
+    before the body is decoded and before the slot or the wallet is touched
+    (#3096). On the seam the wallet is
+    deducted (402 ``insufficient_offerings`` when out of capacity). A provider
+    failure rolls the transaction back so a failed pass never bills, and so
+    does a reply that is no text or a refusal (422 ``no_text_found`` /
+    ``transcription_refused``). Usage is committed atomically with the charge.
 
     Only metadata (user id, total tokens) is logged — never the base64 image
     payload or the transcribed text.
     """
     require_external_ai_available()
+    # The payer gate precedes validation: outside the stub seam a keyless page
+    # can only be refused, so its body is never decoded.
+    await require_ai_payer(session, current_user, None)
     image = _validate_image(payload.image_base64, payload.media_type)
-    await require_ai_payer(session, current_user, x_llm_api_key)
-    byok_key = resolve_chat_api_key(x_llm_api_key)
-    if not vision_provider_available(byok_key):
-        raise unprocessable("model_lacks_vision")
     # One of the user's two concurrent generation slots (#623), held from
     # before the charge until the page settles; transcription keeps its own
     # 20/minute budget rather than the resonance/essay minute bucket.
     async with generation_slot(session, current_user):
-        spent = None if byok_key is not None else await preflight_deduction(session, current_user)
+        spent = await preflight_deduction(session, current_user)
         key = GenerationKey.for_spend(spent)
-        response = await _run_transcription(session, image, byok_key)
+        response = await _run_transcription(session, image)
         await _reject_unusable_reply(session, response, current_user)
         usage = await record_llm_usage(
             session,
@@ -312,7 +299,7 @@ async def transcribe_page(
             feature=GenerationFeature.TRANSCRIPTION,
             user_id=current_user,
             key=key,
-            bucket=None if spent is None else spent.bucket,
+            bucket=spent.bucket,
             outcome=GenerationOutcome.KEPT,
             attempts=_TRANSCRIPTION_ATTEMPTS,
             usage=usage,
@@ -323,3 +310,30 @@ async def transcribe_page(
         extra={"user_id": current_user, "total_tokens": response.total_tokens},
     )
     return TranscribePageResponse(text=response.text)
+
+
+@router.post(
+    "/transcribe-page/direct-admission",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    dependencies=[Depends(get_current_user)],
+)
+# The page-read budget, on both axes, so a device reading its own pages keeps
+# the pace this route always allowed one capture session.
+@limiter.limit(TRANSCRIBE_RATE_LIMIT)
+@limiter.limit(TRANSCRIBE_USER_RATE_LIMIT, key_func=per_user_rate_limit_key)
+async def direct_admission(
+    request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+) -> Response:
+    """Say whether a device may read a page by calling its own vendor directly.
+
+    A writer's own key never reaches this server (ADR 0009 phase (a), #3067):
+    the device sends the page straight to the vendor that key belongs to. What
+    the device cannot know is whether an operator has switched external AI off
+    for a privacy incident (#3075), the one control meant to stop a BYOK call
+    too, so it asks here first. The request carries no body, no key and no page;
+    the answer is 204 with no body, or 503 ``ai_suspended``. Nothing is charged,
+    metered or logged beyond the access line every request gets.
+    """
+    require_external_ai_available()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

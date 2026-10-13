@@ -590,21 +590,6 @@ def supports_vision(provider: str, model: str) -> bool:
     return model in spec.vision_models
 
 
-def vision_provider_available(api_key: str | None = None) -> bool:
-    """Return whether this request may honestly serve an image in this environment.
-
-    The provider is the one the person's own key selects, and must advertise
-    the configured model as vision-capable. Without a key the path is the stub,
-    which can read a page only while its test seam is armed (#3096): a canned
-    transcription is never handed to a writer.
-    """
-    provider = _provider_for_request(api_key)
-    spec = PROVIDER_REGISTRY.get(provider)
-    if spec is None:
-        return stub_seam_armed()
-    return supports_vision(provider, _get_model(provider))
-
-
 def _ensure_vision_capable(
     provider: str,
     model: str,
