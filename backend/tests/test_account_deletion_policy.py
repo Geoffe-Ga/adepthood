@@ -19,6 +19,7 @@ nothing.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from http import HTTPStatus
 
@@ -48,12 +49,15 @@ from tests.helpers.account_seed import (
 
 _PASSWORD = "securepassword123"  # pragma: allowlist secret
 
-# The single place an erased account's email address is allowed to remain: the
-# purchase receipt. It stays because the address is how a paid-for licence or
-# token pack is matched to its buyer, so erasing it would confiscate something
-# the person paid for. Asserted as an exact set — a second surviving mention is
-# a leak, and losing this one is a regression of a different kind.
+# The single place an erased account's email address is allowed to remain: a
+# purchase receipt that was never linked to the account. The owner's ratified
+# rule (#3063 AC15) blanks the address on every *linked* sale at deletion, but
+# an unclaimed sale keeps it, because the address is that sale's only claim
+# path. Asserted as an exact set — a second surviving mention is a leak, and
+# losing this one would blank a receipt nobody claimed.
 _EXPECTED_SURVIVING_EMAIL_COLUMNS = {"gumroadsale.email"}
+# A sale bought under the doomed address and never claimed by any account.
+_UNCLAIMED_SALE_ID = "unclaimed-under-the-doomed-address"
 
 # The wallet movement the cross-account test writes. The amounts carry no
 # meaning beyond being distinguishable from each other -- what the test reads
@@ -292,10 +296,26 @@ async def test_deletion_leaves_no_trace_of_the_erased_address(
     only by foreign keys would miss it and the test above would still pass.
 
     The equality (rather than a subset check) is deliberate in both directions.
-    A new hiding place for the address fails here; so does the purchase receipt
-    quietly losing it, which would strand a paid-for licence.
+    A new hiding place for the address fails here; so does the unclaimed
+    receipt quietly losing it, which would strand a sale nobody has claimed
+    yet. The seeded sale is linked to the doomed account (its token-pack
+    credit), so its address must be gone: the count of rows still naming the
+    address is exactly one, the unclaimed receipt.
     """
     headers, doomed, _ = seeded_pair
+    await db_session.execute(
+        sa.insert(SQLModel.metadata.tables["gumroadsale"]).values(
+            gumroad_sale_id=_UNCLAIMED_SALE_ID,
+            product_id="unclaimed",
+            email=doomed.email,
+            resource_name="sale",
+            is_recurring_charge=False,
+            refunded=False,
+            raw_payload={},
+            created_at=datetime.now(UTC),
+        ),
+    )
+    await db_session.commit()
     before = await _rows_mentioning(db_session, doomed.email)
     assert sum(before.values()) > 0
 
@@ -313,6 +333,7 @@ async def test_deletion_leaves_no_trace_of_the_erased_address(
         if count
     }
     assert set(after) == _EXPECTED_SURVIVING_EMAIL_COLUMNS
+    assert after == {"gumroadsale.email": 1}
 
 
 @pytest.mark.asyncio

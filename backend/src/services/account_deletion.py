@@ -35,9 +35,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, Table, delete, update
+from sqlalchemy import JSON, Column, CursorResult, Table, delete, or_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 from sqlmodel import SQLModel, col, select
@@ -50,6 +51,7 @@ from domain.account_deletion import (
     policy_gaps,
 )
 from domain.ownership import OwnedBy, owner_predicate
+from domain.retention import REDACT_INSTEAD_OF_DELETE
 from models.account_deletion_audit import AccountDeletionAudit
 from models.feedback import FeedbackReport
 from services.feedback_triage import detach_from_doomed_reports
@@ -194,6 +196,35 @@ async def _clear_references(session: AsyncSession, table: Table, account: Accoun
         )
 
 
+def _blank(column: Column[Any]) -> object:
+    """The empty value for a redacted column: ``{}`` for JSON, ``""`` for text."""
+    return {} if isinstance(column.type, JSON) else ""
+
+
+async def _anonymise_linked_sales(session: AsyncSession, account: Account) -> None:
+    """Blank the buyer's identifiers on every sale linked to ``account``; stamp the instant.
+
+    The owner's ratified receipt lifetime (#3063 AC15): the receipt stays, the
+    columns the retention registry names are blanked, and ``anonymised_at``
+    starts its retention clock. A sale is linked through the account's licence
+    binding or its token-pack credit -- never by email, so a sale nobody
+    claimed keeps the address that is its only claim path. Runs before the
+    sweep, which erases the binding and clears the credit link.
+    """
+    sale = SQLModel.metadata.tables["gumroadsale"]
+    binding = SQLModel.metadata.tables["licensebinding"]
+    bound_sale_ids = select(binding.c.gumroad_sale_id).where(binding.c.user_id == account.user_id)
+    linked = or_(
+        sale.c.token_pack_credited_user_id == account.user_id,
+        sale.c.gumroad_sale_id.in_(bound_sale_ids),
+    )
+    values: dict[str, object] = {
+        name: _blank(sale.c[name]) for name in REDACT_INSTEAD_OF_DELETE["gumroadsale"]
+    }
+    values["anonymised_at"] = datetime.now(UTC)
+    await session.execute(update(sale).where(linked).values(values))
+
+
 def require_total_policy() -> None:
     """Refuse to erase anything while the policy has a hole in it."""
     gaps = policy_gaps(SQLModel.metadata)
@@ -273,6 +304,7 @@ async def delete_account(
         session,
         select(FeedbackReport.id).where(col(FeedbackReport.user_id) == account.user_id),
     )
+    await _anonymise_linked_sales(session, account)
     counts = await _sweep(session, account)
     receipt = _build_receipt(account, counts, vault_disposition)
     session.add(

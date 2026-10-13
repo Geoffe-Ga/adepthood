@@ -510,19 +510,18 @@ def test_a_proposal_that_drops_open_obligations_is_reported(
 
 
 def test_the_sale_proposal_redacts_real_columns_and_names_the_schema_it_needs() -> None:
-    """Gumroad: the clock needs an anonymisation stamp the row does not have yet.
+    """Gumroad: the clock's anonymisation stamp is built, so no schema is still required.
 
     The proposal redacts existing columns rather than deleting the receipt,
-    names the missing column as proposed schema, and states the trade-off.
+    its clock column now exists, and it states the trade-off.
     """
     sale = _proposal("gumroadsale")
     columns = SQLModel.metadata.tables["gumroadsale"].c
     assert sale.clock is ProposalClock.AFTER_ACCOUNT_DELETION
     assert sale.redact_columns == ("email", "raw_payload")
     assert all(column in columns for column in sale.redact_columns)
-    assert sale.requires_schema is not None
-    assert sale.requires_schema.startswith("gumroadsale.anonymised_at")
-    assert "anonymised_at" not in columns, "now built: drop requires_schema"
+    assert "anonymised_at" in columns
+    assert sale.requires_schema is None
     assert "re-matched" in sale.rationale
     assert "to confirm" in sale.rationale
 

@@ -386,9 +386,6 @@ RETENTION: Mapping[str, RetentionRule] = {
             compared_to_today=TodayComparison.SHORTER,
             trigger="the sale's anonymisation at deletion of the account it was linked to",
             redact_columns=("email", "raw_payload"),
-            requires_schema="gumroadsale.anonymised_at, stamped by account deletion on "
-            "every sale linked to the account (token-pack credit or LicenseBinding); "
-            "proposed, not built -- today the row records no deletion instant",
             rationale="Trade-off: after redaction a returning buyer can no longer be "
             "re-matched to the licence or pack they paid for. 180 days is assumed to "
             "cover typical refund and card-dispute windows (to confirm; some dispute "
