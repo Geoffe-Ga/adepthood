@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
-import { backendUrl, seedHabit, sessionFor, signUp } from './journalHabitsBrowserSupport';
+import { backendUrl, seedTimerHabit, sessionFor, signUp } from './journalHabitsBrowserSupport';
 
 /**
  * #3006: a finished writing session with no habit linked points to Settings,
@@ -53,7 +53,7 @@ test('an unlinked writing timer points to Settings, which opens on the habit pic
   const email = await signUp(page, 'unlinked-timer-nudge');
   const { token } = await sessionFor(page.request, email);
   const headers = { Authorization: `Bearer ${token}` };
-  const habitId = await seedHabit(page.request, token, HABIT_NAME);
+  const habitId = await seedTimerHabit(page.request, token, HABIT_NAME);
   expect(await linkedHabitId(page.request, headers)).toBeNull();
 
   await page.reload();
