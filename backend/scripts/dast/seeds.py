@@ -97,6 +97,18 @@ _HABIT_FIELDS: dict[str, object] = {
     "energy_return": 2,
 }
 
+# The journal link's default tiers -- 10 / 20 / 45 minutes a day -- as sent by
+# ``POST /habits/``'s create-only ``goals`` block. A constant nested value, so
+# the top-level-only interpolation passes it through untouched.
+_TIMER_GOALS: dict[str, object] = {
+    "target_unit": "minutes",
+    "frequency": 1,
+    "frequency_unit": "per_day",
+    "low": 10,
+    "clear": 20,
+    "stretch": 45,
+}
+
 _SEED_NOTE = "seeded by the authorization matrix"
 _REPLAY_NAME = "dast replay"
 
@@ -133,6 +145,19 @@ SEED_REGISTRY: Mapping[str, SeedSpec] = MappingProxyType(
             create_method="POST",
             create_path="/habits/",
             payload={"name": "DAST habit {unique}", **_HABIT_FIELDS},
+            id_pointer=("id",),
+        ),
+        # A habit a timer may log to (#3150): created with minutes goals,
+        # because ``PATCH /ui-flags`` refuses to link a habit on any unit a
+        # timer cannot measure. Only that reference asks for it.
+        "timer_habit_id": SeedSpec(
+            create_method="POST",
+            create_path="/habits/",
+            payload={
+                "name": "DAST timer habit {unique}",
+                **_HABIT_FIELDS,
+                "goals": _TIMER_GOALS,
+            },
             id_pointer=("id",),
         ),
         # Creating a habit auto-creates its three goals, so the same call is
