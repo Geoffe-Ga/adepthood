@@ -66,16 +66,17 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
   reflection scope. Completion detection output is a separate, non-textual
   derived store (`completionsuggestion.completed_units` and `completed_on`).
 - **Server AI reads plaintext.** `services/botmason.py::resolve_chat_api_key`
-  uses the person's own key (BYOK) when one is sent, and otherwise **the
-  server's own `LLM_API_KEY`**. BotMason credits therefore pay for cloud calls
-  made with the app's key. The following all run server-side on decrypted
+  used the person's own key (BYOK) when one was sent, and otherwise **the
+  server's own `LLM_API_KEY`**, so BotMason credits paid for cloud calls made
+  with the app's key. Phase (a)'s first slice (#3067) has since removed that
+  fallback; see Decision item 4. The following all run server-side on decrypted
   prose: corpus ingest and classification, frequency classification,
   marginalia and essays, completion detection, transcription, and
   `services/creek_vault_reflect.py`.
 - **The web build is the only client that ships** (see the `APP_BASE_URL` row
-  in `DEPLOYMENT.md`). The operator's nginx serves it, and
-  `frontend/nginx.conf` sends `Content-Security-Policy-Report-Only`, which
-  reports and does not enforce. Native targets are configured in
+  in `DEPLOYMENT.md`). The operator's nginx serves it. When this record was
+  written the CSP was report-only; phase (b)'s first slice has since made it
+  enforced (see "Client delivery and update trust"). Native targets are configured in
   `frontend/app.json` and `frontend/eas.json` but are not shipped. On web,
   `frontend/src/storage/secureStringStore.ts` keeps secrets in localStorage.
 - **Ordinary-Fly vaults are operator-readable by ratified decision.**
@@ -137,12 +138,25 @@ answers to this record's follow-up questions, given the same evening.
    or a **managed no-retention runtime** we run. Under the decision, credits
    will never pay for a call made with the app's cloud key.
 
-   **Known gap until phase (a) lands, with #3096: the app-key fallback.**
-   Today, when no BYOK key is sent, `services/botmason.py::_resolve_api_key`
-   falls back to the server's `LLM_API_KEY`. A credit-funded request
-   carrying journal content therefore reaches a cloud vendor on the app's
-   account. Phase (a) removes that fallback for anything carrying a person's
-   content, together with #3096 (refuse without credits or BYOK).
+   **Closed by phase (a)'s first slice (#3067), with #3096: the app-key
+   fallback.** Before that slice, when no BYOK key was sent,
+   `services/botmason.py::_resolve_api_key` fell back to the server's
+   `LLM_API_KEY`, so a credit-funded request carrying journal content reached
+   a cloud vendor on the app's account. Now `_resolve_api_key` has no
+   fallback: a request without the person's own key is answered by their
+   vault where one is bound, and is otherwise refused `llm_key_required`
+   before any client is built (#3096). The exit test is
+   `backend/tests/security/test_byok_only_cloud.py`. Until the vault-local
+   model or the managed runtime is live, credits buy no app-provider
+   inference; that is the feature loss Decision item 12 accepts.
+
+   **Known gap, escalated to the owner: a vault-answered request is not
+   proven non-cloud.** Credits pay only when the caller's vault answers; whether the vault itself uses a cloud model is the vault's boundary (`CREEK_DOWNSTREAM_MODEL`, under the Creek deployment's `CREEK_CLOUD_CONSENT`), and is not yet verified per receipt. A managed vault whose Creek deployment sets
+   `CREEK_CLOUD_CONSENT` could therefore answer a credit-funded request
+   from a cloud model on a key the operator holds. Closing it needs either a
+   vault contract field that reports a local route per answer, or credit
+   admission limited to vaults the person connected themselves; the owner
+   decides which.
 
    **Honest limit, decided by the owner:** processing in that managed
    runtime is **not operator-blind while it runs**. The runtime sees the
@@ -227,15 +241,15 @@ history and future content stand or fall together.
 
 ### Option status_quo
 
-*HEAD today.*
+*HEAD when this record was decided (2026-10-07): the pre-phase-(a) baseline.*
 
 - **Boundary:** The Adepthood server process, its database and backups, Creek on ordinary Fly, and every configured model vendor all see plaintext; provider-managed custody is not operator-blind. (`repo:backend/src/services/journal_encryption.py::KEYS_ENV_VAR`)
 - **Key custody:** Server env var JOURNAL_ENCRYPTION_KEYS holds every key; EncryptedString decrypts on every ORM read. No per-person key exists. (`repo:backend/tests/test_custody_decision_record.py::test_custody_codec_has_no_per_principal_key`)
 - **Recovery:** Operator restores from backup with the env keys; password reset restores full access. (`repo:backend/src/services/journal_encryption.py::KEYS_ENV_VAR`)
 - **Metadata leakage:** Everything: content, sizes, timestamps, counts, tiers, ids, network metadata. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
-- **Inference location:** Server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
+- **Inference location:** Pre-phase-(a) baseline: server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. Phase (a)'s first slice (#3067) removed the app-key payer. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Supported platforms:** Web only ships; native is configured but unshipped. (`repo:DEPLOYMENT.md`)
-- **Client delivery and update trust:** Operator-served web bundle with a report-only CSP; a modified bundle is undetectable to the person. (`repo:frontend/nginx.conf`)
+- **Client delivery and update trust:** Operator-served web bundle with an enforced CSP and SRI; a modified bundle is undetectable to the person, because both are served by us. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** Nothing removed: 18 EncryptedString columns across 10 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defends a database or backup thief only while the env keys stay separate; nothing against operator, host, compelled update, subpoena or support pressure. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
@@ -331,13 +345,13 @@ history and future content stand or fall together.
 
 *Selected: user-held keys plus device-side and vault-local inference, BYOK cloud as explicit opt-in.*
 
-- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server and the app key is a fallback. (`owner:2026-10-07#B12-premise`)
+- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. (`owner:2026-10-07#B12-premise`)
 - **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07#B12-premise`)
 - **Recovery:** A recovery phrase the person writes down plus their passphrase; either unlocks the data key. Losing both means the data is gone, agreed up front at enrolment. Pairing, revocation and the rest of D03 stay open. (`owner:2026-10-07#followup-recovery`)
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
 - **Inference location:** Device first; then the person's vault-local model or a managed no-retention runtime we run (paid by credits, labelled on each use, not operator-blind while it runs); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
 - **Supported platforms:** Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later. (`owner:2026-10-07#B12-web`)
-- **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now, signed builds later; the CSP is report-only today, and CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
+- **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now (live since phase (b)'s first slice), signed builds later; CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** The 12 in-scope EncryptedString columns of journal_scope_proposal (of the 18; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
@@ -368,8 +382,14 @@ certifies that claim for that platform.
 ## Client delivery and update trust
 
 - **Web today:** the operator serves the bundle on every page load.
-  `frontend/nginx.conf` sends `Content-Security-Policy-Report-Only` at both
-  locations, so the CSP reports violations but does not enforce them. Nothing
+  `frontend/nginx.conf` sends an enforced `Content-Security-Policy` at every
+  location that sets headers, with `script-src 'self'` and no `'unsafe-inline'`
+  or `'unsafe-eval'` for scripts. `connect-src` is narrowed to the build's API
+  origin, its Sentry origin when one is configured, and the two BYOK vendors.
+  Styles keep `'unsafe-inline'`, an accepted risk, because react-native-web
+  injects them at runtime. `frontend/web-hardening/sri.js` stamps every script and
+  stylesheet in the built `index.html` with a `sha384` integrity hash, and the
+  build fails if any is missing or wrong. Both are served by us. Nothing
   out-of-band lets a person check the code they ran. Under BD this is the
   weakest link: a served bundle can capture the key and so read stored
   history as well as future content. That is why the web claim is scoped.
@@ -469,9 +489,12 @@ stores. This record consumes them and does not rebuild them.
 
 ## BotMason credits
 
-- **Today:** `resolve_chat_api_key` falls back to the server's
-  `LLM_API_KEY`, so a credit-funded message reaches a cloud vendor on the
-  app's account.
+- **Before phase (a):** `resolve_chat_api_key` fell back to the server's
+  `LLM_API_KEY`, so a credit-funded message reached a cloud vendor on the
+  app's account. Phase (a)'s first slice (#3067) removed that fallback: a
+  request without the person's own key is refused `llm_key_required` unless
+  their vault answers it. Credits pay only when the caller's vault answers; whether the vault itself uses a cloud model is the vault's boundary (`CREEK_DOWNSTREAM_MODEL`, under the Creek deployment's `CREEK_CLOUD_CONSENT`), and is not yet verified per receipt. That is the known gap recorded under
+  Decision item 4.
 - **Decided:** credits fund **non-cloud** inference only. That means the
   person's vault-local model (B05) or a managed no-retention runtime we run. A
   BYOK call pays its own vendor and debits no credits. With neither credits
@@ -605,13 +628,13 @@ with payer and location (B07). This composes with #3096.
 ### Phase (b): client key generation and the encrypted-sync envelope
 
 **First slice: enforce the CSP and add SRI** on the web client. Change
-`frontend/nginx.conf` from `Content-Security-Policy-Report-Only` to an
+`frontend/nginx.conf` from a report-only CSP header to an
 enforced `Content-Security-Policy`, and add Subresource Integrity to the
 served bundles. This comes first because of the consequence in the Decision
 section: enrolment is opt-in, web may not enrol before CSP plus SRI, and
 native comes later, so **nobody can enrol until this slice ships**.
-`test_custody_adr_names_enforcement_that_exists` pins the report-only header;
-rewrite it in the same change.
+`test_custody_adr_names_enforcement_that_exists` pinned the report-only
+header and was rewritten in the same change; it now pins the enforced one.
 
 Then: Generate keys on the device. Use an AEAD envelope bound to owner,
 object type, object id and version, with rollback defence. The proposed

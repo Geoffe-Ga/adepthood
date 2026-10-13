@@ -93,6 +93,8 @@ class _CheckInJob:
     # Weekly / monthly cadence: the streak counts met periods over the whole
     # habit's history instead of days (#2819). ``None`` keeps the day streak.
     cadence: PeriodCadence | None = None
+    # Stamped onto a row this job creates; see :attr:`CheckInCommand.via_timer`.
+    via_timer: bool = False
 
 
 @dataclass(frozen=True)
@@ -353,6 +355,7 @@ async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -
         completed_units=max(0.0, job.completed_units)
         if job.explicit_units
         else job.completed_units,
+        via_timer=job.via_timer,
     )
     if job.timestamp is not None:
         completion.timestamp = job.timestamp
@@ -469,6 +472,7 @@ def _new_explicit_completion(job: _CheckInJob) -> GoalCompletion:
         user_id=job.user_id,
         local_day=job.target_day,
         completed_units=max(0.0, job.completed_units),
+        via_timer=job.via_timer,
     )
     if job.timestamp is not None:
         completion.timestamp = job.timestamp
@@ -569,6 +573,10 @@ class CheckInCommand:
     completed_on: date | None = None
     completed_units: float | None = None
     idempotency_key: str | None = None
+    # Whether a timer measured the amount (#3150). Written only when this
+    # check-in creates the day's row: first write wins, later accumulations
+    # into the same row do not rewrite it.
+    via_timer: bool = False
 
 
 _DEFAULT_CHECK_IN_COMMAND = CheckInCommand()
@@ -740,6 +748,7 @@ async def record_goal_completion(
         timestamp=_completion_timestamp(command.completed_on, ctx.user_timezone),
         subtractive=subtractive,
         cadence=cadence,
+        via_timer=command.via_timer,
     )
     if command.completed_units is not None:
         return await _record_explicit_completion(session, job, command.idempotency_key)

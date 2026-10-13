@@ -21,6 +21,7 @@ real SDK clients at a loopback fake through exactly these variables
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager
 from typing import Any, cast
@@ -308,6 +309,11 @@ async def test_production_lifespan_boots_without_an_override(
         pass
 
 
+def _writer_key() -> str:
+    """The writer's own key for the armed provider: since ADR 0009 phase (a) no other dials."""
+    return OPENAI_KEY if os.environ["BOTMASON_PROVIDER"] == "openai" else ANTHROPIC_KEY
+
+
 def _record_openai_hosts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Build real OpenAI clients over a mock transport; record each request's host."""
     hosts: list[str] = []
@@ -322,7 +328,6 @@ def _record_openai_hosts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return real_client(**cast("dict[str, Any]", kwargs))
 
     monkeypatch.setenv("BOTMASON_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_API_KEY", OPENAI_KEY)
     monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini")
     monkeypatch.setattr(botmason.openai, "AsyncOpenAI", _factory)
     return hosts
@@ -342,7 +347,6 @@ def _record_anthropic_hosts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return real_client(**cast("dict[str, Any]", kwargs))
 
     monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
-    monkeypatch.setenv("LLM_API_KEY", ANTHROPIC_KEY)
     monkeypatch.setenv("LLM_MODEL", "claude-sonnet-5")
     monkeypatch.setattr(botmason.anthropic, "AsyncAnthropic", _factory)
     return hosts
@@ -372,7 +376,7 @@ async def test_production_dial_pins_the_registered_base_url(
     monkeypatch.setenv(ENV_VAR, "production")
     monkeypatch.setenv(name, COLLECTOR_URL)
 
-    await botmason.generate_response("hello", [])
+    await botmason.generate_response("hello", [], api_key=_writer_key())
 
     assert hosts == [registered_host]
 
@@ -391,6 +395,6 @@ async def test_development_dial_still_follows_the_sdk_variable(
     monkeypatch.setenv(ENV_VAR, "development")
     monkeypatch.setenv(name, COLLECTOR_URL)
 
-    await botmason.generate_response("hello", [])
+    await botmason.generate_response("hello", [], api_key=_writer_key())
 
     assert hosts == [COLLECTOR_HOST]

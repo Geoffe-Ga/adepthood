@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
 from dependencies.ownership import resolve_owned_habit
+from domain.habit_links import assert_habit_goals_linkable
 from models.user_ui_flags import UserUiFlags
 from schemas.ui_flags import UiFlagsUpdate
 
@@ -57,12 +58,17 @@ async def apply_ui_flags_update(
     (404 missing / 403 another user's habit) leaves the whole row untouched --
     a boolean sent in the same body is not applied either. An explicit ``null``
     link needs no authorisation: clearing your own link names no other row.
+
+    An owned habit must also count in a unit the writing timer can measure
+    (#3150): goals on anything but ``minutes``/``sessions``, or scored over a
+    period other than a day or a week, are a 422 that likewise writes nothing.
     The caller commits.
     """
     changes = update_body.model_dump(exclude_unset=True)
     habit_id = changes.get(_WRITING_HABIT_FIELD)
     if habit_id is not None:
         await resolve_owned_habit(session, habit_id, user_id)
+        await assert_habit_goals_linkable(session, habit_id)
     for field, value in changes.items():
         setattr(flags, field, value)
     session.add(flags)

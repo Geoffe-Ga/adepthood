@@ -286,8 +286,10 @@ logger = logging.getLogger(__name__)
 router = build_router(
     prefix="/journal",
     tags=["journal"],
-    # 402 is the wallet's, on the metered reflection paths: ``preflight_deduction``
-    # refuses a spend with no capacity, ``resolve_chat_api_key`` a call with no key.
+    # 402 is a payer refusal: ``require_ai_payer`` / ``payer_refusal`` refuse a
+    # call with no key of the writer's own (``llm_key_required``; no server-key
+    # fallback since ADR 0009 phase (a)), and ``preflight_deduction`` a spend with
+    # no capacity on a vault-answered pass.
     # 429 is the generation guardrails' (#623): the per-user minute bucket, the
     # concurrent slot, and the wallet's daily ceiling.
     extra_statuses=(
@@ -2327,7 +2329,12 @@ async def run_resonance(
     # A generation is about to happen: the per-user guardrails (#623) admit it
     # here, after every free exit above. The minute peek is a cheap 429 before
     # any slot or charge; the slot is held until the pass settles.
-    require_external_ai_available()
+    # While AI is suspended (#3075) a locally flagged entry still gets care: the
+    # screen is pure and local, so no provider is built or dialled (#3120).
+    try:
+        require_external_ai_available()
+    except HTTPException as suspended:
+        return await care_or_refusal(session, current_user, message, suspended)
     # No personal key and nothing to pay with is refused here, free (#3096); a
     # vault-bound pass is answered by the vault, so it needs no server provider.
     refusal = await payer_refusal(

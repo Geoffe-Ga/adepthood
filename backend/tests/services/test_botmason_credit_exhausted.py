@@ -35,7 +35,7 @@ import pytest
 
 from services import botmason
 from services.botmason import _MAX_RETRIES, _RETRY_BASE_DELAY, LLMProviderError, generate_response
-from tests.provider_transport import OPENAI_KEY, use_anthropic, use_openai
+from tests.provider_transport import OPENAI_KEY, armed_key, use_anthropic, use_openai
 
 # --- Provider fixtures, captured from real accounts (see the issue bodies) ---
 
@@ -165,7 +165,7 @@ _ExcT = TypeVar("_ExcT", bound=Exception)
 async def _call_and_capture(exc_type: type[_ExcT]) -> _ExcT:  # noqa: UP047
     """Drive ``generate_response`` and return the raised ``exc_type``."""
     with pytest.raises(exc_type) as excinfo:
-        await generate_response("hi", [])
+        await generate_response("hi", [], api_key=armed_key())
     return excinfo.value
 
 

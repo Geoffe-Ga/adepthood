@@ -162,9 +162,12 @@ jobs:
       # react-native-svg stop the two drifts it caught from being re-proposed by
       # a bot bump nobody chose, and the `expo-sdk` group delivers each SDK patch
       # as one reviewable PR instead of a red main.
+      # `web:build` is `expo export` followed by web-hardening/sri.js, which stamps
+      # every served script and stylesheet with its Subresource Integrity hash
+      # and fails the step if any is missing, mismatched, inline or foreign.
       - name: Web bundle builds
         working-directory: frontend
-        run: npx expo export --platform web
+        run: npm run web:build
 
       - name: Tests (with coverage thresholds)
         working-directory: frontend

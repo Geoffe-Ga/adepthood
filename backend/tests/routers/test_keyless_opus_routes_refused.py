@@ -1,11 +1,9 @@
-"""The server-paid model guard settles every charged route at net zero (#623).
+"""A server configured for Opus pays for nothing: each route refuses before any spend (#623, #3067).
 
-``generate_response`` refuses Opus/Turbo when the server pays (decision record
-§4: "refuse non-cost-bounded models on the server-paid path (no multiplier)").
-That refusal is an ``LLMProviderError``, so each charged route's existing
-failure arm must hand the writer's unit back: the resonance pass refunds with
-``refund_failed_pass``, the essay with ``refund_failed_essay``, and the
-transcription rolls its staged spend back. The provider is never dialled.
+#623 refused Opus/Turbo on the server-paid path and refunded the writer's unit.
+ADR 0009 phase (a) removed the server-paid path: a request carrying no key of
+the writer's own is refused 402 ``llm_key_required`` at admission, so there is
+no spend to refund and no audit row at all. The provider is never dialled.
 """
 
 from __future__ import annotations
@@ -14,19 +12,14 @@ from http import HTTPStatus
 from unittest.mock import AsyncMock
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.user import User
-from models.wallet_audit import (
-    REASON_REFUND_FAILED_ESSAY,
-    REASON_REFUND_FAILED_RESONANCE,
-    REASON_SPEND_MONTHLY,
-    WalletAudit,
-)
+from models.wallet_audit import WalletAudit
 from services import botmason
 from tests.provider_transport import ANTHROPIC_KEY
 from tests.transcription_helpers import JPEG_BYTES, payload
@@ -37,7 +30,8 @@ _BODY = "I walked by the river and the willow bent without breaking."
 
 @pytest.fixture
 def opus_server(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
-    """Configure a server-paid Anthropic deployment pinned to Opus; return the dial mock."""
+    """Configure an Anthropic deployment with its own key, pinned to Opus; return the dial mock."""
+    monkeypatch.delenv(botmason.STUB_SEAM_ENV_VAR, raising=False)
     monkeypatch.setenv("BOTMASON_PROVIDER", "anthropic")
     monkeypatch.setenv("LLM_API_KEY", ANTHROPIC_KEY)
     monkeypatch.setenv("LLM_MODEL", _OPUS)
@@ -103,32 +97,34 @@ async def _reasons(session: AsyncSession, user_id: int) -> list[str]:
     return list(result.scalars())
 
 
+def _assert_refused(resp: Response) -> None:
+    """The refusal only the writer's own key can answer."""
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json() == {"detail": botmason.KEY_REQUIRED_DETAIL}
+
+
 @pytest.mark.asyncio
-async def test_server_paid_opus_resonance_is_502_and_refunded(
+async def test_keyless_opus_resonance_is_refused_before_any_spend(
     async_client: AsyncClient, db_session: AsyncSession, opus_server: AsyncMock
 ) -> None:
-    """A refused model is a provider failure: 502, unit refunded, nothing dialled."""
+    """402 ``llm_key_required``: no spend, so no refund, and nothing dialled."""
     headers, user_id = await _signup(async_client, "opus_pass")
     entry_id = (await _seed_entry(db_session, user_id)).id
     before = await _wallet(db_session, user_id)
 
     resp = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
 
-    assert resp.status_code == HTTPStatus.BAD_GATEWAY, resp.text
-    assert resp.json()["detail"] == "llm_provider_error"
+    _assert_refused(resp)
     assert await _wallet(db_session, user_id) == before
-    assert await _reasons(db_session, user_id) == [
-        REASON_SPEND_MONTHLY,
-        REASON_REFUND_FAILED_RESONANCE,
-    ]
+    assert await _reasons(db_session, user_id) == []
     opus_server.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_server_paid_opus_essay_is_refunded_and_caches_nothing(
+async def test_keyless_opus_essay_is_refused_and_caches_nothing(
     async_client: AsyncClient, db_session: AsyncSession, opus_server: AsyncMock
 ) -> None:
-    """The essay's finally arm refunds the refused letter; the note stays uncached."""
+    """The letter is refused at admission; the note stays uncached."""
     headers, user_id = await _signup(async_client, "opus_essay")
     note_id = await _seed_note(db_session, user_id)
     before = await _wallet(db_session, user_id)
@@ -139,12 +135,9 @@ async def test_server_paid_opus_essay_is_refunded_and_caches_nothing(
         json={"price_acknowledged": True},
     )
 
-    assert resp.status_code == HTTPStatus.BAD_GATEWAY, resp.text
+    _assert_refused(resp)
     assert await _wallet(db_session, user_id) == before
-    assert await _reasons(db_session, user_id) == [
-        REASON_SPEND_MONTHLY,
-        REASON_REFUND_FAILED_ESSAY,
-    ]
+    assert await _reasons(db_session, user_id) == []
     note = await db_session.get(Marginalia, note_id)
     assert note is not None
     assert note.essay is None
@@ -152,10 +145,10 @@ async def test_server_paid_opus_essay_is_refunded_and_caches_nothing(
 
 
 @pytest.mark.asyncio
-async def test_server_paid_opus_transcription_is_502_and_leaves_no_audit_row(
+async def test_keyless_opus_transcription_is_refused_and_leaves_no_audit_row(
     async_client: AsyncClient, db_session: AsyncSession, opus_server: AsyncMock
 ) -> None:
-    """Transcription rolls its staged spend back, so nothing is written at all."""
+    """Transcription refuses at admission, so nothing is staged or written."""
     headers, user_id = await _signup(async_client, "opus_page")
     before = await _wallet(db_session, user_id)
 
@@ -163,8 +156,7 @@ async def test_server_paid_opus_transcription_is_502_and_leaves_no_audit_row(
         "/journal/transcribe-page", headers=headers, json=payload(JPEG_BYTES)
     )
 
-    assert resp.status_code == HTTPStatus.BAD_GATEWAY, resp.text
-    assert resp.json()["detail"] == "llm_provider_error"
+    _assert_refused(resp)
     assert await _wallet(db_session, user_id) == before
     assert await _reasons(db_session, user_id) == []
     opus_server.assert_not_awaited()
