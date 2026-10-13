@@ -2631,6 +2631,11 @@
             "minimum": 1.0,
             "title": "Goal Id",
             "type": "integer"
+          },
+          "via_timer": {
+            "default": false,
+            "title": "Via Timer",
+            "type": "boolean"
           }
         },
         "required": [
@@ -3263,6 +3268,16 @@
             "title": "Energy Return",
             "type": "integer"
           },
+          "goals": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HabitGoalsCreate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "icon": {
             "maxLength": 100,
             "title": "Icon",
@@ -3367,6 +3382,54 @@
           "energy_return"
         ],
         "title": "HabitCreate",
+        "type": "object"
+      },
+      "HabitGoalsCreate": {
+        "additionalProperties": false,
+        "description": "The three goal tiers a link flow creates a habit with (#3150).\n\nOne unit and cadence shared by every tier -- the same shape\n``PUT /habits/{id}/goals/units`` edits -- plus each tier's target. The\njournal link sends ``minutes`` 10 / 20 / 45 per day; the practice link\n``sessions`` 1 / 1 / 2, four per week. Targets climb: ``low <= clear <=\nstretch``. Every number is strictly positive, because a timer never logs\na zero-minute or zero-session goal. Which units are allowed is decided by\n:mod:`domain.habit_links`, not here, so the rule has one home.",
+        "properties": {
+          "clear": {
+            "exclusiveMinimum": 0.0,
+            "title": "Clear",
+            "type": "number"
+          },
+          "frequency": {
+            "exclusiveMinimum": 0.0,
+            "title": "Frequency",
+            "type": "number"
+          },
+          "frequency_unit": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Frequency Unit",
+            "type": "string"
+          },
+          "low": {
+            "exclusiveMinimum": 0.0,
+            "title": "Low",
+            "type": "number"
+          },
+          "stretch": {
+            "exclusiveMinimum": 0.0,
+            "title": "Stretch",
+            "type": "number"
+          },
+          "target_unit": {
+            "maxLength": 50,
+            "minLength": 1,
+            "title": "Target Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_unit",
+          "frequency",
+          "frequency_unit",
+          "low",
+          "clear",
+          "stretch"
+        ],
+        "title": "HabitGoalsCreate",
         "type": "object"
       },
       "HabitHistoryItem": {
@@ -3880,7 +3943,7 @@
         "type": "object"
       },
       "JournalErasureReceipt": {
-        "description": "What ``POST /journal/{id}/erase-locally`` did, in closed, content-free terms.\n\nThe page is always gone from Adepthood when this is returned.\n``remote_copy`` is ``confirmed_absent`` only when the vault holding the copy\nconfirmed it absent; otherwise it is ``unconfirmed`` and ``copy_location``\nsays, relative to the vault connected now, where a copy may remain. There\nis deliberately no \"withdrawn\" value: a copy nobody confirmed is not one.",
+        "description": "What ``POST /journal/{id}/erase-locally`` did, in closed, content-free terms.\n\nThe page is always gone from Adepthood when this is returned.\n``remote_copy`` is ``confirmed_absent`` only when the vault holding the copy\nconfirmed it absent; otherwise it is ``unconfirmed`` and ``copy_location``\nsays, relative to the vault connected now, where a copy may remain --\n``unrecorded_vault`` for a copy made before Adepthood recorded which vault\nreceived it, which no vault can ever confirm (#3095). There is\ndeliberately no \"withdrawn\" value: a copy nobody confirmed is not one.",
         "properties": {
           "copy_location": {
             "anyOf": [
@@ -3888,7 +3951,8 @@
                 "enum": [
                   "connected_vault",
                   "previous_vault",
-                  "disconnected_vault"
+                  "disconnected_vault",
+                  "unrecorded_vault"
                 ],
                 "type": "string"
               },
@@ -15795,7 +15859,7 @@
         ]
       },
       "post": {
-        "description": "Create a habit + defaults; 422 invisible name, 409 quota/duplicate.",
+        "description": "Create a habit + its goal tiers; 422 invisible name or non-timer goals, 409 quota/duplicate.\n\n``payload.goals`` is the link flows' block (#3150): the habit a timer will\nlog to is created with its minutes-or-sessions tiers in the same request,\nso the first timed session lands on the right unit. Without it the habit\ngets the 1 / 2 / 3 ``units`` per day defaults.",
         "operationId": "create_habit_habits__post",
         "parameters": [
           {
@@ -16146,7 +16210,7 @@
         ]
       },
       "put": {
-        "description": "Replace a habit; 422 invisible name, 409 on rename collision.",
+        "description": "Replace a habit; 422 invisible name or a goals block, 409 on rename collision.",
         "operationId": "update_habit_habits__habit_id__put",
         "parameters": [
           {
@@ -16391,7 +16455,7 @@
     },
     "/habits/{habit_id}/goals/units": {
       "put": {
-        "description": "Update the shared unit fields on every goal of the habit atomically.\n\nIssue #289: the GoalUnitEditor previously fanned out one\n``PUT /goals/{id}`` per tier, so a mid-sequence failure left tiers\nwith mismatched units server-side.  A single transaction here makes\nthe all-tiers invariant atomic: either every goal moves to the new\nunit fields or none do.  Tier identity and per-tier targets are\ndeliberately untouched.",
+        "description": "Update the shared unit fields on every goal of the habit atomically.\n\nIssue #289: the GoalUnitEditor previously fanned out one\n``PUT /goals/{id}`` per tier, so a mid-sequence failure left tiers\nwith mismatched units server-side.  A single transaction here makes\nthe all-tiers invariant atomic: either every goal moves to the new\nunit fields or none do.  Tier identity and per-tier targets are\ndeliberately untouched.\n\nA habit a timer logs to stays on ``minutes``/``sessions``, per day or per\nweek (#3150); anything else is a 422 that writes nothing.",
         "operationId": "update_goal_units_habits__habit_id__goals_units_put",
         "parameters": [
           {

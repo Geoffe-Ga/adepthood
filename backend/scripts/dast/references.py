@@ -365,7 +365,9 @@ REFERENCE_REGISTRY: ReferenceRegistry = MappingProxyType(
         # The writing timer's habit link (#2861): the caller's own flags row is
         # the path's implicit object, and the habit in the body is the one under
         # test. The response echoes the linked id, so a cross-tenant link that
-        # landed would name the victim's habit in the caller's own answer.
+        # landed would name the victim's habit in the caller's own answer. The
+        # seed is a habit on timer goals: the route refuses to link any other
+        # (#3150), which would fail the positive control on domain grounds.
         ("PATCH", "/ui-flags"): ReferenceProbe(
             method="PATCH",
             path="/ui-flags",
@@ -374,7 +376,7 @@ REFERENCE_REGISTRY: ReferenceRegistry = MappingProxyType(
                 ObjectReference(
                     field="writing_session_habit_id",
                     location=ReferenceLocation.BODY,
-                    seed_key="habit_id",
+                    seed_key="timer_habit_id",
                     evidence=EvidenceStrategy.ECHO,
                 ),
             ),

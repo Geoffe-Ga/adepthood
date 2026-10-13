@@ -198,6 +198,10 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     "This page is set to be deleted. Its copy is in the Creek vault you were connected to before, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
   vault_withdrawal_disconnected_vault:
     "This page is set to be deleted. Its copy is in the Creek vault you disconnected, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
+  // A copy made before Adepthood recorded which vault received it (#3095). No
+  // vault can confirm it, so this never promises the deletion finishes on its own.
+  vault_withdrawal_unrecorded_vault:
+    "This page was copied to a Creek vault before October 7, 2026, before Adepthood recorded which vault received each copy. We can't confirm that copy was deleted: it may still be in a Creek vault you connected earlier. You can delete the page here only, then delete the copy in that vault yourself.",
   journal_entry_deletion_pending:
     "This page is set to be deleted, so it can't be edited. Deletion finishes once your Creek vault confirms its copy is gone.",
 

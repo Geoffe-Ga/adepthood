@@ -589,6 +589,15 @@ async def test_the_writing_timer_habit_link_is_exported_as_the_habit_id(
             "start_date": "2024-01-01",
             "energy_cost": 1,
             "energy_return": 2,
+            # A writing link needs timer units (#3150).
+            "goals": {
+                "target_unit": "minutes",
+                "frequency": 1,
+                "frequency_unit": "per_day",
+                "low": 10,
+                "clear": 20,
+                "stretch": 45,
+            },
         },
         headers=headers,
     )

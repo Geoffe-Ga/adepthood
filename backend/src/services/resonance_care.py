@@ -143,11 +143,12 @@ async def care_only_response(
 async def care_or_refusal(
     session: AsyncSession, user_id: int, message: str, refusal: HTTPException
 ) -> ResonanceResponse:
-    """Answer a payer-refused pass with care when the local screen flags the entry.
+    """Answer a refused pass with care when the local screen flags the entry.
 
-    Care never depends on the payer (NORTH-STAR §10): a refused distressed
-    writer gets the care surface with no reflection -- the 200 the client
-    already renders -- and anyone else gets the 402 itself (#3096).
+    Care never depends on the payer or on the model being reachable
+    (NORTH-STAR §10): a distressed writer refused for payment (#3096) or by the
+    AI suspension switch (#3120) gets the care surface with no reflection --
+    the 200 the client already renders -- and anyone else gets ``refusal``.
     """
     care = care_for(message)
     if care is None:

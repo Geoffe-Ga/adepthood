@@ -155,10 +155,15 @@ class JournalErasureReceipt(BaseModel):
     The page is always gone from Adepthood when this is returned.
     ``remote_copy`` is ``confirmed_absent`` only when the vault holding the copy
     confirmed it absent; otherwise it is ``unconfirmed`` and ``copy_location``
-    says, relative to the vault connected now, where a copy may remain. There
-    is deliberately no "withdrawn" value: a copy nobody confirmed is not one.
+    says, relative to the vault connected now, where a copy may remain --
+    ``unrecorded_vault`` for a copy made before Adepthood recorded which vault
+    received it, which no vault can ever confirm (#3095). There is
+    deliberately no "withdrawn" value: a copy nobody confirmed is not one.
     """
 
     entry_id: int
     remote_copy: Literal["confirmed_absent", "unconfirmed"]
-    copy_location: Literal["connected_vault", "previous_vault", "disconnected_vault"] | None
+    copy_location: (
+        Literal["connected_vault", "previous_vault", "disconnected_vault", "unrecorded_vault"]
+        | None
+    )
