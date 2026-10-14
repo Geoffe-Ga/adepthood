@@ -89,6 +89,8 @@ _AI_ROUTES: Final = ("resonance", "essay", "detect", "transcribe")
 _FUNDED_BALANCE: Final = 5
 _ADMIN_REASON: Final = "comped for the beta"
 _REVOKED_BODY: Final = {"detail": AI_ACCESS_REVOKED}
+_BYOK_HEADER: Final = "X-LLM-API-Key"
+_MONTHLY_CAP_ENV: Final = "BOTMASON_MONTHLY_CAP"
 _WEBHOOK_PATH: Final = "/webhooks/gumroad/ping"
 _WEBHOOK_SECRET_ENV: Final = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secret
 _WEBHOOK_SECRET: Final = "revocation-suite-shared-secret"  # pragma: allowlist secret
@@ -358,6 +360,34 @@ async def test_each_gumroad_reversal_ping_restricts_ai_or_not(
     db_session.expire_all()
     assert not await has_course_access(db_session, user_id)
     assert await ai_access_revoked(db_session, user_id) is restricted
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["resonance", "essay"])
+async def test_a_revoked_unfunded_member_with_their_own_key_is_answered(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    route: str,
+) -> None:
+    """A valid personal key pays its own provider: 200, and the wallet is never touched."""
+    stub = arm_anthropic(monkeypatch)
+    monkeypatch.setenv(_MONTHLY_CAP_ENV, "0")
+    headers, user_id, _ = await signup(async_client, f"byok_revoked_{route}")
+    await revoke_course_access(db_session, user_id, REASON_REFUND)
+    assert await ai_access_revoked(db_session, user_id)
+    before_wallet = await wallet(db_session, user_id)
+    assert before_wallet[1] == 0
+    before_audit = await count_rows(db_session, WalletAudit)
+
+    resp = await _call_route(
+        route, async_client, db_session, {**headers, _BYOK_HEADER: ANTHROPIC_KEY}, user_id
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert stub.request_count > 0
+    assert await wallet(db_session, user_id) == before_wallet
+    assert await count_rows(db_session, WalletAudit) == before_audit
 
 
 @pytest.mark.asyncio
