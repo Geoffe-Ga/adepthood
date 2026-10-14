@@ -991,6 +991,104 @@ def test_no_affirmative_present_tense_custody_claim() -> None:
     assert {name: hits for name, hits in found.items() if hits} == {}
 
 
+# The surfaces a reader actually sees a custody claim on (#3264): the public
+# policy and terms, and the copy compiled into the app. App copy is read as the
+# string literals of non-test TypeScript; comments are matched so they are
+# skipped, since a comment is never shown to anyone.
+_LEGAL_DOCUMENTS = ("privacy-policy.md", "terms-of-service.md")
+_TS_SOURCE_SUFFIXES = (".ts", ".tsx")
+_TS_LITERAL = re.compile(
+    r"//[^\n]*|/\*.*?\*/"
+    r"|'(?P<single>(?:\\.|[^'\\\n])*)'"
+    r'|"(?P<double>(?:\\.|[^"\\\n])*)"'
+    r"|`(?P<template>(?:\\.|[^`\\])*)`",
+    re.DOTALL,
+)
+
+
+def _ts_string_literals(source: str) -> str:
+    """Each string literal in ``source``, one block per literal, newline escapes decoded."""
+    bodies = (
+        next(body for body in match.group("single", "double", "template") if body is not None)
+        for match in _TS_LITERAL.finditer(source)
+        if match.lastgroup is not None
+    )
+    return "\n\n".join(body.replace("\\n", "\n") for body in bodies)
+
+
+def _is_app_source(path: Path) -> bool:
+    """Whether ``path`` is shipped TypeScript rather than a test."""
+    return (
+        path.suffix in _TS_SOURCE_SUFFIXES
+        and "__tests__" not in path.parts
+        and ".test." not in path.name
+    )
+
+
+def _surface_documents(root: Path) -> dict[str, str]:
+    """The policy, the terms and each app source file's literals, named by repo path."""
+    documents = {
+        f"docs/legal/{name}": (root / "docs" / "legal" / name).read_text(encoding="utf-8")
+        for name in _LEGAL_DOCUMENTS
+    }
+    for path in sorted((root / "frontend" / "src").rglob("*")):
+        if _is_app_source(path):
+            source = path.read_text(encoding="utf-8")
+            documents[path.relative_to(root).as_posix()] = _ts_string_literals(source)
+    return documents
+
+
+def test_no_unscoped_custody_claim_in_the_policy_terms_or_app_copy() -> None:
+    """The privacy policy, the terms and the app's copy never state custody flatly."""
+    documents = _surface_documents(_REPO_ROOT)
+
+    found = {name: _unscoped_custody_claims(text) for name, text in documents.items()}
+
+    assert any(name.startswith("frontend/src/") for name in documents)
+    assert {name: hits for name, hits in found.items() if hits} == {}
+
+
+_PLANTED_POLICY = (
+    "## Your journal\n\nYour entries are encrypted at rest.\n"
+    "Adepthood is operator-blind, so\nwe cannot help you recover them.\n"
+)
+_PLANTED_TS = (
+    "// Adepthood is operator-blind -- a comment, never shown.\n"
+    "export const COPY =\n"
+    "  'Your journal stays yours.\\n' +\n"
+    '  "Adepthood is operator-blind.";\n'
+)
+
+
+def test_the_surface_scan_reads_each_new_source(tmp_path: Path) -> None:
+    """A planted claim in the policy, the terms or an app literal is reported by file."""
+    legal = tmp_path / "docs" / "legal"
+    legal.mkdir(parents=True)
+    (legal / "privacy-policy.md").write_text(_PLANTED_POLICY, encoding="utf-8")
+    (legal / "terms-of-service.md").write_text(
+        "Journal keys are user-held today.\n", encoding="utf-8"
+    )
+    tests_dir = tmp_path / "frontend" / "src" / "features" / "__tests__"
+    tests_dir.mkdir(parents=True)
+    (tests_dir.parent / "copy.ts").write_text(_PLANTED_TS, encoding="utf-8")
+    (tests_dir / "copy.test.ts").write_text("'Adepthood is operator-blind.';\n", encoding="utf-8")
+    (tests_dir.parent / "Screen.test.tsx").write_text(
+        "'Adepthood is operator-blind.';\n", encoding="utf-8"
+    )
+
+    found = {
+        name: _unscoped_custody_claims(text) for name, text in _surface_documents(tmp_path).items()
+    }
+
+    assert {name: hits for name, hits in found.items() if hits} == {
+        "docs/legal/privacy-policy.md": [
+            "Adepthood is operator-blind, so we cannot help you recover them."
+        ],
+        "docs/legal/terms-of-service.md": ["Journal keys are user-held today."],
+        "frontend/src/features/copy.ts": ["Adepthood is operator-blind."],
+    }
+
+
 # Planted violations: each is a flat claim the scan must catch. The first
 # three are the reviewers' own bypass examples.
 _PLANTED_CLAIMS = (
