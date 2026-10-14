@@ -34,8 +34,8 @@
  * What this buys the banner's ``children`` slot is written out in
  * {@link WritingSessionBanner}.
  */
-import React, { useCallback, useRef, useState } from 'react';
-import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from './JournalEntry.styles';
 import type { WritingSessionResult } from './writingSession';
@@ -98,19 +98,56 @@ interface StandingNote {
   ordinal: number;
 }
 
-function useBandClearance(onClearanceChange: WritingSessionSurfaceProps['onClearanceChange']) {
-  const reportLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      onClearanceChange?.(
-        Math.max(
-          WRITING_TIMER_CLEARANCE,
-          event.nativeEvent.layout.height + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
-        ),
-      );
-    },
-    [onClearanceChange],
-  );
+function useBandClearance(
+  onClearanceChange: WritingSessionSurfaceProps['onClearanceChange'],
+  scrollWholeSurface: boolean,
+) {
+  const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
+  const reportLayout = useCallback((event: LayoutChangeEvent) => {
+    setVisibleHeight(event.nativeEvent.layout.height);
+  }, []);
+  useEffect(() => {
+    if (visibleHeight === null) return;
+    onClearanceChange?.(
+      Math.max(
+        scrollWholeSurface ? 0 : WRITING_TIMER_CLEARANCE,
+        visibleHeight + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
+      ),
+    );
+  }, [onClearanceChange, scrollWholeSurface, visibleHeight]);
   return reportLayout;
+}
+
+function useStandingNote(onSession: WritingSessionSurfaceProps['onSession']) {
+  const [note, setNote] = useState<StandingNote | null>(null);
+  const dismiss = useCallback(() => setNote(null), []);
+  // Held through a ref so ``record`` keeps one identity for the life of the
+  // mount: it is the ticking timer's ``onComplete``, and a consumer that
+  // re-created its callback each render would otherwise churn that prop ten
+  // times a second.
+  const onSessionRef = useRef(onSession);
+  onSessionRef.current = onSession;
+  const record = useCallback((result: WritingSessionResult) => {
+    onSessionRef.current?.(result);
+    if (!result.reachedFullDuration) return;
+    setNote((previous) => ({ result, ordinal: (previous?.ordinal ?? 0) + 1 }));
+  }, []);
+  return { note, dismiss, record };
+}
+
+function useBandBounds() {
+  const [bandHeight, setBandHeight] = useState(Infinity);
+  const [contentHeight, setContentHeight] = useState(0);
+  // Measure the unshrunk note, offers and clock: enlarged text and an open
+  // picker need their real height, rather than a count of nominal targets.
+  const scrollWholeSurface = contentHeight > bandHeight;
+  const reportBandLayout = useCallback((event: LayoutChangeEvent) => {
+    setBandHeight(event.nativeEvent.layout.height);
+  }, []);
+  const reportContentSize = useCallback((_width: number, height: number) => {
+    setContentHeight(height);
+  }, []);
+  return { scrollWholeSurface, reportBandLayout, reportContentSize };
 }
 
 function WritingSessionSurface({
@@ -122,34 +159,27 @@ function WritingSessionSurface({
   onClearanceChange,
   deps,
 }: WritingSessionSurfaceProps): React.JSX.Element {
-  const [note, setNote] = useState<StandingNote | null>(null);
-  const dismiss = useCallback(() => setNote(null), []);
-  // Held through a ref so ``record`` keeps one identity for the life of the
-  // mount: it is the ticking timer's ``onComplete``, and a consumer that
-  // re-created its callback each render would otherwise churn that prop ten
-  // times a second.
-  const onSessionRef = useRef(onSession);
-  onSessionRef.current = onSession;
-  const reportLayout = useBandClearance(onClearanceChange);
-  const record = useCallback((result: WritingSessionResult) => {
-    onSessionRef.current?.(result);
-    if (!result.reachedFullDuration) return;
-    setNote((previous) => ({ result, ordinal: (previous?.ordinal ?? 0) + 1 }));
-  }, []);
+  const { note, dismiss, record } = useStandingNote(onSession);
+  const { scrollWholeSurface, reportBandLayout, reportContentSize } = useBandBounds();
+  const reportLayout = useBandClearance(onClearanceChange, scrollWholeSurface);
   return (
     <View
       style={[styles.band, { right: rightInset }]}
       pointerEvents="box-none"
+      onLayout={reportBandLayout}
       testID="writing-session-band"
     >
-      <View
+      <ScrollView
         style={styles.content}
+        scrollEnabled={scrollWholeSurface}
         pointerEvents="box-none"
         onLayout={reportLayout}
+        onContentSizeChange={reportContentSize}
+        keyboardShouldPersistTaps="handled"
         testID="writing-session-band-content"
       >
         {note === null ? null : (
-          <WritingSessionBanner result={note.result} onDismiss={dismiss}>
+          <WritingSessionBanner result={note.result} onDismiss={dismiss} scrollWholeSurface>
             {renderOffer === undefined ? null : (
               <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
             )}
@@ -162,7 +192,7 @@ function WritingSessionSurface({
           withinBand
           deps={deps}
         />
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -174,7 +204,8 @@ const styles = StyleSheet.create({
   },
   band: {
     position: 'absolute',
-    // Leave the upper half for the page's actions; long offers scroll below.
+    // Leave the upper half for page actions; at short heights the complete
+    // surface scrolls, including its summary, Close and timer.
     top: '50%',
     justifyContent: 'flex-end',
     left: 0,
