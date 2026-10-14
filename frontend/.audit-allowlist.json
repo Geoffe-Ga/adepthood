@@ -13,7 +13,7 @@
       "package": "node-forge",
       "expires": "2026-10-16",
       "issue": 3023,
-      "reason": "No patched node-forge exists (affected <=1.4.0; 1.4.0 is latest). Reached only via the build-time Expo CLI (@expo/cli, @expo/code-signing-certificates), not the app bundle. Owner-approved 14-day box; re-check per #3023."
+      "reason": "No patched release exists (1.4.0 is latest). patch-package backports the exact nested DigestAlgorithm element-count guard from digitalbazaar/forge#1152 at ceba34402e329f0365134f23fe19898756527d65 (#3022); installed-library signature regressions cover it. npm still reports the affected package version. Build-time Expo CLI exposure only. Preserve the owner-approved hard expiry 2026-10-16; re-check per #3023 and remove this entry and the patch when a fixed upstream release ships."
     },
     {
       "id": "GHSA-vfj7-8cjw-p6xm",
