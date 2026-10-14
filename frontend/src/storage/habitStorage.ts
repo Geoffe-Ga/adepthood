@@ -4,7 +4,7 @@ import type { Habit } from '../features/Habits/Habits.types';
 
 import { getJsonArray, getJsonArrayForUpdate } from './jsonStore';
 import { serialize } from './serializedWrite';
-import { scopedKey } from './userScope';
+import { getActiveUser, scopedKey } from './userScope';
 
 /**
  * The three caches below are per-account, so every one of them is resolved
@@ -26,6 +26,16 @@ function habitsKey(): string {
 /** This account's pending-check-in queue key — also its serialized write lane. */
 function pendingCheckInsKey(): string {
   return scopedKey(PENDING_CHECKINS_KEY_BASE);
+}
+
+/** A drain holds the original key and owner across every awaited POST. */
+export interface PendingCheckInScope {
+  key: string;
+  owner: number | null;
+}
+
+export function capturePendingCheckInScope(): PendingCheckInScope {
+  return { key: pendingCheckInsKey(), owner: getActiveUser() };
 }
 
 /** This account's dropped-check-in quarantine key. */
@@ -157,8 +167,10 @@ export async function replacePendingCheckIns(checkIns: PendingCheckIn[]): Promis
   });
 }
 
-export async function loadPendingCheckIns(): Promise<PendingCheckIn[]> {
-  return (await getJsonArray<PendingCheckIn>(pendingCheckInsKey())) ?? [];
+export async function loadPendingCheckIns(
+  scope: PendingCheckInScope = capturePendingCheckInScope(),
+): Promise<PendingCheckIn[]> {
+  return (await getJsonArray<PendingCheckIn>(scope.key)) ?? [];
 }
 
 /**
@@ -175,11 +187,59 @@ export async function clearPendingCheckIns(): Promise<void> {
 }
 
 /**
+ * Remove only terminal replay entries from the queue as it exists now. The
+ * foreground may have appended during a POST; rebuilding from the replay's
+ * snapshot would erase that tap. Legacy entries are matched one at a time so
+ * even an identical later append survives.
+ */
+export async function removePendingCheckIns(
+  completed: PendingCheckIn[],
+  scope: PendingCheckInScope,
+): Promise<void> {
+  const { owner, key } = scope;
+  if (completed.length === 0 || getActiveUser() !== owner) return;
+  await serialize(key, async () => {
+    if (getActiveUser() !== owner) return;
+    let current: PendingCheckIn[] | null;
+    try {
+      current = await getJsonArrayForUpdate<PendingCheckIn>(key);
+    } catch (err: unknown) {
+      console.warn(
+        '[storage] transient read during pending check-in cleanup, retaining queue for replay',
+        err,
+      );
+      return;
+    }
+    const remaining = [...(current ?? [])];
+    for (const entry of completed) {
+      const index = remaining.findIndex((candidate) =>
+        entry.operation_id
+          ? candidate.operation_id === entry.operation_id
+          : candidate.operation_id === undefined &&
+            candidate.goal_id === entry.goal_id &&
+            candidate.timestamp === entry.timestamp &&
+            candidate.did_complete === entry.did_complete &&
+            candidate.completed_units === entry.completed_units &&
+            candidate.completed_on === entry.completed_on,
+      );
+      if (index >= 0) remaining.splice(index, 1);
+    }
+    if (getActiveUser() !== owner) return;
+    if (remaining.length === 0) await AsyncStorage.removeItem(key);
+    else await AsyncStorage.setItem(key, JSON.stringify(remaining));
+  });
+}
+
+/**
  * Append `entry` to the quarantine, keeping only the newest
  * `MAX_DROPPED_CHECK_INS` records. Runs inside the serialized lane, so the
  * read-modify-write is atomic with respect to the other quarantine writers.
  */
-async function appendDroppedCheckIn(key: string, entry: DroppedCheckIn): Promise<void> {
+async function appendDroppedCheckIn(
+  key: string,
+  entry: DroppedCheckIn,
+  owner: number | null,
+): Promise<void> {
   let result: DroppedCheckIn[] | null;
   try {
     result = await getJsonArrayForUpdate<DroppedCheckIn>(key);
@@ -194,8 +254,12 @@ async function appendDroppedCheckIn(key: string, entry: DroppedCheckIn): Promise
     return;
   }
   const existing = result ?? [];
+  if (entry.operation_id && existing.some((item) => item.operation_id === entry.operation_id)) {
+    return;
+  }
   existing.push(entry);
   // Oldest-first storage, so trimming from the front evicts the oldest.
+  if (getActiveUser() !== owner) return;
   await AsyncStorage.setItem(key, JSON.stringify(existing.slice(-MAX_DROPPED_CHECK_INS)));
 }
 
@@ -209,10 +273,16 @@ async function appendDroppedCheckIn(key: string, entry: DroppedCheckIn): Promise
  * of the drain. ``serialize`` deliberately forwards the lambda's rejection to
  * its caller, so the write is wrapped here rather than left to the lane.
  */
-export async function recordDroppedCheckIn(entry: DroppedCheckIn): Promise<void> {
+export async function recordDroppedCheckIn(
+  entry: DroppedCheckIn,
+  owner: number | null = getActiveUser(),
+): Promise<void> {
+  if (getActiveUser() !== owner) return;
   const key = droppedCheckInsKey();
   try {
-    await serialize(key, () => appendDroppedCheckIn(key, entry));
+    await serialize(key, async () => {
+      if (getActiveUser() === owner) await appendDroppedCheckIn(key, entry, owner);
+    });
   } catch (err: unknown) {
     console.warn('[storage] could not quarantine a dropped check-in', err);
   }

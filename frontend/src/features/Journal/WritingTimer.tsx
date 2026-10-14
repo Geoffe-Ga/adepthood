@@ -109,7 +109,7 @@ function PresetRow({
 }): React.JSX.Element {
   return (
     <View
-      style={styles.row}
+      style={[styles.row, styles.presetRow]}
       accessibilityRole="radiogroup"
       accessibilityLabel={WRITING_TIMER_PRESET_GROUP_LABEL}
       testID="writing-timer-row-presets"
@@ -171,8 +171,7 @@ function TimerControl({
  * Whichever of start / pause / resume / stop the current state offers.
  *
  * A fragment, not a row of its own: the controls sit beside the readout on the
- * pill's first row, which is what keeps the pill's height a count of rows
- * rather than a consequence of how much fits across a given phone.
+ * pill's first row, while the preset choices can reflow independently below.
  */
 function LiveTimerControls({
   view,
@@ -635,12 +634,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
   },
   /**
-   * A column of fixed-height rows, spanning the band rather than sizing itself
-   * to its contents. Deliberately NOT a wrapping row: laid out that way the
-   * readout, four presets and Start come to roughly 452dp in this face at this
-   * size, so every phone reflowed it onto two or three rows and the page
-   * reserved space for one. A column of known rows has a height that does not
-   * depend on the width it is given.
+   * Keep the readout and controls together above independently wrapping
+   * presets. The surface measures this column, so larger text can grow the
+   * reserved band without overlapping page controls.
    */
   pill: {
     flexDirection: 'column',
@@ -677,6 +673,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SPACING.sm,
     height: WRITING_TIMER_ROW_HEIGHT,
+  },
+  // Larger system text may need another line; measured band clearance grows
+  // with it instead of clipping the unit or shrinking the touch targets.
+  presetRow: {
+    flexWrap: 'wrap',
+    height: 'auto',
+    minHeight: WRITING_TIMER_ROW_HEIGHT,
   },
   rowDocked: {
     flexDirection: 'column',

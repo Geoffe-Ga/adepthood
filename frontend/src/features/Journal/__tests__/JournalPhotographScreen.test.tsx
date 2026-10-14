@@ -8,6 +8,7 @@ import type { CaptureResult, MultiPickResult, PickedAsset } from '../pickJournal
 
 import { TranscriptionError } from '@/api';
 import type { JournalMessage, MediaType, TranscribePageT, TranscriptionErrorKind } from '@/api';
+import { LLM_KEY_REQUIRED_COPY } from '@/api/errorMessages';
 import { toISODate } from '@/components/DatePicker';
 import { useCapturedTranscriptStore } from '@/store/useCapturedTranscriptStore';
 import { settle } from '@/testing/asyncSettle';
@@ -724,17 +725,15 @@ describe('JournalPhotographScreen — single-page error recovery', () => {
   });
 });
 
-describe('JournalPhotographScreen — terminal model-lacks-vision failure', () => {
+describe('JournalPhotographScreen — terminal key-required failure', () => {
   it('renders terminal copy, typed-entry offramp, and disabled Save without Retry or Retake', async () => {
     mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('key_required', 402));
     const { getByTestId, queryByTestId } = renderScreen();
     await settle();
     fireEvent.press(getByTestId('capture-transcribe'));
     await settle();
-    expect(getByTestId('photograph-block-1-error')).toHaveTextContent(
-      'The AI that reads pages here can’t see photos. You can still type this page in by hand.',
-    );
+    expect(getByTestId('photograph-block-1-error')).toHaveTextContent(LLM_KEY_REQUIRED_COPY);
     expect(getByTestId('photograph-run-progress')).toHaveTextContent(
       '0 of 1 read · 1 need attention',
     );
@@ -747,7 +746,7 @@ describe('JournalPhotographScreen — terminal model-lacks-vision failure', () =
 
   it('offers a hand-typed-entry offramp that leaves for a plain entry without charging', async () => {
     mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('key_required', 402));
     const { getByTestId, navigation } = renderScreen();
     await settle();
     fireEvent.press(getByTestId('capture-transcribe'));
@@ -1826,9 +1825,9 @@ describe('JournalPhotographScreen — transient file cleanup', () => {
 
   it('releases every session file when stepping off to a typed entry', async () => {
     mockPick.mockResolvedValueOnce(picked());
-    // The typed-entry offramp surfaces only on a terminal, config-level failure
-    // the writer cannot retry past — model_lacks_vision — so drive the run there.
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+    // The typed-entry offramp surfaces only on a terminal failure the writer
+    // cannot retry past — a page read with no key of their own — so drive the run there.
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('key_required', 402));
     const { getByTestId, navigation } = renderScreen();
     await settle();
     fireEvent.press(getByTestId('capture-transcribe'));
@@ -2236,7 +2235,7 @@ describe('JournalPhotographScreen — append into the open entry', () => {
 
   it('returns the writer to the page they were on when transcription cannot work at all', async () => {
     mockPick.mockResolvedValueOnce(picked());
-    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('model_lacks_vision', 422));
+    mockTranscribe.mockRejectedValueOnce(new TranscriptionError('key_required', 402));
 
     const screen = renderAppendScreen();
     await settle();

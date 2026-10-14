@@ -343,6 +343,69 @@ test('a check-in tapped offline is queued on the device and replays exactly once
   await log.settleAt(QUEUED_TAPS, 'the Habits load must not re-post a drained queue');
 });
 
+test('a new tap queued while a slow replay is in flight survives and reaches the server', async ({
+  page,
+  request,
+}, testInfo) => {
+  const REPLAYED = 'Slow replay walk';
+  const APPENDED = 'Tap during replay';
+  const { token, habitIds } = await arrange(page, request, 'offline-concurrent-tap', [
+    REPLAYED,
+    APPENDED,
+  ]);
+  const [replayedId, appendedId] = habitIds as [number, number];
+  const original = await queueOffline(page, [[REPLAYED, 1]]);
+  const originalKey = replayKey(operationIds(original)[0]!);
+  let releaseReplay!: () => void;
+  let signalReplay!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseReplay = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    signalReplay = resolve;
+  });
+  let failNewTap = true;
+  await page.route(
+    (url) => url.origin === new URL(backendUrl()).origin,
+    async (route: Route) => {
+      if (!isCompletionPost(route.request())) {
+        await route.fallback();
+      } else if ((await route.request().headerValue('idempotency-key')) === originalKey) {
+        signalReplay();
+        await held;
+        await route.fallback();
+      } else {
+        await (failNewTap ? route.abort('internetdisconnected') : route.fallback());
+      }
+    },
+  );
+
+  await goOnline(page);
+  await page.goto(`${frontendUrl()}/journal`);
+  await started;
+  await openHabits(page);
+  await expect(tile(page, APPENDED)).toBeVisible();
+  await logUnits(page, APPENDED, 1);
+  await expect.poll(async () => (await readPendingQueue(page))?.length ?? 0).toBe(2);
+  const appended = (await readPendingQueue(page))![1]!;
+  await page.screenshot({ path: testInfo.outputPath('habits-concurrent-replay.png') });
+  failNewTap = false;
+  releaseReplay();
+  await expect.poll(() => queuedIds(page)).toEqual([appended.operation_id]);
+  expect(await serverUnits(request, token, replayedId)).toBe(1);
+  expect(await serverUnits(request, token, appendedId)).toBe(0);
+
+  await openJournal(page);
+  await openHabits(page);
+  await expect.poll(() => queuedIds(page)).toBeNull();
+  expect(await serverUnits(request, token, replayedId)).toBe(1);
+  expect(await serverUnits(request, token, appendedId)).toBe(1);
+  await page.screenshot({ path: testInfo.outputPath('habits-replayed-desktop.png') });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(tile(page, APPENDED)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('habits-replayed-phone.png') });
+});
+
 test('a queued check-in the server permanently rejects is dropped, the rest still land, and the user is told', async ({
   page,
   request,

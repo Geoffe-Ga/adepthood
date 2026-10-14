@@ -160,6 +160,49 @@ test('expanded options stay inside the sheet around the desktop rail breakpoint'
   }
 });
 
+test('preset controls and their unit fit inside the expanded pill with larger text', async ({
+  page,
+}, testInfo) => {
+  await openWritingPage(page);
+  for (const textScale of [1, 2]) {
+    for (const width of [1019, 1020, 1021, 1280, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 640 : 720 });
+      await page.getByTestId('writing-timer-pill').evaluate((pill, scale) => {
+        for (const text of pill.querySelectorAll<HTMLElement>('[dir="auto"]')) {
+          const base = text.dataset.baseFontSize ?? getComputedStyle(text).fontSize;
+          text.dataset.baseFontSize = base;
+          text.style.fontSize = `${parseFloat(base) * scale}px`;
+          text.style.lineHeight = 'normal';
+        }
+      }, textScale);
+      await page.screenshot({ path: testInfo.outputPath(`presets-${width}-${textScale}x.png`) });
+      const pill = await boxOf(page.getByTestId('writing-timer-pill'), 'expanded pill');
+      const sheet = await boxOf(page.getByTestId('journal-sheet'), 'sheet');
+      expect(pill.x).toBeGreaterThanOrEqual(sheet.x);
+      expect(pill.x + pill.width).toBeLessThanOrEqual(sheet.x + sheet.width);
+      for (const id of [
+        'writing-timer-preset-10',
+        'writing-timer-preset-20',
+        'writing-timer-preset-30',
+        'writing-timer-preset-45',
+        'writing-timer-preset-unit',
+      ]) {
+        const control = page.getByTestId(id);
+        const box = await boxOf(control, id);
+        expect(box.x, `${id} leaves the pill at ${width}px/${textScale}x`).toBeGreaterThanOrEqual(
+          pill.x,
+        );
+        expect(
+          box.x + box.width,
+          `${id} leaves the pill at ${width}px/${textScale}x`,
+        ).toBeLessThanOrEqual(pill.x + pill.width);
+        expect(box.y + box.height).toBeLessThanOrEqual(pill.y + pill.height);
+        expect(await control.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+      }
+    }
+  }
+});
+
 test('a long habit offer scrolls without covering the page actions on a short phone', async ({
   page,
 }, testInfo) => {

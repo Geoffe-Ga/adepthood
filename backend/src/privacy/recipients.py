@@ -180,6 +180,9 @@ class Recipient:
     endpoint_env_vars: tuple[str, ...] = ()
     dial_sites: frozenset[DialSite] = frozenset()
     egress_leaves: frozenset[tuple[str, str]] = frozenset()
+    #: Shipped frontend modules (``src/...``) that send to this party straight
+    #: from the person's device, never through this server.
+    client_dial_modules: frozenset[str] = frozenset()
     approved_models: frozenset[str] = frozenset()
     #: The privacy-policy lead-in that discloses this party, or ``None``.
     policy_lead_in: str | None = None
@@ -271,6 +274,9 @@ _CONTENT_AND_KEY: Final = frozenset({DataClass.CONTENT, DataClass.METADATA, Data
 _METADATA: Final = frozenset({DataClass.METADATA})
 _NOTHING: Final = frozenset({DataClass.NONE})
 
+#: The frontend module that sends a page read straight from the device (#3067).
+_DEVICE_DIRECT_MODULE: Final = "src/api/byokDirect.ts"
+
 #: Lead-ins one privacy-policy paragraph shares between several rows.
 _EMAIL_RELAY_LEAD_IN: Final = "An email relay (Resend, or the deployment's own mail server)"
 _IDENTITY_LEAD_IN: Final = "Google and Apple"
@@ -284,6 +290,11 @@ def _llm_provider(
     ADR 0009 phase (a) (#3067): no request carrying a person's content is sent
     on the operator's account, so there is no operator-account scope, and the
     end-to-end provider probe that dialled with the server's key is retired.
+
+    Two routes reach it. Resonance passes, letters and completion detection are
+    relayed by this server with the user's key. A page read goes from the
+    user's device straight to the provider (``frontend/src/api/byokDirect.ts``),
+    so the provider also sees that device's network identity rather than ours.
     """
     return Recipient(
         id=rid,
@@ -294,6 +305,7 @@ def _llm_provider(
         endpoint_env_vars=(PROVIDER_BASE_URL_ENV_VARS[provider],),
         dial_sites=frozenset({site}),
         egress_leaves=frozenset({_BOTMASON_LEAF}),
+        client_dial_modules=frozenset({_DEVICE_DIRECT_MODULE}),
         approved_models=models,
         policy_lead_in="The language-model provider",
         scopes=(
@@ -301,6 +313,12 @@ def _llm_provider(
                 ScopeKind.USER_OWNED_ACCOUNT,
                 _CONTENT_AND_KEY,
                 f"an X-LLM-API-Key header carrying a {legal_name} key (BYOK)",
+            ),
+            Scope(
+                ScopeKind.USER_OWNED_ACCOUNT,
+                _CONTENT_AND_KEY,
+                f"page reading, sent from the writer's device with their own {legal_name} key; "
+                "the provider sees the device's IP address, user agent and, on web, the Origin",
             ),
         ),
     )

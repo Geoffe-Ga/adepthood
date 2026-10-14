@@ -401,7 +401,6 @@ async def test_rejection_keeps_its_detail_shape(
 _CUSTOMIZE_PATH_TEMPLATE = "/user-practices/{user_practice_id}/customize"
 _RESONANCE_PATH_TEMPLATE = "/journal/{entry_id}/resonance"
 _ESSAY_PATH_TEMPLATE = "/journal/marginalia/{marginalia_id}/essay"
-_TRANSCRIBE_PATH = "/journal/transcribe-page"
 
 _LLM_KEY_HEADER = "X-LLM-API-Key"
 # Long enough that no plausible provider key bound accepts it, so the request is
@@ -446,12 +445,15 @@ _AFTER_VALIDATOR_CONFIG: dict[str, object] = {
 _MODE_CONFIG_CASES = (_MISSING_FIELD_CONFIG, _AFTER_VALIDATOR_CONFIG)
 _MODE_CONFIG_IDS = ("mode-config-missing-required-field", "mode-config-after-validator")
 
+# The routes that still declare the key header. ``/journal/transcribe-page``
+# left this set when page reading went client-direct (ADR 0009 phase (a),
+# #3067): it declares no key header at all, and a key sent to it anyway is
+# pinned unforwarded and unlogged by tests/security/test_byok_only_cloud.py.
 _LLM_KEY_ROUTES = (
     _RESONANCE_PATH_TEMPLATE.format(entry_id=_ABSENT_ROW_ID),
     _ESSAY_PATH_TEMPLATE.format(marginalia_id=_ABSENT_ROW_ID),
-    _TRANSCRIBE_PATH,
 )
-_LLM_KEY_ROUTE_IDS = ("journal-resonance", "marginalia-essay", "transcribe-page")
+_LLM_KEY_ROUTE_IDS = ("journal-resonance", "marginalia-essay")
 
 _SRC_ROOT = Path(__file__).resolve().parents[2] / "src"
 _ERRORS_MODULE = _SRC_ROOT / "errors.py"

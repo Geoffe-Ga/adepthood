@@ -328,10 +328,15 @@ async def test_essay_byok_credit_exhausted_is_402(
 
 
 @pytest.mark.asyncio
-async def test_essay_server_key_credit_exhausted_is_503(
+async def test_essay_spent_balance_is_never_an_operator_outage(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A spent server key on the essay path gets the operator's code, not the reader's."""
+    """No server-key ``503`` is left on the essay path: 402, and no letter is cached.
+
+    A keyless letter reaches no vendor in production (ADR 0009 phase (a),
+    #3067); the armed test seam is the only way to raise here, and the retired
+    ``llm_service_credit_exhausted`` code must not come back on it.
+    """
     _refuse_for_credit(monkeypatch)
     headers, user_id = await _signup(async_client, "essay_server")
     marg_id = await _seed_marginalia(db_session, user_id)
@@ -340,8 +345,8 @@ async def test_essay_server_key_credit_exhausted_is_503(
         f"/journal/marginalia/{marg_id}/essay", headers=headers, json=_PRICED
     )
 
-    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
-    assert resp.json()["detail"] == "llm_service_credit_exhausted"
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == "llm_credit_exhausted"
     await _assert_no_essay_cached(db_session, marg_id)
 
 
@@ -744,7 +749,7 @@ def _fail_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     ("break_provider", "status"),
     [
         (_fail_provider, HTTPStatus.BAD_GATEWAY),
-        (_refuse_for_credit, HTTPStatus.SERVICE_UNAVAILABLE),
+        (_refuse_for_credit, HTTPStatus.PAYMENT_REQUIRED),
     ],
 )
 async def test_failed_server_paid_essay_is_refunded(
@@ -754,7 +759,7 @@ async def test_failed_server_paid_essay_is_refunded(
     break_provider: object,
     status: HTTPStatus,
 ) -> None:
-    """A provider error or a spent server key hands the reserved unit back."""
+    """A provider error or a spent balance hands the reserved unit back."""
     assert callable(break_provider)
     break_provider(monkeypatch)
     headers, user_id = await _signup(async_client, f"failed_{status.value}")
