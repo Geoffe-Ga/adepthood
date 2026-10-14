@@ -261,6 +261,16 @@ describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
     expect(notice).toMatch(/vault you disconnected/i);
   });
 
+  it('tells the person a pre-binding copy may remain in an earlier vault (#3095)', async () => {
+    const { getByTestId } = await refusedWith('vault_withdrawal_unrecorded_vault');
+
+    const notice = getByTestId('journal-delete-error').props.children as string;
+    expect(notice).toMatch(/before October 7, 2026/);
+    expect(notice).toMatch(/may still be in a Creek vault you connected earlier/i);
+    expect(notice).not.toMatch(/withdrawn|is gone/i);
+    expect(getByTestId('journal-unreachable-erase')).toBeTruthy();
+  });
+
   it('reconnect first opens vault settings and erases nothing', async () => {
     const { getByTestId, queryByTestId } = await refusedWith('vault_withdrawal_previous_vault');
 
@@ -371,6 +381,18 @@ describe('the receipt names where a copy may remain (#3094)', () => {
       copy_location: 'connected_vault',
     });
     expect(notice).toMatch(/copy may still be in your Creek vault/);
+    expect(notice).not.toMatch(/withdrawn|is gone too/);
+  });
+
+  it('says a pre-binding copy may remain in a vault connected before the record began (#3095)', () => {
+    const notice = erasureReceiptNotice({
+      entry_id: 2,
+      remote_copy: 'unconfirmed',
+      copy_location: 'unrecorded_vault',
+    });
+    expect(notice).toMatch(/deleted from adepthood/i);
+    expect(notice).toMatch(/copied to a Creek vault before October 7, 2026/);
+    expect(notice).toMatch(/may still be in a Creek vault you connected earlier/i);
     expect(notice).not.toMatch(/withdrawn|is gone too/);
   });
 

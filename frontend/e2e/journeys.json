@@ -195,7 +195,7 @@
   },
   {
     "id": "habits.offline-check-in-replay-drains",
-    "description": "A check-in tapped while the device is offline is queued on the device, and the next habits load replays that queue: an entry the server will never accept is dropped so the queue keeps draining behind it, while a dropped connection re-queues the unposted suffix intact. Covered by frontend/e2e/habits-offline-replay.browser.e2e.test.ts against the real backend. It takes the device offline with the browser context's setOffline and waits on the app's own offline banner, logs units through the goal sheet, and reads the queue straight out of the device's storage under the account-scoped key named by the device-owner stamp. Reconnecting does not replay the habit queue by itself; a habits load does, so every replay is one fresh load onto the journal shelf, whose mount load is the single drain, and Habits is opened only once the queue has reached its expected end state. It asserts exactly one POST /goal_completions/ per queued check-in, each carrying that entry's own Idempotency-Key, and reads the stored rows back out of band: the units total, and the local_day a same-day replay lands on. A check-in queued yesterday and replayed today, on a page clock pinned to midday in the account's zone, sends completed_on for yesterday and is stored on yesterday. A permanent rejection is a real 404 goal_not_found, produced by deleting the queued goal's habit out of band; the entry behind it still lands, and the drop is written to a bounded on-device quarantine (the most recent records only) and surfaced on the Habits screen as a count of the check-ins that could not be saved, an alert the user can dismiss and that a later load does not bring back; the quarantine is also wiped on logout. A transient failure is a harness-side abort of every attempt for one entry's key: the queue keeps exactly the unposted suffix and the next load posts only that. A server rejection with an unrecognised status that keeps recurring is retried, and given up on only after both MAX_CHECK_IN_REPLAY_ATTEMPTS counted rejections and MIN_POISON_AGE_MS since the first (#2473); it is then quarantined and surfaced like any other drop, while offline, timeout, 401 and availability failures (408, 429, 502, 503, 504) never count. The spec reaches the give-up with a harness-fulfilled 500 for one key and a seeded retry record already one refusal short of the cap and past the age floor, so the final refusal, the drain behind it and the notice are real while the week of refusals is not; the boundaries are pinned by src/features/Habits/services/__tests__/replayPolicy.test.ts. The classification is pinned by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx, and the notice by src/features/Habits/components/__tests__/DroppedCheckInNotice.test.tsx.",
+    "description": "A check-in tapped while the device is offline is queued on the device, and the next habits load replays that queue: an entry the server will never accept is dropped so the queue keeps draining behind it, while a dropped connection re-queues the unposted suffix intact. Covered by frontend/e2e/habits-offline-replay.browser.e2e.test.ts against the real backend. It takes the device offline with the browser context's setOffline and waits on the app's own offline banner, logs units through the goal sheet, and reads the queue straight out of the device's storage under the account-scoped key named by the device-owner stamp. Reconnecting does not replay the habit queue by itself; a habits load does. Concurrent loads share one drain. A browser case holds the original replay POST, opens Habits, queues a new tap by failing its requests, then releases the replay: the newer operation survives cleanup and reaches the real server on the next load, with one stored unit for each habit. It asserts exactly one POST /goal_completions/ per queued check-in, each carrying that entry's own Idempotency-Key, and reads the stored rows back out of band: the units total, and the local_day a same-day replay lands on. A check-in queued yesterday and replayed today, on a page clock pinned to midday in the account's zone, sends completed_on for yesterday and is stored on yesterday. A permanent rejection is a real 404 goal_not_found, produced by deleting the queued goal's habit out of band; the entry behind it still lands, and the drop is written to a bounded on-device quarantine (the most recent records only) and surfaced on the Habits screen as a count of the check-ins that could not be saved, an alert the user can dismiss and that a later load does not bring back; the quarantine is also wiped on logout. A transient failure is a harness-side abort of every attempt for one entry's key: the queue keeps exactly the unposted suffix and the next load posts only that. A server rejection with an unrecognised status that keeps recurring is retried, and given up on only after both MAX_CHECK_IN_REPLAY_ATTEMPTS counted rejections and MIN_POISON_AGE_MS since the first (#2473); it is then quarantined and surfaced like any other drop, while offline, timeout, 401 and availability failures (408, 429, 502, 503, 504) never count. The spec reaches the give-up with a harness-fulfilled 500 for one key and a seeded retry record already one refusal short of the cap and past the age floor, so the final refusal, the drain behind it and the notice are real while the week of refusals is not; the boundaries are pinned by src/features/Habits/services/__tests__/replayPolicy.test.ts. The classification is pinned by unit tests in src/features/Habits/services/__tests__/habitManager.test.ts and src/features/Habits/hooks/__tests__/useHabitActions.test.tsx, and the notice by src/features/Habits/components/__tests__/DroppedCheckInNotice.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits", "goalCompletions"],
@@ -654,7 +654,7 @@
   },
   {
     "id": "journal.delete-with-unreachable-vault",
-    "description": "A writer whose page reached a Creek vault they have since replaced or disconnected deletes that page (#3094, #3098). The DELETE never dials the new vault and answers a 503 that says, in content-free relational terms, where the copy is: vault_withdrawal_previous_vault or vault_withdrawal_disconnected_vault. The shelf keeps the page, says why, and offers reconnect first (opening vault settings) or \"I can't reach it\", which calls POST /journal/{entry_id}/erase-locally: the page is erased here -- gone from read, list and export -- a content-free unconfirmed obligation is kept bound to the old vault, and the plain receipt says a copy may remain there and must be deleted there; nothing reports it withdrawn. Reconnecting the old vault later lets the background sweep confirm and clear the obligation. Uncovered because no lane spec yet drives two vault connections for one account against the out-of-process contract fake; pinned meanwhile by backend/tests/test_journal_unreachable_vault.py, backend/tests/test_journal_delete_completion.py, backend/tests/test_vault_destination_binding.py and the Jest suites JournalShelfScreenDelete.test.tsx, JournalEntryScreenPrivacy.test.tsx and api/__tests__/journalErasure.test.ts.",
+    "description": "A writer whose page reached a Creek vault they have since replaced or disconnected deletes that page (#3094, #3098). The DELETE never dials the new vault and answers a 503 that says, in content-free relational terms, where the copy is: vault_withdrawal_previous_vault or vault_withdrawal_disconnected_vault. The shelf keeps the page, says why, and offers reconnect first (opening vault settings) or \"I can't reach it\", which calls POST /journal/{entry_id}/erase-locally: the page is erased here -- gone from read, list and export -- a content-free unconfirmed obligation is kept bound to the old vault, and the plain receipt says a copy may remain there and must be deleted there; nothing reports it withdrawn. Reconnecting the old vault later lets the background sweep confirm and clear the obligation. A page copied to a vault before destination binding (#3095) recorded no vault at all: the connected vault is still asked but its answer is never trusted, so the DELETE (and an Intimate reclassification) answers vault_withdrawal_unrecorded_vault, the shelf tells the person plainly that a copy made before October 7, 2026 may remain in a vault they connected earlier, and \"I can't reach it\" erases the page here with an unconfirmed obligation bound to no vault -- a receipt naming unrecorded_vault that no vault can ever clear. Uncovered because no lane spec yet drives two vault connections for one account against the out-of-process contract fake; pinned meanwhile by backend/tests/test_journal_unreachable_vault.py, backend/tests/test_journal_delete_completion.py, backend/tests/test_vault_destination_binding.py and the Jest suites JournalShelfScreenDelete.test.tsx, JournalEntryScreenPrivacy.test.tsx and api/__tests__/journalErasure.test.ts.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["journal"],
@@ -670,12 +670,17 @@
   },
   {
     "id": "journal.write-under-vault-send-suspension",
-    "description": "While the operator's PRIVACY_SUSPEND_VAULT_SEND switch is on, a writer with a connected Creek vault saves or edits a Personal page (#3107). The page is saved locally; the vault adapter refuses the ingest before the wire, so the write is recorded as suspended -- not degraded -- and the page owes nothing: no vault destination is bound and no VAULT_WRITE lineage shadow is logged. Deleting that page later completes at once (204, no withdrawal dial, no obligation row), even if the vault has since been disconnected. Once the switch is lifted, the next save really sends, binds the destination and records the shadow exactly once. Uncovered because no lane spec drives the operator switch against the out-of-process contract fake; pinned meanwhile by backend/tests/test_vault_destination_binding.py, backend/tests/test_privacy_lineage.py and backend/tests/test_creek_vault_write.py.",
+    "description": "While the operator's PRIVACY_SUSPEND_VAULT_SEND switch is on, a writer with a connected Creek vault saves or edits a Personal page (#3107). The page is saved locally; the vault adapter refuses the ingest before the wire, so the write is recorded as suspended -- not degraded -- and the page owes nothing: no vault destination is bound and no VAULT_WRITE lineage shadow is logged. Deleting that page later completes at once (204, no withdrawal dial, no obligation row), even if the vault has since been disconnected. Once the switch is lifted, the next save really sends, binds the destination and records the shadow exactly once. A first essay letter asked for under the switch is the same (#3122): the letter is kept locally, and its Voice Draft mirror leaves no VoiceDraftRetraction intent and no VOICE_DRAFT_MIRROR shadow, while a mirror PUT that was dialled and failed (a 5xx or a lost acknowledgement) keeps both. Uncovered because no lane spec drives the operator switch against the out-of-process contract fake; pinned meanwhile by backend/tests/test_vault_destination_binding.py, backend/tests/test_privacy_lineage.py, backend/tests/test_creek_vault_write.py and backend/tests/test_voice_draft_mirror_suspension.py.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["journal"],
-      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "DELETE /journal/{entry_id}"],
-      "tables": ["journalentry", "journalwithdrawalobligation"]
+      "routes": [
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["journalentry", "journalwithdrawalobligation", "voicedraftretraction"]
     },
     "status": "uncovered",
     "issue": 3107
@@ -745,7 +750,7 @@
   },
   {
     "id": "journal.vault-bound-reflection-fails-closed",
-    "description": "A writer who has connected a vault -- ready, still provisioning, or with a stored host this server will not dial, or the deployment vault's bound owner -- asks for resonance. Their pass is answered by the vault or by nothing (#3061): a vault with nothing usable to say is a refunded zero-note pass with the server's own explanation; a vault that cannot answer (down, refusing, timing out, unreadable, no reflect capability, an unrecognized tier) is a refunded, retryable 503 reflection_source_unavailable whose margin copy says nothing was charged and the entry is saved; a locally distress-flagged entry gets the care surface alone; and completion detection, inside the pass and on the standalone route, answers checked: false. In none of those is the app's own model provider dialled, whatever BYOK key the request carries. Still uncovered as a journey: the wire lane's bound vault owner now crosses the real seam on the happy arm only -- journal-vault-withdrawal.e2e.test.ts asserts its margin note is the lane vault's own answer to POST /v1/reflections -- while none of the fail-closed arms above is driven over the wire yet; the out-of-process fake Creek vault (fakeCreekVault.mjs) is their future home. Pinned meanwhile at the route by backend/tests/security/test_vault_boundary_no_fallback.py, structurally by backend/tests/security/test_app_provider_construction_chokepoint.py, and client-side by useResonance.test.tsx and errorMessages.test.ts.",
+    "description": "A writer who has connected a vault -- ready, still provisioning, or with a stored host this server will not dial, or the deployment vault's bound owner -- asks for resonance. Their pass is answered by the vault or by nothing (#3061): a vault with nothing usable to say is a refunded zero-note pass with the server's own explanation; a vault that cannot answer (down, refusing, timing out, unreadable, a malformed capability handshake, no reflect capability, an unrecognized tier) is a refunded, retryable 503 reflection_source_unavailable whose margin copy says nothing was charged and the entry is saved; a locally distress-flagged entry gets the care surface alone; and completion detection, inside the pass and on the standalone route, answers checked: false. In none of those is the app's own model provider dialled, whatever BYOK key the request carries -- nor, when the writer reconnects or disconnects their vault while a pass is in flight, is that pass re-sent to the new vault or the app provider. Still uncovered as a journey: the wire lane's bound vault owner now crosses the real seam on the happy arm only -- journal-vault-withdrawal.e2e.test.ts asserts its margin note is the lane vault's own answer to POST /v1/reflections -- while none of the fail-closed arms above is driven over the wire yet; the out-of-process fake Creek vault (fakeCreekVault.mjs) is their future home. Pinned meanwhile at the route by backend/tests/security/test_vault_boundary_no_fallback.py, structurally by backend/tests/security/test_app_provider_construction_chokepoint.py, and client-side by useResonance.test.tsx and errorMessages.test.ts.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["resonance", "completionSuggestions"],
@@ -756,7 +761,7 @@
       "tables": ["journalentry", "marginalia", "walletaudit", "uservaultconfig"]
     },
     "status": "uncovered",
-    "issue": 3078
+    "issue": 3061
   },
   {
     "id": "journal.care-support-dismiss-reopen",
@@ -1049,22 +1054,42 @@
   },
   {
     "id": "course.read-and-mark-progress",
-    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Which stage it opens on is the server's answer, not a count of completed stages the client makes for itself. The cold start's bounded wait is a state of this journey, not a journey of its own: it crosses no screen, client wrapper, route or table this entry does not already name -- it is a client-side timer over the same GET /stages read, and it is reached precisely when that read never answers, which no lane against a live server can arrange. Pinned in-process by src/features/Course/__tests__/CourseScreenColdStart.test.tsx, the way the Map's identical bounded wait is pinned by MapScreenColdStart.test.tsx and declared nowhere in this ledger.",
+    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Course opens on the last Frequency marked read; the date/server current stage applies only before any reading or when that Frequency is locked after a reset. Explicit route parameters keep precedence. The cold start's bounded wait is pinned in-process by src/features/Course/__tests__/CourseScreenColdStart.test.tsx over the same GET /stages request.",
     "crosses": {
       "screen": "frontend/src/features/Course/CourseScreen.tsx",
-      "client": ["course", "stages"],
+      "client": ["course", "stages", "uiFlags"],
       "routes": [
         "GET /stages",
         "GET /stages/program-calendar",
+        "GET /ui-flags",
         "GET /course/stages/{stage_number}/content",
         "GET /course/content/{content_id}/body",
         "POST /course/content/{content_id}/mark-read",
         "GET /course/stages/{stage_number}/progress"
       ],
-      "tables": ["stagecontent", "contentcompletion"]
+      "tables": ["stagecontent", "contentcompletion", "useruiflags"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/course.e2e.test.ts"
+  },
+  {
+    "id": "course.restores-last-read-frequency",
+    "description": "At desktop and phone widths, a reader marks a Blue chapter read while the program calendar is on Orange, then reloads Course without route parameters and finds Blue selected. The browser uses the real reader scroll and mark-read action, GET /ui-flags, and GET /stages without response stubs.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["course", "stages", "uiFlags"],
+      "routes": [
+        "GET /stages",
+        "GET /ui-flags",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/content/{content_id}/body",
+        "POST /course/content/{content_id}/mark-read",
+        "GET /course/stages/{stage_number}/progress"
+      ],
+      "tables": ["stagecontent", "contentcompletion", "useruiflags"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course-reading-position.browser.e2e.test.ts"
   },
   {
     "id": "course.write-note-on-passage",
@@ -1254,12 +1279,11 @@
   },
   {
     "id": "account.byok-key-crosses-two-service-boundaries",
-    "description": "Someone saves their own OpenAI or Anthropic key on the device, then uses a model-powered feature. The production app sends the key over HTTPS to Adepthood in the X-LLM-API-Key header, and Adepthood forwards it over HTTPS to the selected provider for that request without persisting, logging, or returning it. Both Settings surfaces disclose those two service boundaries before the key is used. The copy and wire contract are pinned together by src/features/Settings/__tests__/byokDisclosure.test.ts and the rendered-screen specs beside it. The real-wire lane cannot cover the whole journey because it neither mounts SecureStore-backed Settings screens nor sends a live credential to an external model provider; doing so would turn a test fixture into a production secret and a billable third-party call.",
+    "description": "Someone saves their own OpenAI or Anthropic key on the device, then uses a model-powered feature. The production app sends the key over HTTPS to Adepthood in the X-LLM-API-Key header, and Adepthood forwards it over HTTPS to the selected provider for that request without persisting, logging, or returning it. Both Settings surfaces disclose those two service boundaries before the key is used. The copy and wire contract are pinned together by src/features/Settings/__tests__/byokDisclosure.test.ts and the rendered-screen specs beside it. The real-wire lane cannot cover the whole journey because it neither mounts SecureStore-backed Settings screens nor sends a live credential to an external model provider; doing so would turn a test fixture into a production secret and a billable third-party call. Page reading is the exception since ADR 0009 phase (a)'s second half (#3067): with a key, the device sends the key and the page straight to that key's vendor, Adepthood sees only a content-free admission request and declares no key header on its page-read route, so the two-boundary copy now overstates that one feature's exposure (owner's copy decision). That path is journal.page-read-with-own-key-goes-device-to-vendor.",
     "crosses": {
       "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
       "client": ["journal", "resonance"],
       "routes": [
-        "POST /journal/transcribe-page",
         "POST /journal/{entry_id}/resonance",
         "POST /journal/marginalia/{marginalia_id}/essay"
       ],
@@ -1400,7 +1424,7 @@
   },
   {
     "id": "journal.photograph-a-page-into-the-open-entry",
-    "description": "Someone writing a journal page -- including a Course reader writing a reflection, which is an ordinary page opened with a prefilled title -- taps the camera in the entry's top-right row (beside the key and the close X), photographs a page or screenshot of their response -- handwritten, typed, printed, or a screenshot of a message thread, which transcribes as sender-labelled lines -- and the transcription is appended into the entry they already had open rather than being filed as a second one. Overlapping screenshots of one thread merge without repeating the overlap: where two adjacent pages repeat lines at their seam (a cropped line at either edge included), the merged transcript carries them once, a quiet per-page notice counts the repeated lines by page position, and a \"Keep them\" action restores both copies for that seam; each page's stored text is never altered, a short or single coincidental repeat is never dropped, lines whose numbers, times, symbols or emoji differ never count as repeats, and a seam beside a hand-edited page is left whole so the writer's correction always reaches the entry (#2929). The seam is what makes that a single entry: the capture route hands the merged transcript back through an in-memory store and the open page's own create-then-update writer persists it, so the title and save context the writer arrived with survive and one POST /journal/ covers the whole journey. The outcome also includes a production deployment with no vision model configured: it refuses before billing with model_lacks_vision, shows the terminal copy and hand-typed-entry offramp, and keeps Save disabled (#2849); and an image with no text, or a read the model declines, which the server answers with an uncharged 422 no_text_found / transcription_refused that the page offers to Retake or Remove, never as its text (#2851). Uncovered because neither lane can drive the capture: the route auto-launches the device photo picker on mount, which the node lane cannot even mount (#2324) and which no browser spec has ever driven through a file chooser, and the transcription itself is a charged vision call that needs the lane's LLM stub wired through it.",
+    "description": "Someone writing a journal page -- including a Course reader writing a reflection, which is an ordinary page opened with a prefilled title -- taps the camera in the entry's top-right row (beside the key and the close X), photographs a page or screenshot of their response -- handwritten, typed, printed, or a screenshot of a message thread, which transcribes as sender-labelled lines -- and the transcription is appended into the entry they already had open rather than being filed as a second one. Overlapping screenshots of one thread merge without repeating the overlap: where two adjacent pages repeat lines at their seam (a cropped line at either edge included), the merged transcript carries them once, a quiet per-page notice counts the repeated lines by page position, and a \"Keep them\" action restores both copies for that seam; each page's stored text is never altered, a short or single coincidental repeat is never dropped, lines whose numbers, times, symbols or emoji differ never count as repeats, and a seam beside a hand-edited page is left whole so the writer's correction always reaches the entry (#2929). The seam is what makes that a single entry: the capture route hands the merged transcript back through an in-memory store and the open page's own create-then-update writer persists it, so the title and save context the writer arrived with survive and one POST /journal/ covers the whole journey. The outcome also includes a page read the writer cannot retry past -- no key of their own (key_required) or a spent balance on it (credit_exhausted) -- which shows the terminal copy and hand-typed-entry offramp and keeps Save disabled (#2849; the former model_lacks_vision outcome is retired, since a page read with a key now always asks the vendor for a vision model, #3067); and an image with no text, or a read the model declines, which the server answers with an uncharged 422 no_text_found / transcription_refused that the page offers to Retake or Remove, never as its text (#2851). Uncovered because neither lane can drive the capture: the route auto-launches the device photo picker on mount, which the node lane cannot even mount (#2324) and which no browser spec has ever driven through a file chooser, and the transcription itself is a charged vision call that needs the lane's LLM stub wired through it.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
@@ -1409,6 +1433,18 @@
     },
     "status": "uncovered",
     "issue": 2768
+  },
+  {
+    "id": "journal.page-read-with-own-key-goes-device-to-vendor",
+    "description": "A writer who has saved their own OpenAI or Anthropic key photographs a page. The page and the key go from their device straight to that key's vendor (ADR 0009 phase (a), #3067): the app first asks Adepthood's content-free POST /journal/transcribe-page/direct-admission (no body, no key, no page; 204, or 503 ai_suspended while an operator has switched external AI off, and the page is then not sent; an unreachable admission also stops it), then calls https://api.anthropic.com/v1/messages (with anthropic-dangerous-direct-browser-access, which Anthropic requires before it answers a browser) or https://api.openai.com/v1/chat/completions with the same prompt and token budget the server used and that vendor's registry default model (gpt-4o-mini or claude-sonnet-5; the operator's LLM_MODEL does not govern a device-direct read), and judges the reply by the same rules, so an empty read or a refusal is no_text_found / transcription_refused and never the page's text; a kept read is appended into the open entry exactly as on the server path. A spent vendor balance, a vendor rate limit, a bad key, a timeout and a dropped connection keep the kinds and copy the server path had. Without a key, a production build refuses key_required on the device and sends the page nowhere (only a development build still reaches its local server's stub seam). The server's page-read route declares no key header and runs its payer gate before decoding a body; a key sent to it anyway by a stale client is never read, forwarded or logged, and the request is refused llm_key_required. Uncovered because no lane can drive it: the capture route auto-launches the device photo picker (journal.photograph-a-page-into-the-open-entry), and a covering spec would need a live vendor credential and a billable third-party call, or a vendor fake the enforced CSP's connect-src admits. Pinned meanwhile by src/api/__tests__/transcribePage.test.ts and byokDirect.test.ts (request shape, error taxonomy, privacy, CSP origins), src/api/__tests__/transcriptionContract.test.ts and backend/tests/test_transcription_client_contract.py (one shared fixture: prompt and token budget captured off the server's own wire request, the registry default models, and the classifier's verdicts over every refusal opener and cue), and backend/tests/security/test_byok_only_cloud.py (the admission carries nothing and honours the suspension; a key sent to the page route is never forwarded or logged).",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalPhotographScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/transcribe-page/direct-admission", "POST /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 3067
   },
   {
     "id": "journal.entry-controls-fit-phone-and-desktop",
@@ -2109,7 +2145,7 @@
   },
   {
     "id": "journal.external-ai-suspended",
-    "description": "While an operator has set PRIVACY_SUSPEND_EXTERNAL_AI during a privacy incident, a writer asks for a resonance pass, a first essay letter, completion detection and a page transcription. Each answers 503 ai_suspended, charges nothing and dials no provider. Journal create, read, edit, export and account deletion keep working, and a cached letter and an intimate entry's care surface are still served (#3075). Uncovered because the e2e lane's provider environment is lane-wide, so a spec cannot flip the switch for one journey, and the client has no copy of its own for this code: the suspended-state wording is the owner's decision. Pinned meanwhile by backend/tests/incident/test_privacy_suspension.py.",
+    "description": "While an operator has set PRIVACY_SUSPEND_EXTERNAL_AI during a privacy incident, a writer asks for a resonance pass, a first essay letter, completion detection and a page transcription. Each answers 503 ai_suspended, charges nothing and dials no provider. Journal create, read, edit, export and account deletion keep working, and a cached letter and an intimate entry's care surface are still served (#3075). Uncovered because the e2e lane's provider environment is lane-wide, so a spec cannot flip the switch for one journey, and the client has no copy of its own for this code: the suspended-state wording is the owner's decision. Pinned meanwhile by backend/tests/incident/test_privacy_suspension.py. A page read with the writer's own key now goes from the device to the vendor (#3067); it asks POST /journal/transcribe-page/direct-admission first, which answers the same 503 ai_suspended, and the page never leaves the device. Pinned meanwhile by backend/tests/security/test_byok_only_cloud.py and src/api/__tests__/transcribePage.test.ts.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["resonance", "journal"],
@@ -2117,7 +2153,8 @@
         "POST /journal/{entry_id}/resonance",
         "POST /journal/marginalia/{marginalia_id}/essay",
         "POST /journal/{entry_id}/suggestions/detect",
-        "POST /journal/transcribe-page"
+        "POST /journal/transcribe-page",
+        "POST /journal/transcribe-page/direct-admission"
       ],
       "tables": ["journalentry", "walletaudit"]
     },
@@ -2126,7 +2163,7 @@
   },
   {
     "id": "journal.ai-refused-without-payer",
-    "description": "A writer with no API key of their own asks for a resonance pass, a first essay letter, completion detection or a page transcription. Since ADR 0009 phase (a) (#3067) the server's own key never pays for a writer's content, so on the app-provider path this is refused llm_key_required whatever provider the server is configured with; only a writer whose own vault answers spends credits, and an empty wallet there is refused insufficient_offerings. Each is refused 402 before anything is spent (no wallet change, no slot, no usage row, no dial): insufficient_offerings when the wallet is empty, llm_key_required when only a personal key could answer. The resonance and letter surfaces open the add-credits-or-key refill dialog; a page read shows a terminal 'add your key in Settings' card. No canned stub text ever reaches the writer; with credits or a key, generation proceeds as before (#3096). Uncovered because the e2e lane arms BOTMASON_STUB_SEAM and its provider environment lane-wide, so a spec cannot disarm the seam or empty the monthly allocation for one journey. Pinned meanwhile by backend/tests/security/test_byok_only_cloud.py (zero cloud calls without the writer's key, by provider factory, transport and socket spies; a credit debit stands only beside a vault receipt), backend/tests/test_generation_payer.py, backend/tests/test_generation_payer_invariants.py and the Jest suites TranscriptionPayerRefusal, ResonanceRefillDialogPayer and errorMessages.",
+    "description": "A writer with no API key of their own asks for a resonance pass, a first essay letter, completion detection or a page transcription. Since ADR 0009 phase (a) (#3067) the server's own key never pays for a writer's content, so on the app-provider path this is refused llm_key_required whatever provider the server is configured with; only a writer whose own vault answers spends credits, and an empty wallet there is refused insufficient_offerings. Each is refused 402 before anything is spent (no wallet change, no slot, no usage row, no dial): insufficient_offerings when the wallet is empty, llm_key_required when only a personal key could answer. The resonance and letter surfaces open the add-credits-or-key refill dialog; a page read shows a terminal 'add your key in Settings' card. No canned stub text ever reaches the writer; with credits or a key, generation proceeds as before (#3096). Uncovered because the e2e lane arms BOTMASON_STUB_SEAM and its provider environment lane-wide, so a spec cannot disarm the seam or empty the monthly allocation for one journey. Pinned meanwhile by backend/tests/security/test_byok_only_cloud.py (zero cloud calls without the writer's key, by provider factory, transport and socket spies; a credit debit stands only beside a vault receipt), backend/tests/test_generation_payer.py, backend/tests/test_generation_payer_invariants.py and the Jest suites TranscriptionPayerRefusal, ResonanceRefillDialogPayer and errorMessages. Since #3067 a production build does not send a keyless page at all: it shows the same 'add your key in Settings' card from key_required on the device, and the server's page route, asked anyway, runs the payer gate before decoding the body.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["resonance", "journal"],
@@ -2152,5 +2189,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/csp-enforced.browser.e2e.test.ts"
+  },
+  {
+    "id": "map.wavelength-phase-terms-are-canon",
+    "description": "A traveller opens a stage on the Map and reads its six Wavelength phases, each with an integrated (Rx) and a shadow (OD) name, and every name is the course's canonical term from aptitude-course's Modes of the Wavelength CSV: Teal reads Epiphany / Delusion through Pattern-Seeking / Belief Salience, not Yellow's old meditation terms (#3135). The names come only from GET /stages manifestations, which the server reads from src/curriculum/archetypal_wavelength.json; nothing is hardcoded client-side. Clear Light has no CSV row, and its six pairs are app-authored. Uncovered: no spec yet reads the served manifestations and observes them on the Map stage modal. The source is pinned by backend/scripts/check_wavelength_terms.py, which the content-drift CI job runs against the vendored CSV, and by backend/tests/test_curriculum.py (test_phase_names_match_the_canonical_modes_csv). The renderer is pinned by fixture tests in src/features/Map/__tests__/StageExpressionsSection.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["stages"],
+      "routes": ["GET /stages"],
+      "tables": ["coursestage"]
+    },
+    "status": "uncovered",
+    "issue": 3157
   }
 ]

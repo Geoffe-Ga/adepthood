@@ -72,6 +72,8 @@ import {
   loadUserTimezone,
   clearUserTimezone,
 } from '@/storage/authStorage';
+import { isUserTimezonePending } from '@/storage/userCalendar';
+import { getActiveUser } from '@/storage/userScope';
 import { isTokenExpired, shouldRefreshToken } from '@/utils/token';
 import type * as tokenModule from '@/utils/token';
 
@@ -902,6 +904,31 @@ describe('AuthContext', () => {
    * the stored zone is the only source still holds.
    */
   describe('resumed session carries its own calendar (#2847)', () => {
+    it.each(['UTC', 'America/Los_Angeles'])(
+      'marks the cached %s zone authoritative',
+      async (zone) => {
+        mockLoadToken.mockResolvedValue('stored-jwt');
+        mockLoadUserTimezone.mockResolvedValue(zone);
+        const { result } = renderHook(() => useAuth(), { wrapper });
+        await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+        expect(result.current.userTimezoneReady).toBe(true);
+        expect(isUserTimezonePending(getActiveUser())).toBe(false);
+      },
+    );
+
+    it('keeps a legacy fallback provisional until a server-confirmed zone arrives', async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      mockLoadUserTimezone.mockResolvedValue(null);
+      mockRefreshSession.mockImplementation(() => new Promise(() => {}));
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+      expect(result.current.userTimezoneReady).toBe(false);
+      expect(isUserTimezonePending(getActiveUser())).toBe(true);
+      await act(async () => result.current.setUserTimezone('UTC'));
+      expect(result.current.userTimezoneReady).toBe(true);
+      expect(isUserTimezonePending(getActiveUser())).toBe(false);
+    });
+
     it('resumes on the stored zone rather than the UTC default', async () => {
       mockLoadToken.mockResolvedValue('stored-jwt');
       mockLoadUserTimezone.mockResolvedValue('America/Los_Angeles');

@@ -26,10 +26,10 @@ call Energy Scaffolding
 when you finish the course the first time.
 
 This material can be shockingly sticky. You’ll find it
-organizing your thoughts, philosophies and ideologies. The Stages can
-act like a food pyramid, where you need a practice, a habit, a
-serving of each rung to
-be Whole and actualized. Not one serving of the
+organizing your thoughts, philosophies and ideologies. The Stages work
+like a balanced plate: you need a practice, a habit, a
+serving of each one to
+be Whole. Not one serving of the
 best one. A serving of each—which is a
 useful thing to remember every time you catch yourself
 wondering which Stage you *are*. You aren’t any
@@ -78,11 +78,13 @@ full focus on each habit
 as you add it to your stack, rather than tilting manic and trying to
 transform your life in one fell swoop.
 
-By the end, you will have built
-not just a lifestyle but a foundation of radical
+By the end, you’ll have more to
+draw on: a foundation of radical
 agency, a practice of
-true Free Will, and, ultimately, the ability to
-release even that—to dissolve into the effortless flow of Source.
+true Free Will, and a first taste of
+releasing even that into the effortless flow of Source. The Wavelength
+keeps turning after the course ends; you’ll just have a wider repertoire
+to meet it with.
 
 The Ten Stages of APTITUDE are taught through the lens
 of the Archetypal Wavelength, with each Stage’s Practice uncovering
@@ -100,13 +102,13 @@ focus on that Stage have passed.
 The practices also build efficacy. Each a meditative
 technique, they begin by taking a few seconds of your day, and work up
 over the course of the nine months toward 45 minutes of meditation: a
-truly serious commitment. Exactly what you
-need to Wake Up.
+truly serious commitment. Enough, honestly, to
+give waking up a real chance.
 
-Exactly what you need for
-Wholeness.
+Enough for Wholeness to have
+somewhere to land.
 
-### APTITUDE’s Stages Correspond to Steps in Human Development on the Path Toward Wholeness.
+### Where the Stages and Their Colors Come From
 
 Their colors are borrowed—and
 modified to refer specifically to Aspects of
@@ -121,7 +123,7 @@ referring to the Stages simpler.
 
 The Stages *do*, however, map onto the traditional
 chakra system—not as a mystical claim, but because both are
-descriptions of the same climb up the same body:
+maps of the same body, drawn root to crown:
 
 | Stage | Chakra |
 |---|---|
@@ -170,10 +172,10 @@ thoughtlessly performing the actions that would keep me alive.
 
 ~ Patrick Rothfuss, [Name of the Wind](https://patrickrothfuss.com/content/books.html)
 
-At this foundational level, individuals operate purely
-from instinct, driven by survival needs alone. There is no awareness of
-Free Will; life is simply a series of reactions to environmental
-stimuli. This is the domain of Maslow’s physiological needs, the Root
+When Beige runs the show unexamined, you’re on
+instinct: eat, sleep, don’t die. There’s no Free Will in the picture
+yet, just reaction—stimulus, response, next
+stimulus. This is the domain of Maslow’s physiological needs, the Root
 Chakra, and the earliest stages of human cognitive and psychosocial
 development.
 
@@ -191,9 +193,8 @@ to turn focus inward.
 
 An example of an ongoing habit to cultivate during this
 stage is taking work
-seriously, fostering the stability in the basic
-structures of life that is a necessary foundation for pursuing and
-exercising agency.
+seriously—rent paid, fridge stocked, bills on
+time—because agency needs a floor to stand on.
 
 #### Yes-and-Ness: Receptivity (Purple, Mythic, The Pleasure Seeker)
 
@@ -239,11 +240,11 @@ another because we are all interconnected.
 
 ~ Sharon Salzberg, [Lovingkindness](https://www.sharonsalzberg.com/lovingkindness)
 
-Here, behavior is driven by an often unconscious urge
-to alleviate emotional pain. Without self-love, the tendency is to exert
-dominance—over others, over situations, or even over the self. Power
-dynamics become central, and Free Will is often misinterpreted as
-forceful control.
+When Red runs unexamined, you’re mostly trying to make
+a hurt stop—and without self-love, the quickest way to do that is to
+push: on people, on situations, on yourself. Everything
+becomes a power game, and Free Will gets mistaken for
+winning it.
 
 The meditative practice for this stage is
 confidence-building through belly
@@ -293,11 +294,11 @@ Somewhere I belong
 
 ~ Linkin Park, [Somewhere I Belong](https://linkinpark.com)
 
-This stage is defined by external expectations. People
-behave according to their roles in relationships and society, seeing
-themselves as defined by how they fit into larger systems. Free Will, at
-this point, feels like a constrained choice within predefined
-lanes.
+When Blue runs unexamined, you live by the expectations
+around you—you play your role in the family, the job, the group, and
+start to believe the role is you. Free Will, at
+this point, feels like picking a lane somebody else already
+painted.
 
 But like all the others, the Community Love stage has
 both a light and shadow side. While the default temptation is often to
@@ -321,9 +322,9 @@ scrolling
 awareness—noticing and interrupting compulsive
 engagement with digital media.
 
-Again we are letting go of that which does not serve.
-That which introduces other Wavelengths into the ecosystem of our soul
-and makes our own true voice difficult to hear. Scrolling mindfully—or
+Again, we’re putting down something that costs more than it gives:
+whatever introduces other Wavelengths into the ecosystem of our soul
+and makes our own true voice hard to hear. Scrolling mindfully—or
 not at all—reveals that
 the artificial belonging that social media promises is like
 salt water to a thirsty
@@ -337,10 +338,10 @@ Well I'm fucking screaming… at you
 
 ~ The Used, [A Box Full of Sharp Objects](https://theused.net)
 
-Here, individuals chase external validation:
-achievement, money, status, and recognition. Free Will is still largely
-unexamined, as behavior is dictated by culturally sanctified success
-metrics.
+When Orange runs unexamined, you chase the scoreboard:
+achievement, money, status, applause. Free Will still hasn’t
+been looked at; you’re just running whatever your culture
+calls winning.
 
 The practice for this phase is the
 Wim Hof Method, which
@@ -421,11 +422,11 @@ disciplines, and there’s no room for free will.
 
 ~ Robert Sapolsky, [Determined](https://humsci.stanford.edu/feature/determined-science-life-without-free-will-robert-m-sapolsky-biology)
 
-At this Integrative stage, individuals begin to see the
-totality of their conditioning—biological, cultural, psychological. The
-totality, in other words, of the impediments to Free Will that arise
-through the categories of experience represented by the previous seven
-Stages.
+At Yellow you start to see the whole of your
+conditioning at once—body, culture, psyche. Everything the
+first six Stages showed you one piece at a time, now in one
+frame: the full weight of what’s been pressing on your Free Will
+all along.
 
 The realization dawns that Free Will may be largely
 illusory, a construct emerging from countless prior influences. An
@@ -455,7 +456,7 @@ APTITUDE, a focus on the true core practice.
 meditation of at least 45 minutes will be the
 habit for the Stage as well.
 
-#### Wisdom: True Self (Teal, Nonduality, The Adept)
+#### Wisdom: True Self (Teal, True Self Connection, The True Self Embodier)
 
 The Great Way is not difficult
 for those who have no preferences.
@@ -471,27 +472,28 @@ With enough continued perseverance, the next stage helps you connect with your T
 
 Having reflected on each Stage prior and incorporated
 their healthiest expression into your ongoing Blissy Meditation
-practice, the impossible begins to happen. The individual begins
-shedding conditioned patterns, releasing karmic attachments, and
-disentangling from the illusory of personal control by the small “y” you
-so that the True You can step up and take command.
+practice, something starts to shift. You begin
+shedding conditioned patterns, loosening karmic attachments, and
+letting go of the fantasy that the small “y” you was ever fully in
+charge—so the True You can step forward and take the wheel.
 
 Finally, Free Will becomes possible, but it is
 recognized as not belonging to the level of the small self.
 
 But with your increased balance, a strange intuition
-begins to form: there is a soul—called the Atman/Brahmin in
-Hinduism—more basic and essential than the personality. Outside of time.
-Outside of dualism. Beyond, transcendent, of the vessel. The You, with a
+begins to form: there is a soul—what Hinduism calls the
+Atman—more basic and essential than the personality. Older than this
+life. The part of you that chose to show up here. Beyond, transcendent, of the vessel. The You, with a
 big “Y.”
 
 That is where Free Will can be
 located. In the soul itself that has chosen to incarnate here as you.
-The soul that is simultaneously an aspect of the All and also identical
-with the All itself.
+The soul that has been quietly steering this life the whole time,
+whether or not you were listening.
 
-You are everything. Your will expresses through all of
-causality because it’s all you.
+This isn’t dissolving into everything—that’s Ultraviolet’s
+medicine, with its own Stage. This is discovering that Someone has been
+home the whole time, and that your will is theirs.
 
 To get in touch with it, we’ll be practicing something
 called the MacGyver
@@ -551,11 +553,11 @@ If you’re following along with the recommended habits,
 Stage Nine is where we tackle mindful food
 choices, embracing every calorie and nutrient as
 a vector for the sacred. We’ve just about tackled the entire gamut of
-messed up habits that are the societal default. Just as much as the
-spiritual practices that APTITUDE encourages you to charge after, these
-prerequisites are
-fundamental to the
-benefits that the Course will yield.
+messed up habits that are the societal default. These unglamorous habits
+matter every bit as much as the practices—they’re
+where most of what
+the Course gives you
+actually comes from.
 
 In many cultures, you don’t start meditating until
 you’ve proven an ability to stick to the ethical standards of that

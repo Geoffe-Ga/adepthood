@@ -22,7 +22,7 @@ Draw it. Create a visual map showing how your patterns interconnect. This is sys
 
 **Developmental Autobiography**
 
-Write your life story through the lens of the spiral. When were you in Beige? What moved you to Purple? What Red moment shaped you? When did you first touch Orange? Green? Yellow?
+Write your life story through the lens of the capacities. When did agency first come online for you? When did you learn to receive? What moment taught you to take up space? When did belonging, competence, shadow, and systems-sight each show up—and which ones are still thin?
 
 This isn't just reflection—it's integration. You're weaving your past into a coherent narrative that makes sense of who you've become.
 
@@ -36,7 +36,7 @@ This question trains your mind to see integration *as an active process*, not a 
 
 **Future Self Dialogue**
 
-Write a letter to your future self—the version of you who's completed APTITUDE, who's integrated all ten stages, who's become a full Adept. What do you want them to know? What are you struggling with now? What do you hope to have learned?
+Write a letter to your future self—the version of you who's been through all ten stages and is still practicing, still cycling, with more notes within reach than you have today. What do you want them to know? What are you struggling with now? What do you hope to have learned?
 
 Then write back. Let your future self respond. What do they see about your current situation that you can't see yet?
 

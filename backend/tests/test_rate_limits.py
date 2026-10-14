@@ -817,6 +817,9 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     # Per address and per account: an uncharged unusable read (#2851) must not
     # be buyable by rotating addresses.
     "routers.transcription.transcribe_page": ("20 per 1 minute", "20 per 1 minute"),
+    # The content-free admission a device asks before a client-direct page read
+    # (#3067) keeps the page-read budget it replaced.
+    "routers.transcription.direct_admission": ("20 per 1 minute", "20 per 1 minute"),
 }
 
 # One sentinel for every ``{param}`` segment. The coverage guard below only

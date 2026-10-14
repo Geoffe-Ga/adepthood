@@ -86,3 +86,22 @@ async def clear_writing_habit_links(session: AsyncSession, habit_id: int) -> Non
         .where(col(UserUiFlags.writing_session_habit_id) == habit_id)
         .values(writing_session_habit_id=None)
     )
+
+
+async def advance_course_reading_stage(
+    session: AsyncSession, user_id: int, stage_number: int
+) -> None:
+    """Remember the highest read Frequency, including concurrent mark-read calls.
+
+    Compare in the UPDATE itself so a slower earlier-stage request cannot
+    overwrite a later-stage request that has already committed.
+    """
+    await ensure_ui_flags(session, user_id)
+    last_stage = col(UserUiFlags.course_last_stage)
+    await session.execute(
+        update(UserUiFlags)
+        .where(col(UserUiFlags.user_id) == user_id)
+        .where(last_stage.is_(None) | (last_stage < stage_number))
+        .values(course_last_stage=stage_number)
+    )
+    await session.commit()

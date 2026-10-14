@@ -25,7 +25,6 @@ import {
   CREDIT_EXHAUSTED_COPY,
   INSUFFICIENT_OFFERINGS_COPY,
   LLM_KEY_REQUIRED_COPY,
-  SERVICE_CREDIT_EXHAUSTED_COPY,
 } from '@/api/errorMessages';
 import { Button } from '@/components/Button';
 import { accent, writingField, writingFieldFocus } from '@/design/tokens';
@@ -43,10 +42,6 @@ const REDO_CONFIRM_LABEL = 'Read again and replace my edits';
 const blockInputA11y = (position: number): string =>
   `Edit the transcribed text of page ${position}`;
 
-/** Friendly terminal copy when the configured model cannot read images at all. */
-const MODEL_LACKS_VISION_COPY =
-  'The AI that reads pages here can’t see photos. You can still type this page in by hand.';
-
 /** Per-kind copy for a recoverable page failure. The payer refusals (#3096) and the
  *  spent provider balances are sourced from the shared code map, so each story
  *  has a single source of truth. */
@@ -63,12 +58,10 @@ const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = 
     'That photo is a little large to read. Retake it, or use a lower-resolution shot.',
   wallet_exhausted: INSUFFICIENT_OFFERINGS_COPY,
   key_required: LLM_KEY_REQUIRED_COPY,
-  model_lacks_vision: MODEL_LACKS_VISION_COPY,
   // Sourced from the shared code map rather than written again here: this
   // surface's own copy is where the transient story survived last time, and a
   // second wording is a second place for it to come back.
   credit_exhausted: CREDIT_EXHAUSTED_COPY,
-  service_credit_exhausted: SERVICE_CREDIT_EXHAUSTED_COPY,
   unknown: "Something didn't work while reading this page. Try again, or remove it.",
 };
 

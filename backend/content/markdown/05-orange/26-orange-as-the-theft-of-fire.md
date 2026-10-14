@@ -12,7 +12,7 @@ media: []
 
 ## Orange as the Theft of Fire
 
-Orange is the stage where you steal fire from the gods. Where you stop waiting for salvation, for permission, for the universe to hand you what you need—and you *take* it. Not through domination (that's Red). Through *understanding*.
+Orange is the stage where you steal fire from the gods. Where you stop waiting for salvation, for permission, for the universe to hand you what you need—and you *take* it. Not by force—that's Red's shadow, not Red—but through *understanding*.
 
 You learn how things work. You study the systems. You run the experiments. You gather the data. And then you *use* what you've learned to build something new. To solve a problem. To make the world a little less dark.
 

@@ -26,7 +26,7 @@ import httpx2
 import openai
 
 from domain.care import MEDICATION_GUARDRAIL
-from errors import bad_request, payment_required, service_unavailable
+from errors import bad_request, payment_required
 from privacy.recipients import REGISTERED_PROVIDER_BASE_URLS
 from security import sanitize_user_text
 from services.journal_encryption import production_in_force
@@ -392,12 +392,12 @@ _ANTHROPIC_CREDIT_EXHAUSTED_PHRASE = "credit balance is too low"
 # argument rather than a claimed one.
 _ANTHROPIC_CREDIT_EXHAUSTED_STATUS = 400
 
-# Detail codes the routers emit for a spent balance. Split by whose key it was,
-# because the remedy is a different person: a caller's own key is a bill they
-# can settle, the server's is one only an operator can. Mirrored in
-# ``frontend/src/api/errorMessages.ts``.
+# The detail code the routers emit for a spent balance. Every vendor call is
+# made on the writer's own key (``_resolve_api_key`` refuses any other before a
+# client is built, ADR 0009 phase (a), #3067), so a spent balance is always a
+# bill the writer can settle; the server-key sibling this once had is retired.
+# Mirrored in ``frontend/src/api/errorMessages.ts``.
 CREDIT_EXHAUSTED_DETAIL = "llm_credit_exhausted"
-SERVICE_CREDIT_EXHAUSTED_DETAIL = "llm_service_credit_exhausted"
 
 
 def _provider_error_message(exc: BaseException) -> str:
@@ -466,30 +466,24 @@ def _classify_provider_error(exc: Exception) -> LLMProviderError:
     return LLMProviderError(str(exc))
 
 
-def credit_exhausted_error(exc: LLMCreditExhaustedError, *, byok: bool) -> HTTPException:
-    """Map a spent balance onto the status whose remedy the caller actually owns.
+def credit_exhausted_error(exc: LLMCreditExhaustedError) -> HTTPException:
+    """Map a spent balance onto ``402`` :data:`CREDIT_EXHAUSTED_DETAIL`.
 
-    A caller's own key is a bill they can settle, so they get ``402``
-    :data:`CREDIT_EXHAUSTED_DETAIL`. The server's key is nothing they hold, so
-    they get ``503`` :data:`SERVICE_CREDIT_EXHAUSTED_DETAIL` -- though since ADR
-    0009 phase (a) (#3067) no call is made on the server's key, so a route
-    reaches that arm only if that rule is ever broken.
+    Every vendor call carries the writer's own key -- :func:`_resolve_api_key`
+    refuses any other before a client is built (ADR 0009 phase (a), #3067) --
+    so the balance that ran out is theirs, a bill they can settle. The ``503``
+    server-key arm this once had could be reached only by breaking that rule,
+    and is retired with it.
 
-    Both branches log, at the level that matches whose problem it is: a spent
-    server key is an outage an operator has to act on, a spent caller key is
-    ordinary traffic an operator only needs when someone reports it. Both are
-    ids and the provider's own words — never the key, never any part of what the
-    user wrote. Logging is deliberate rather than incidental here: making this
-    condition non-retryable removed the two WARNINGs the retry loop used to emit
-    on the way past, so without these lines a spent balance would produce no
-    server-side signal at all.
+    Logged at INFO: ordinary traffic an operator needs only when someone reports
+    it. The line is ids and the provider's own words -- never the key, never any
+    part of what the user wrote. Logging is deliberate rather than incidental:
+    making this condition non-retryable removed the WARNINGs the retry loop used
+    to emit on the way past, so without this line a spent balance would produce
+    no server-side signal at all.
     """
-    log = logger.info if byok else logger.warning
-    detail = CREDIT_EXHAUSTED_DETAIL if byok else SERVICE_CREDIT_EXHAUSTED_DETAIL
-    log(detail, extra={"provider": exc.provider, "byok": byok}, exc_info=exc)
-    if byok:
-        return payment_required(CREDIT_EXHAUSTED_DETAIL)
-    return service_unavailable(SERVICE_CREDIT_EXHAUSTED_DETAIL)
+    logger.info(CREDIT_EXHAUSTED_DETAIL, extra={"provider": exc.provider}, exc_info=exc)
+    return payment_required(CREDIT_EXHAUSTED_DETAIL)
 
 
 # Genuine provider/transport failures normalized to LLMProviderError. The two
@@ -588,21 +582,6 @@ def supports_vision(provider: str, model: str) -> bool:
     if spec is None:
         return False
     return model in spec.vision_models
-
-
-def vision_provider_available(api_key: str | None = None) -> bool:
-    """Return whether this request may honestly serve an image in this environment.
-
-    The provider is the one the person's own key selects, and must advertise
-    the configured model as vision-capable. Without a key the path is the stub,
-    which can read a page only while its test seam is armed (#3096): a canned
-    transcription is never handed to a writer.
-    """
-    provider = _provider_for_request(api_key)
-    spec = PROVIDER_REGISTRY.get(provider)
-    if spec is None:
-        return stub_seam_armed()
-    return supports_vision(provider, _get_model(provider))
 
 
 def _ensure_vision_capable(

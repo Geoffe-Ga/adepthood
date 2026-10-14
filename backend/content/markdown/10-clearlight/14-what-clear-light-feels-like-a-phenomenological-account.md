@@ -26,11 +26,11 @@ You get angry. Sad. Frustrated. The emotions are real. Intense, even. But they d
 
 You're not suppressing them. You're not indulging them. You're just aware. And that awareness creates space. The emotion is here, but it's not *you*. You're the space in which it's moving.
 
-**Decision-Making Becomes Effortless**
+**Decisions Get Lighter**
 
 You used to agonize over decisions. Weighing pros and cons. Second-guessing. Ruminating.
 
-Now, decisions emerge. You ask the question. You sit with it. And the answer comes—not from thinking, but from a deeper knowing. You trust it. You act. You don't look back.
+Now, more often, decisions emerge. You ask the question. You sit with it. An answer comes—not only from thinking. You trust it enough to act. Sometimes you still look back, and that's allowed.
 
 This isn't recklessness. It's alignment. You're attuned to the flow. You move with it instead of against it.
 
@@ -44,7 +44,7 @@ And people feel it. They relax. They open. Conversations go deeper, faster. Not 
 
 Most of the time, you still operate as "you"—the person with a name, a history, a role. That's functional. Necessary.
 
-But you can also drop that. At will. And rest in the awareness that was here before "you" arrived and will be here after "you" leaves.
+But you can also set that down—not always on command, but more often than you used to—and rest in the awareness that was here before "you" showed up this morning.
 
 This isn't dissociation. It's the opposite. It's coming home. To what you always were. To what everything is.
 

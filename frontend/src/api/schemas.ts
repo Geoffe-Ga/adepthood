@@ -18,6 +18,8 @@
  */
 import { z } from 'zod';
 
+import { STAGE_DURATIONS_DAYS } from '../constants/program';
+
 // ---------------------------------------------------------------------------
 // Shared primitives
 // ---------------------------------------------------------------------------
@@ -138,12 +140,15 @@ export type AccountDeletionReceiptT = z.infer<typeof accountDeletionReceiptSchem
  * page "here only" did. ``remote_copy`` is ``confirmed_absent`` only when the
  * vault holding the copy confirmed it gone; otherwise it is ``unconfirmed`` and
  * ``copy_location`` says where a copy may remain, relative to the vault
- * connected now. There is no "withdrawn" value on purpose.
+ * connected now; ``unrecorded_vault`` is a copy made before Adepthood recorded
+ * which vault received it, which no vault can confirm (#3095). There is no
+ * "withdrawn" value on purpose.
  */
 export const copyLocationSchema = z.enum([
   'connected_vault',
   'previous_vault',
   'disconnected_vault',
+  'unrecorded_vault',
 ]);
 
 export type CopyLocationT = z.infer<typeof copyLocationSchema>;
@@ -1256,6 +1261,13 @@ export const uiFlagsSchema = z.object({
    * from a server that predates the link still parses, as unlinked.
    */
   writing_session_habit_id: z.number().int().positive().nullable().default(null),
+  course_last_stage: z
+    .number()
+    .int()
+    .min(1)
+    .max(STAGE_DURATIONS_DAYS.length)
+    .nullable()
+    .default(null),
 });
 
 export type UiFlagsT = z.infer<typeof uiFlagsSchema>;

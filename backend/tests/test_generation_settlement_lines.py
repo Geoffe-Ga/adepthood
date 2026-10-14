@@ -805,19 +805,24 @@ async def test_a_byok_essay_settles_uncharged_without_a_refund(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("byok", [False, True])
+@pytest.mark.parametrize("stale_key_header", [False, True])
 async def test_a_transcription_settles_with_its_tokens_and_cost(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     *,
-    byok: bool,
+    stale_key_header: bool,
 ) -> None:
-    """One kept transcription line; charged only when the server paid."""
+    """One kept, charged transcription line; a key header sent anyway changes nothing.
+
+    The server never takes a key for a page read (ADR 0009 phase (a), #3067): a
+    device with one reads the page itself. A stale client's header is therefore
+    not a payer, so the seam-answered page is charged exactly as a keyless one.
+    """
     patch_generate_response(monkeypatch, priced_response(SENTINEL_TEXT))
-    headers, user_id = await _signup(async_client, f"transcribe_settle_{byok}")
-    if byok:
+    headers, user_id = await _signup(async_client, f"transcribe_settle_{stale_key_header}")
+    if stale_key_header:
         headers = {**headers, _BYOK_HEADER: _BYOK_KEY}
     caplog.set_level(logging.INFO, logger="routers.transcription")
     _capture(caplog)
@@ -831,8 +836,8 @@ async def test_a_transcription_settles_with_its_tokens_and_cost(
     extra = record.__dict__
     assert extra["feature"] == "transcription"
     assert extra["outcome"] == "kept"
-    assert extra["charged"] is (not byok)
-    assert extra["bucket"] == (None if byok else BUCKET_MONTHLY)
+    assert extra["charged"] is True
+    assert extra["bucket"] == BUCKET_MONTHLY
     assert extra["attempts"] == 1
     assert extra["prompt_tokens"] == 11
     assert extra["completion_tokens"] == 7

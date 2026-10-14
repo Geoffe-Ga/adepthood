@@ -18,15 +18,15 @@ The Masculine at Yellow does three things:
 
 **1. Sees Systems**
 
-The Yellow Masculine recognizes that everything is interconnected. It sees the feedback loops, the emergent properties, the unintended consequences. It doesn't reduce complexity—it *navigates* it. It can hold multiple variables in mind and track how they interact.
+The Yellow Masculine recognizes that everything is interconnected. It sees the feedback loops, the emergent properties, the unintended consequences. It doesn't reduce complexity—it *navigates* it. It can hold multiple variables in mind and track how they interact. In a life, this is the part of you that watches a Tuesday-night fight with your partner and notices the real variable is that neither of you has eaten since noon.
 
 **2. Synthesizes Knowledge**
 
-The Masculine at Yellow takes insights from disparate fields and weaves them together. It sees that psychology, neuroscience, contemplative practice, systems theory, and developmental models are all pointing at the same underlying patterns. It *integrates* them into a coherent framework.
+The Masculine at Yellow takes insights from disparate fields and weaves them together. It sees that psychology, neuroscience, contemplative practice, systems theory, and developmental models are all pointing at the same underlying patterns. It *integrates* them into a coherent framework. In a life, this is noticing that what your therapist calls a "part," what the dharma calls a "hindrance," and what your lifting coach calls "the voice that quits at rep eight" are the same guy—and working with him once instead of three times.
 
 **3. Acts from Clarity**
 
-The Yellow Masculine doesn't get paralyzed by complexity. It gathers information, sees the system, and then *acts*—decisively, but humbly. It knows that every action is an experiment, that feedback will come, and that adjustments will be needed. It acts without attachment to being right.
+The Yellow Masculine doesn't get paralyzed by complexity. It gathers information, sees the system, and then *acts*—decisively, but humbly. It knows that every action is an experiment, that feedback will come, and that adjustments will be needed. It acts without attachment to being right. In a life, this is the Sunday you move the cushion out of the bedroom, having seen that the bedroom is where the sit dies—and then watching for a month to find out whether you were right.
 
 This is the Masculine as scientist-practitioner. As builder-of-coherence. As integrator-of-all-that-came-before.
 

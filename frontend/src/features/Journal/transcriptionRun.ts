@@ -54,12 +54,7 @@ const SEAM_SEPARATOR = '\n';
  * which says in words that waiting cannot help.
  */
 export const TERMINAL_ERROR_KINDS: ReadonlySet<TranscriptionErrorKind> =
-  new Set<TranscriptionErrorKind>([
-    'model_lacks_vision',
-    'key_required',
-    'credit_exhausted',
-    'service_credit_exhausted',
-  ]);
+  new Set<TranscriptionErrorKind>(['key_required', 'credit_exhausted']);
 
 /** One page's lifecycle within a run. */
 export type TranscriptionBlockStatus = 'pending' | 'inFlight' | 'done' | 'failed';

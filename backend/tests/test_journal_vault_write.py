@@ -42,9 +42,15 @@ from domain.creek_vault import (
 from main import app
 from models.journal_entry import JournalEntry
 from routers.journal import _record_vault_outcome
-from tests.vault_client_doubles import NoPipelineVaultDouble
+from tests.vault_client_doubles import NoPipelineVaultDouble, bind_every_account_to_a_recorded_vault
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
+
+
+@pytest.fixture(autouse=True)
+def _every_account_has_a_recorded_vault(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Serve these scripted vaults from a recorded vault, as production always does."""
+    bind_every_account_to_a_recorded_vault(monkeypatch)
 
 
 async def _signup(client: AsyncClient, username: str) -> dict[str, str]:

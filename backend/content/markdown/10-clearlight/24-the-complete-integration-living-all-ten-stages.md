@@ -18,7 +18,7 @@ Let me paint a picture of what it looks like to have full access to the entire s
 
 **Breakfast (Purple):** You make tea. You feel gratitude—not forced, just noticing. You honor the ritual. The warmth of the cup. The aroma. You're receiving the moment. This is Purple—intuitive, symbolic, connected.
 
-**Work Challenge (Red):** A colleague is being aggressive. Trying to dominate a meeting. The old you might collapse (Green) or over-analyze (Yellow). The integrated you asserts clearly: "I hear you. And I disagree. Here's why." You hold your ground without escalating. This is Red—channeled, not repressed.
+**Work Challenge (Red):** A colleague is being aggressive. Trying to dominate a meeting. Green's pull here is to collapse into the other person's feelings; Yellow's is to analyze the dynamic instead of meeting it. Both are real capacities, just not the lead note this moment wants. So you say it, clearly: "I hear you. And I disagree. Here's why." You hold your ground without escalating. This is Red—channeled, not repressed.
 
 **Team Building (Blue):** You facilitate a group process. You create structure. You hold the container. You honor each person's contribution. You make sure everyone belongs. This is Blue—connection and order in service of the whole.
 
@@ -28,7 +28,7 @@ Let me paint a picture of what it looks like to have full access to the entire s
 
 **Systems Thinking (Yellow):** You're designing a new initiative. You see the interconnections. You integrate multiple frameworks. You think in layers and feedback loops. This is Yellow—integrated intellect.
 
-**Witnessing Practice (Teal):** You take your 60-minute walk. No agenda. Just presence. The boundary between self and world dissolves. You're the awareness in which everything is arising. This is Teal—equanimity and witness.
+**Dog Walkin' Shamanism (Teal):** You take your 45-minute walk. No agenda, no headphones. You listen—with your feet, with your whole body—for the part of you that was here before this life and will be here after it, and you let that steer. This is Teal—connection to the True Self.
 
 **Evening Meditation (Ultraviolet):** 75 minutes. Deep. Formless. Devotional. You're not doing this for yourself anymore. You're offering it. This is Ultraviolet—prayer as practice.
 
@@ -52,7 +52,7 @@ That's what having the full scale actually buys you. Not the ability to select t
 
 The lead note changes hour to hour. The chord is always playing.
 
-This is mastery. This is the gift of APTITUDE. This is what ten years of practice produces.
+This is the range. This is the gift of APTITUDE. This is what years of practice tend to produce—on the good days, and there are more of them than there were.
 
 And it's available to anyone willing to walk the path.
 

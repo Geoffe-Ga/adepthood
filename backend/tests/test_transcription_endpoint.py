@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
 from client_ip import TRUSTED_PROXIES_ENV_VAR
+from errors import unprocessable
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
 from services import botmason as botmason_service
@@ -107,27 +108,29 @@ async def test_production_stub_provider_is_refused_before_wallet_deduction(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("payer", ["byok_on_real_provider", "byok_on_stub"])
-async def test_text_only_model_is_422_before_slot_or_wallet_deduction(
+@pytest.mark.parametrize("server_provider", ["real_provider", "stub"])
+async def test_a_key_header_is_refused_before_slot_wallet_or_dial(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
-    payer: str,
+    server_provider: str,
 ) -> None:
-    """A model that cannot see images is refused before the slot, the charge or a dial.
+    """A key sent to this route is not a payer: 402 before the slot, the charge or a dial.
 
-    The payer gate admits both cases -- a personal key on a server configured
-    with a real provider, and one on a stub server (a keyless request is
-    refused ``llm_key_required`` first since ADR 0009 phase (a)) -- so this is
-    the route's own pre-charge ``model_lacks_vision`` guard answering, through
-    the real ``vision_provider_available`` with the model reported text-only.
+    Page reading is client-direct (ADR 0009 phase (a), #3067): the device calls
+    its own vendor, so the route declares no key header and a stale client's
+    header is never read. Outside the stub seam the request is keyless and the
+    payer gate refuses ``llm_key_required`` -- whatever provider the server is
+    configured with, and with the vendor transport armed and counting.
     """
     transport = use_openai(monkeypatch, HTTPStatus.OK, {})
     monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
-    headers = {**await _signup(async_client, f"text_only_{payer}"), "X-LLM-API-Key": OPENAI_KEY}
-    if payer == "byok_on_stub":
+    headers = {
+        **await _signup(async_client, f"stale_key_{server_provider}"),
+        "X-LLM-API-Key": OPENAI_KEY,
+    }
+    if server_provider == "stub":
         monkeypatch.setenv("BOTMASON_PROVIDER", "stub")
-    monkeypatch.setattr(botmason_service, "supports_vision", lambda _provider, _model: False)
     preflight = AsyncMock()
     monkeypatch.setattr("routers.transcription.preflight_deduction", preflight)
     slots: list[str] = []
@@ -138,18 +141,48 @@ async def test_text_only_model_is_422_before_slot_or_wallet_deduction(
         yield
 
     monkeypatch.setattr("routers.transcription.generation_slot", _slot)
-    email = f"text_only_{payer}@example.com"
+    email = f"stale_key_{server_provider}@example.com"
     before = await _wallet_snapshot(db_session, email)
 
     resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
 
-    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, resp.text
-    assert resp.json()["detail"] == "model_lacks_vision"
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == "llm_key_required"
     preflight.assert_not_awaited()
     assert slots == []
     assert transport.request_count == 0
     assert _units_spent(before, await _wallet_snapshot(db_session, email)) == 0
     assert await _usage_row_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_keyless_page_is_refused_before_its_body_is_decoded(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outside the stub seam a keyless page can only be refused, so it is never decoded.
+
+    The payer gate runs before image validation: a malformed body is answered
+    ``llm_key_required``, not ``invalid_image``, and the decoder never sees it.
+    """
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
+    decoded: list[str] = []
+
+    def _spy(*_args: object) -> None:
+        decoded.append("validated")
+        raise unprocessable("invalid_image")
+
+    monkeypatch.setattr("routers.transcription._validate_image", _spy)
+    headers = await _signup(async_client, "keyless_undecoded")
+
+    resp = await async_client.post(
+        _ENDPOINT,
+        json={"image_base64": "not!!base64!!", "media_type": "image/jpeg"},
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == "llm_key_required"
+    assert decoded == []
 
 
 @pytest.mark.asyncio
@@ -221,13 +254,19 @@ async def test_wallet_exhausted_is_402_and_uncharged(
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("zero_monthly_cap")
-async def test_byok_transcription_bypasses_both_wallet_buckets(
+async def test_a_key_header_does_not_bypass_the_wallet(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A caller-paid transcription works with no allowance and spends neither bucket."""
-    _patch_generate_response(monkeypatch, _priced_response("caller-paid transcription"))
-    headers = await _signup(async_client, "byok_transcribe_free")
-    before = await _wallet_snapshot(db_session, "byok_transcribe_free@example.com")
+    """With no allowance, a key sent anyway buys nothing: 402, neither bucket, no usage.
+
+    The key once let a page skip both buckets because the server spent it on
+    the caller's behalf. The server no longer takes a key for a page read (ADR
+    0009 phase (a), #3067), so the seam-answered page needs the wallet as any
+    keyless one does.
+    """
+    _patch_generate_response(monkeypatch, _priced_response("never reached"))
+    headers = await _signup(async_client, "stale_key_wallet")
+    before = await _wallet_snapshot(db_session, "stale_key_wallet@example.com")
 
     resp = await async_client.post(
         _ENDPOINT,
@@ -235,10 +274,11 @@ async def test_byok_transcription_bypasses_both_wallet_buckets(
         headers={**headers, _BYOK_HEADER: _BYOK_KEY},
     )
 
-    assert resp.status_code == HTTPStatus.OK, resp.text
-    after = await _wallet_snapshot(db_session, "byok_transcribe_free@example.com")
-    assert after == before == (0, 0)
-    assert await _usage_row_count(db_session) == 1
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json()["detail"] == "insufficient_offerings"
+    after = await _wallet_snapshot(db_session, "stale_key_wallet@example.com")
+    assert after == before
+    assert await _usage_row_count(db_session) == 0
 
 
 @pytest.mark.asyncio
@@ -355,19 +395,43 @@ async def test_validation_failure_does_not_charge(
 
 
 @pytest.mark.asyncio
-async def test_model_lacks_vision_is_422_and_rolls_back_charge(
-    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(LLMVisionUnsupportedError("provider lacks vision"), id="vision-unsupported"),
+        pytest.param(
+            botmason_service.LLMCreditExhaustedError("spent", provider="openai"),
+            id="credit-exhausted-openai",
+        ),
+        pytest.param(
+            botmason_service.LLMCreditExhaustedError("spent", provider="anthropic"),
+            id="credit-exhausted-anthropic",
+        ),
+    ],
+)
+async def test_every_provider_failure_is_502_and_rolls_back_charge(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: LLMProviderError,
 ) -> None:
-    """A vision-incapable model/provider surfaces model_lacks_vision and refunds."""
-    _patch_generate_response_raises(monkeypatch, LLMVisionUnsupportedError("provider lacks vision"))
-    headers = await _signup(async_client, "novision")
-    before = await _wallet_snapshot(db_session, "novision@example.com")
+    """Each provider failure the keyless seam path could see is one rolled-back 502.
+
+    The 422 ``model_lacks_vision`` and the spent-balance codes this route once
+    mapped described a writer's key reaching a vendor from here, which no
+    longer happens (ADR 0009 phase (a), #3067). What is left is the rollback
+    guarantee: whatever the failure, nothing is charged and nothing is metered.
+    """
+    _patch_generate_response_raises(monkeypatch, failure)
+    headers = await _signup(async_client, f"failure_{type(failure).__name__.lower()}")
+    email = f"failure_{type(failure).__name__.lower()}@example.com"
+    before = await _wallet_snapshot(db_session, email)
 
     resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
 
-    assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
-    assert resp.json()["detail"] == "model_lacks_vision"
-    after = await _wallet_snapshot(db_session, "novision@example.com")
+    assert resp.status_code == HTTPStatus.BAD_GATEWAY, resp.text
+    assert resp.json()["detail"] == "llm_provider_error"
+    after = await _wallet_snapshot(db_session, email)
     assert _units_spent(before, after) == 0
     assert await _usage_row_count(db_session) == 0
 
@@ -544,64 +608,13 @@ async def test_no_log_record_leaks_base64_or_transcription_text(
         assert _SENTINEL_TEXT not in dict_blob
 
 
-# --- A permanently exhausted balance is not a transient outage --------------
+# --- A key sent anyway never reaches a vendor, even one armed to answer -----
 
 _BYOK_HEADER = "X-LLM-API-Key"
 _BYOK_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
-_PROVIDER_PROSE = (
-    "Error code: 429 - You exceeded your current quota, please check your plan and billing details."
-)
-
-
-def _credit_exhausted(provider: str = "openai") -> Exception:
-    """The refusal a spent account raises, as the provider layer classifies it."""
-    return botmason_service.LLMCreditExhaustedError(_PROVIDER_PROSE, provider=provider)
-
-
-@pytest.mark.asyncio
-async def test_transcribe_byok_credit_exhausted_is_402_and_refunds(
-    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Reading a page hits the same provider; a spent caller key is a 402, not a 502."""
-    _patch_generate_response_raises(monkeypatch, _credit_exhausted())
-    headers = await _signup(async_client, "scan_byok")
-    before = await _wallet_snapshot(db_session, "scan_byok@example.com")
-
-    resp = await async_client.post(
-        _ENDPOINT,
-        json=_payload(_JPEG_BYTES),
-        headers={**headers, _BYOK_HEADER: _BYOK_KEY},
-    )
-
-    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
-    assert resp.json()["detail"] == "llm_credit_exhausted"
-    after = await _wallet_snapshot(db_session, "scan_byok@example.com")
-    assert _units_spent(before, after) == 0
-    assert await _usage_row_count(db_session) == 0
-
-
-@pytest.mark.asyncio
-async def test_transcribe_server_key_credit_exhausted_is_503_and_refunds(
-    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A spent server key on the vision path gets its own code and still refunds."""
-    _patch_generate_response_raises(monkeypatch, _credit_exhausted(provider="anthropic"))
-    headers = await _signup(async_client, "scan_server")
-    before = await _wallet_snapshot(db_session, "scan_server@example.com")
-
-    resp = await async_client.post(_ENDPOINT, json=_payload(_JPEG_BYTES), headers=headers)
-
-    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
-    assert resp.json()["detail"] == "llm_service_credit_exhausted"
-    after = await _wallet_snapshot(db_session, "scan_server@example.com")
-    assert _units_spent(before, after) == 0
-    assert await _usage_row_count(db_session) == 0
-
-
-# --- The whole chain, with nothing in the middle mocked ----------------------
 
 #: OpenAI's real answer for a spent quota, captured verbatim. Served at the HTTP
-#: transport so the SDK builds its own ``RateLimitError`` from it.
+#: transport so a dial, if one happened, would build the SDK's own error.
 _OPENAI_QUOTA_BODY = {
     "error": {
         "message": "You exceeded your current quota, please check your plan and billing details.",
@@ -611,24 +624,22 @@ _OPENAI_QUOTA_BODY = {
     }
 }
 _HTTP_TOO_MANY_REQUESTS = 429
-_SINGLE_ATTEMPT = 1
 
 
 @pytest.mark.asyncio
-async def test_a_real_provider_quota_refusal_reaches_the_caller_as_402(
+async def test_a_key_header_never_reaches_a_vendor_transport(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """One test with no seam mocked: provider body -> SDK -> classifier -> route.
+    """No seam mocked: header -> route -> payer gate. The vendor transport stays untouched.
 
-    Every other case in this file injects a ready-made
-    ``LLMCreditExhaustedError``, which proves the routing but assumes the
-    classification. Perturbing the classifier leaves all of them green, so on
-    their own they cannot tell a working carve-out from a deleted one. Here the
-    OpenAI SDK builds its own error from the captured body and the real
-    ``generate_response`` runs, so the whole chain is under assertion -- and the
-    request count proves the doomed call was not retried on the way.
+    This file once proved the whole relay chain here (a provider's quota body
+    built into the SDK's error and mapped to 402). Page reading is client-direct
+    now (ADR 0009 phase (a), #3067), so that chain runs on the device and is
+    pinned in ``frontend/src/api/__tests__/byokDirect.test.ts``; what this route
+    owes is that a key sent to it opens no transport at all.
     """
     stub = use_openai(monkeypatch, _HTTP_TOO_MANY_REQUESTS, _OPENAI_QUOTA_BODY)
+    monkeypatch.delenv(STUB_SEAM_ENV_VAR, raising=False)
     headers = await _signup(async_client, "scan_real")
     before = await _wallet_snapshot(db_session, "scan_real@example.com")
 
@@ -639,8 +650,8 @@ async def test_a_real_provider_quota_refusal_reaches_the_caller_as_402(
     )
 
     assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
-    assert resp.json()["detail"] == "llm_credit_exhausted"
-    assert stub.request_count == _SINGLE_ATTEMPT
+    assert resp.json()["detail"] == "llm_key_required"
+    assert stub.request_count == 0
     after = await _wallet_snapshot(db_session, "scan_real@example.com")
     assert _units_spent(before, after) == 0
     assert await _usage_row_count(db_session) == 0
@@ -698,19 +709,18 @@ async def test_unusable_reply_on_server_key_is_422_and_uncharged(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("zero_monthly_cap")
 @pytest.mark.parametrize(("reply", "detail"), _UNUSABLE_REPLIES)
-async def test_unusable_reply_on_byok_is_422_and_writes_no_usage_row(
+async def test_unusable_reply_with_a_stale_key_header_is_422_and_uncharged(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
     reply: str,
     detail: str,
 ) -> None:
-    """Caller-paid: an unusable reply leaves both buckets alone and meters nothing."""
+    """A key sent anyway changes nothing: the unusable reply rolls back, metering nothing."""
     _patch_generate_response(monkeypatch, _priced_response(reply))
-    headers = await _signup(async_client, "unusable_byok")
-    before = await _wallet_snapshot(db_session, "unusable_byok@example.com")
+    headers = await _signup(async_client, "unusable_stale_key")
+    before = await _wallet_snapshot(db_session, "unusable_stale_key@example.com")
 
     resp = await async_client.post(
         _ENDPOINT,
@@ -720,8 +730,8 @@ async def test_unusable_reply_on_byok_is_422_and_writes_no_usage_row(
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert resp.json()["detail"] == detail
-    after = await _wallet_snapshot(db_session, "unusable_byok@example.com")
-    assert after == before
+    after = await _wallet_snapshot(db_session, "unusable_stale_key@example.com")
+    assert _units_spent(before, after) == 0
     assert await _usage_row_count(db_session) == 0
 
 

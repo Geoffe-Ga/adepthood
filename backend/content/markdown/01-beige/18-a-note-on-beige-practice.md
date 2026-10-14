@@ -20,7 +20,7 @@ Whatever you measure is what your mind recognizes as something that matters.
 
 Over the course of APTITUDE, we’ll be kicking it up a notch every three weeks. Maybe you’ll find that the Practice of Grounding is something you want to keep around, but it isn’t necessary to stack Practices the same way we are shooting to stack Habits.
 
-Eventually we will get to a point, increasing by just a few minutes every few weeks, where you are meditating solidly for 45 minutes a day—a healthy householder minimum that brings Bliss, Awakening, and Wholeness within reach.
+Eventually—adding just a few minutes every few weeks—you’ll be sitting a solid 45 minutes a day. That’s a healthy householder’s floor, not a finish line: enough room for Bliss and Awakening to drop by, and for the Wholeness you already are to get a word in.
 
 For now, start small. 1-3 minutes. But do it as often as necessary.
 

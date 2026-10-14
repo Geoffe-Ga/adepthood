@@ -18,9 +18,9 @@ It's not mystical (though it can feel that way). It's neurological. Mirror neuro
 
 This is why sitting with a teacher is different than sitting alone. Why being in a sangha accelerates practice. Why reading words written from clarity can shift something in you.
 
-At Clear Light, you become a source of transmission. Not because you're special. But because you've stabilized in presence. And that stability creates a field.
+At Clear Light, you'll sometimes be the settled one in the room. Not because you're special. Because you've sat enough that, on a good day, presence is where you land. On a bad day someone else is the settled one, and you catch it from them.
 
-People feel it when they're around you. They might not have words for it. They just know: something about you is different. Calmer. Clearer. More real.
+People sometimes feel it around you. They won't have words for it. They'll just relax a little. That's all it is—and it's enough.
 
 And in feeling it, they remember it's possible. For them too.
 

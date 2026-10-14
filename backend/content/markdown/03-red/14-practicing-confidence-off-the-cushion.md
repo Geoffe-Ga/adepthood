@@ -88,6 +88,6 @@ You might also employ one of the Self-Care Strategies: Lion's Breath to discharg
 
 This is the practice. This is Red, lived. Not perfectly. Not without faltering. But with the deep, embodied knowledge that you can return. That self-love is always available. That confidence isn't something you achieve once and keep forever—it's something you practice, moment by moment, breath by breath, choice by choice.
 
-And every time you return—every time you choose Leading over Dominating, Power-With over Power-Over, Self-Acceptance over Shame—you reinforce the new pattern. You rewire the neural pathways. You become, slowly and surely, the kind of person who knows their worth not because someone told them, but because they've proven it to themselves a thousand small times.
+And every time you return—every time you choose Leading over Dominating, Power-With over Power-Over, Self-Acceptance over Shame—you reinforce the new pattern. The groove wears deeper. You become, slowly and surely, the kind of person who knows their worth not because someone told them, but because they've proven it to themselves a thousand small times.
 
 That's the power of practice. That's the gift of Red. And that's what you carry with you, off the cushion and into the world.

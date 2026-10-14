@@ -157,9 +157,9 @@ from services.creek_vault_reflect import (
 from services.creek_vault_voice_drafts import (
     VoiceDraftCopy,
     mark_entry_retractions_pending,
-    mirror_voice_draft,
-    record_mirror_intent,
+    mirror_recorded_voice_draft,
 )
+from services.creek_vault_withdraw import is_pre_binding_copy
 from services.creek_vault_write import (
     VaultWriteOutcome,
     VaultWriteStatus,
@@ -502,7 +502,9 @@ async def _bind_vault_destination(
     Intimate entry is withheld from the wire before any dial. An entry whose
     earlier copy is owed to a *different* vault keeps that marker and is not
     offered to the new one: a single marker cannot describe two copies, and
-    the owed one wins.
+    the owed one wins. A pre-binding copy is re-sent but never bound: its
+    original may sit in an earlier vault, so adopting the connected one would
+    let that vault report it withdrawn (#3095).
 
     The fingerprint comes from the same config read that built the request's
     client (:func:`resolved_vault_destination`), so a reconnect landing after
@@ -518,11 +520,20 @@ async def _bind_vault_destination(
             extra={"entry_id": entry.id, "reason": "destination_changed"},
         )
         return _Binding.WITHHOLD
-    if entry.vault_destination is not None or destination is None:
+    if _keeps_its_binding(entry, destination):
         return _Binding.UNCHANGED
     entry.vault_destination = destination
     session.add(entry)
     return _Binding.BOUND
+
+
+def _keeps_its_binding(entry: JournalEntry, destination: str | None) -> bool:
+    """Whether this send leaves ``entry``'s destination as it is.
+
+    It is already bound, there is no vault to bind to, or its copy predates
+    binding and so must never adopt the vault connected now (#3095).
+    """
+    return entry.vault_destination is not None or destination is None or is_pre_binding_copy(entry)
 
 
 def _binding_without_a_dial(entry: JournalEntry, vault_client: CreekVaultClient) -> _Binding | None:
@@ -1500,9 +1511,7 @@ def _log_resonance_outcome(
 class _ResonancePassContext:
     """What the literary pass needs beyond the prompt itself.
 
-    ``byok`` records whose key paid for the call, which is what decides how a
-    spent provider balance is reported — a bill the caller can settle, or one
-    only an operator can. ``care`` is the standby surface a distress-flagged
+    ``care`` is the standby surface a distress-flagged
     entry falls back to when the pass fails, so care never depends on the LLM.
     ``spent`` is the optional deduction a failure path must compensate. It is
     ``None`` when the caller's own key pays, otherwise it committed before the
@@ -1513,7 +1522,6 @@ class _ResonancePassContext:
 
     session: AsyncSession
     care: CareResponse | None
-    byok: bool
     user_id: int
     spent: SpendResult | None
     trace: _FailedGeneration
@@ -1605,7 +1613,7 @@ async def _generate_marginalia_or_error(
         await _refund_failed_pass(
             context.session, context.user_id, context.spent, trace=context.trace
         )
-        raise credit_exhausted_error(exc, byok=context.byok) from exc
+        raise credit_exhausted_error(exc) from exc
     except LLMProviderError as exc:
         await _refund_failed_pass(
             context.session, context.user_id, context.spent, trace=context.trace
@@ -2433,7 +2441,6 @@ async def _run_admitted_resonance(
             _ResonancePassContext(
                 session=session,
                 care=care,
-                byok=byok_key is not None,
                 user_id=current_user,
                 spent=spent,
                 trace=trace,
@@ -3411,7 +3418,9 @@ async def _mirror_cached_essay(
     and if this PUT linearized first, the competing mutation waits and retracts
     it. The content-free intent row -- bound to the destination being dialled --
     is committed before the PUT, so even a lost acknowledgement leaves the
-    withdrawal that mutation owes on record. The request transaction is
+    withdrawal that mutation owes on record; a PUT the operator's vault-send
+    suspension refused before the wire offered nothing, so that intent is
+    dropped and no lineage shadow is counted (#3122). The request transaction is
     committed before Creek I/O; PostgreSQL holds the cross-worker lock on a
     non-pooled, dedicated connection rather than consuming the application
     pool. Account outermost, entry innermost -- the
@@ -3424,33 +3433,17 @@ async def _mirror_cached_essay(
         await ensure_account_live(session, entry.user_id)
         if await withdrawal_refusal(session, entry) is not None:
             return cached
-        marginalia_id = cast("int", cached.id)
-        destination = await resolved_vault_destination(session, entry.user_id)
-
-        async def _record_intent() -> bool:
-            recorded = await record_mirror_intent(
-                session,
-                user_id=entry.user_id,
-                entry_id=cast("int", entry.id),
-                marginalia_id=marginalia_id,
-                destination=destination,
-            )
-            if recorded:
-                # Shadow only (#3059): the mirror was admitted and its PUT is
-                # next. Committed so no connection is held across that PUT.
-                await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
-                await session.commit()
-            return recorded
-
-        await mirror_voice_draft(
+        await mirror_recorded_voice_draft(
+            session,
             clients.vault_client,
             VoiceDraftCopy(
                 owner_user_id=entry.user_id,
-                marginalia_id=marginalia_id,
+                marginalia_id=cast("int", cached.id),
                 essay=essay,
                 classification=entry.classification,
             ),
-            record_intent=_record_intent,
+            entry=entry,
+            destination=await resolved_vault_destination(session, entry.user_id),
         )
     return cached
 
@@ -3518,7 +3511,7 @@ async def _cache_essay(
     charge = _EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
     settled = False
     try:
-        essay = await _dial_essay(llm, note, body, prior_letters, byok=byok_key is not None)
+        essay = await _dial_essay(llm, note, body, prior_letters)
         await _settle_essay(session, note, essay, llm, charge)
         settled = True
     finally:
@@ -3559,8 +3552,6 @@ async def _dial_essay(
     note: Marginalia,
     body: str,
     prior_letters: list[str],
-    *,
-    byok: bool,
 ) -> str | None:
     """Ask the provider for the letter, mapping its failures to HTTP errors.
 
@@ -3581,7 +3572,7 @@ async def _dial_essay(
             prior_drafts=prior_letters,
         )
     except LLMCreditExhaustedError as exc:
-        raise credit_exhausted_error(exc, byok=byok) from exc
+        raise credit_exhausted_error(exc) from exc
     except LLMProviderError as exc:
         raise bad_gateway("llm_provider_error") from exc
 

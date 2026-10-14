@@ -126,11 +126,25 @@ answers to this record's follow-up questions, given the same evening.
 
    **Known gap until phase (a) lands:** today the client sends the person's
    key to our backend in the `X-LLM-API-Key` header
-   (`frontend/src/api/index.ts`). The relay path in
+   (`frontend/src/api/index.ts`) for resonance passes, letters and completion
+   detection. The relay path in
    `services/botmason.py` is: the header, then `resolve_chat_api_key`
    (validates and returns the key), then `_resolve_api_key`, then the
    server-side vendor call in `_call_openai` / `_call_anthropic`. So the
-   server sees both the key and the plaintext on every BYOK call.
+   server sees both the key and the plaintext on every relayed BYOK call.
+   Those three still relay because their prompts are assembled from
+   server-held context (earlier entries, earlier letters, the person's
+   habits) and their results are stored with receipts the server observed;
+   how to move them is an open owner decision.
+
+   **Narrowed by phase (a)'s second slice (#3067): page reading.** With the
+   person's key, the device sends a page straight to that key's vendor
+   (`frontend/src/api/byokDirect.ts`). The page-read route declares no
+   `X-LLM-API-Key` header, so a key sent to it by an old client is not read
+   or forwarded. Our server is asked only a content-free admission question
+   (`POST /journal/transcribe-page/direct-admission`), so the operator's
+   incident switch (`PRIVACY_SUSPEND_EXTERNAL_AI`) still stops the call. The
+   exit test is `backend/tests/security/test_byok_only_cloud.py`.
 4. **BotMason credits pay for non-cloud inference only.**
    (`owner:2026-10-07#B12-credits`, `owner:2026-10-07#followup-runtime`)
    That means the vault-local model (B05,

@@ -70,7 +70,7 @@ Those somatic responses are data. They're telling you which problems are *yours*
 
 And here's a crucial distinction: a problem is not the same as a complaint. A complaint is passive: "People are so lazy." A problem is active: "Most people don't have access to tools that help them understand their own motivation." See the difference? The complaint blames. The problem diagnoses and implies a potential solution.
 
-Your problems should energize you, not deplete you. If writing them down makes you feel hopeless, you're framing them wrong. Reframe them as *gaps*—spaces between what is and what could be. Gaps can be bridged. That's what you're training to do.
+Some of these will make you feel hopeless. That's allowed—hopelessness is usually grief with its coat on. When it hits, shrink the frame: not "the food system is broken" but "this block has no grocery store." Then look at what's left as a *gap*—the space between what is and what could be. A gap that size can be bridged. That's what you're training to do.
 
 **Prompt 4: Formulate Your Answer to Prompt 1 as a Four Quadrant Vow and Share It (At least 4x per week)**
 

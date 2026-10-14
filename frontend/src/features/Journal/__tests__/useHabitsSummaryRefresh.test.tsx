@@ -22,9 +22,10 @@ import type { AppStateStatus, NativeEventSubscription } from 'react-native';
 
 /** The zone `useAuth` is hydrated with for the test in flight. */
 let mockHydratedTimezone = 'UTC';
+let mockTimezoneReady = true;
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ userTimezone: mockHydratedTimezone }),
+  useAuth: () => ({ userTimezone: mockHydratedTimezone, userTimezoneReady: mockTimezoneReady }),
 }));
 
 const mockLoadHabits = jest.fn();
@@ -123,6 +124,7 @@ const sendAppState = (status: AppStateStatus): void => {
 describe('useHabitsSummary refresh', () => {
   beforeEach(() => {
     mockHydratedTimezone = 'UTC';
+    mockTimezoneReady = true;
     mockLoadHabits.mockClear();
     useHabitStore.setState({ loading: false, habits: [], habitsById: {}, habitOrder: [] });
     appStateHandler = null;
@@ -144,6 +146,15 @@ describe('useHabitsSummary refresh', () => {
   });
 
   describe('coming back to the shelf', () => {
+    it('retries when a provisional UTC calendar becomes confirmed UTC', () => {
+      mockTimezoneReady = false;
+      const { rerender } = renderHook(() => useHabitsSummary());
+      expect(mockLoadHabits).toHaveBeenLastCalledWith('UTC', { replayCheckIns: false });
+      mockTimezoneReady = true;
+      rerender(undefined);
+      expect(mockLoadHabits.mock.calls).toEqual([['UTC', { replayCheckIns: false }], ['UTC']]);
+    });
+
     it('reads habits again on return, not only on mount', () => {
       mockHydratedTimezone = WEST_TZ;
       mountShelfInNavigator();

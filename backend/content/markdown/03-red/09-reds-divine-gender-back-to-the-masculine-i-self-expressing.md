@@ -28,4 +28,4 @@ Divine Masculine does three things here:
 
 A wounded expression of this force becomes domination. The healthy expression is sovereignty—an interior throne that governs itself first. That sovereignty depends on Self-Love. Shame makes power grasp; love lets power radiate. Cultivating belly-rooted confidence, as you did in Paced Breathing and its alternatives, feeds this radiance.
 
-Red’s Masculine is temporary, yet essential. Skip it and later stages collapse; linger too long and growth stalls. Meet it fully, then carry its virtues onward: the courage to be specific, the readiness to act, the steadiness of a backbone that remembers its own name.
+Red’s Masculine is one note, and an essential one. Leave it unplayed and the rest of the chord sounds hollow; let it drown out every other note and the music turns to noise. Meet it fully, and keep it in your hands: the courage to be specific, the readiness to act, the steadiness of a backbone that remembers its own name.

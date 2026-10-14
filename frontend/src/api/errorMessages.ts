@@ -62,16 +62,15 @@ const MONTHLY_FREE_MESSAGES_USED =
   "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";
 
 /**
- * A spent provider balance, told twice — because the person who can fix it is
- * not the same person. Neither line offers a retry: waiting refills nothing, so
- * "give it a moment and try again" is a promise this condition cannot keep. Both
- * are exported so the transcription surface, which keeps its own closed error
- * taxonomy, renders this story from the same words rather than a second copy.
+ * A spent provider balance on the writer's own key. It offers no retry: waiting
+ * refills nothing, so "give it a moment and try again" is a promise this
+ * condition cannot keep. Exported so the transcription surface, which keeps its
+ * own closed error taxonomy, renders this story from the same words rather than
+ * a second copy. The server's own key never pays for anyone's writing (ADR 0009
+ * phase (a), #3067), so the shared-balance sibling this once had is retired.
  */
 export const CREDIT_EXHAUSTED_COPY =
   "The account behind your API key has run out of credit, so BotMason can't run. Top it up with whoever issued the key (OpenAI or Anthropic), or paste a different key in Settings.";
-export const SERVICE_CREDIT_EXHAUSTED_COPY =
-  "BotMason's shared AI access has run out of credit. That's ours to fix, and we've been pinged. Add your own API key in Settings if you'd rather not wait.";
 
 /**
  * The generation guardrails' refusals (#623). Decision record §1 ratifies
@@ -199,6 +198,10 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
     "This page is set to be deleted. Its copy is in the Creek vault you were connected to before, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
   vault_withdrawal_disconnected_vault:
     "This page is set to be deleted. Its copy is in the Creek vault you disconnected, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
+  // A copy made before Adepthood recorded which vault received it (#3095). No
+  // vault can confirm it, so this never promises the deletion finishes on its own.
+  vault_withdrawal_unrecorded_vault:
+    "This page was copied to a Creek vault before October 7, 2026, before Adepthood recorded which vault received each copy. We can't confirm that copy was deleted: it may still be in a Creek vault you connected earlier. You can delete the page here only, then delete the copy in that vault yourself.",
   journal_entry_deletion_pending:
     "This page is set to be deleted, so it can't be edited. Deletion finishes once your Creek vault confirms its copy is gone.",
 
@@ -224,7 +227,6 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // 402 fallback below, which tells the monthly free-messages story and points
   // the reader at the very key that just came back empty.
   llm_credit_exhausted: CREDIT_EXHAUSTED_COPY,
-  llm_service_credit_exhausted: SERVICE_CREDIT_EXHAUSTED_COPY,
 
   // --- Streaming / rate limits / network -------------------------------
   // Deliberately surface-neutral and number-free. The backend emits this one

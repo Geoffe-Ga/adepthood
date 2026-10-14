@@ -24,7 +24,7 @@ And when you recognize that—when you stop practicing to *get* somewhere and st
 
 You're no longer postponing your life until you're "enlightened." You're living now. Fully. Messily. Beautifully.
 
-You're the Adept. Not because you've mastered anything. But because you've stopped pretending there's anything to master.
+The Adept is playing in you. Not because you've mastered anything—because you've stopped pretending there's anything to master.
 
 You've recognized the truth: you were always whole. The path was never about becoming whole—it was about *remembering* that you already are.
 

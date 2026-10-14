@@ -68,7 +68,7 @@ Then return to your day. But carry the quality of presence with you. Let the wal
 
 Because Teal is about *embodied* integration. You can't think your way here. You can't meditate your way here from a cushion alone. You need the earth. The elements. The non-human. The rhythm of walking. These things rewire you in ways that sitting never will.
 
-Dog Walkin' Shamanism is how you learn to be the Witness *in motion*. To integrate without effort. To receive wisdom instead of seeking it.
+Dog Walkin' Shamanism is how you learn to keep the line to your True Self open *while moving*. To let integration arrive instead of manufacturing it. To receive wisdom instead of hunting for it—on the good days, anyway. On the other days you just walked the dog, and that counts.
 
 Do this daily. Make it sacred. Let it teach you.
 

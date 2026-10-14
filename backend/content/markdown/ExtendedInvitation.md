@@ -44,7 +44,7 @@ at least, you suspect you might be.
 And you’ve been called.
 
 APTITUDE—Adepthood: Praxis and
-Theory for Integrating, Transcending, and Unbridling from Determinism
+Theory for Integrating, Tuning, and Unbridling from Determinism
 Effectively—is neither a dogma nor a rigid
 hierarchy that only by summiting can one be enlightened, whole or Good
 Enough. Although the course comprises both theory and the way to put
@@ -219,10 +219,10 @@ read ourselves.
 
 APTITUDE’s objective is for you to
 become the book. A
-book to be read through your mere presence. The objective here, in this
-experiment that we are undertaking together, is to provide you with
-everything you need to put into practice all that wonderful woo woo
-you’ve been studying for as long as you can remember.
+book to be read through your mere presence. What I’m after, in this
+experiment we’re running together, is to hand you enough structure
+to actually practice all that wonderful woo woo you’ve been studying
+for as long as you can remember.
 
 My sincere hope is that the Wavelength of your
 uplifted frequency lifts all those you encounter. That through finding
@@ -239,8 +239,9 @@ reflects the value of the community that will be there to support you
 along the way.
 
 Because the Creekmason Digital Sangha—a liminal rave of
-a Discord server—is an essential part. It is the springboard, workshop,
-and laboratory in which these skills are honed. It’s where we Liminal
+a Discord server—is where a lot of that value lives. It’s a standing
+invitation, never a requirement, but it’s the springboard, workshop, and
+laboratory where these skills get honed. It’s where we Liminal
 Creeps get launched into re-integration
 with the meatspace communities we’ve always
 felt a little Othered by.

@@ -95,11 +95,7 @@ def test_the_model_declares_a_nullable_timezone_aware_stamp() -> None:
 
 
 def test_the_migration_chains_from_the_obligation_head(migration_config: Config) -> None:
-    """One linear chain: this revision sits directly on the head it was written against.
-
-    A later revision may sit on top of it (the #3151 practice-habit link does),
-    so the claim is that the single head descends from it, not that it is the head.
-    """
+    """This revision retains its authored parent on the single linear chain."""
     script = ScriptDirectory.from_config(migration_config)
     revision = script.get_revision(_REVISION)
     assert revision is not None

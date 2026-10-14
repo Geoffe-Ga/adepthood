@@ -64,17 +64,19 @@ You're managing a diverse team. Different people need different things. You coul
 
 - **Delegating**: "You've got this. Let me know if you need anything."
 
-Without Yellow's vantage, you'd pick one and apply it to everyone. But Yellow recognizes: different people have different notes unlocked. And different situations call for different approaches.
+Without Yellow's vantage, you'd pick one and apply it to everyone. But Yellow recognizes: different people have different notes loud right now. And different situations call for different approaches.
 
 So you flex:
 
-- The new hire who's still learning (Blue): Directive. "Here's the process. Follow it exactly until you've got it down."
+- The person who needs structure right now (the Blue note): Directive. "Here's the process. Follow it until it's in your hands."
 
-- The mid-level contributor (Orange): Coaching. "Here's the goal. How would you solve this? Show me your thinking."
+- The person ready to be stretched (the Orange note): Coaching. "Here's the goal. How would you solve this? Show me your thinking."
 
-- The senior teammate going through personal stuff (Green): Supportive. "I can see you're struggling. What support do you need? Let's adjust your workload."
+- The person who's hurting (the Green note): Supportive. "I can see you're struggling. What do you need? Let's adjust your workload."
 
-- The expert who knows more than you (Yellow): Delegating. "I trust your judgment. Run with it. Keep me posted."
+- The person who can see the whole board on this one (the Yellow note): Delegating. "I trust your judgment. Run with it. Keep me posted."
+
+None of these is a label. The new hire may need the Yellow note on the one thing they already know cold, and the twenty-year expert may need the Blue note the week after a divorce. The same person will need a different note next quarter.
 
 This is Situational Leadership informed by Spiral Dynamics. You're not rigidly attached to one style. You're *responsive* to what each person and each moment needs.
 

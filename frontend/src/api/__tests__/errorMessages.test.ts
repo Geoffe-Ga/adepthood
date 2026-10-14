@@ -9,7 +9,6 @@ import {
   GENERIC_FALLBACK,
   INSUFFICIENT_OFFERINGS_COPY,
   messageForCode,
-  SERVICE_CREDIT_EXHAUSTED_COPY,
   UNREACHABLE_MESSAGE,
   USER_FACING_ERROR_MESSAGES,
 } from '../errorMessages';
@@ -63,6 +62,7 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'vault_withdrawal_pending',
       'vault_withdrawal_previous_vault',
       'vault_withdrawal_disconnected_vault',
+      'vault_withdrawal_unrecorded_vault',
       'journal_entry_deletion_pending',
       // wallet
       'payment_required',
@@ -74,9 +74,8 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'generation_guard_unavailable',
       'llm_key_required',
       'invalid_llm_api_key_format',
-      // permanently exhausted provider balance -- caller's key, then ours
+      // permanently exhausted provider balance on the caller's own key
       'llm_credit_exhausted',
-      'llm_service_credit_exhausted',
       // streaming / rate limits / network
       'rate_limit_exceeded',
       'llm_provider_error',
@@ -422,11 +421,12 @@ describe('exhausted provider balance (permanent, not transient)', () => {
     expect(message.length).toBeGreaterThan(0);
   });
 
-  it('gives our own spent key its own copy, not the transient 503 fallback', () => {
-    const message = formatApiError(new ApiError(503, 'llm_service_credit_exhausted'));
-    expect(message).not.toBe(TRANSIENT_503_COPY);
-    expect(message).not.toBe(PROVIDER_TROUBLE_COPY);
-    expect(message.length).toBeGreaterThan(0);
+  it('has no copy for the retired server-key balance: the server key never pays (#3067)', () => {
+    expect(USER_FACING_ERROR_MESSAGES).not.toHaveProperty('llm_service_credit_exhausted');
+    // Were it ever emitted again, it would read as any other brief outage.
+    expect(formatApiError(new ApiError(503, 'llm_service_credit_exhausted'))).toBe(
+      TRANSIENT_503_COPY,
+    );
   });
 
   // The three assertions below all read the RENDERED string, not the raw map.
@@ -436,34 +436,18 @@ describe('exhausted provider balance (permanent, not transient)', () => {
   // over exactly the rungs that made the original bug invisible.
   const rendered = {
     caller: () => formatApiError(new ApiError(402, 'llm_credit_exhausted')),
-    ours: () => formatApiError(new ApiError(503, 'llm_service_credit_exhausted')),
   };
 
   it('renders the intended copy rather than falling through to a status default', () => {
     expect(rendered.caller()).toBe(CREDIT_EXHAUSTED_COPY);
-    expect(rendered.ours()).toBe(SERVICE_CREDIT_EXHAUSTED_COPY);
   });
 
-  it('tells the two apart, because the remedy is not the same person', () => {
-    expect(rendered.caller()).not.toBe(rendered.ours());
-  });
-
-  it('offers no retry affordance for either, since retrying can never work', () => {
+  it('offers no retry affordance, since retrying can never work', () => {
     expect(rendered.caller()).not.toMatch(RETRY_AFFORDANCE);
-    expect(rendered.ours()).not.toMatch(RETRY_AFFORDANCE);
   });
 
   it('leaks no provider internals, account reference, or key material', () => {
     expect(rendered.caller()).not.toMatch(PROVIDER_INTERNALS);
-    expect(rendered.ours()).not.toMatch(PROVIDER_INTERNALS);
-  });
-
-  it('never tells a reader to settle a bill on an account they do not hold', () => {
-    // The server's key is nobody's but ours; pointing the reader at "Plans &
-    // Billing" would be an instruction they cannot carry out.
-    expect(rendered.ours()).not.toMatch(
-      /your (provider|openai|anthropic) account|top up|purchase credits|upgrade your plan/i,
-    );
   });
 });
 

@@ -34,6 +34,7 @@ from services.botmason import STUB_MODEL_NAME, STUB_PROSE_PREFIX, LLMResponse
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import voice_draft_external_id
 from tests.support.barrier_arrivals import BARRIER_ARRIVAL_TIMEOUT_SECONDS, BarrierArrivals
+from tests.vault_client_doubles import RECORDED_VAULT, bind_every_account_to_a_recorded_vault
 
 # A server-paid first letter must say the writer saw its price (#623); without
 # it the route answers 409 before it charges or dials anything.
@@ -155,6 +156,7 @@ async def _mark_ingested(session: AsyncSession, entry_id: int) -> None:
     entry = await session.get(JournalEntry, entry_id)
     assert entry is not None
     entry.vault_ref = _JOURNAL_REF
+    entry.vault_destination = RECORDED_VAULT
     session.add(entry)
     await session.commit()
 
@@ -294,6 +296,12 @@ class _BlockingDraftVault(_RecordingDraftVault):
         result = await super().delete_voice_draft(external_id, tier_ceiling)
         self.operations.append("delete")
         return result
+
+
+@pytest.fixture(autouse=True)
+def _every_account_has_a_recorded_vault(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Serve these scripted vaults from a recorded vault, as production always does."""
+    bind_every_account_to_a_recorded_vault(monkeypatch)
 
 
 def _wire_vault(vault: _RecordingDraftVault) -> None:

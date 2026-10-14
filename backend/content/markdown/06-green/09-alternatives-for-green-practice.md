@@ -26,7 +26,7 @@ This is alchemical writing. You're transmuting the base metal of shame into the 
 
 **2. Gestalt Chair Work (Self vs. Shadow)**
 
-Similar to the main practice, but simplified. Two chairs. Alternate every 5 minutes. Self speaks, then Shadow responds. Go back and forth for the full 30 minutes. Let the conversation unfold. By the end, you'll have clarity.
+Similar to the main practice, but simplified. Two chairs. Alternate every 5 minutes. Self speaks, then Shadow responds. Go back and forth for the full 30 minutes. Let the conversation unfold. Some days it ends in clarity. Some days it ends in a question you didn't know you had. Both count.
 
 **3. Wording Through It (Paul Selig Method)**
 

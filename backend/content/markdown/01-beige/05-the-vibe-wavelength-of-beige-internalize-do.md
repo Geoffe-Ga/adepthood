@@ -14,7 +14,7 @@ media: []
 
 This stage also builds on the introduction to the Archetypal Wavelength that you should have picked up from the [Philosophy page](https://aptitude.guru/philosophy/archetypal-wavelength). Please do read that material if you haven’t yet. It provides a vital foundation.
 
-For each Stage of APTITUDE, we will be looking at the Archetypal Wavelength from a different perspective. The Beige wave is the “Do”ing aspect of a Wavelength you’re Internalizing for—a six-phase cycle that reveals the natural rhythm of doing.
+For each Stage of APTITUDE, we will be looking at the Archetypal Wavelength from a different perspective. The Beige wave is the “Do”-ing side of the Wavelength you Inhabit—a six-phase cycle with its own natural rhythm of doing.
 
 We’ll go into this deeper in a moment, so don’t worry about memorizing this information. For now, I’ll just introduce the key point that with regard to each Phase of the Wavelength, as the Greek sage Hippocrates said, “the dosage makes the medicine.”
 

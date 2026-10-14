@@ -25,7 +25,7 @@
 
 [The Sacred High—and the Temptation to Stay There Forever](#the-sacred-highand-the-temptation-to-stay-there-forever)
 
-[When You Don’t Ground, You Ascend Into Disconnection](#when-you-dont-ground-you-ascend-into-disconnection)
+[When You Don't Ground, You Float Into Disconnection](#when-you-dont-ground-you-float-into-disconnection)
 
 [And then… the dangerous temptation to repeat](#and-then-the-dangerous-temptation-to-repeat)
 

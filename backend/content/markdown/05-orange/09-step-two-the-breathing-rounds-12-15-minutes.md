@@ -30,7 +30,7 @@ Your body will start to signal that it wants air. The diaphragm will contract. T
 
 But here's the secret: you don't. Not yet. You've just oxygenated your blood beyond normal levels. You have time.
 
-Stay calm. Relax your shoulders. Soften your jaw. Notice the sensations without reacting to them. This is where the training happens. This is where you learn that panic is optional.
+Stay calm. Relax your shoulders. Soften your jaw. Notice the sensations without reacting to them. This is where the training happens: the alarm goes off and you find out you don't have to obey it. Some days you will anyway. That's data, not failure.
 
 When the urge to breathe becomes strong—not unbearable, just strong—take a deep, full recovery breath. Fill your lungs completely. Hold that breath for 15 seconds. Then exhale slowly and return to normal breathing.
 

@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { clearUserTimezone } from '@/storage/authStorage';
 import { clearCheckInReplayState } from '@/storage/checkInReplayState';
 import { loadFeedbackDraft, saveFeedbackDraft } from '@/storage/feedbackDraftStorage';
+import type * as HabitStorageModule from '@/storage/habitStorage';
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
@@ -52,6 +53,10 @@ jest.mock('@/storage/llmKeyStorage', () => ({
 }));
 
 jest.mock('@/storage/habitStorage', () => ({
+  capturePendingCheckInScope:
+    jest.requireActual<typeof HabitStorageModule>('@/storage/habitStorage')
+      .capturePendingCheckInScope,
+  removePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   clearHabits: jest.fn(() => Promise.resolve()),
   clearPendingCheckIns: jest.fn(() => Promise.resolve()),
   clearDroppedCheckIns: jest.fn(() => Promise.resolve()),
