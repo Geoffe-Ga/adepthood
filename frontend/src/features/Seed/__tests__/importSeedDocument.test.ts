@@ -196,6 +196,11 @@ describe('a request that produced no outcome', () => {
     await expect(importSeedDocument(document(), 'personal')).resolves.toBe('failed');
   });
 
+  test('keeps the managed size refusal actionable rather than retryable', async () => {
+    mockFetch.mockReturnValue(accepted(413, { detail: 'managed_document_too_large' }));
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('managed_too_large');
+  });
+
   test('keeps the size verdict when the server is the one who caught it', async () => {
     mockFetch.mockReturnValue(accepted(413, { detail: 'document_too_large' }));
 

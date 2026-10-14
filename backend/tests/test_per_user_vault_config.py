@@ -32,12 +32,14 @@ feature exists for.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from functools import partial
 from http import HTTPStatus
 
 import pytest
 import sqlalchemy as sa
 from cryptography.fernet import Fernet
-from httpx import AsyncClient
+from httpx import AsyncClient, MockTransport, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -49,6 +51,8 @@ from domain.creek_vault import (
     HandshakeResult,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultTierCeiling,
+    VaultUploadRequest,
 )
 from models.user_vault_config import VAULT_URL_MAX_LENGTH, UserVaultConfig
 from models.vault_activation import VaultActivation, VaultActivationState
@@ -56,6 +60,7 @@ from schemas.vault_config import VAULT_API_KEY_MAX_LENGTH
 from services import creek_vault_client as vault_client_module
 from services import creek_vault_url_resolution, journal_encryption
 from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
+from tests.test_creek_vault_http_client import _handshake_payload
 
 # The marker real ciphertext carries. Imported as a literal rather than off the
 # private constant so this file states, independently, what "encrypted at rest"
@@ -846,3 +851,50 @@ async def test_managed_connection_guard_does_not_reserve_another_accounts_slot(
     assert config.user_id == owner_id
     assert config.provisioned is True
     assert config.api_key == _KEY_A
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+async def test_managed_connection_resolution_enforces_the_replay_body_limit(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The account resolver carries managed ownership into the real transport."""
+    headers, user_id = await _signup(async_client, "managed-upload-owner")
+    await _connect(async_client, headers, _VAULT_A_URL, _KEY_A)
+    config = (await db_session.execute(select(UserVaultConfig))).scalar_one()
+    config.provisioned = True
+    db_session.add(
+        VaultActivation(
+            user_id=user_id,
+            activation_id="upload-limit",
+            consumer_identity="upload-limit",
+            state=VaultActivationState.READY.value,
+        )
+    )
+    await db_session.commit()
+    request = VaultUploadRequest(
+        external_id="upload-limit",
+        filename="notes.txt",
+        content_base64="A" * (1024 * 1024),
+        tier=VaultTierCeiling.PERSONAL,
+        tier_ceiling=VaultTierCeiling.PERSONAL,
+        created_at=datetime.now(UTC),
+    )
+    calls: list[str] = []
+
+    def handle(incoming: Request) -> Response:
+        """Only the capability probe may reach this transport."""
+        calls.append(incoming.method)
+        return Response(200, json=_handshake_payload(capabilities=["upload"]))
+
+    async with AsyncClient(transport=MockTransport(handle)) as http:
+        monkeypatch.setattr(
+            vault_client_module,
+            "HttpCreekVaultClient",
+            partial(HttpCreekVaultClient, http_client=http),
+        )
+        client = await _client_for(db_session, user_id)
+        assert (await client.handshake()).available
+        with pytest.raises(ValueError, match="managed_document_too_large"):
+            await client.upload(request)
+    assert calls == ["GET"]

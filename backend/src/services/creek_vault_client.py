@@ -171,6 +171,7 @@ from services.creek_vault_telemetry import (
     outcome_for_error,
     record_vault_outcome,
 )
+from services.creek_vault_upload_limits import guard_managed_upload_body
 from services.creek_vault_url import VaultUrlDefect, VaultUrlFinding, classify_vault_url
 from services.creek_vault_url_user import (
     UserVaultUrlFinding,
@@ -1617,6 +1618,7 @@ class HttpCreekVaultClient:
         *,
         http_client: httpx.AsyncClient | None = None,
         pin_destination: bool = True,
+        managed: bool = False,
     ) -> None:
         """Validate the URL, then bind the credential, the client, and a safe cache.
 
@@ -1638,6 +1640,7 @@ class HttpCreekVaultClient:
         self._url = url.rstrip("/")
         self._http_client = http_client
         self._pin_destination = pin_destination
+        self._managed = managed
         self._last_handshake = HandshakeResult.unavailable()
         self._degrade_reason: HandshakeDegradeReason | None = None
 
@@ -2027,6 +2030,9 @@ class HttpCreekVaultClient:
         """
         ceiling = wire_ceiling_for(request.tier_ceiling)
         body = _upload_document_body(request, wire_ceiling_for(request.tier))
+        if self._managed:
+            encoded = httpx.Request("POST", f"{self._url}{_UPLOADS_PATH}", json=body).content
+            guard_managed_upload_body(encoded)
         try:
             return await self._authorized_request(
                 "POST", f"{self._url}{_UPLOADS_PATH}", body, ceiling=ceiling
@@ -2749,8 +2755,10 @@ def build_creek_vault_client() -> CreekVaultPipelineClient:
     return HttpCreekVaultClient(url, os.getenv("CREEK_VAULT_API_KEY", ""), pin_destination=False)
 
 
-def build_connected_vault_client(url: str, api_key: str) -> CreekVaultPipelineClient:
-    """Return the adapter for a vault one user connected for themselves.
+def build_connected_vault_client(
+    url: str, api_key: str, *, managed: bool = False
+) -> CreekVaultPipelineClient:
+    """Return the per-account adapter, bounding managed upload envelopes.
 
     The per-user twin of :func:`build_creek_vault_client`, and the differences
     between them are exactly the differences between the two configurations.
@@ -2816,4 +2824,4 @@ def build_connected_vault_client(url: str, api_key: str) -> CreekVaultPipelineCl
             _FORBIDDEN_STORED_DESTINATION_EVENT, extra=_stored_destination_fields(destination)
         )
         return LocalFallbackCreekVaultClient()
-    return HttpCreekVaultClient(url, api_key)
+    return HttpCreekVaultClient(url, api_key, managed=managed)

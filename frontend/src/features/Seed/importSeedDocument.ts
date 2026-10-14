@@ -65,8 +65,11 @@ const CORPUS_SEED_STATUS: Record<CorpusImportStatusT, CorpusSeedStatus> = {
 
 /** Map a thrown import failure onto the run's vocabulary, bytes untouched. */
 function statusForError(error: unknown): SettledSeedStatus {
-  if (error instanceof DocumentUploadError && error.kind === 'too_large') {
-    return 'too_large';
+  if (
+    error instanceof DocumentUploadError &&
+    (error.kind === 'too_large' || error.kind === 'managed_too_large')
+  ) {
+    return error.kind;
   }
   return 'failed';
 }
