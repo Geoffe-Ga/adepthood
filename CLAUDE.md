@@ -8,7 +8,7 @@ personal knowledge base whose growing corpus becomes a "Higher Self" that
 reflects the user's own wisdom back in the language of the 36-week APTITUDE
 program and the Archetypal Wavelength. Around that floor are optional,
 self-chosen **depths** — prompted journaling, habit scaffolding, a practice
-ramp, the course reading, and the Digital Sangha. Nothing is mandatory, though
+ramp, the Course reading, and the Digital Sangha. Nothing is mandatory, though
 some Course readings follow a schedule: the governing principle is **"you choose
 your depth."** Deeper rings are offered only as resonant, declinable
 invitations — never gamified pressure. The product vision lives in `NORTH-STAR.md`; the "Candle & Ink" visual north
