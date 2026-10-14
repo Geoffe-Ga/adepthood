@@ -42,7 +42,7 @@ from services.encryption_inventory import (
     raw_table,
 )
 from services.journal_encryption import EncryptedString
-from tests.support.encrypted_rows import insert_row
+from tests.support.encrypted_rows import insert_row, stored_plaintext
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ADR_DIR = _REPO_ROOT / "docs" / "adr"
@@ -747,7 +747,7 @@ async def test_server_env_keys_alone_recover_every_in_scope_journal_column(
 
         assert isinstance(stored, str)
         assert canary not in stored
-        assert je.decrypt(stored) == canary
+        assert je.decrypt(stored) == stored_plaintext(target, canary)
     finally:
         je.reset_cache()
 
