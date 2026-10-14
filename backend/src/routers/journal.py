@@ -21,6 +21,7 @@ from database import get_session
 from dependencies.creek_vault import (
     get_creek_vault_client,
     get_reflection_boundary,
+    resolve_reflection_boundary,
     resolved_vault_destination,
 )
 from dependencies.ownership import (
@@ -605,11 +606,16 @@ async def _record_corpus_fragment(session: AsyncSession, entry: JournalEntry) ->
     held. :func:`services.corpus_ingest._classify_and_record` commits before it
     dials for that reason, and this commit now lands only what happened after —
     the fragment, or nothing.
+
+    The owner's boundary is resolved here, from server state, because the
+    classifier is the app provider: a vault-bound writer's entry is never
+    classified by it (#3156).
     """
     if entry.id is None:
         return
+    boundary = await resolve_reflection_boundary(session, entry.user_id)
     with suppress(LLMCreditExhaustedError):
-        await ingest_journal_entry(session, entry)
+        await ingest_journal_entry(session, entry, boundary=boundary)
     await session.commit()
 
 
@@ -1181,6 +1187,7 @@ async def update_journal_entry(
                 payload,
                 current_user,
                 session,
+                withdraw_if_denied=True,
             )
             if not admits_egress(entry.classification):
                 await _apply_intimate_update(
@@ -1203,23 +1210,41 @@ async def _apply_intimate_update(
     *,
     chose_intimate: bool,
 ) -> None:
-    """Keep an Intimate entry out of the corpus and, when it was chosen, withdraw its copies.
+    """When Intimate was chosen, withdraw the entry's remote copies.
 
     Every PATCH that sets Intimate -- including a repeat of the same value --
     owes and retries every withdrawal, so "choose Intimate again" is a real
-    retry. The tier is committed first and never reverted; a 503 reports only
+    retry. The tier is committed first, together with the local withdrawal
+    (:func:`_stage_local_withdrawal`), and never reverted; a 503 reports only
     that remote cleanup is pending. A body edit or Finish on an entry that is
     already Intimate never dials: it saves, and any owed withdrawal is left to
     the background sweep, so a vault that can never confirm (#3060 escalation
     1) cannot hold the writer's own page hostage.
     """
-    entry_id = cast("int", entry.id)
-    await withdraw_local_journal_entry(session, user_id=entry.user_id, entry_id=entry_id)
-    if chose_intimate:
-        await mark_entry_retractions_pending(session, user_id=entry.user_id, entry_id=entry_id)
-    await session.commit()
     if chose_intimate and not await _withdraw_remote_copies(session, entry, vault_client):
         raise await _withdrawal_pending(session, entry, vault_client)
+
+
+async def _stage_local_withdrawal(
+    session: AsyncSession, entry: JournalEntry, payload: JournalEntryUpdate
+) -> None:
+    """Stage an Intimate entry's local withdrawal into the commit of its tier. Does not commit.
+
+    A no-op for an entry that still admits egress.
+
+    The corpus copy goes and, when Intimate was chosen, every recorded essay
+    offer becomes an owed withdrawal -- in the very transaction that commits
+    the tier, as :func:`mark_entry_retractions_pending` requires. Committed
+    apart, a process that died between the two left an Intimate page whose
+    corpus copy and mirrored essays nothing would ever withdraw: the page
+    already read Intimate, so neither the writer nor the sweep retried (#3162).
+    """
+    if admits_egress(entry.classification):
+        return
+    entry_id = cast("int", entry.id)
+    await withdraw_local_journal_entry(session, user_id=entry.user_id, entry_id=entry_id)
+    if "classification" in payload.model_fields_set:
+        await mark_entry_retractions_pending(session, user_id=entry.user_id, entry_id=entry_id)
 
 
 async def _persist_entry_update(
@@ -1227,8 +1252,15 @@ async def _persist_entry_update(
     payload: JournalEntryUpdate,
     current_user: int,
     session: AsyncSession,
+    *,
+    withdraw_if_denied: bool = False,
 ) -> JournalEntry:
-    """Load, apply, and commit one owned update inside any caller-held privacy lock."""
+    """Load, apply, and commit one owned update inside any caller-held privacy lock.
+
+    ``withdraw_if_denied`` (the re-ingesting branch) stages the local
+    withdrawal of an entry that is Intimate after the update into the same
+    commit as the update itself.
+    """
     result = await session.execute(
         select(JournalEntry).where(
             JournalEntry.id == entry_id,
@@ -1242,6 +1274,8 @@ async def _persist_entry_update(
         raise not_found("journal_entry")
     await refuse_if_deletion_pending(session, entry)
     await _apply_entry_update(entry, payload, session)
+    if withdraw_if_denied:
+        await _stage_local_withdrawal(session, entry, payload)
     session.add(entry)
     try:
         await session.commit()
@@ -3150,16 +3184,20 @@ class _EssayClients:
     """What the caller brings to essay expansion besides the note id.
 
     The cloud credential and optional vault, plus ``price_acknowledged``: the
-    caller's word that the writer saw the letter's price before asking (#623).
+    caller's word that the writer saw the letter's price before asking (#623),
+    and ``boundary``: whether this caller's AI operations may reach the app
+    provider at all, resolved from server state (#3156).
     """
 
     api_key: str | None = field(repr=False)
     vault_client: CreekVaultPipelineClient
+    boundary: ReflectionBoundary
     price_acknowledged: bool = False
 
 
 def _essay_clients(
     vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
     x_llm_api_key: Annotated[
         str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
     ] = None,
@@ -3169,6 +3207,7 @@ def _essay_clients(
     return _EssayClients(
         api_key=x_llm_api_key,
         vault_client=vault_client,
+        boundary=boundary,
         price_acknowledged=payload is not None and payload.price_acknowledged,
     )
 
@@ -3258,6 +3297,35 @@ def _log_essay_cache_hit(note: Marginalia, stage: str) -> None:
     )
 
 
+def _refuse_vault_bound_essay(note: Marginalia, boundary: ReflectionBoundary) -> None:
+    """Fail a vault-bound writer's first letter closed, before any charge or dial (#3156).
+
+    A letter is written by the app provider and only by it: no vault advertises
+    an essay capability, so for a writer whose AI operations are bound to their
+    vault there is no source this request may use. That is the reflection
+    route's refusal, under its token -- a 503 ``reflection_source_unavailable``
+    -- and it is raised ahead of the payer, price and guardrail gates, so
+    nothing is staged, nothing is charged, nothing is dialled and ``essay``
+    stays ``NULL`` for a later ask. A BYOK key changes none of it: a key pays
+    for a call, it does not consent to one.
+
+    One WARNING in a closed vocabulary: ids, the operation and this module's
+    reason word, never the body, a prompt, a key or a letter.
+    """
+    if boundary is not ReflectionBoundary.VAULT_BOUND:
+        return
+    logger.warning(
+        REFLECTION_SOURCE_UNAVAILABLE,
+        extra={
+            "user_id": note.user_id,
+            "id": note.id,
+            "operation": GenerationFeature.ESSAY.value,
+            "reason": VaultSourceUnavailableReason.CAPABILITY_MISSING.value,
+        },
+    )
+    raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
+
+
 def _require_price_acknowledged(clients: _EssayClients) -> None:
     """Refuse a server-paid first letter the writer was not shown the price of.
 
@@ -3297,6 +3365,9 @@ async def _expand_essay(
     if not admits_egress(entry.classification):
         return note
     require_external_ai_available()
+    # Before the payer gate: asking a vault-bound writer for a key or a price
+    # would be a false next step when no source may answer them (#3156).
+    _refuse_vault_bound_essay(note, clients.boundary)
     # Before the price gate: asking a writer with no way to pay to acknowledge
     # a price would be a false next step (#3096).
     await require_ai_payer(session, user_id, clients.api_key)
@@ -3386,7 +3457,11 @@ async def _cache_and_mirror_essay(
         # read is released with its own before anything leaves the process.
         await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
         cached = await _cache_essay(
-            session, note, _sanitize_message(entry.message), clients.api_key
+            session,
+            note,
+            _sanitize_message(entry.message),
+            api_key=clients.api_key,
+            boundary=clients.boundary,
         )
     # The provider answered with something that was not a letter, so there is no
     # letter: the note comes back with ``essay`` unset -- the same no-letter
@@ -3463,7 +3538,12 @@ async def _essay_charge(
 
 
 async def _cache_essay(
-    session: AsyncSession, note: Marginalia, body: str, api_key: str | None
+    session: AsyncSession,
+    note: Marginalia,
+    body: str,
+    *,
+    api_key: str | None,
+    boundary: ReflectionBoundary,
 ) -> Marginalia:
     """Charge, generate the essay via the cloud LLM, cache it on the note, and persist.
 
@@ -3495,19 +3575,26 @@ async def _cache_essay(
     commit is what releases the connection before it. ``note.user_id`` is the
     owner ``expand_marginalia_essay`` already authorized this row against, and
     ``_prior_letters_query`` re-asserts ownership on the parent entry besides.
+
+    **The adapter comes from the boundary chokepoint, before the charge (#3156).**
+    :func:`services.reflection_boundary.require_app_provider_llm` is the only
+    way this seam gets a provider: :func:`_expand_essay` already answered a
+    vault-bound caller its 503, so a refusal here is a missing check upstream,
+    and it lands before anything is staged -- a 500 with nothing charged, never
+    a dial.
     """
     prior_letters = await _prior_letter_essays(
         session, user_id=note.user_id, exclude_entry_id=note.journal_entry_id
     )
     byok_key = resolve_chat_api_key(api_key)
+    llm = require_app_provider_llm(boundary, byok_key)
     spent = await _essay_charge(session, note.user_id, byok_key)
     # The minute hit, after the charge is staged and before it commits: a
     # refusal leaves the staged charge for the guardrail slot's rollback.
     consume_generation_minute(note.user_id)
     await session.commit()
-    # Pure constructors, hoisted so the failure guard can report the calls
-    # that returned and the generation they belong to (#623 PR3).
-    llm = BotmasonResonanceLLM(byok_key)
+    # Pure constructor, hoisted so the failure guard can report the generation
+    # the calls belong to (#623 PR3).
     charge = _EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
     settled = False
     try:

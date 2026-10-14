@@ -247,7 +247,12 @@
       "backend/tests/security/test_telemetry_sentinels.py::test_uvicorns_access_logger_is_switched_off",
       "backend/tests/security/test_telemetry_sentinels.py::test_outbound_request_urls_stay_out_of_the_info_stream",
       "backend/tests/security/test_telemetry_sentinels.py::test_a_rate_limited_share_token_never_reaches_the_log",
-      "backend/tests/security/test_telemetry_sentinels.py::test_a_search_query_string_reaches_no_log"
+      "backend/tests/security/test_telemetry_sentinels.py::test_a_search_query_string_reaches_no_log",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
     ],
     "sinks": [
       "telemetry.sentry_envelope",
@@ -261,12 +266,63 @@
       "telemetry.vault_telemetry",
       "db.llmusagelog"
     ],
-    "issue": 3160,
-    "gap": "database and middleware error paths carrying Intimate canaries are not yet driven end-to-end"
+    "by_sink": {
+      "telemetry.sentry_envelope": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_route_raising_a_canary_ships_a_clean_but_diagnosable_event",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.root_log": [
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.access_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_share_token_never_reaches_the_access_log",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.uvicorn_error_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_uvicorns_own_traceback_is_content_free",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.uvicorn_access_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_uvicorns_access_logger_is_switched_off"
+      ],
+      "telemetry.outbound_client_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_outbound_request_urls_stay_out_of_the_info_stream",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.rate_limit_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_a_rate_limited_share_token_never_reaches_the_log"
+      ]
+    },
+    "issue": 3064,
+    "gap": "frontend envelope is proven by Jest (JournalEditorCrashEnvelope.test.tsx), which pytest cannot cite; vault telemetry and llmusagelog are not driven on a failure path"
   },
   "C13": {
-    "status": "uncovered",
-    "tests": [],
+    "status": "partial",
+    "tests": [
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded",
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_deployment_owner_env_vault_is_vault_bound"
+    ],
     "sinks": [
       "net.creek_vault_connected",
       "net.creek_vault_deployment",
@@ -274,8 +330,20 @@
       "net.openai",
       "net.anthropic"
     ],
+    "by_sink": {
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault"
+      ],
+      "net.openai": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault"
+      ]
+    },
     "issue": 2871,
-    "gap": "no managed vault installs a pinned local model; no packet-level test proves the reflection stays in its boundary"
+    "gap": "local model runtime and serving proof (Geoffe-Ga/Creek-Vault#1849, #2871) is outside this repo; adepthood proves only which destinations its AI operations dial"
   },
   "C14": {
     "status": "uncovered",
@@ -339,13 +407,25 @@
       "backend/tests/test_restore_suppression.py::test_restored_backup_does_not_resurrect_soft_deleted_entry",
       "backend/tests/test_restore_suppression.py::test_reapply_reowes_resurrected_withdrawals_and_clears_the_vault_handle",
       "backend/tests/test_restore_suppression.py::test_reapply_withdraws_the_resurrected_corpus_copy",
+      "backend/tests/test_restore_suppression.py::test_a_deleted_page_whose_owner_reuses_an_erased_id_is_still_suppressed",
       "backend/tests/test_journal_vault_write.py::test_delete_withdraws_remote_before_soft_delete_and_retries_on_failure",
-      "backend/tests/test_journal_deletion_in_progress.py::test_delete_503_then_refused_patch_then_sweep_leaves_no_corpus_copy"
+      "backend/tests/test_journal_deletion_in_progress.py::test_delete_503_then_refused_patch_then_sweep_leaves_no_corpus_copy",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_crash_after_every_commit_resumes_clean_or_truthfully_pending",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_replaying_durable_runs_after_delete_or_intimate_never_resends_the_canary",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_restore_and_reapply_never_resurrect_a_deleted_entry_or_account",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_pre_binding_copy_stays_truthfully_unconfirmed_through_every_recovery",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_the_invariant_sees_a_resurrection_when_suppression_is_disabled",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_the_invariant_sees_a_false_withdrawal_when_withdrawal_is_disabled",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_the_invariant_sees_a_resend_after_deletion",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_restore_does_not_forget_an_intimate_reclassification",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_restore_does_not_forget_a_deletion_in_progress"
     ],
     "sinks": [
       "db.journalentry.message",
       "db.journalentry.title",
       "db.corpusfragment.content",
+      "net.openai",
+      "net.anthropic",
       "net.creek_vault_connected",
       "net.creek_vault_deployment",
       "vault.creek_volume",
@@ -353,8 +433,8 @@
       "backup.railway_platform",
       "backup.offhost_pg_dump"
     ],
-    "issue": 3162,
-    "gap": "no crash at every commit boundary with replay; vendor and backup copies have no verified deadline"
+    "issue": 3214,
+    "gap": "restore forgets Intimate and in-progress deletes; provider backup erasure, vendor copies (#3065), manual vaults unverified"
   },
   "C22": {
     "status": "uncovered",
@@ -368,7 +448,12 @@
     "tests": [
       "backend/tests/security/test_vault_boundary_no_fallback.py::test_vault_notes_with_candidates_make_zero_app_provider_calls",
       "backend/tests/security/test_vault_boundary_no_fallback.py::test_vault_failure_never_falls_back",
-      "backend/tests/security/test_vault_boundary_no_fallback.py::test_byok_header_does_not_authorize_fallback_under_vault_boundary"
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_byok_header_does_not_authorize_fallback_under_vault_boundary",
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_deployment_owner_env_vault_is_vault_bound",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_a_vault_bound_writer_never_reaches_the_app_provider_seam",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_the_seam_spy_sees_an_app_provider_writer"
     ],
     "sinks": [
       "net.openai",
@@ -377,8 +462,20 @@
       "net.creek_vault_deployment",
       "net.creek_downstream_model"
     ],
-    "issue": 3161,
-    "gap": "no socket-level matrix proves a vault-bound writer's AI operations dial only their vault with each dependency down"
+    "by_sink": {
+      "net.openai": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault"
+      ],
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault"
+      ]
+    },
+    "issue": 2871,
+    "gap": "the deployment-wide vault is proven at the seam, not the socket; whether the vault's own model stays local is Creek's to prove (Geoffe-Ga/Creek-Vault#1849, #2871)"
   },
   "C24": {
     "status": "partial",

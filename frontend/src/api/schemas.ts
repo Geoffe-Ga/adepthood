@@ -645,6 +645,9 @@ export const userPracticeSchema = z.object({
   end_date: isoDate.nullable(),
   custom_name: z.string().nullish(),
   mode_config_override: z.record(z.string(), z.unknown()).nullish(),
+  // The habit this practice's sessions count toward, or null when unlinked
+  // (#3151). Set via ``PATCH /user-practices/{id}/habit``.
+  habit_id: z.number().int().nullish(),
   effective_name: z.string().nullish(),
   effective_config: z.record(z.string(), z.unknown()).nullish(),
 });
@@ -706,6 +709,20 @@ export const stageIntroSchema = z.object({
   title: z.string(),
   summary: z.string().nullable(),
 });
+
+/**
+ * The "Read next" target from ``GET /course/next-unread`` (#3147): the earliest
+ * unlocked chapter the reader has not marked read, across every open stage.
+ * The endpoint answers ``null`` when the reader is caught up, which is why the
+ * response schema is this object made nullable rather than the object alone.
+ */
+export const nextUnreadSchema = z.object({
+  content_id: z.number().int().positive(),
+  stage_number: z.number().int().min(1).max(STAGE_DURATIONS_DAYS.length),
+  title: z.string(),
+});
+
+export type NextUnreadT = z.infer<typeof nextUnreadSchema>;
 
 /**
  * Frequency-banner payload from ``GET /user-practices/current/frequency``.

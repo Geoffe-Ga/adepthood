@@ -21,6 +21,18 @@ class ContentItemResponse(BaseModel):
     is_read: bool
 
 
+class NextUnreadResponse(BaseModel):
+    """The earliest unlocked, unread chapter across every open stage (issue #3147).
+
+    The Course screen's "Read next" button opens it; the endpoint answers
+    ``null`` instead when every chapter the drip has opened is already read.
+    """
+
+    content_id: int
+    stage_number: int
+    title: str
+
+
 class CourseProgressResponse(BaseModel):
     """Aggregate read-progress for a stage's content."""
 

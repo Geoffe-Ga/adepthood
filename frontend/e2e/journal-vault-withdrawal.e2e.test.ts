@@ -1,22 +1,28 @@
 import { describe, afterAll, beforeAll, expect, it } from '@jest/globals';
 
 import { readLaneState } from './laneState';
+import { expectVaultBoundLetterRefused } from './vaultBoundLetter';
 
 import { ApiError, auth, journal, resonance, setTokenGetter } from '@/api';
 
 /**
- * Withdrawing a journal page and its generated Voice Draft across real sockets.
+ * Withdrawing a journal page from a connected Creek vault across real sockets.
  *
  * This journey logs in as the lane's pre-provisioned vault owner, so the live
  * FastAPI server resolves its production `HttpCreekVaultClient` and talks to the
- * isolated Creek contract process. The first Voice Draft DELETE is made to fail
- * at that external boundary. Adepthood must answer with its stable retryable
- * error and keep the page visible; only a later confirmed Voice Draft deletion
- * plus journal withdrawal may make the local page disappear.
+ * isolated Creek contract process. The page reaches the vault, the owner's
+ * resonance pass is answered by that vault (#3061), and deleting the page
+ * withdraws the vault's replica before the local page disappears.
+ *
+ * The owner is vault-bound, so a first letter on the vault's margin note is
+ * refused 503 `reflection_source_unavailable` -- uncharged, undialled, and with
+ * no Voice Draft reaching the vault (#3156). The Voice Draft half of this
+ * journey (a failed draft retraction keeping the page visible, then a confirmed
+ * retry) returns once the vault writes letters itself (#3203).
  *
  * The fake records only identities, tiers, actions, and content digests. The
- * assertions can therefore prove both replicas existed and were removed without
- * bringing the writer's page or AI-authored draft back across a control route.
+ * assertions can therefore prove the replica existed and was removed without
+ * bringing the writer's page back across a control route.
  */
 
 interface VaultFragment {
@@ -39,8 +45,6 @@ interface VaultLedger {
 
 const HTTP_OK = 200;
 const HTTP_NOT_FOUND = 404;
-const HTTP_SERVICE_UNAVAILABLE = 503;
-const RETRYABLE_WITHDRAWAL = 'vault_withdrawal_pending';
 const PAGE =
   'The cedar held the rain all night. By morning I could hear each drop arrive and leave.';
 
@@ -66,17 +70,6 @@ async function vaultLedger(): Promise<VaultLedger> {
   return (await response.json()) as VaultLedger;
 }
 
-async function failNextVoiceDraftDelete(): Promise<void> {
-  if (lane === null) throw new Error('globalSetup recorded no lane state');
-  const response = await fetch(`${lane.vaultUrl}/__lane/fail-next-voice-draft-delete`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${lane.vaultApiKey}` },
-  });
-  if (response.status !== HTTP_OK) {
-    throw new Error(`the lane's vault refused its failure control with ${response.status}`);
-  }
-}
-
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
   try {
     await promise;
@@ -86,10 +79,16 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
   throw new Error('expected the request to reject, but it resolved');
 }
 
+function holdsPage(fragments: VaultFragment[], entryId: number): boolean {
+  return fragments.some(
+    (fragment) => fragment.kind === 'journal' && fragment.externalId === String(entryId),
+  );
+}
+
 describe('journal withdrawal from a connected Creek vault', () => {
   let sessionToken: string | null = null;
   let entryId = 0;
-  let voiceDraftExternalId = '';
+  let marginaliaId = 0;
 
   beforeAll(async () => {
     if (lane === null) throw new Error('globalSetup recorded no lane state');
@@ -105,16 +104,14 @@ describe('journal withdrawal from a connected Creek vault', () => {
     setTokenGetter(null);
   });
 
-  it('stores both the page and its generated Voice Draft in the connected vault', async () => {
+  it('stores the page in the connected vault and has the vault answer its resonance', async () => {
     const entry = await journal.create({ message: PAGE, classification: 'personal' });
     entryId = entry.id;
     await journal.update(entryId, { status: 'finished' });
     const pass = await resonance.generate(entryId);
     const note = required(pass.marginalia[0], 'marginalia');
-    // The explicit, priced ask the essay modal sends (#623).
-    const expanded = await resonance.essay(note.id, { priceAcknowledged: true });
+    marginaliaId = note.id;
 
-    expect((expanded.essay ?? '').trim()).not.toBe('');
     const { fragments, received } = await vaultLedger();
     // The owner is vault-bound (#3061): the note is the vault's own answer,
     // quoting the page, and never an app-provider substitute.
@@ -123,60 +120,24 @@ describe('journal withdrawal from a connected Creek vault', () => {
     expect(received.some((call) => call.method === 'POST' && call.path === '/v1/reflections')).toBe(
       true,
     );
-    expect(
-      fragments.some(
-        (fragment) => fragment.kind === 'journal' && fragment.externalId === String(entryId),
-      ),
-    ).toBe(true);
-    const draft = required(
-      fragments.find((fragment) => fragment.kind === 'voice-draft'),
-      'Voice Draft fragment',
-    );
-    voiceDraftExternalId = draft.externalId;
+    expect(holdsPage(fragments, entryId)).toBe(true);
   });
 
-  it('keeps the page visible when Creek cannot confirm the Voice Draft deletion', async () => {
-    await failNextVoiceDraftDelete();
-
-    const failure = await rejection(journal.delete(entryId));
-
-    expect(failure).toBeInstanceOf(ApiError);
-    expect((failure as ApiError).status).toBe(HTTP_SERVICE_UNAVAILABLE);
-    expect((failure as ApiError).detail).toBe(RETRYABLE_WITHDRAWAL);
-    await expect(journal.get(entryId)).resolves.toMatchObject({ id: entryId, message: PAGE });
-    const { fragments } = await vaultLedger();
-    expect(
-      fragments.some(
-        (fragment) =>
-          fragment.kind === 'voice-draft' && fragment.externalId === voiceDraftExternalId,
-      ),
-    ).toBe(true);
+  it('refuses the first letter uncharged, so no Voice Draft reaches the vault', async () => {
+    await expectVaultBoundLetterRefused(marginaliaId);
   });
 
-  it('removes every remote replica and the local page after a confirmed retry', async () => {
+  it('removes the remote replica and then the local page on delete', async () => {
     await expect(journal.delete(entryId)).resolves.toBeUndefined();
 
     const { fragments, received } = await vaultLedger();
+    expect(holdsPage(fragments, entryId)).toBe(false);
     expect(
-      fragments.some(
-        (fragment) => fragment.kind === 'journal' && fragment.externalId === String(entryId),
+      received.some(
+        (request) =>
+          request.method === 'DELETE' && request.path === `/v1/journal-entries/${entryId}`,
       ),
-    ).toBe(false);
-    expect(
-      fragments.some(
-        (fragment) =>
-          fragment.kind === 'voice-draft' && fragment.externalId === voiceDraftExternalId,
-      ),
-    ).toBe(false);
-    expect(
-      received
-        .filter(
-          (request) =>
-            request.method === 'DELETE' &&
-            request.path === `/v1/voice-drafts/${voiceDraftExternalId}`,
-        )
-        .map((request) => request.action),
-    ).toEqual(['failed', 'failed', 'failed', 'deleted']);
+    ).toBe(true);
 
     const missing = await rejection(journal.get(entryId));
     expect(missing).toBeInstanceOf(ApiError);

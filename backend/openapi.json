@@ -4872,6 +4872,30 @@
         "title": "ModelUsageBreakdown",
         "type": "object"
       },
+      "NextUnreadResponse": {
+        "description": "The earliest unlocked, unread chapter across every open stage (issue #3147).\n\nThe Course screen's \"Read next\" button opens it; the endpoint answers\n``null`` instead when every chapter the drip has opened is already read.",
+        "properties": {
+          "content_id": {
+            "title": "Content Id",
+            "type": "integer"
+          },
+          "stage_number": {
+            "title": "Stage Number",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_id",
+          "stage_number",
+          "title"
+        ],
+        "title": "NextUnreadResponse",
+        "type": "object"
+      },
       "OperationSource": {
         "description": "Which side answered one operation of a pass, as a response reports it (#3062).\n\nThe persisted :class:`~models.marginalia.MarginaliaSource` values, plus\n``none``: the operation was not run at all (detection with no candidates,\nor under a vault-bound boundary). ``none`` is a fact about this pass and is\nnever stored, so it can never be mistaken for a row whose source was not\nrecorded.",
         "enum": [
@@ -8732,6 +8756,17 @@
             ],
             "title": "End Date"
           },
+          "habit_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Habit Id"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -8787,6 +8822,30 @@
           "sessions"
         ],
         "title": "UserPracticeDetail",
+        "type": "object"
+      },
+      "UserPracticeHabitLink": {
+        "additionalProperties": false,
+        "description": "PATCH body for ``/user-practices/{id}/habit`` (#3151).\n\n``habit_id`` is required and nullable: an id links the practice to that\nhabit once the caller is shown to own it, and an explicit ``null`` clears\nthe link. Requiring the field keeps an empty body a 422 rather than a\nsilent unlink. The id is bounded like every other row id, so ``0``, a\nnegative or a value past int32 is a 422 rather than a database lookup.",
+        "properties": {
+          "habit_id": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Habit Id"
+          }
+        },
+        "required": [
+          "habit_id"
+        ],
+        "title": "UserPracticeHabitLink",
         "type": "object"
       },
       "UserPracticeResponse": {
@@ -8886,6 +8945,17 @@
               }
             ],
             "title": "End Date"
+          },
+          "habit_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Habit Id"
           },
           "id": {
             "title": "Id",
@@ -12761,7 +12831,7 @@
     },
     "/corpus/consent/{source}": {
       "put": {
-        "description": "Record this account's decision about one source and report the result.\n\nCommitted here rather than left to a caller, because a decision is never\nonly the event: on a revocation it is the purge, and on a grant it is the\nsweep back over the writing the account already had, bounded and reported by\n:mod:`services.corpus_backfill`. Leaving any of it uncommitted would be a\npermission changed on screen and not in the database.\n\nA grant is no longer *one* transaction, and the commit here is the last of\nseveral rather than the only one. The sweep ends its transaction before\nevery classification so that no pooled connection is held across a provider\ncall -- see :func:`services.corpus_ingest._classify_and_record` -- which\nmakes the decision itself durable at the first entry. So a grant whose sweep\nis cut short by a client that stopped waiting leaves the permission recorded\nand whatever it reached ontologized, and the remainder waits for the next\nyes. That is a change of promise and the better half of the trade: the\nalternative was a permission the account had given, paid for at a provider,\nand thrown away.\n\n**The account barrier is held for the decision, never across the sweep.**\nThis route serves the revocation as well as the grant, and\n``DELETE /users/me`` takes the same exclusive hold: a hold spanning a sweep\nbounded only by :data:`services.corpus_backfill.BACKFILL_ENTRY_CEILING`\nprovider calls would not merely delay those two, it would reorder them to\nafter every dial the sweep had left -- the two requests that mean *stop\nsending my writing* made to wait out the sending, and the writing sent in\nthe meantime withheld by the code that predates the barrier. So the hold\nhere covers the liveness read and the decision, which dial nothing, and the\nsweep takes it per entry in\n:func:`services.corpus_backfill._offer_one`, re-reading this decision inside\neach one. A stop then waits for the dial in flight and for nothing else.\n\nRate-limited more tightly than ``POST /import`` despite carrying the\nsmallest body in the API: a grant is the most expensive request here, since\nthe sweep it authorises costs a provider call per entry it reaches, where\nan import costs one in total. See :data:`schemas.corpus.CONSENT_RATE_LIMIT`.\n\nThe response is still the *state*. What the grant's sweep reached is a fact\nabout the sweep rather than about the decision -- a bounded sweep resumes\nunder a decision already standing -- so it goes where sweeps are kept, the\nappend-only :class:`models.corpus_sweep.CorpusSweep` log and the log line,\nrather than onto a shape that also answers ``GET``.",
+        "description": "Record this account's decision about one source and report the result.\n\nCommitted here rather than left to a caller, because a decision is never\nonly the event: on a revocation it is the purge, and on a grant it is the\nsweep back over the writing the account already had, bounded and reported by\n:mod:`services.corpus_backfill`. Leaving any of it uncommitted would be a\npermission changed on screen and not in the database.\n\nA grant is no longer *one* transaction, and the commit here is the last of\nseveral rather than the only one. The sweep ends its transaction before\nevery classification so that no pooled connection is held across a provider\ncall -- see :func:`services.corpus_ingest._classify_and_record` -- which\nmakes the decision itself durable at the first entry. So a grant whose sweep\nis cut short by a client that stopped waiting leaves the permission recorded\nand whatever it reached ontologized, and the remainder waits for the next\nyes. That is a change of promise and the better half of the trade: the\nalternative was a permission the account had given, paid for at a provider,\nand thrown away.\n\n**The account barrier is held for the decision, never across the sweep.**\nThis route serves the revocation as well as the grant, and\n``DELETE /users/me`` takes the same exclusive hold: a hold spanning a sweep\nbounded only by :data:`services.corpus_backfill.BACKFILL_ENTRY_CEILING`\nprovider calls would not merely delay those two, it would reorder them to\nafter every dial the sweep had left -- the two requests that mean *stop\nsending my writing* made to wait out the sending, and the writing sent in\nthe meantime withheld by the code that predates the barrier. So the hold\nhere covers the liveness read and the decision, which dial nothing, and the\nsweep takes it per entry in\n:func:`services.corpus_backfill._offer_one`, re-reading this decision inside\neach one. A stop then waits for the dial in flight and for nothing else.\n\nRate-limited more tightly than ``POST /import`` despite carrying the\nsmallest body in the API: a grant is the most expensive request here, since\nthe sweep it authorises costs a provider call per entry it reaches, where\nan import costs one in total. See :data:`schemas.corpus.CONSENT_RATE_LIMIT`.\n\nThe response is still the *state*. What the grant's sweep reached is a fact\nabout the sweep rather than about the decision -- a bounded sweep resumes\nunder a decision already standing -- so it goes where sweeps are kept, the\nappend-only :class:`models.corpus_sweep.CorpusSweep` log and the log line,\nrather than onto a shape that also answers ``GET``.\n\nThe sweep runs under the account's AI-operation boundary, resolved here from\nserver state: a writer who connected a vault has nothing classified by the\napp provider, so their grant is recorded and the sweep stops before its\nfirst offer (#3156).",
         "operationId": "put_corpus_consent_corpus_consent__source__put",
         "parameters": [
           {
@@ -13753,6 +13823,124 @@
           }
         },
         "summary": "Mark Content Read",
+        "tags": [
+          "course"
+        ]
+      }
+    },
+    "/course/next-unread": {
+      "get": {
+        "description": "The earliest unlocked, unread chapter across every open stage, or ``null``.\n\nOrdered by stage, then ``release_day``, then ``id`` -- the release order\nthe per-stage listing already uses -- so \"Read next\" always lands on the\nchapter a reader would reach by walking the stages in order. Drip lock\nsemantics come from the same :func:`filter_content_for_user` path as the\nlisting; nothing is re-derived here. ``null`` (not 404) means \"caught\nup\": the resource is the reader's position, and it always exists.\n\nThe request carries no id at all -- the answer is scoped to the JWT\nsubject -- so there is no foreign id to authorize.",
+        "operationId": "get_next_unread_course_next_unread_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NextUnreadResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Next Unread Course Next Unread Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          }
+        },
+        "summary": "Get Next Unread",
         "tags": [
           "course"
         ]
@@ -18432,7 +18620,7 @@
     },
     "/journal/transcribe-page": {
       "post": {
-        "description": "Transcribe one keyless image of text on the armed stub seam, or refuse.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — an operator's external-AI\nsuspension answers 503 ``ai_suspended`` before anything else (#3075), then\nthe payer gate runs, then the image is validated (422 without any charge).\nThis route holds no key of the writer's own -- a device with one reads the\npage by calling its vendor directly (ADR 0009 phase (a), #3067) -- so\noutside the armed stub test seam the gate refuses 402 ``llm_key_required``\nbefore the body is decoded and before the slot or the wallet is touched\n(#3096). On the seam the wallet is\ndeducted (402 ``insufficient_offerings`` when out of capacity). A provider\nfailure rolls the transaction back so a failed pass never bills, and so\ndoes a reply that is no text or a refusal (422 ``no_text_found`` /\n``transcription_refused``). Usage is committed atomically with the charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
+        "description": "Transcribe one keyless image of text on the armed stub seam, or refuse.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — an operator's external-AI\nsuspension answers 503 ``ai_suspended`` before anything else (#3075), then a\nvault-bound writer is answered 503 ``reflection_source_unavailable`` (#3156),\nthen the payer gate runs, then the image is validated (422 without any charge).\nThis route holds no key of the writer's own -- a device with one reads the\npage by calling its vendor directly (ADR 0009 phase (a), #3067) -- so\noutside the armed stub test seam the gate refuses 402 ``llm_key_required``\nbefore the body is decoded and before the slot or the wallet is touched\n(#3096). On the seam the wallet is\ndeducted (402 ``insufficient_offerings`` when out of capacity). A provider\nfailure rolls the transaction back so a failed pass never bills, and so\ndoes a reply that is no text or a refusal (422 ``no_text_found`` /\n``transcription_refused``). Usage is committed atomically with the charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
         "operationId": "transcribe_page_journal_transcribe_page_post",
         "parameters": [
           {
@@ -27664,6 +27852,137 @@
           }
         },
         "summary": "Customize User Practice",
+        "tags": [
+          "user-practices"
+        ]
+      }
+    },
+    "/user-practices/{user_practice_id}/habit": {
+      "patch": {
+        "description": "Link this practice to the habit its sessions count toward, or unlink it (#3151).\n\nThe selection is the caller's own via ``require_owned_user_practice``. A\n``habit_id`` is then authorised by :func:`domain.habit_links.link_practice_habit`\n-- 404 missing, audited 403 another user's, then 422 unless its goals count\nminutes or sessions per day or per week -- and ``null`` clears the link. A\nrefusal writes nothing. The link is per practice, so two practices can feed\ntwo habits; the journal's own link stays on ``/ui-flags``.",
+        "operationId": "link_user_practice_habit_user_practices__user_practice_id__habit_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_practice_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "User Practice Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPracticeHabitLink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPracticeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Link User Practice Habit",
         "tags": [
           "user-practices"
         ]

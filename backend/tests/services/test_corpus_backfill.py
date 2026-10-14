@@ -70,6 +70,7 @@ from services.botmason import LLMCreditExhaustedError, LLMProviderError
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentChange, ConsentState, set_consent
 from services.privacy_suspension import EXTERNAL_AI_SUSPEND_ENV_VAR
+from services.reflection_boundary import ReflectionBoundary
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -170,7 +171,9 @@ async def _decide(
 ) -> cb.BackfillOutcome:
     """Record one decision and run whatever that decision reaches."""
     change = await set_consent(session, user_id=_OWNER, source=source, granted=granted)
-    outcome = await backfill_after_consent(session, user_id=_OWNER, change=change)
+    outcome = await backfill_after_consent(
+        session, user_id=_OWNER, change=change, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await session.commit()
     return outcome
 
@@ -908,7 +911,9 @@ async def test_a_grant_with_no_decision_behind_it_sweeps_nothing(
         event=None,
     )
 
-    outcome = await backfill_after_consent(db_session, user_id=_OWNER, change=unattributable)
+    outcome = await backfill_after_consent(
+        db_session, user_id=_OWNER, change=unattributable, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert (outcome.entries_considered, outcome.fragments_added, outcome.entries_remaining) == (
@@ -1038,7 +1043,9 @@ async def test_a_decision_belonging_to_somebody_else_authorises_nothing(
         db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
     )
 
-    outcome = await backfill_after_consent(db_session, user_id=stranger, change=change)
+    outcome = await backfill_after_consent(
+        db_session, user_id=stranger, change=change, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.commit()
 
     assert outcome.entries_considered == 0
@@ -1153,7 +1160,9 @@ async def test_what_the_sweep_reached_survives_the_request_being_abandoned(
         db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
     )
 
-    await backfill_after_consent(db_session, user_id=_OWNER, change=change)
+    await backfill_after_consent(
+        db_session, user_id=_OWNER, change=change, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.rollback()
 
     assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND, _THIRD])
@@ -1202,7 +1211,9 @@ async def test_an_abandoned_sweep_keeps_its_fragments_and_loses_its_receipt(
         db_session, user_id=_OWNER, source=CorpusSource.JOURNAL, granted=True
     )
 
-    await backfill_after_consent(db_session, user_id=_OWNER, change=change)
+    await backfill_after_consent(
+        db_session, user_id=_OWNER, change=change, boundary=ReflectionBoundary.APP_PROVIDER
+    )
     await db_session.rollback()
 
     assert sorted(await _stored(db_session)) == sorted([_FIRST, _SECOND])

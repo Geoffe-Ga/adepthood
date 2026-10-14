@@ -1,7 +1,7 @@
 """add resourcecompletion table for Start Here read marks (#3148).
 
 Revision ID: e0094da08afc
-Revises: b6d8f0a2c4e6
+Revises: c8f1d3e5a7b9
 Create Date: 2026-10-14 00:00:00.000000
 
 Purely additive: ``upgrade`` creates the ``resourcecompletion`` table (a
@@ -20,7 +20,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "e0094da08afc"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "b6d8f0a2c4e6"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "c8f1d3e5a7b9"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

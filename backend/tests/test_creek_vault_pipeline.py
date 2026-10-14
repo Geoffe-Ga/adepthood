@@ -69,6 +69,9 @@ from services.creek_vault_pipeline import _commit_finished_run as commit_finishe
 from services.creek_vault_pipeline import _PipelinePlan as PipelinePlan
 from services.creek_vault_pipeline import _reconcile_run as reconcile_run
 from services.creek_vault_pipeline import _RunResult as RunResult
+from services.creek_vault_pipeline import (
+    _settle_despite_cancellation as settle_despite_cancellation,
+)
 from services.creek_vault_pipeline import _StageCounts as StageCounts
 from services.creek_vault_pipeline import _start_queued_run as start_queued_run
 from services.creek_vault_telemetry import (
@@ -820,6 +823,22 @@ async def test_an_accepted_job_is_not_duplicated_when_its_commit_outlives_the_bu
     ]
 
 
+class _NeverTerminalRecorder(_DurableJobRecorder):
+    """A durable-job vault whose every admitted job stays running forever."""
+
+    def _status(self, job_id: str) -> httpx.Response:
+        """Keep every admitted job running forever."""
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "job_id": job_id,
+                "state": "running",
+                "result": None,
+            },
+        )
+
+
 @pytest.mark.asyncio
 async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
     concurrent_session_factory: async_sessionmaker[AsyncSession],
@@ -832,25 +851,11 @@ async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
     in-memory SQLite URL has a different, empty database; under a loaded xdist
     worker that made this assertion test the fixture rather than the pipeline.
     """
-
-    class _NeverTerminal(_DurableJobRecorder):
-        def _status(self, job_id: str) -> httpx.Response:
-            """Keep every admitted job running forever."""
-            return httpx.Response(
-                200,
-                json={
-                    "status": "ok",
-                    "job_id": job_id,
-                    "state": "running",
-                    "result": None,
-                },
-            )
-
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.005)
     monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
     monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
     monkeypatch.setattr(pipeline, "_JOB_RECONCILIATION_BUDGET_SECONDS", 0.01)
-    recorder = _NeverTerminal()
+    recorder = _NeverTerminalRecorder()
     http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
     client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
     await client.handshake()
@@ -871,6 +876,92 @@ async def test_a_job_that_never_finishes_releases_its_continuation_as_ambiguous(
     assert rows[0].outcome == VaultPipelineOutcome.AMBIGUOUS
     assert rows[0].attempt_count == 1
     assert rows[0].job_id == recorder.CLASSIFICATION_JOB
+
+
+#: The polling ceiling the test below sets, and a liveness read held well past
+#: it, so the ceiling is certain to expire while that read is in flight.
+_SHORT_POLLING_CEILING_SECONDS = 0.01
+_LIVENESS_READ_OUTLASTING_THE_CEILING_SECONDS = 0.05
+
+
+@pytest.mark.asyncio
+async def test_the_polling_ceiling_never_cancels_the_detached_gates_liveness_read(
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The clock that abandons a job never lands inside a database round trip (#3216).
+
+    The detached ladder orders every status poll behind a liveness read on a
+    gate session of its own, and that read sits inside the reconciliation
+    ceiling. A cancellation landing between SQLAlchemy's aiosqlite ``execute``
+    and its ``fetchall`` leaves the read's statement stepped and unfinalized on
+    a pooled connection -- a SHARED lock that the pool's reset-on-return
+    rollback does not release -- so the ladder's own ``AMBIGUOUS`` commit then
+    waited out the whole busy timeout and failed ``database is locked``. Holding
+    the read past the ceiling makes that landing certain instead of a race.
+    """
+    real_liveness_read = pipeline.account_is_live
+    cancelled_reads: list[int] = []
+
+    async def _liveness_read_outlasting_the_ceiling(session: AsyncSession, user_id: int) -> bool:
+        try:
+            await asyncio.sleep(_LIVENESS_READ_OUTLASTING_THE_CEILING_SECONDS)
+        except asyncio.CancelledError:
+            cancelled_reads.append(user_id)
+            raise
+        return await real_liveness_read(session, user_id)
+
+    monkeypatch.setattr(pipeline, "account_is_live", _liveness_read_outlasting_the_ceiling)
+    monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.005)
+    monkeypatch.setattr(pipeline, "_LEAST_WORTH_STARTING_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(
+        pipeline, "_JOB_RECONCILIATION_BUDGET_SECONDS", _SHORT_POLLING_CEILING_SECONDS
+    )
+    recorder = _NeverTerminalRecorder()
+    http = httpx.AsyncClient(transport=httpx.MockTransport(recorder))
+    client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+    await client.handshake()
+
+    async with concurrent_session_factory() as session:
+        await drive_vault_pipeline(
+            session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
+    await _wait_for_background_pipeline()
+    await http.aclose()
+
+    assert cancelled_reads == []
+    async with concurrent_session_factory() as session:
+        rows = await _rows(session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.AMBIGUOUS),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_settling_read_outlives_every_cancellation_before_reraising() -> None:
+    """Repeated cancellations wait for the read to end, then the first is re-raised."""
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def _read() -> bool:
+        await release.wait()
+        finished.set()
+        return True
+
+    waiter = asyncio.create_task(settle_despite_cancellation(_read()))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    await asyncio.sleep(0)
+    waiter.cancel()
+    await asyncio.sleep(0)
+    assert not waiter.done()
+    assert not finished.is_set()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert finished.is_set()
 
 
 @pytest.mark.asyncio
