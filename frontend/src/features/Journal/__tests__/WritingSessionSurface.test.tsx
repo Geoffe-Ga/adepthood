@@ -146,6 +146,30 @@ describe('WritingSessionSurface', () => {
     );
   });
 
+  it('hands offer scrolling to the outer surface only while measured content overflows', () => {
+    const { getByTestId } = renderSurface();
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+    fireEvent(getByTestId('writing-session-band-content'), 'contentSizeChange', 1280, 260);
+    for (const [height, outerScrolls] of [
+      [400, false],
+      [172, true],
+      [400, false],
+    ] as const) {
+      fireEvent(getByTestId('writing-session-band'), 'layout', {
+        nativeEvent: { layout: { height } },
+      });
+      expect(getByTestId('writing-session-band-content').props.scrollEnabled).toBe(outerScrolls);
+      expect(getByTestId('writing-session-offer-scroll').props.scrollEnabled).toBe(!outerScrolls);
+      expect(StyleSheet.flatten(getByTestId('writing-session-banner').props.style).flexShrink).toBe(
+        outerScrolls ? 0 : 1,
+      );
+      expect(
+        StyleSheet.flatten(getByTestId('writing-session-offer-scroll').props.style).flexShrink,
+      ).toBe(outerScrolls ? 0 : 1);
+    }
+  });
+
   it('keeps a running timer alive when resizing into and out of a short band', () => {
     const { getByTestId, queryByTestId } = renderSurface();
     fireEvent.press(getByTestId('writing-timer-start'));

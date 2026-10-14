@@ -179,7 +179,11 @@ function WritingSessionSurface({
         testID="writing-session-band-content"
       >
         {note === null ? null : (
-          <WritingSessionBanner result={note.result} onDismiss={dismiss} scrollWholeSurface>
+          <WritingSessionBanner
+            result={note.result}
+            onDismiss={dismiss}
+            scrollWholeSurface={scrollWholeSurface}
+          >
             {renderOffer === undefined ? null : (
               <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
             )}
