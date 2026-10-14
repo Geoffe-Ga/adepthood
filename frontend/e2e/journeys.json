@@ -2371,5 +2371,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habits-recovery.browser.e2e.test.ts"
+  },
+  {
+    "id": "release.claim-certification",
+    "description": "An operator, not a user, decides whether a public privacy or product claim (C01-C24 in docs/legal/claim-ledger.json) may be published. The publish gate (backend/scripts/claim_certification.py, run by backend/tests/scripts/test_claim_publish_gate.py) refuses any ledger claim marked published without a current certificate in docs/qa/claim-certifications.json: an independent reviewer who implemented nothing and is not the loop, tested commits equal to the backend and frontend releases the serving receipts report, resolving non-xfail tests and covered journeys, passed dependency gates, a human signoff on the exact sentence digest, and an unexpired 90-day window. It renders no screen; the crossing below names the journal surface the strongest claims (C03, C07-C12, C20-C23) are about. Uncovered (#3076): no claim is certified, because certification needs an appointed independent human reviewer and live synthetic journeys on the serving build, both owner actions, so nothing can cross this seam yet.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/PrivacyTierControl.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 3076
   }
 ]
