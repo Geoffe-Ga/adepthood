@@ -2169,5 +2169,22 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/csp-enforced.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.offline-calendar-and-legacy-recovery",
+    "description": "A resumed account whose first authoritative timezone refresh fails offline recovers on a later Habits load after the auth cooldown, including actual UTC, and exactly one legacy completion reaches the real server on its account-local day. A real deleted-goal rejection followed by an injected device cleanup read failure retains a durable local replay identity and one visible dropped check-in across retry; local replay identity never enters the API payload. Unit interleavings additionally cover repeated retries, distinct identical legacy taps, failed identity persistence, concurrent drains and account switches.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits", "goalCompletions"],
+      "routes": [
+        "POST /auth/refresh",
+        "GET /habits/",
+        "POST /goal_completions/",
+        "DELETE /habits/{habit_id}"
+      ],
+      "tables": ["user", "habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-recovery.browser.e2e.test.ts"
   }
 ]
