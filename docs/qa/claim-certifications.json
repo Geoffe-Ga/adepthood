@@ -1,0 +1,852 @@
+{
+  "schema_version": 1,
+  "records": [
+    {
+      "claim_id": "C01",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B20",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C02",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B07",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B22",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C03",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B02",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B12",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B13",
+            "status": "pending",
+            "evidence_ref": null
+          },
+          {
+            "item": "B14",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C04",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B11",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C05",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B01",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B11",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C06",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B10",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B11",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C07",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B01",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B03",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B04",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C08",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B03",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B15",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C09",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B03",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B04",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C10",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B03",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B04",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C11",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B04",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C12",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B10",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C13",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B05",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B06",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B07",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B08",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B09",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C14",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B17",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C15",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B18",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C16",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B19",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C17",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B17",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B19",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C18",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B20",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B21",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C19",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B21",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C20",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B01",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B02",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C21",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B04",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B08",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C22",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B05",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B07",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B16",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C23",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B01",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B06",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B12",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B13",
+            "status": "pending",
+            "evidence_ref": null
+          },
+          {
+            "item": "B14",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    },
+    {
+      "claim_id": "C24",
+      "status": "withheld",
+      "implementers": [],
+      "reviewer": null,
+      "tested_commits": {
+        "backend": null,
+        "frontend": null
+      },
+      "serving_receipt": null,
+      "automated_evidence": [],
+      "live_journey_evidence": [],
+      "required_gates": [
+        [
+          {
+            "item": "B01",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B15",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B16",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B23",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ],
+        [
+          {
+            "item": "B24",
+            "status": "pending",
+            "evidence_ref": null
+          }
+        ]
+      ],
+      "issued_on": null,
+      "expires_on": null,
+      "release_decision": null,
+      "exclusions": [],
+      "limitations": []
+    }
+  ]
+}
