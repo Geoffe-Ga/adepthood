@@ -4872,6 +4872,30 @@
         "title": "ModelUsageBreakdown",
         "type": "object"
       },
+      "NextUnreadResponse": {
+        "description": "The earliest unlocked, unread chapter across every open stage (issue #3147).\n\nThe Course screen's \"Read next\" button opens it; the endpoint answers\n``null`` instead when every chapter the drip has opened is already read.",
+        "properties": {
+          "content_id": {
+            "title": "Content Id",
+            "type": "integer"
+          },
+          "stage_number": {
+            "title": "Stage Number",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_id",
+          "stage_number",
+          "title"
+        ],
+        "title": "NextUnreadResponse",
+        "type": "object"
+      },
       "OperationSource": {
         "description": "Which side answered one operation of a pass, as a response reports it (#3062).\n\nThe persisted :class:`~models.marginalia.MarginaliaSource` values, plus\n``none``: the operation was not run at all (detection with no candidates,\nor under a vault-bound boundary). ``none`` is a fact about this pass and is\nnever stored, so it can never be mistaken for a row whose source was not\nrecorded.",
         "enum": [
@@ -5944,6 +5968,23 @@
           "current_stage"
         ],
         "title": "ProgramCalendarResponse",
+        "type": "object"
+      },
+      "ProgramStartRequest": {
+        "additionalProperties": false,
+        "description": "The person's chosen program start date (issue #3097).\n\nA local calendar date and nothing else: the server stores its local\nmidnight in the caller's zone and derives both stage answers from it, so\nthere is no field through which a client could name a stage. Closed\n(``extra=\"forbid\"``) so an attempt to send one is refused rather than\nsilently dropped.",
+        "properties": {
+          "program_start_date": {
+            "description": "The calendar date the program starts on, in the caller's timezone. No later than today and no earlier than one full program before account creation.",
+            "format": "date",
+            "title": "Program Start Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "program_start_date"
+        ],
+        "title": "ProgramStartRequest",
         "type": "object"
       },
       "PromoteQuoteCreate": {
@@ -13764,6 +13805,124 @@
           }
         },
         "summary": "Mark Content Read",
+        "tags": [
+          "course"
+        ]
+      }
+    },
+    "/course/next-unread": {
+      "get": {
+        "description": "The earliest unlocked, unread chapter across every open stage, or ``null``.\n\nOrdered by stage, then ``release_day``, then ``id`` -- the release order\nthe per-stage listing already uses -- so \"Read next\" always lands on the\nchapter a reader would reach by walking the stages in order. Drip lock\nsemantics come from the same :func:`filter_content_for_user` path as the\nlisting; nothing is re-derived here. ``null`` (not 404) means \"caught\nup\": the resource is the reader's position, and it always exists.\n\nThe request carries no id at all -- the answer is scoped to the JWT\nsubject -- so there is no foreign id to authorize.",
+        "operationId": "get_next_unread_course_next_unread_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NextUnreadResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Next Unread Course Next Unread Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          }
+        },
+        "summary": "Get Next Unread",
         "tags": [
           "course"
         ]
@@ -26192,6 +26351,124 @@
           }
         },
         "summary": "Get Program Calendar",
+        "tags": [
+          "stages"
+        ]
+      },
+      "put": {
+        "description": "Let the person pick, or change, the date their program starts on (#3097).\n\nThe anchor is stored as local midnight of ``program_start_date`` in the\ncaller's zone, so the calendar counts exactly the days the person sees.\nA person with no progress row yet -- a habits-only account the first time\nit needs an anchor -- gets one provisioned here, so the choice can be made\nbefore the server would otherwise stamp ``now``.\n\nThe record moves with the anchor in the same write\n(:func:`domain.stage_authority.reanchor_program`), so every reader --\nhabit reveal, course drip, prompts -- agrees from the next request on.\nInvitations already consumed stay consumed: a habit ring revealed under the\nold date is neither re-locked nor re-stamped.\n\nRefused with 422 outside the range :mod:`domain.program_start` defines, and\nwith 409 ``program_start_fixed_after_first_cycle`` once begin-again has run,\nbecause a later cycle's anchor is also its predecessor's recorded end.",
+        "operationId": "set_program_start_stages_program_calendar_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgramStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramCalendarResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Set Program Start",
         "tags": [
           "stages"
         ]

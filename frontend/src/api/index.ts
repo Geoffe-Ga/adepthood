@@ -46,6 +46,7 @@ import {
   essayResponseSchema,
   botmasonUsageSchema,
   stageIntroSchema,
+  nextUnreadSchema,
   userPracticeSchema,
   stageProgressRecordSchema,
   stagePromptsResponseSchema,
@@ -62,6 +63,7 @@ import {
   feedbackReceiptSchema,
   type AccountDeletionReceiptT,
   type CopyLocationT,
+  type NextUnreadT,
   type JournalErasureReceiptT,
   type DataExportArchiveT,
   type AcceptSuggestionResultT,
@@ -2852,6 +2854,12 @@ export interface StageIntro {
   summary: string | null;
 }
 
+/** The chapter "Read next" opens: earliest unlocked, unread, across open stages. */
+export type NextUnread = NextUnreadT;
+
+const nextUnreadResponseSchema =
+  nextUnreadSchema.nullable() as unknown as z.ZodType<NextUnread | null>;
+
 export const course = {
   /** Whole stage-content list via the ``Page`` envelope. */
   stageContentAll(stageNumber: number, token?: string): Promise<ContentItem[]> {
@@ -2866,6 +2874,16 @@ export const course = {
     return request<ContentCompletion>(`/course/content/${contentId}/mark-read`, {
       method: 'POST',
       token,
+    });
+  },
+  /**
+   * The earliest unlocked chapter the caller has not read, ordered by stage then
+   * release, or ``null`` once every open chapter is read (#3147).
+   */
+  nextUnread(token?: string): Promise<NextUnread | null> {
+    return request<NextUnread | null>('/course/next-unread', {
+      token,
+      schema: nextUnreadResponseSchema,
     });
   },
   stageProgress(stageNumber: number, token?: string): Promise<CourseProgress> {

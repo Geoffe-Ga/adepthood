@@ -41,6 +41,7 @@ from schemas.course import (
     ContentCompletionResponse,
     ContentItemResponse,
     CourseProgressResponse,
+    NextUnreadResponse,
     SiteResourceResponse,
     StageIntroResponse,
 )
@@ -252,6 +253,36 @@ async def _listing_unlocked_count(
     )
 
 
+async def _stage_items_in_release_order(
+    session: AsyncSession, stage: CourseStage
+) -> list[StageContent]:
+    """A stage's content rows in release order: ``release_day``, then ``id``."""
+    result = await session.execute(
+        select(StageContent)
+        .where(StageContent.course_stage_id == stage.id)
+        .order_by(col(StageContent.release_day).asc(), col(StageContent.id).asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _gated_stage_listing(
+    session: AsyncSession, user_id: int, stage: CourseStage, tz: str
+) -> list[ContentItemResponse]:
+    """The stage's chapters with drip-lock and read status applied for ``user_id``.
+
+    The single gating path behind both the per-stage listing and the
+    cross-stage "Read next" lookup, so the two can never disagree about
+    which chapters are open.
+    """
+    items = await _stage_items_in_release_order(session, stage)
+    unlocked = await _listing_unlocked_count(session, user_id, stage, len(items), tz)
+    read_ids = await _read_ids_for_user(session, user_id, _content_ids_from_items(items))
+    filtered = filter_content_for_user(
+        _items_to_raw_dicts(items), unlocked_count=unlocked, read_content_ids=read_ids
+    )
+    return [ContentItemResponse(**chapter) for chapter in filtered]
+
+
 @router.get("/stages/{stage_number}/content", response_model=None)
 async def list_stage_content(
     stage_number: StageNumberPath,
@@ -281,26 +312,58 @@ async def list_stage_content(
     # confused with a real one; stages 1..10 are public knowledge, and the
     # listing itself is open (titles-only when locked) so there's no oracle.
     stage = await _get_stage_by_number(session, stage_number)
-
-    result = await session.execute(
-        select(StageContent)
-        .where(StageContent.course_stage_id == stage.id)
-        .order_by(col(StageContent.release_day).asc(), col(StageContent.id).asc())
-    )
-    items = list(result.scalars().all())
-
-    unlocked = await _listing_unlocked_count(session, current_user, stage, len(items), user_tz)
-    content_ids = [item.id for item in items if item.id is not None]
-    read_ids = await _read_ids_for_user(session, current_user, content_ids)
-
-    raw = _items_to_raw_dicts(items)
-    filtered = filter_content_for_user(raw, unlocked_count=unlocked, read_content_ids=read_ids)
-    responses = [ContentItemResponse(**f) for f in filtered]
+    responses = await _gated_stage_listing(session, current_user, stage, user_tz)
 
     if pagination.paginate:
         sliced = responses[pagination.offset : pagination.offset + pagination.limit]
         return build_page(sliced, len(responses), pagination)
     return responses
+
+
+async def _first_unread_in_stage(
+    session: AsyncSession, user_id: int, stage: CourseStage, tz: str
+) -> NextUnreadResponse | None:
+    """The stage's earliest open chapter ``user_id`` has not read, if any.
+
+    A locked stage is skipped outright rather than listed: its titles-only
+    table of contents has no open chapter to offer, and skipping it keeps
+    the drip clock from being touched for a stage the reader cannot enter.
+    """
+    if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number, tz):
+        return None
+    listing = await _gated_stage_listing(session, user_id, stage, tz)
+    for chapter in listing:
+        if not chapter.is_locked and not chapter.is_read:
+            return NextUnreadResponse(
+                content_id=chapter.id, stage_number=stage.stage_number, title=chapter.title
+            )
+    return None
+
+
+@router.get("/next-unread", response_model=NextUnreadResponse | None)
+async def get_next_unread(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> NextUnreadResponse | None:
+    """The earliest unlocked, unread chapter across every open stage, or ``null``.
+
+    Ordered by stage, then ``release_day``, then ``id`` -- the release order
+    the per-stage listing already uses -- so "Read next" always lands on the
+    chapter a reader would reach by walking the stages in order. Drip lock
+    semantics come from the same :func:`filter_content_for_user` path as the
+    listing; nothing is re-derived here. ``null`` (not 404) means "caught
+    up": the resource is the reader's position, and it always exists.
+
+    The request carries no id at all -- the answer is scoped to the JWT
+    subject -- so there is no foreign id to authorize.
+    """
+    result = await session.execute(select(CourseStage).order_by(col(CourseStage.stage_number)))
+    for stage in result.scalars().all():
+        found = await _first_unread_in_stage(session, current_user, stage, user_tz)
+        if found is not None:
+            return found
+    return None
 
 
 @router.get("/content/{content_id}", response_model=ContentItemResponse)
