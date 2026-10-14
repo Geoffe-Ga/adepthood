@@ -1,6 +1,7 @@
 """Exercise component selection and real Git history, including moved files."""
 
 import importlib.util
+import re
 import subprocess
 import tempfile
 import unittest
@@ -15,8 +16,44 @@ _SPEC.loader.exec_module(affected)
 
 
 class LaneSelection(unittest.TestCase):
-    def test_docs_do_not_start_runtime_jobs(self):
-        self.assertFalse(any(affected.affected(["docs/adr/0001.md"]).values()))
+    def test_docs_do_not_start_application_or_compatibility_jobs(self):
+        lanes = affected.affected(["docs/adr/0001.md"])
+        self.assertFalse(
+            any(lanes[key] for key in ["backend", "compat", "content", "e2e"])
+        )
+
+    def test_document_inputs_select_the_cross_boundary_guards(self):
+        for path in [
+            "docs/legal/privacy-policy.md",
+            "docs/legal/terms-of-service.md",
+            "docs/your-data.md",
+            "docs/future-policy.md",
+        ]:
+            with self.subTest(path=path):
+                self.assertTrue(affected.affected([path])["cross"])
+
+    def test_e2e_workflow_selects_its_cross_boundary_guards(self):
+        self.assertTrue(affected.affected([".github/workflows/e2e.yml"])["cross"])
+
+    def test_literal_root_inputs_of_marked_guards_select_the_cross_lane(self):
+        root = Path(__file__).resolve().parents[2]
+        calls = re.compile(
+            r"""(?:join|resolve)\(REPO_ROOT,\s*((?:['"][^'"]*['"][\s,]*)+)\)"""
+        )
+        inputs = set()
+        for path in (root / "frontend").rglob("*.test.*"):
+            if "node_modules" in path.parts or "e2e" in path.parts:
+                continue
+            source = path.read_text()
+            if "@/testing/backendSource" not in source:
+                continue
+            for match in calls.finditer(source):
+                inputs.add("/".join(re.findall(r"""['"]([^'"]+)['"]""", match[1])))
+        self.assertIn("docs/legal/privacy-policy.md", inputs)
+        self.assertIn(".github/workflows/e2e.yml", inputs)
+        for path in sorted(inputs):
+            with self.subTest(path=path):
+                self.assertTrue(affected.affected([path])["cross"])
 
     def test_frontend_change_keeps_backend_python_jobs_off(self):
         self.assertEqual(
@@ -216,6 +253,11 @@ class GitHistory(unittest.TestCase):
 
 
 class WorkflowWiring(unittest.TestCase):
+    def test_e2e_workflow_edits_trigger_backend_cross_boundary_guards(self):
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/backend-ci.yml").read_text()
+        self.assertEqual(text.count('      - ".github/workflows/e2e.yml"'), 2)
+
     def test_selector_outputs_reach_the_caller_workflows(self):
         root = Path(__file__).resolve().parents[2]
         text = (root / ".github/workflows/_affected.yml").read_text()

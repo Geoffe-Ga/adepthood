@@ -26,6 +26,8 @@ on:
       # PR reverting EXPO_OFFLINE or loosening an SDK pin never runs them.
       # tests/scripts/test_sdk_alignment_gate.py pins this list.
       - ".github/workflows/frontend-ci.yml"
+      # Cross-boundary Jest guards read this workflow as a contract too.
+      - ".github/workflows/e2e.yml"
       - ".github/dependabot.yml"
       - "frontend/package.json"
       - "frontend/package-lock.json"
@@ -48,6 +50,7 @@ on:
       - ".github/workflows/backend-ci.yml"
       - ".github/workflows/_affected.yml"
       - ".github/workflows/frontend-ci.yml"
+      - ".github/workflows/e2e.yml"
       - ".github/dependabot.yml"
       - "frontend/package.json"
       - "frontend/package-lock.json"

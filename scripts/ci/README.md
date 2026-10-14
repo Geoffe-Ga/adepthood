@@ -7,7 +7,8 @@ and both sides of a rename count; unavailable history runs every lane.
 
 | Changed input | Jobs selected in addition to backend quality |
 | --- | --- |
-| Docs and root guard inputs | No runtime jobs |
+| Documentation (`docs/`) | Cross-boundary guards; no Python, schema, Postgres, or E2E jobs |
+| Other root guard inputs | No runtime jobs |
 | Backend meta-tests | Python compatibility and cross-boundary guards; no schema, Postgres, or E2E jobs |
 | Backend source | Python compatibility, OpenAPI, migrations, integration, cross-boundary guards, E2E |
 | Backend unit tests | Python compatibility, OpenAPI, migrations, integration, cross-boundary guards |
@@ -19,6 +20,7 @@ and both sides of a rename count; unavailable history runs every lane.
 | Backend dependency files | Python lanes, cross-boundary guards, content drift, E2E |
 | CI selector or its tests | All lanes in both caller workflows |
 | A caller workflow | All of that workflow's jobs |
+| E2E workflow | Also the backend cross-boundary guards that read its contract |
 
 Backend quality retains its existing trigger paths because its tests read
 documents, graph data, scripts, and frontend dependency/security configuration.
@@ -32,6 +34,9 @@ guards to read arbitrary backend paths, including shared fixtures, configuration
 examples, and contract assertions in backend tests.
 It also watches `scripts/frontend/`, which owns the runner and its dependency
 and lockfile helpers, so helper changes exercise the job that consumes them.
+The guards also read privacy/terms/your-data documents and the E2E workflow, so
+`docs/` and `.github/workflows/e2e.yml` select this lane. A source audit test
+checks literal `REPO_ROOT` file inputs in every marked guard against selection.
 Graph tests and scheduled/manual scans retain their existing scopes.
 
 Selection happens at job level, so unrelated jobs are skipped before dependencies

@@ -35,7 +35,8 @@ def affected(paths: list[str]) -> dict[str, bool]:
             # backendSource.ts deliberately accepts any backend path, including
             # shared fixtures, config examples and test-owned contract inputs.
             # Keep this cheap lane broad so new readers cannot evade it.
-            path.startswith(("backend/", "frontend/", "scripts/frontend/"))
+            path.startswith(("backend/", "frontend/", "scripts/frontend/", "docs/"))
+            or path == ".github/workflows/e2e.yml"
             for path in paths
         )
     )
