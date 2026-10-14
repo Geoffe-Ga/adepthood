@@ -107,11 +107,19 @@ function run(command: string, args: string[], env: typeof process.env): Promise<
  * this export's cache at its own empty directory, so the bundle is built from
  * this env alone.
  */
-export async function buildEnforcedWebApp(apiOrigin: string): Promise<EnforcedBuild> {
+export async function buildEnforcedWebApp(
+  apiOrigin: string,
+  platformRelease?: string,
+): Promise<EnforcedBuild> {
   const workDir = mkdtempSync(join(tmpdir(), 'adepthood-csp-'));
   const dist = join(workDir, 'dist');
   const cacheDir = join(workDir, 'tmp');
-  const env = { ...frontendServerEnv(apiOrigin, process.env), TMPDIR: cacheDir, TMP: cacheDir };
+  const env = {
+    ...frontendServerEnv(apiOrigin, process.env),
+    TMPDIR: cacheDir,
+    TMP: cacheDir,
+    RAILWAY_GIT_COMMIT_SHA: platformRelease ?? process.env.RAILWAY_GIT_COMMIT_SHA,
+  };
   mkdirSync(cacheDir);
   const node = process.execPath;
   await run(
@@ -129,6 +137,7 @@ export async function buildEnforcedWebApp(apiOrigin: string): Promise<EnforcedBu
     env,
   );
   await run(node, ['web-hardening/sri.js', 'stamp', dist], env);
+  await run(node, ['web-hardening/build-receipt.js', dist], env);
   const conf = join(workDir, 'default.conf');
   await run(node, ['web-hardening/csp.js', 'nginx.conf', conf], env);
   const plan = parseNginxConf(readFileSync(conf, 'utf8'));

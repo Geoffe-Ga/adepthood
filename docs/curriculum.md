@@ -52,8 +52,9 @@ per-phase manifestation copy are pulled from two different sources:
   `free_will_description`) come from `APTITUDE Complete Map.csv` in the
   `aptitude-course` repository's `database_of_course_curriculum`, including
   the December 2025 supersessions recorded in that repository's `CLAUDE.md`
-  (Stage 4 aspect "Community Love"; Stage 8 color "Teal", aspect "True Self
-  Connection", free-will archetype "True Self Embodier"). This is the
+  (Stage 4 aspect "Community Love"; Stage 8 color "Teal" and free-will
+  archetype "True Self Embodier"). Stage 8's aspect is "True Self Wisdom", the
+  CSV's own cell (owner ruling 2026-10-13, #2664). This is the
   canonical APTITUDE ontology, not the *Archetypal Wavelength* spreadsheet.
 - `manifestations_source` — the titles and six-phase `Rx` (integrated) / `OD`
   (shadow) manifestation copy come from *The Archetypal Wavelength*
@@ -61,8 +62,8 @@ per-phase manifestation copy are pulled from two different sources:
   `WavelengthWatch` quote verbatim). It does **not** source the subtitles.
 - `subtitles_source` — the per-Stage `subtitle` comes from the `aptitude-course`
   repository's resource copy: the `#### ` stage headings in
-  `markdown/resources/aptitude-stages.md` and the numbered item list in
-  `markdown/resources/about.md`. The subtitles are *not* a mechanical
+  `markdown/resources/04-aptitude-stages.md` and the numbered item list in
+  `markdown/resources/02-about.md`. The subtitles are *not* a mechanical
   `"<aspect> <category>"` join, and they are not the course's own wording
   verbatim either — the dataset and that item list agree exactly only for
   Stages 3, 5, 6, 7 and 8 — so this key records where the editorial decision
@@ -351,8 +352,10 @@ any other kind, a blank field, a duplicate or an unknown key. The generator
 never writes this file. Fixing a gap means editing `aptitude-course`, re-pinning
 (step 2 above), and deleting the entry in the same PR: a recorded gap that no
 longer reproduces fails the gate as stale. The current record lists teal-7
-(heading-only), orange-7 (a 29-word framing chapter) and beige chapter 12
-(missing), all pending the owner.
+(heading-only), orange-7 (a 29-word framing chapter), beige chapter 12
+(missing), and the numbers upstream retired without reuse: beige chapter 8
+(moved to the site resources as Energy Scaffolding) and orange chapters 26-28
+(removed), all pending the owner.
 
 **Inventories.** `python -m scripts.content_completeness` regenerates two files
 and then runs the gate; `--check` writes nothing and also fails when either

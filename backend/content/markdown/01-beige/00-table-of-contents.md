@@ -14,8 +14,6 @@
 
 [The Default Habit of Beige: Take Work Seriously](#the-default-habit-of-beige-take-work-seriously)
 
-[Energy Scaffolding](#energy-scaffolding)
-
 [How to Perform Energy Scaffolding](#how-to-perform-energy-scaffolding)
 
 [The Four Gates of Habit Alchemy](#the-four-gates-of-habit-alchemy)

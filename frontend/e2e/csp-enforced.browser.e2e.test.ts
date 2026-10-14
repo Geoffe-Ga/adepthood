@@ -1,3 +1,6 @@
+import { readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { expect, test, type Page } from '@playwright/test';
 
 import {
@@ -39,6 +42,7 @@ const JOURNEY_TIMEOUT_MS = 180_000;
 const JOURNAL_MENU = 'Open Journal menu';
 const PROBE_FLAG = '__cspInlineProbeRan';
 const UNLISTED_URL = 'https://connect-src-probe.invalid/';
+const BUILD_RELEASE = 'fa30ecb307dee6b099848a209a85666ddb58b2dd'; // pragma: allowlist secret - public Git commit fixture
 
 interface Violation {
   directive: string;
@@ -55,7 +59,7 @@ test.use({ ignoreHTTPSErrors: true });
 test.beforeAll(async () => {
   test.setTimeout(BUILD_TIMEOUT_MS);
   proxy = await startTlsProxy(backendUrl());
-  build = await buildEnforcedWebApp(proxy.origin);
+  build = await buildEnforcedWebApp(proxy.origin, BUILD_RELEASE);
   server = await serveWithNginxHeaders(build, ENFORCED_FRONTEND_PORT);
 });
 
@@ -69,6 +73,43 @@ function served(): { build: EnforcedBuild; server: StaticServer; proxy: TlsProxy
   if (!build || !server || !proxy) throw new Error('the enforced build was not set up');
   return { build, server, proxy };
 }
+
+test('the exported web build exposes its own uncached receipt and never an SPA substitute', async ({
+  page,
+}, testInfo) => {
+  const { build: built, server: site } = served();
+  const url = `${site.url}/build-receipt.json`;
+  const response = await page.goto(url);
+  expect(response?.status()).toBe(200);
+  expect(response?.headers()['content-type']).toBe('application/json');
+  expect(response?.headers()['cache-control']).toBe('no-store');
+  expect(response?.headers()['x-content-type-options']).toBe('nosniff');
+  expect(response?.headers()['x-frame-options']).toBe('DENY');
+  expect(response?.headers()['content-security-policy']).toBe(built.policy);
+  const receipt = { receipt_schema: 1, release: BUILD_RELEASE, surface: 'web' };
+  expect(await response?.json()).toEqual(receipt);
+  expect(await page.locator('body').innerText()).toContain(BUILD_RELEASE);
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 720 });
+    await page.screenshot({ path: testInfo.outputPath(`build-receipt-${String(width)}.png`) });
+  }
+
+  const path = join(built.dist, 'build-receipt.json');
+  const stamped = readFileSync(path);
+  try {
+    unlinkSync(path);
+    const absent = await page.request.get(url);
+    expect(absent.status()).toBe(404);
+    expect(absent.headers()['cache-control']).toBe('no-store');
+    expect(await absent.text()).not.toContain('<div id="root">');
+    writeFileSync(path, JSON.stringify({ ...receipt, release: 'unknown' }));
+    const unknown = await page.request.get(url);
+    expect(unknown.headers()['cache-control']).toBe('no-store');
+    expect(await unknown.json()).toEqual({ ...receipt, release: 'unknown' });
+  } finally {
+    writeFileSync(path, stamped);
+  }
+});
 
 /**
  * Record every CSP violation the page reports, across navigations: the DOM

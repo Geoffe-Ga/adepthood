@@ -83,6 +83,10 @@ Finally, expand your awareness to include *everyone*. All beings, everywhere. An
 
 Feel the scope of that. The whole world. Every person, every creature. All of it held in your heart, if only for a moment.
 
+**When the Mind Wanders:**
+
+It will, here too. The same move applies: notice, look at what surfaced, send the phrases into it—each person in the memory, then all beings, then yourself—and come back. Inside this timed sit the digression has to stay brief, or the sequence falls apart; on a Return Journey, where a whole week belongs to one circle, there’s room to let it breathe. The full method is in [The Return Journey](./15-the-return-journey-five-weeks-of-metta.md).
+
 **Why It Works:**
 
 Metta is not about becoming a doormat or bypassing your anger. It's about training your heart to stay *soft* even when life is hard. To keep choosing connection over closure. To remember that everyone—including you—is doing their best with the tools they have, even when their best is messy and painful and imperfect.

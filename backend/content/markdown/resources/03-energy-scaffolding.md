@@ -1,12 +1,8 @@
 ---
-id: beige-8
-stage: 1
-chapter: 8
-order: 8
 slug: energy-scaffolding
 title: "Energy Scaffolding"
-content_type: chapter
-release_day: 7
+content_type: essay
+description: "The habit method the whole program hangs on: one new behavior every 21 days, chosen because it gives back more energy than it takes."
 media: []
 ---
 

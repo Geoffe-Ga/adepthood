@@ -60,7 +60,9 @@ _BODY = " ".join(["word"] * MIN_CHAPTER_WORDS)
 
 #: The real tree's thin chapters and numbering gaps on the pinned commit.
 _REAL_THIN = {"teal-7", "orange-7"}
-_REAL_NUMBERING = {"1:12"}
+#: Beige 8 moved to the site resources and Orange 26-28 were removed upstream
+#: (aptitude-course#76); ids are never reused, so their numbers stay vacant.
+_REAL_NUMBERING = {"1:8", "1:12", "5:26", "5:27", "5:28"}
 _REAL_PRACTICE_COUNT = 37
 
 
@@ -313,8 +315,8 @@ def test_a_body_opening_with_a_thematic_break_is_not_thin(tree: Tree) -> None:
 # --- numbering ------------------------------------------------------------------------
 
 
-def test_numbering_gaps_on_vendored_tree_are_exactly_1_12(real: Corpus) -> None:
-    """Beige skips chapter 12; every other stage is contiguous from 1."""
+def test_numbering_gaps_on_vendored_tree_are_exactly_the_recorded_ones(real: Corpus) -> None:
+    """Beige skips 8 and 12, Orange 26-28; every other stage is contiguous from 1."""
     assert {f.key for f in CHECKS["numbering_gap"](real)} == _REAL_NUMBERING
 
 
@@ -508,15 +510,18 @@ def test_vendored_findings_reconcile_exactly_with_recorded_gaps(real: Corpus) ->
 def test_every_recorded_gap_is_pending_owner_review_and_names_upstream() -> None:
     """The record is a to-do list for the owner, not a permanent waiver."""
     gaps = load_gaps(GAPS_PATH)
-    assert {(gap.kind, gap.key) for gap in gaps} == {
-        ("thin_chapter", "teal-7"),
-        ("thin_chapter", "orange-7"),
-        ("numbering_gap", "1:12"),
+    assert {(gap.kind, gap.key, gap.issue) for gap in gaps} == {
+        ("thin_chapter", "teal-7", "#3070"),
+        ("thin_chapter", "orange-7", "#3070"),
+        ("numbering_gap", "1:12", "#3070"),
+        ("numbering_gap", "1:8", "#3148"),
+        ("numbering_gap", "5:26", "#3137"),
+        ("numbering_gap", "5:27", "#3137"),
+        ("numbering_gap", "5:28", "#3137"),
     }
     for gap in gaps:
         assert gap.owner_review == "pending"
         assert gap.upstream == "Geoffe-Ga/aptitude-course"
-        assert gap.issue == "#3070"
         assert gap.reason.strip()
 
 

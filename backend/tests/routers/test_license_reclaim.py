@@ -4,8 +4,8 @@ Contract: while the first account lives, its key cannot grant a second one —
 the refusal is byte-identical to an unknown key's. Once the account is erased
 the binding goes with it, so the same key may be redeemed by exactly one new
 account. Only access transfers: the new account inherits none of the deleted
-account's rows, its wallet starts at zero, and the anonymised purchase receipt
-is the one place the old address survives.
+account's rows, its wallet starts at zero, and the old address survives
+nowhere, not even on the anonymised purchase receipt (#3063 AC15).
 """
 
 from __future__ import annotations

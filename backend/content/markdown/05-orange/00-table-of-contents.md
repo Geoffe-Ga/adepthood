@@ -50,12 +50,6 @@
 
 [The Prometheus Principle: Stealing Fire from the Gods](#the-prometheus-principle-stealing-fire-from-the-gods)
 
-[Orange as the Theft of Fire](#orange-as-the-theft-of-fire)
-
-[The Lever and the Fulcrum: Archimedes and the Power of Understanding](#the-lever-and-the-fulcrum-archimedes-and-the-power-of-understanding)
-
-[The Library of Alexandria: Knowledge as Sacred Responsibility](#the-library-of-alexandria-knowledge-as-sacred-responsibility)
-
 [Practicing Understanding Off the Cushion](#practicing-understanding-off-the-cushion)
 
 ---
