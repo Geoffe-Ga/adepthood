@@ -10,8 +10,8 @@ export const READ_NEXT_LABEL = 'Read next';
 export const CAUGHT_UP_LABEL = 'All caught up';
 
 /**
- * Where "Read next" points: still asking, a chapter, or nowhere because every
- * open chapter is read (``target: null``). A failed lookup is its own state so
+ * Where "Read next" points: still asking, a Start Here resource or a chapter,
+ * or nowhere because every open page is read (``target: null``). A failed lookup is its own state so
  * the button can step aside rather than claim the reader is caught up.
  */
 export type NextUnreadState =
@@ -61,8 +61,8 @@ interface ReadNextButtonProps {
 }
 
 /**
- * One tap to wherever the reader left off: the earliest unlocked chapter they
- * have not read, in any open stage. When everything open is read it says so
+ * One tap to wherever the reader left off: an unread Start Here resource first,
+ * then the earliest unlocked chapter they have not read, in any open stage. When everything open is read it says so
  * and is disabled -- an honest resting state, never a nudge. A failed lookup
  * renders nothing: the stage pills and chapter list still work, and a button
  * that cannot know where to go should not pretend to.
