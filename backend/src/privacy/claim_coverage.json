@@ -391,13 +391,25 @@
       "backend/tests/test_restore_suppression.py::test_restored_backup_does_not_resurrect_soft_deleted_entry",
       "backend/tests/test_restore_suppression.py::test_reapply_reowes_resurrected_withdrawals_and_clears_the_vault_handle",
       "backend/tests/test_restore_suppression.py::test_reapply_withdraws_the_resurrected_corpus_copy",
+      "backend/tests/test_restore_suppression.py::test_a_deleted_page_whose_owner_reuses_an_erased_id_is_still_suppressed",
       "backend/tests/test_journal_vault_write.py::test_delete_withdraws_remote_before_soft_delete_and_retries_on_failure",
-      "backend/tests/test_journal_deletion_in_progress.py::test_delete_503_then_refused_patch_then_sweep_leaves_no_corpus_copy"
+      "backend/tests/test_journal_deletion_in_progress.py::test_delete_503_then_refused_patch_then_sweep_leaves_no_corpus_copy",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_crash_after_every_commit_resumes_clean_or_truthfully_pending",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_replaying_durable_runs_after_delete_or_intimate_never_resends_the_canary",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_restore_and_reapply_never_resurrect_a_deleted_entry_or_account",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_pre_binding_copy_stays_truthfully_unconfirmed_through_every_recovery",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_the_invariant_sees_a_resurrection_when_suppression_is_disabled",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_the_invariant_sees_a_false_withdrawal_when_withdrawal_is_disabled",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_the_invariant_sees_a_resend_after_deletion",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_restore_does_not_forget_an_intimate_reclassification",
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_restore_does_not_forget_a_deletion_in_progress"
     ],
     "sinks": [
       "db.journalentry.message",
       "db.journalentry.title",
       "db.corpusfragment.content",
+      "net.openai",
+      "net.anthropic",
       "net.creek_vault_connected",
       "net.creek_vault_deployment",
       "vault.creek_volume",
@@ -405,8 +417,8 @@
       "backup.railway_platform",
       "backup.offhost_pg_dump"
     ],
-    "issue": 3162,
-    "gap": "no crash at every commit boundary with replay; vendor and backup copies have no verified deadline"
+    "issue": 3214,
+    "gap": "restore forgets Intimate and in-progress deletes; provider backup erasure, vendor copies (#3065), manual vaults unverified"
   },
   "C22": {
     "status": "uncovered",

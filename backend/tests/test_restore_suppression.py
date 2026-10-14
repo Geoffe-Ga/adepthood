@@ -894,3 +894,37 @@ async def test_reapply_withdraws_the_resurrected_corpus_copy(
     await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
 
     assert await _fragments(factory, entry_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_page_whose_owner_reuses_an_erased_id_is_still_suppressed(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """An erased account's id, handed to a new account, does not hide that account's deletions.
+
+    A restore rewinds the id sequence (and SQLite reuses the highest freed id
+    anyway), so a later signup can hold the id of an account erased earlier.
+    Its soft-deleted page must still be exported and reapplied: a live
+    database never holds an erased account's pages, so the account tombstone
+    covers none of them (found by the C21 lifecycle machine, #3162).
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    gone = await _signup(client, "gone")
+    await _delete_account(client, gone)
+    heir = await _signup(client, "heir")
+    assert heir.user_id == gone.user_id, "precondition: the erased id was handed out again"
+    entry_id = await _write(client, heir, "the heir's page, later deleted")
+    snapshot = await _snapshot(factory, tmp_path)
+    resp = await client.delete(f"/journal/{entry_id}", headers=heir.headers)
+    assert resp.status_code == HTTPStatus.NO_CONTENT
+    tombstones = await _export(factory)
+    assert [t.entry_id for t in tombstones.entries] == [entry_id]
+    await _restore(factory, snapshot)
+
+    await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    resp = await client.get(f"/journal/{entry_id}", headers=heir.headers)
+    assert resp.status_code == HTTPStatus.NOT_FOUND
+    assert await _login_status(client, heir) == HTTPStatus.OK
