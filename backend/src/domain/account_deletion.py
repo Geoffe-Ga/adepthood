@@ -312,6 +312,7 @@ POLICY: Mapping[str, TablePolicy] = {
         "wanted offered, meaningless once there is nobody to offer them to.",
     ),
     "promptresponse": _erase("user_id", "Answers to the weekly prompts."),
+    "resourcecompletion": _erase("user_id", "Which Start Here resources the account marked read."),
     "restoremarker": _retain(
         "Content-free record that a restored database had its deletions "
         "reapplied: an operator restore id, a state and counts. It names no "
