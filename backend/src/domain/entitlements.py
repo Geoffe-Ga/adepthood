@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import col, select
 
+from errors import forbidden
 from integrations.gumroad import GumroadUnavailableError, verify_license
 from models.entitlement import Entitlement, EntitlementKind
 
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from schemas.gumroad import GumroadPurchase
 
 __all__ = [
+    "AI_ACCESS_REVOKED",
     "PRODUCT_IDS_ENV_VAR",
     "REASON_ADMIN_OVERRIDE",
     "REASON_CANCELLATION",
@@ -63,11 +65,13 @@ __all__ = [
     "AptitudeLicenseCheck",
     "GumroadUnavailableError",
     "LicenseOutcome",
+    "ai_access_revoked",
     "grant_course_access",
     "grant_manual_course_access",
     "has_course_access",
     "is_aptitude_product_id",
     "is_token_pack_product_id",
+    "refuse_if_ai_access_revoked",
     "revoke_course_access",
     "revoke_entitlement_by_id",
     "stage_course_access",
@@ -97,6 +101,11 @@ REASON_DUPLICATE_SIGNUP = "duplicate_signup"
 # WARNING carrying it is the anomalous-claim signal ADR 0008 Decision 6 asks
 # for; the caller's response stays the generic refusal.
 REASON_LICENSE_ALREADY_BOUND = "license_already_bound"
+
+# The 403 detail a revoked member's operator-funded AI request is refused with
+# (#1938, B21 E1). Distinct from the 402 payer details on purpose: credits or a
+# key are not what is missing, so the client must not offer a refill.
+AI_ACCESS_REVOKED = "ai_access_revoked"
 
 # Comma-separated allowlist of Gumroad product ids that count as "the
 # APTITUDE course". Read at call time so a rotation needs no restart (and so
@@ -267,6 +276,46 @@ async def revoke_course_access(session: AsyncSession, user_id: int, reason: str)
             "entitlement_id": entitlement.id,
         },
     )
+
+
+async def ai_access_revoked(session: AsyncSession, user_id: int) -> bool:
+    """Whether ``user_id``'s course entitlement was revoked and nothing live replaced it.
+
+    True only for an account holding at least one revoked ``course_access``
+    row and no active one: a refund, a dispute, a lapsed membership or an
+    operator's manual revocation. An account with no row at all -- a legacy
+    account from before the license gate, or one never comped -- has nothing
+    to lose and is *not* revoked; a revoke followed by a re-grant is live.
+
+    The owner's decision (#1938, B21 E1, 2026-10-07): revocation restricts AI
+    features only. The journal, export, deletion, course reading, habits and
+    practice never consult this.
+    """
+    if await has_course_access(session, user_id):
+        return False
+    result = await session.execute(
+        select(Entitlement.id)
+        .where(
+            Entitlement.user_id == user_id,
+            Entitlement.kind == EntitlementKind.COURSE_ACCESS,
+            col(Entitlement.revoked_at).is_not(None),
+        )
+        .limit(1)
+    )
+    return result.first() is not None
+
+
+async def refuse_if_ai_access_revoked(session: AsyncSession, user_id: int) -> None:
+    """Raise ``403 ai_access_revoked`` when :func:`ai_access_revoked` holds for ``user_id``.
+
+    Called by the payer gate (``services.generation_access.require_ai_payer``)
+    at every AI route's admission and by ``services.wallet.preflight_deduction``,
+    the one function that charges -- so no operator-funded generation starts
+    for a revoked member, whichever way a route reaches the wallet. A writer's
+    own key never reaches this check: it pays its own provider.
+    """
+    if await ai_access_revoked(session, user_id):
+        raise forbidden(AI_ACCESS_REVOKED)
 
 
 async def grant_manual_course_access(

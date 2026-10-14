@@ -21,6 +21,13 @@ or a key" surface, so this adds no parallel shape:
 * ``insufficient_offerings`` -- no personal key, and neither wallet bucket has a
   unit left.
 
+One refusal is not a payer question and is a 403 instead: ``ai_access_revoked``,
+for an account whose entitlement was revoked (refund, dispute, lapse or an
+operator's revocation) and not re-granted (#1938, B21 E1). It is decided by
+:func:`domain.entitlements.refuse_if_ai_access_revoked` after the key check, so
+a personal key is still admitted, and before the wallet is read, so the client
+is never offered a refill that could not help.
+
 ADR 0009 phase (a) (#3067): the server's ``LLM_API_KEY`` never pays for a
 request carrying a person's content, so credits buy nothing on the app-provider
 path. :func:`services.botmason.server_generation_available` is the one predicate
@@ -38,6 +45,7 @@ from typing import TYPE_CHECKING, Final
 
 from fastapi import HTTPException, status
 
+from domain.entitlements import AI_ACCESS_REVOKED, refuse_if_ai_access_revoked
 from errors import payment_required
 from services.account_egress_barrier import ensure_account_live
 from services.botmason import (
@@ -71,7 +79,10 @@ async def require_ai_payer(
     needs credits, and -- when ``app_provider`` says the app's own provider
     would answer rather than the caller's vault -- is refused, because no cloud
     model answers a person's content without their own key (only the armed
-    stub test seam is admitted). Reads only; spends nothing.
+    stub test seam is admitted). A request credits would pay for is refused
+    ``403 ai_access_revoked`` when the account's entitlement was revoked
+    (#1938, B21 E1); a personal key is admitted whatever the entitlement, since
+    it funds nothing of the operator's. Reads only; spends nothing.
     """
     if resolve_chat_api_key(supplied_key) is not None:
         return
@@ -80,6 +91,9 @@ async def require_ai_payer(
     # An account erased while this request was in flight is answered with the
     # same 401 its egress barrier would give, not a wallet question.
     await ensure_account_live(session, user_id)
+    # A revoked entitlement is answered before the wallet is read: credits are
+    # not what is missing, so a 402 would offer a refill that cannot help.
+    await refuse_if_ai_access_revoked(session, user_id)
     if not await has_generation_capacity(session, user_id):
         raise payment_required(CREDITS_OR_KEY_REQUIRED)
 
@@ -91,16 +105,25 @@ async def payer_refusal(
     *,
     app_provider: bool = True,
 ) -> HTTPException | None:
-    """Run :func:`require_ai_payer`, handing back its 402 instead of raising it.
+    """Run :func:`require_ai_payer`, handing back its refusal instead of raising it.
 
     For a route that owes the writer something even when nobody can pay -- the
-    resonance pass's local care surface. ``None`` means admitted; any other
-    refusal (a malformed key, an erased account) still raises.
+    resonance pass's local care surface. Hands back a 402 payer refusal and the
+    403 ``ai_access_revoked``, since care depends on neither. ``None`` means
+    admitted; any other refusal (a malformed key, an erased account) still
+    raises.
     """
     try:
         await require_ai_payer(session, user_id, supplied_key, app_provider=app_provider)
     except HTTPException as refusal:
-        if refusal.status_code != status.HTTP_402_PAYMENT_REQUIRED:
+        if not _is_payer_refusal(refusal):
             raise
         return refusal
     return None
+
+
+def _is_payer_refusal(refusal: HTTPException) -> bool:
+    """Whether ``refusal`` is one :func:`payer_refusal` hands back rather than raises."""
+    if refusal.status_code == status.HTTP_402_PAYMENT_REQUIRED:
+        return True
+    return refusal.status_code == status.HTTP_403_FORBIDDEN and refusal.detail == AI_ACCESS_REVOKED

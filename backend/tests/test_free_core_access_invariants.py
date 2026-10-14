@@ -11,11 +11,16 @@ entitlement is live and after a refund revokes it (ADR 0008 Decision 4):
 * read the course;
 * delete the account.
 
-Course reading after revocation is pinned as *today's* behaviour, not as a
-product promise: what revocation should restrict is the owner's open
-decision (#1938, B21 escalation E1). Until it is made, a revoked
-entitlement restricts nothing, and a change that gates any route on it has
-to change this suite on purpose.
+What revocation restricts is the owner's decision (#1938, B21 E1,
+2026-10-07): "revocation restricts AI features only (journal/export/deletion
+open)." So every route above answers the revoked member exactly as it answers
+the live one, course reading included, and a change that gates any of them on
+the entitlement has to change this suite on purpose. The one difference is a
+charged AI request: the live member with no allowance is refused ``402
+insufficient_offerings``, the revoked member ``403 ai_access_revoked`` -- and
+neither refusal touches the page it was asked of. The restriction's own edges
+(legacy accounts, re-grants, comps, a personal key, care) are pinned in
+``tests/test_ai_access_revocation.py``.
 
 None of these may charge the wallet, write an LLM usage row, or call Gumroad.
 The allowance is zero on every axis -- ``BOTMASON_MONTHLY_CAP=0``, an empty
@@ -54,6 +59,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, select
 
 from domain.entitlements import (
+    AI_ACCESS_REVOKED,
     REASON_REFUND,
     AptitudeLicenseCheck,
     LicenseOutcome,
@@ -87,6 +93,12 @@ SECOND_DRAFT = "The same page, edited, still with nothing in the wallet."
 STAGE_NUMBER = 1
 SESSION_MINUTES = 5
 INSUFFICIENT_OFFERINGS = "insufficient_offerings"
+# What a charged AI request answers, by entitlement state: an empty wallet for
+# the live member, the revocation itself for the refunded one (B21 E1).
+CHARGED_REFUSAL = {
+    ACTIVE: (HTTPStatus.PAYMENT_REQUIRED, INSUFFICIENT_OFFERINGS),
+    REVOKED: (HTTPStatus.FORBIDDEN, AI_ACCESS_REVOKED),
+}
 # Every seam through which the app reaches Gumroad, as (module path, attribute).
 GUMROAD_SEAMS = (
     ("domain.entitlements", "verify_license"),
@@ -324,9 +336,8 @@ async def test_course_reading_is_free_whatever_the_entitlement(
 ) -> None:
     """A $0 member reads the course live or refunded, and reading charges nothing.
 
-    Pins today's behaviour for the revoked case (AC10/AC11). It stays pinned
-    until the owner decides E1 -- what, if anything, a revoked entitlement
-    should restrict. Gating course reading on it is that decision, not a fix.
+    The revoked case is the owner's decision (B21 E1, 2026-10-07): revocation
+    restricts AI features only, so course reading stays open (AC10/AC11).
     """
     stage = CourseStage(
         title="Stage 1",
@@ -367,14 +378,20 @@ async def test_course_reading_is_free_whatever_the_entitlement(
 async def test_charged_resonance_is_refused_but_entry_is_kept(
     async_client: AsyncClient, db_session: AsyncSession, free_member: FreeMember
 ) -> None:
-    """With no allowance a resonance pass is exactly 402, and the page it was asked of stays."""
+    """A refused resonance pass leaves the page it was asked of exactly as written.
+
+    Live with no allowance: exactly 402 ``insufficient_offerings``. Revoked:
+    exactly 403 ``ai_access_revoked`` -- the revocation, not the empty wallet,
+    is what the member is told (B21 E1).
+    """
     entry_id = await _write_entry(async_client, free_member)
+    status_code, detail = CHARGED_REFUSAL[free_member.state]
 
     refused = await async_client.post(f"/journal/{entry_id}/resonance", headers=free_member.headers)
     kept = await async_client.get(f"/journal/{entry_id}", headers=free_member.headers)
 
-    assert refused.status_code == HTTPStatus.PAYMENT_REQUIRED, refused.text
-    assert refused.json()["detail"] == INSUFFICIENT_OFFERINGS
+    assert refused.status_code == status_code, refused.text
+    assert refused.json()["detail"] == detail
     assert kept.status_code == HTTPStatus.OK
     assert kept.json()["message"] == FIRST_DRAFT
     await _assert_nothing_charged(db_session, free_member)
