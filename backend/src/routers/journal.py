@@ -1187,6 +1187,7 @@ async def update_journal_entry(
                 payload,
                 current_user,
                 session,
+                withdraw_if_denied=True,
             )
             if not admits_egress(entry.classification):
                 await _apply_intimate_update(
@@ -1209,23 +1210,37 @@ async def _apply_intimate_update(
     *,
     chose_intimate: bool,
 ) -> None:
-    """Keep an Intimate entry out of the corpus and, when it was chosen, withdraw its copies.
+    """When Intimate was chosen, withdraw the entry's remote copies.
 
     Every PATCH that sets Intimate -- including a repeat of the same value --
     owes and retries every withdrawal, so "choose Intimate again" is a real
-    retry. The tier is committed first and never reverted; a 503 reports only
+    retry. The tier is committed first, together with the local withdrawal
+    (:func:`_stage_local_withdrawal`), and never reverted; a 503 reports only
     that remote cleanup is pending. A body edit or Finish on an entry that is
     already Intimate never dials: it saves, and any owed withdrawal is left to
     the background sweep, so a vault that can never confirm (#3060 escalation
     1) cannot hold the writer's own page hostage.
     """
+    if chose_intimate and not await _withdraw_remote_copies(session, entry, vault_client):
+        raise await _withdrawal_pending(session, entry, vault_client)
+
+
+async def _stage_local_withdrawal(
+    session: AsyncSession, entry: JournalEntry, *, chose_intimate: bool
+) -> None:
+    """Stage an Intimate entry's local withdrawal into the commit of its tier. Does not commit.
+
+    The corpus copy goes and, when Intimate was chosen, every recorded essay
+    offer becomes an owed withdrawal -- in the very transaction that commits
+    the tier, as :func:`mark_entry_retractions_pending` requires. Committed
+    apart, a process that died between the two left an Intimate page whose
+    corpus copy and mirrored essays nothing would ever withdraw: the page
+    already read Intimate, so neither the writer nor the sweep retried (#3162).
+    """
     entry_id = cast("int", entry.id)
     await withdraw_local_journal_entry(session, user_id=entry.user_id, entry_id=entry_id)
     if chose_intimate:
         await mark_entry_retractions_pending(session, user_id=entry.user_id, entry_id=entry_id)
-    await session.commit()
-    if chose_intimate and not await _withdraw_remote_copies(session, entry, vault_client):
-        raise await _withdrawal_pending(session, entry, vault_client)
 
 
 async def _persist_entry_update(
@@ -1233,8 +1248,15 @@ async def _persist_entry_update(
     payload: JournalEntryUpdate,
     current_user: int,
     session: AsyncSession,
+    *,
+    withdraw_if_denied: bool = False,
 ) -> JournalEntry:
-    """Load, apply, and commit one owned update inside any caller-held privacy lock."""
+    """Load, apply, and commit one owned update inside any caller-held privacy lock.
+
+    ``withdraw_if_denied`` (the re-ingesting branch) stages the local
+    withdrawal of an entry that is Intimate after the update into the same
+    commit as the update itself.
+    """
     result = await session.execute(
         select(JournalEntry).where(
             JournalEntry.id == entry_id,
@@ -1248,6 +1270,10 @@ async def _persist_entry_update(
         raise not_found("journal_entry")
     await refuse_if_deletion_pending(session, entry)
     await _apply_entry_update(entry, payload, session)
+    if withdraw_if_denied and not admits_egress(entry.classification):
+        await _stage_local_withdrawal(
+            session, entry, chose_intimate="classification" in payload.model_fields_set
+        )
     session.add(entry)
     try:
         await session.commit()
