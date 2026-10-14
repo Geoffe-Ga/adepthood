@@ -65,15 +65,15 @@
   },
   {
     "id": "welcome.first-run-walkthrough-to-journal",
-    "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
+    "description": "A fresh account reads all four Welcome panels naming the journal floor, independently chosen depths, user-named habits with check-ins, and grounding or timed practices (#3103). At 390x844 and 1280x720, every body, privacy note and pager control stays in view. On a 320x568 phone and with 200% text, each panel scrolls vertically while Skip and Next/Begin remain available. Begin and Skip each hand the reader to the Journal shelf through its real GET /journal/ request. The spec awaits PATCH /ui-flags has_seen_welcome=true before reload and verifies the subsequent GET /ui-flags returns true, proving account-owned persistence. It saves panel screenshots for visual inspection.",
     "crosses": {
       "screen": "frontend/src/features/Welcome/WelcomeScreen.tsx",
-      "client": ["journal"],
-      "routes": ["GET /journal/"],
-      "tables": ["journalentry"]
+      "client": ["journal", "uiFlags"],
+      "routes": ["GET /journal/", "GET /ui-flags", "PATCH /ui-flags"],
+      "tables": ["journalentry", "useruiflags"]
     },
-    "status": "uncovered",
-    "issue": 2399
+    "status": "covered",
+    "coveredBy": "frontend/e2e/welcome.browser.e2e.test.ts"
   },
   {
     "id": "habits.create-check-in-streak",
