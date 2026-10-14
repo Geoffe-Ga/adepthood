@@ -327,7 +327,7 @@ export const VAULT_DISCONNECT_FAILED =
  * by hand.
  */
 export const VAULT_ADDRESS_UNREADABLE =
-  'Adepthood cannot read that as an address. Copy it again from your vault.';
+  'Adepthood does not recognise that as an address. Copy it again from your vault.';
 
 /**
  * The address parsed but did not name a vault. One classifier defect covers
