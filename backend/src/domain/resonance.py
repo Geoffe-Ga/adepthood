@@ -670,9 +670,9 @@ def _build_essay_prompt(
     instructions = (
         f"{MEDICATION_GUARDRAIL}\n\n"
         "You are writing a short, warm letter to the person whose journal this is, "
-        "in their own Higher Self's voice, expanding on a margin note you left: "
+        "in their own Higher Self's voice, expanding on the margin note below: "
         "their words and wisdom handed back, never advice or a plan. Stay "
-        "grounded in the passage you anchored to and in the body and the day it "
+        "grounded in the passage the note anchors to and in the body and the day it "
         "describes; speak in second person, plainly, like a smart friend. If a "
         "stage or phase of the wavelength fits, name it as a capacity or a "
         "season, never as who they are and never as above or below another. Be "
@@ -684,7 +684,7 @@ def _build_essay_prompt(
     )
     material = (
         f"Margin note kind: {kind}\n"
-        f"Your margin note: {note}\n"
+        f"The margin note: {note}\n"
         f"The passage it anchors to:\n<passage>\n{anchor_text}\n</passage>\n\n"
         f"The full entry for context:\n<entry>\n{body}\n</entry>"
         f"{prior_letters_material}"
