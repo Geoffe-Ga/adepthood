@@ -65,9 +65,8 @@ If the vault's own deployment allows it a cloud model (its
 `CREEK_CLOUD_CONSENT` setting), what it holds of yours also goes to that
 model's provider, under the vault's configuration rather than Adepthood's. The
 [privacy policy](legal/privacy-policy.md) names every party that receives
-anything of yours: Railway, which hosts Adepthood's server and database; the
-encrypted backup copies kept off the hosting platform by the operator; the
-language-model provider; your vault, Fly for a managed one, and the vault's
+anything of yours: Railway, which hosts Adepthood's server and database and
+holds its backups; the language-model provider; your vault, Fly for a managed one, and the vault's
 model provider; Gumroad; Sentry; the email relay (Resend, or the deployment's
 own mail server); and Google or Apple if you sign in with one.
 
@@ -217,14 +216,14 @@ cleared off them.
 
 ### Backups
 
-Deleting your account does not reach into backups. Our backup schedule has two
-legs: the hosting platform keeps each daily backup for 6 days, and a weekly
-copy kept off the platform, itself encrypted, is kept for 30 days. An
-off-platform copy made before that period was shortened from 90 days may be
-kept for up to 90 days, until it ages out. The off-platform copies are made,
-and the expired ones deleted, by the operator by hand. A backup taken before you deleted still holds what your account held
-then, with your writing encrypted in it as it is in the database. No backup is
-edited to remove one account. On that schedule, the last copy of your data in
+Deleting your account does not reach into backups. Our backups are the hosting
+platform's daily backups, which Railway keeps for 6 days. The operator no
+longer makes copies off the platform. A weekly copy off the platform made
+before that stopped in October 2026 could be kept for up to 90 days; if any is
+left, it is deleted by the operator by hand. Until the operator confirms none
+is left, the figure below is the longer one. A backup taken before you deleted
+still holds what your account held then, with your writing encrypted in it as
+it is in the database. No backup is edited to remove one account. On that schedule, the last copy of your data in
 Adepthood's own backups ages out within about 97 days of your deletion. That
 bound is Adepthood's alone: each party the privacy policy names keeps what it
 received under its own retention.

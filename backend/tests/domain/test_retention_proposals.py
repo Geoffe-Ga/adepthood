@@ -64,10 +64,11 @@ from domain.retention import (
 from domain.retention_stores import (
     BACKUP_LEGS,
     HELD_BACKUP_BOUND_DAYS,
+    HELD_OFFHOST_DUMP_INTERVAL_DAYS,
     HELD_OFFHOST_DUMP_RETENTION_DAYS,
-    OFFHOST_DUMP_INTERVAL_DAYS,
-    OFFHOST_DUMP_RETENTION_DAYS,
     OLDEST_LIVE_BACKUP_DAYS,
+    RAILWAY_PLATFORM_BACKUP_DAYS,
+    RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS,
     STORES,
     Days,
     Hours,
@@ -112,7 +113,6 @@ _RATIFIED_RULES: dict[str, tuple[RetentionKind, int]] = {
 # The store periods ratified the same day; ``None`` is "no fixed period".
 _RATIFIED_STORES: dict[str, Days | None] = {
     "railway_platform_backup": Days(6),
-    "offhost_pg_dump": Days(30),
     "application_logs": Days(30),
     "fly_volume_snapshots": Days(1),
     "creek_vault_volume": None,
@@ -491,10 +491,10 @@ def test_a_backup_leg_without_a_period_or_proposal_is_reported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A backup leg's retention is the owner's decision, so it must be ratified or proposed."""
-    _patch_store(monkeypatch, replace(_store("offhost_pg_dump"), ratified=None))
+    _patch_store(monkeypatch, replace(_store("railway_platform_backup"), ratified=None))
     findings = inventory_findings()
     assert len(findings) == 1
-    assert "backup leg 'offhost_pg_dump'" in findings[0]
+    assert "backup leg 'railway_platform_backup'" in findings[0]
 
 
 def test_a_ratified_store_cannot_keep_a_proposal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -512,11 +512,11 @@ def test_a_ratified_backup_leg_must_be_the_runbooks_retention(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A leg's ratified period is a live rule: it is the deadline the runbook prunes at."""
-    drifted = RatifiedPeriod(deadline=Days(OFFHOST_DUMP_RETENTION_DAYS + 1), rationale="r")
-    _patch_store(monkeypatch, replace(_store("offhost_pg_dump"), ratified=drifted))
+    drifted = RatifiedPeriod(deadline=Days(RAILWAY_PLATFORM_BACKUP_DAYS + 1), rationale="r")
+    _patch_store(monkeypatch, replace(_store("railway_platform_backup"), ratified=drifted))
     findings = inventory_findings()
     assert len(findings) == 1
-    assert "offhost_pg_dump" in findings[0]
+    assert "railway_platform_backup" in findings[0]
     assert "runbook" in findings[0]
 
 
@@ -531,11 +531,13 @@ def test_a_store_proposal_longer_than_today_must_say_so(
 ) -> None:
     """A future store proposal may not quietly lengthen a known deadline."""
     longer = StoreProposal(
-        deadline=Days(OFFHOST_DUMP_RETENTION_DAYS + 1),
+        deadline=Days(RAILWAY_PLATFORM_BACKUP_DAYS + 1),
         rationale="r",
         compared_to_today=TodayComparison.SHORTER,
     )
-    _patch_store(monkeypatch, replace(_store("offhost_pg_dump"), ratified=None, proposal=longer))
+    _patch_store(
+        monkeypatch, replace(_store("railway_platform_backup"), ratified=None, proposal=longer)
+    )
     findings = inventory_findings()
     assert len(findings) == 1
     assert "longer" in findings[0]
@@ -594,15 +596,17 @@ def test_tombstone_bearing_rules_outlive_the_backup_bound() -> None:
     assert receipt_days >= OLDEST_LIVE_BACKUP_DAYS
 
 
-def test_the_ratified_thirty_day_dumps_leave_the_floor_at_the_held_bound() -> None:
-    """The off-host leg is now 30 days, and the floor is still 97, not 37.
+def test_retiring_the_offhost_leg_leaves_the_floor_at_the_held_bound() -> None:
+    """The off-host leg is retired (#3260), and the floor is still 97, not 7.
 
-    The floor is the maximum of today's legs and the bound of copies still held
-    under the older retention, so lowering the leg alone leaves it at 97.
+    The floor is the maximum of today's legs and the bound of copies that may
+    still be held from the retired leg, so retiring the leg alone leaves it at 97.
     """
-    assert Days(OFFHOST_DUMP_RETENTION_DAYS) == _RATIFIED_STORES["offhost_pg_dump"]
-    assert HELD_OFFHOST_DUMP_RETENTION_DAYS > OFFHOST_DUMP_RETENTION_DAYS
-    assert HELD_BACKUP_BOUND_DAYS == (HELD_OFFHOST_DUMP_RETENTION_DAYS + OFFHOST_DUMP_INTERVAL_DAYS)
+    assert {leg.key for leg in BACKUP_LEGS} == {"railway_platform_backup"}
+    assert "offhost_pg_dump" not in {store.key for store in STORES}
+    assert HELD_BACKUP_BOUND_DAYS == (
+        HELD_OFFHOST_DUMP_RETENTION_DAYS + HELD_OFFHOST_DUMP_INTERVAL_DAYS
+    )
     assert oldest_live_backup_days(BACKUP_LEGS, HELD_BACKUP_BOUND_DAYS) == HELD_BACKUP_BOUND_DAYS
     assert max(leg.oldest_live_copy_days for leg in BACKUP_LEGS) < HELD_BACKUP_BOUND_DAYS
     assert OLDEST_LIVE_BACKUP_DAYS == HELD_BACKUP_BOUND_DAYS
@@ -647,11 +651,11 @@ def _load_variant(
 def test_the_held_bound_alone_is_what_keeps_the_floor_at_97(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Lowering HELD to the new retention -- the separate, later change -- gives 37.
+    """Dropping the held copies -- the separate, later change -- gives Railway's 7.
 
     Proves the 97 rests on the held copies and not on a leg, so the guard above
-    is not vacuous: the day the held dumps are pruned and HELD is lowered, the
-    floor and the purge's minimum fall with it.
+    is not vacuous: the day no retired-leg dump is held and the held bound is
+    dropped, the floor and the purge's minimum fall to the platform leg's.
     """
     stores_path = _BACKEND_SRC / "domain" / "retention_stores.py"
     lowered = _load_variant(
@@ -659,11 +663,15 @@ def test_the_held_bound_alone_is_what_keeps_the_floor_at_97(
         "retention_stores_held_lowered",
         stores_path,
         (
-            f"\nHELD_OFFHOST_DUMP_RETENTION_DAYS: Final = {HELD_OFFHOST_DUMP_RETENTION_DAYS}\n",
-            "\nHELD_OFFHOST_DUMP_RETENTION_DAYS: Final = OFFHOST_DUMP_RETENTION_DAYS\n",
+            (
+                "\nHELD_BACKUP_BOUND_DAYS: Final = HELD_OFFHOST_DUMP_RETENTION_DAYS + "
+                "HELD_OFFHOST_DUMP_INTERVAL_DAYS\n"
+            ),
+            # No retired-leg dump held: nothing older than the platform leg survives.
+            "\nHELD_BACKUP_BOUND_DAYS: Final = 0\n",
         ),
     )
-    lowered_bound = OFFHOST_DUMP_RETENTION_DAYS + OFFHOST_DUMP_INTERVAL_DAYS
+    lowered_bound = RAILWAY_PLATFORM_BACKUP_DAYS + RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS
     assert lowered_bound == lowered.OLDEST_LIVE_BACKUP_DAYS
 
     monkeypatch.setitem(sys.modules, "domain.retention_stores", lowered)

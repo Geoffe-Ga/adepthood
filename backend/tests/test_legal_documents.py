@@ -1534,3 +1534,22 @@ def test_your_data_says_operator_triage_goes_with_the_report() -> None:
     assert "are not in your export" in your_data
     assert "they do not outlive the report they describe" in your_data
     assert "your report's words are never published" in your_data
+
+
+# The off-host backup copy the owner retired on 2026-10-14 (#3260): "No off-host
+# copy; rely on Railway's 6-day backups." No public document may still promise it.
+_RETIRED_OFFHOST_CLAIMS: Final[tuple[str, ...]] = (
+    "30-day off-host",
+    "off-host backups",
+    "kept off the hosting platform",
+    "once a week the operator copies the whole database",
+    "kept off the platform for 30 days",
+)
+
+
+def test_no_public_document_promises_an_off_host_backup() -> None:
+    """The retired off-host leg is promised nowhere a reader looks."""
+    for document in (_PRIVACY_POLICY, _TERMS_OF_SERVICE, _YOUR_DATA):
+        prose = _prose(document)
+        restated = [claim for claim in _RETIRED_OFFHOST_CLAIMS if claim.lower() in prose]
+        assert not restated, f"{document.name} still promises an off-host copy: {restated}"

@@ -10,10 +10,11 @@ evidence for that claim. A deadline nobody has established is an
 :class:`Unknown` carrying an *open question* that points at an issue, never a
 blank: :func:`inventory_findings` reports an unknown without one.
 
-The two backup legs' day counts are the constants
-:data:`RAILWAY_PLATFORM_BACKUP_DAYS` and :data:`OFFHOST_DUMP_RETENTION_DAYS`,
-pinned equal to the values ``DEPLOYMENT.md`` states by a drift test. Changing
-either is a change to a retention promise and belongs to the owner (#3063 AC15).
+The backup leg's day count is the constant :data:`RAILWAY_PLATFORM_BACKUP_DAYS`,
+pinned equal to the value ``DEPLOYMENT.md`` states by a drift test. Changing it
+is a change to a retention promise and belongs to the owner (#3063 AC15). On
+2026-10-14 the owner retired the off-host leg ("No off-host copy; rely on
+Railway's 6-day backups", #3260), so Railway's platform backup is the only leg.
 
 A store whose deadline is unknown, and each backup leg (whose retention is
 itself an owner decision, #3063 AC15), must carry a decision: a
@@ -38,14 +39,9 @@ from typing import Final
 
 #: Railway's Daily platform backup keeps each snapshot this long (DEPLOYMENT.md).
 RAILWAY_PLATFORM_BACKUP_DAYS: Final = 6
-#: The encrypted off-host ``pg_dump`` is kept this long (DEPLOYMENT.md). The owner
-#: ratified 30 days on 2026-10-13 (#3063 AC15); it was 90.
-OFFHOST_DUMP_RETENTION_DAYS: Final = 30
 
 #: Railway's platform backup runs Daily (DEPLOYMENT.md).
 RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS: Final = 1
-#: The off-host dump is taken Weekly, by hand (DEPLOYMENT.md).
-OFFHOST_DUMP_INTERVAL_DAYS: Final = 7
 
 
 @dataclass(frozen=True)
@@ -75,32 +71,27 @@ BACKUP_LEGS: tuple[BackupLeg, ...] = (
         evidence="DEPLOYMENT.md 'What is backed up': Platform, Daily, 6 days; "
         "Railway expires its own backups",
     ),
-    BackupLeg(
-        key="offhost_pg_dump",
-        retention_days=OFFHOST_DUMP_RETENTION_DAYS,
-        interval_days=OFFHOST_DUMP_INTERVAL_DAYS,
-        evidence="DEPLOYMENT.md 'What is backed up': Off-host, Weekly, 30 days; pruned "
-        "by hand on each weekly run ('Taking an off-host dump', DRAFT prune step)",
-    ),
 )
 
-#: The off-host retention the oldest dumps *still held* were written under.
-#: Lowering :data:`OFFHOST_DUMP_RETENTION_DAYS` to the ratified 30 days did not
-#: delete the dumps already kept for longer, so this stays at the old 90. It may
-#: only be lowered -- in a separate, later change, the owner's -- once every dump
-#: older than the new bound (new retention plus one interval, 37 days) has been
-#: pruned. It is never below :data:`OFFHOST_DUMP_RETENTION_DAYS`.
+#: The retention the retired off-host leg's draft runbook wrote dumps under
+#: before 2026-10-13. The owner retired that leg on 2026-10-14 (#3260), but
+#: retiring it deletes nothing: a dump the operator made under the draft is held
+#: until someone deletes it. This value is therefore unchanged, and so is the
+#: 97-day purge floor built on it. Lowering it -- to Railway's own 6 + 1 days --
+#: is a separate, later change, the owner's, made only once no such dump is held.
 HELD_OFFHOST_DUMP_RETENTION_DAYS: Final = 90
+#: The retired off-host leg's draft schedule: Weekly, by hand.
+HELD_OFFHOST_DUMP_INTERVAL_DAYS: Final = 7
 #: The age the oldest still-held copy can reach under that older retention.
-HELD_BACKUP_BOUND_DAYS: Final = HELD_OFFHOST_DUMP_RETENTION_DAYS + OFFHOST_DUMP_INTERVAL_DAYS
+HELD_BACKUP_BOUND_DAYS: Final = HELD_OFFHOST_DUMP_RETENTION_DAYS + HELD_OFFHOST_DUMP_INTERVAL_DAYS
 
 
 def oldest_live_backup_days(legs: tuple[BackupLeg, ...], held_bound_days: int) -> int:
     """The oldest a live backup copy can be: today's legs, or copies held from before.
 
-    Taking the maximum with ``held_bound_days`` is what keeps a ratified,
-    shorter backup retention from lowering the journal purge floor while dumps
-    kept under the longer one still exist.
+    Taking the maximum with ``held_bound_days`` is what keeps a retired or
+    shortened backup leg from lowering the journal purge floor while copies
+    made under the longer retention may still exist.
     """
     return max(held_bound_days, *(leg.oldest_live_copy_days for leg in legs))
 
@@ -179,7 +170,7 @@ class TodayComparison(enum.StrEnum):
 
 
 # Store periods the owner ratified on 2026-10-13 (#3063 AC15; PR #3155, comment
-# 6151018235). The two backup legs' are the constants above.
+# 6151018235). The backup leg's is the constant above.
 #: Content-free logs: at most this, or the vendor's current setting if shorter.
 APPLICATION_LOG_RETENTION_DAYS: Final = 30
 #: The vault is a mirror of the journal; a snapshot bridges one day.
@@ -253,20 +244,6 @@ STORES: tuple[Store, ...] = (
             deadline=Days(RAILWAY_PLATFORM_BACKUP_DAYS),
             rationale="Keep: Daily kept 6 days is already Railway's shortest schedule, and "
             "it is the leg that recovers from everyday mistakes.",
-        ),
-    ),
-    Store(
-        key="offhost_pg_dump",
-        description="Encrypted off-host pg_dump of the whole database, taken manually.",
-        controller=Controller.ADEPTHOOD,
-        deadline=Days(OFFHOST_DUMP_RETENTION_DAYS),
-        evidence="DEPLOYMENT.md 'What is backed up' (off-host leg)",
-        ratified=RatifiedPeriod(
-            deadline=Days(OFFHOST_DUMP_RETENTION_DAYS),
-            rationale="Four weekly copies still cover a month of late-found damage or "
-            "platform loss. Transition: the purge floor stays at the held 97-day bound "
-            "until every dump kept under the 90-day retention has aged out and been "
-            "pruned; only a later change lowers it, to 37.",
         ),
     ),
     Store(

@@ -38,7 +38,6 @@ EXPECTED_LEAD_INS = frozenset(
         "Sentry",
         "An email relay (Resend, or the deployment's own mail server)",
         "Google and Apple",
-        "Encrypted copies kept off the hosting platform by the operator",
     }
 )
 
@@ -53,7 +52,6 @@ NAMED_SINCE_B01 = frozenset(
         RecipientId.GOOGLE_IDENTITY,
         RecipientId.APPLE_IDENTITY,
         RecipientId.RESEND,
-        RecipientId.OFFHOST_BACKUP,
     }
 )
 
@@ -119,10 +117,15 @@ def test_once_undisclosed_recipient_is_named_in_its_own_lead_in(
     assert name in row.policy_lead_in.casefold()
 
 
-def test_your_data_names_the_off_platform_backup_holder() -> None:
-    """Your data says the policy names every party, so its own list includes the backups too."""
-    your_data = " ".join(YOUR_DATA_PATH.read_text(encoding="utf-8").lower().split())
-    name = RECIPIENTS[RecipientId.OFFHOST_BACKUP].short_name.casefold()
+# The off-platform backup holder the owner retired on 2026-10-14 (#3260): "No
+# off-host copy; rely on Railway's 6-day backups." Neither document may still
+# name it as a party that receives anything.
+_RETIRED_OFFHOST_HOLDER = "kept off the hosting platform"
 
-    assert "names every party" in your_data
-    assert name in your_data
+
+@pytest.mark.parametrize("path", [POLICY_PATH, YOUR_DATA_PATH], ids=lambda path: path.name)
+def test_no_document_names_the_retired_off_platform_backup_holder(path: Path) -> None:
+    """With no off-host copy, no party list may still name an off-platform backup holder."""
+    prose = " ".join(path.read_text(encoding="utf-8").lower().split())
+
+    assert _RETIRED_OFFHOST_HOLDER not in prose

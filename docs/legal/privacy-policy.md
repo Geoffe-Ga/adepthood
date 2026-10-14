@@ -286,15 +286,10 @@ Which provider that is depends on how the vault is set up.
 **Railway**, the platform the server and its database run on. Everything the
 database holds is on Railway's machines, and so is the key the server
 decrypts your writing with, so the encryption described above does not keep
-your writing from the host any more than it does from the operator. Any
-platform backups of the database are held by Railway too ("Deleting your
-account" below says how long they are kept).
-
-**Encrypted copies kept off the hosting platform by the operator**, on our
-backup schedule. Once a week the operator copies the whole database,
-encrypts the copy, and keeps it somewhere other than Railway, so the service
-can be recovered if the platform is lost. Where those copies are kept is not
-yet settled. "Deleting your account" below says how long they are kept.
+your writing from the host any more than it does from the operator. The
+database's backups are Railway's own platform backups, held by Railway too
+("Deleting your account" below says how long they are kept). The operator no
+longer makes backup copies anywhere other than Railway.
 
 **Fly.io**, only if Adepthood activated a managed vault for you. Fly hosts
 that vault, and as the vault paragraph above says, Fly and privileged
@@ -502,12 +497,13 @@ names nobody.
 **Backups age out; they are not edited.** The database is backed up, and a
 backup taken before you deleted still holds what your account held then, with
 your writing encrypted in it as it is in the database. No backup is altered to
-remove one account. Our backup schedule keeps the hosting platform's daily
-backups for 6 days and the weekly encrypted copies kept off the platform for
-30 days. Off-platform copies made before that period was shortened from 90
-days may be kept for up to 90 days, until they age out. Those off-platform
-copies are made, and the expired ones deleted, by the operator by hand. On that schedule, the last copy of your data in
-Adepthood's own backups ages out within about 97 days of your deletion. That
+remove one account. Our backups are the hosting platform's daily backups,
+which Railway keeps for 6 days. The operator no longer makes copies off the
+platform. A weekly copy off the platform made before that stopped in October
+2026 could be kept for up to 90 days; if any is left, it is deleted by the
+operator by hand. Until the operator confirms none is left, we state the longer
+figure: on that schedule, the last copy of your data in Adepthood's own backups
+ages out within about 97 days of your deletion. That
 bound is Adepthood's alone: each party under "Who else receives your data"
 keeps what it received under its own retention, which this page does not set.
 
