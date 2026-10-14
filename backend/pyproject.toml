@@ -92,6 +92,11 @@ fixable = ["ALL"]
 # it. Named file by file, never the whole helpers/ tree.
 "tests/helpers/precommit_lane.py" = ["S603"]
 "backend/tests/helpers/precommit_lane.py" = ["S603"]
+# The privacy guard-mutation meta-test (#3163) reruns this repo's own pytest,
+# argv built from sys.executable and manifest node ids, so a mutated guard
+# cannot leak into the parent run. Same reason, same file-by-file scope.
+"tests/security/test_privacy_guard_mutations.py" = ["S603"]
+"backend/tests/security/test_privacy_guard_mutations.py" = ["S603"]
 "conftest.py" = ["S101"]
 "backend/conftest.py" = ["S101"]
 # Issue #272: ``lifespan`` deliberately lazy-imports ``models`` (one-time

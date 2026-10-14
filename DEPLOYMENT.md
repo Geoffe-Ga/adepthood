@@ -592,8 +592,16 @@ costs.
 8. **Suppress resurrected deletions.** *DRAFT for owner review (#3063); not yet
    a ratified step of this procedure.* A backup taken before an account or a
    journal page was deleted still holds it, and the deletion's own record is
-   restored away with it, so the deleted account could sign in again. Before
-   cutting over, reapply the deletion tombstones to the restored database:
+   restored away with it, so the deleted account could sign in again. The
+   same goes for a page made Intimate after the backup (it would come back
+   Personal) and a deletion still waiting on its vault (it would come back
+   live, with no record that the vault copy is owed). The tombstone file
+   (format version 3, #3214) carries all four: erased accounts, soft-deleted
+   pages, Intimate pages and open vault-withdrawal obligations. Reapply
+   re-stamps the Intimate tier and re-records each obligation; the background
+   sweep then finishes the withdrawals once the app is serving. A file from
+   an earlier format is refused: export a fresh one. Before cutting over,
+   reapply the tombstones to the restored database:
    ```bash
    # From backend/, with DATABASE_URL pointing at the RESTORED database.
    # TOMBSTONES is the content-free file exported with `export --out` from the

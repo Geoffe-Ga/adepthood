@@ -80,7 +80,9 @@
       "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row",
       "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
       "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
-      "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+      "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart",
+      "backend/tests/integration/test_privacy_orderings_multiprocess.py::test_no_mirror_lands_after_an_intimate_reclassification_in_another_process",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[admits_egress-C07]"
     ],
     "sinks": [
       "net.openai",
@@ -137,7 +139,8 @@
       "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
       "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
       "backend/tests/security/test_transcription_tier_refusal.py::test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched",
-      "backend/tests/security/test_transcription_tier_refusal.py::test_the_direct_admission_never_admits_a_non_egress_tier"
+      "backend/tests/security/test_transcription_tier_refusal.py::test_the_direct_admission_never_admits_a_non_egress_tier",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[admits_egress-C08]"
     ],
     "sinks": [
       "net.openai",
@@ -170,7 +173,8 @@
       "backend/tests/services/test_corpus_store.py::test_retrieval_never_returns_an_intimate_fragment",
       "backend/tests/services/test_corpus_ingest.py::test_an_intimate_entry_is_never_offered_to_the_classifier",
       "backend/tests/services/test_corpus_ingest.py::test_re_tiering_an_entry_to_intimate_takes_it_out_of_the_corpus",
-      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[admits_egress-C09]"
     ],
     "sinks": [
       "db.corpusfragment.content",
@@ -194,7 +198,8 @@
       "backend/tests/test_intimate_privacy_guard.py::test_only_eligible_prior_letters_reach_the_cloud_prompt",
       "backend/tests/test_privacy_lineage.py::test_folded_intimate_quote_never_reaches_resonance_prompt",
       "backend/tests/test_privacy_lineage.py::test_folded_intimate_quote_never_reaches_unrelated_entry_grounding",
-      "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+      "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[egress_eligible_clause-C10]"
     ],
     "sinks": [
       "net.openai",
@@ -222,7 +227,11 @@
       "backend/tests/test_creek_vault_tier_ceiling.py::test_an_intimate_ingest_never_reaches_the_wire",
       "backend/tests/test_voice_draft_mirroring.py::test_intimate_essay_never_attempts_a_mirror",
       "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
-      "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+      "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart",
+      "backend/tests/test_journal_vault_write.py::test_failed_intimate_withdrawal_is_visible_and_retryable_from_persisted_state",
+      "backend/tests/integration/test_privacy_orderings_multiprocess.py::test_no_mirror_lands_after_an_intimate_reclassification_in_another_process",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[admits_egress-C11]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[withdrawal_is_confirmed-C11]"
     ],
     "sinks": [
       "net.creek_vault_connected",
@@ -254,7 +263,9 @@
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
-      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[exception_reason-C12]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[scrub_event-C12]"
     ],
     "sinks": [
       "telemetry.sentry_envelope",
@@ -323,7 +334,10 @@
     "tests": [
       "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
       "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded",
-      "backend/tests/security/test_vault_boundary_no_fallback.py::test_deployment_owner_env_vault_is_vault_bound"
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_deployment_owner_env_vault_is_vault_bound",
+      "backend/tests/test_reflection_boundary.py::test_require_refuses_loudly_under_the_vault_boundary",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[app_provider_llm-C13]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[require_app_provider_llm-C13]"
     ],
     "sinks": [
       "net.creek_vault_connected",
@@ -410,6 +424,10 @@
       "backend/tests/test_restore_suppression.py::test_reapply_reowes_resurrected_withdrawals_and_clears_the_vault_handle",
       "backend/tests/test_restore_suppression.py::test_reapply_withdraws_the_resurrected_corpus_copy",
       "backend/tests/test_restore_suppression.py::test_a_deleted_page_whose_owner_reuses_an_erased_id_is_still_suppressed",
+      "backend/tests/test_restore_suppression.py::test_reapply_restamps_an_intimate_page_and_withdraws_it_locally",
+      "backend/tests/test_restore_suppression.py::test_reapply_rerecords_an_owed_withdrawal",
+      "backend/tests/test_restore_suppression.py::test_intimate_and_obligation_tombstones_never_touch_another_page",
+      "backend/tests/test_restore_suppression.py::test_an_interrupted_obligation_reapply_leaves_nothing_half_done",
       "backend/tests/test_journal_vault_write.py::test_delete_withdraws_remote_before_soft_delete_and_retries_on_failure",
       "backend/tests/test_journal_deletion_in_progress.py::test_delete_503_then_refused_patch_then_sweep_leaves_no_corpus_copy",
       "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_crash_after_every_commit_resumes_clean_or_truthfully_pending",
@@ -420,7 +438,18 @@
       "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_the_invariant_sees_a_false_withdrawal_when_withdrawal_is_disabled",
       "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_the_invariant_sees_a_resend_after_deletion",
       "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_restore_does_not_forget_an_intimate_reclassification",
-      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_restore_does_not_forget_a_deletion_in_progress"
+      "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_restore_does_not_forget_a_deletion_in_progress",
+      "backend/tests/test_account_egress_barrier.py::test_deletion_response_is_never_followed_by_a_vault_write",
+      "backend/tests/test_account_egress_barrier.py::test_a_write_racing_its_own_erasure_is_refused_not_a_five_hundred",
+      "backend/tests/integration/test_privacy_orderings_multiprocess.py::test_two_processes_egressing_for_one_account_are_serialized",
+      "backend/tests/integration/test_privacy_orderings_multiprocess.py::test_without_the_cross_worker_half_the_two_processes_overlap",
+      "backend/tests/integration/test_privacy_orderings_multiprocess.py::test_a_write_racing_its_erasure_in_another_process_is_refused_and_orphans_nothing",
+      "backend/tests/integration/test_privacy_orderings_multiprocess.py::test_exactly_one_process_resumes_a_durable_pipeline_run",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[hold_account-C21]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[ensure_account_live-C21]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[reapply_account_tombstone-C21]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[reapply_entry_tombstone-C21]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[withdrawal_is_confirmed-C21]"
     ],
     "sinks": [
       "db.journalentry.message",
@@ -435,8 +464,8 @@
       "backup.railway_platform",
       "backup.offhost_pg_dump"
     ],
-    "issue": 3214,
-    "gap": "restore forgets Intimate and in-progress deletes; provider backup erasure, vendor copies (#3065), manual vaults unverified"
+    "issue": 3063,
+    "gap": "provider backup erasure (#3063), vendor copies (#3065) and manually managed vaults are unverified"
   },
   "C22": {
     "status": "uncovered",
@@ -455,7 +484,10 @@
       "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
       "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded",
       "backend/tests/security/test_ai_boundary_network_matrix.py::test_a_vault_bound_writer_never_reaches_the_app_provider_seam",
-      "backend/tests/security/test_ai_boundary_network_matrix.py::test_the_seam_spy_sees_an_app_provider_writer"
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_the_seam_spy_sees_an_app_provider_writer",
+      "backend/tests/test_reflection_boundary.py::test_require_refuses_loudly_under_the_vault_boundary",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[app_provider_llm-C23]",
+      "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[require_app_provider_llm-C23]"
     ],
     "sinks": [
       "net.openai",
