@@ -6,8 +6,7 @@
       "db.journalentry.message",
       "db.journalentry.title",
       "net.hosting_platform",
-      "backup.railway_platform",
-      "backup.offhost_pg_dump"
+      "backup.railway_platform"
     ],
     "issue": 3067,
     "gap": "the server holds the keys; no adversarial test gives a reviewer operator access and finds prose unreadable"
@@ -65,8 +64,7 @@
       "net.apple_identity",
       "net.hosting_platform",
       "net.fly",
-      "telemetry.sentry_envelope",
-      "backup.offhost_pg_dump"
+      "telemetry.sentry_envelope"
     ],
     "issue": 3065,
     "gap": "processor purposes and agreements stay UNVERIFIED; content recipients are not reconciled to contracts"
@@ -461,8 +459,7 @@
       "net.creek_vault_deployment",
       "vault.creek_volume",
       "vault.creek_embeddings",
-      "backup.railway_platform",
-      "backup.offhost_pg_dump"
+      "backup.railway_platform"
     ],
     "issue": 3063,
     "gap": "provider backup erasure (#3063), vendor copies (#3065) and manually managed vaults are unverified"

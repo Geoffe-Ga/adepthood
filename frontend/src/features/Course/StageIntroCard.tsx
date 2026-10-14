@@ -5,6 +5,8 @@ import { course as courseApi, type StageIntro } from '../../api';
 
 import styles from './Course.styles';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 interface StageIntroCardProps {
   stageNumber: number;
   onOpen: (_stageNumber: number) => void;
@@ -30,9 +32,9 @@ const StageIntroCard = ({ stageNumber, onOpen }: StageIntroCardProps): React.JSX
       .then((result) => {
         if (active) setIntro(result);
       })
-      .catch((err: unknown) => {
+      .catch(() => {
         // No intro / locked stage is expected — keep the card hidden, no banner.
-        console.warn('No stage introduction:', err);
+        reportDiagnostic('course_load_failed');
       });
     return () => {
       active = false;

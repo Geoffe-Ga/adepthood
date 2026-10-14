@@ -99,10 +99,7 @@ describe('useStageStore', () => {
     const after = useStageStore.getState().stages.map((s: StageData) => s.progress);
 
     expect(after).toEqual(before);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('updateStageProgress called for unknown stage'),
-      expect.objectContaining({ stageNumber: 99 }),
-    );
+    expect(warnSpy).toHaveBeenCalledWith('unknown_stage_progress', { stage: 99, progress: 1 });
     warnSpy.mockRestore();
   });
 

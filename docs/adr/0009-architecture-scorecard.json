@@ -117,11 +117,11 @@
     },
     {
       "id": "BUDGET",
-      "question": "Budget per active account-month and staffing per phase."
+      "question": "Answered for now on 2026-10-14: no paid runtime, no paid reviews. Still open: any budget or staffing figure, if that changes."
     },
     {
       "id": "REVIEWERS",
-      "question": "Who the four owed reviewers are."
+      "question": "Answered for now on 2026-10-14: adversarial AI reviews plus the owner's own. Still open: who the independent reviewers are, if one is ever engaged; until then the independent-review gate is unmet."
     }
   ],
   "options": {

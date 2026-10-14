@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, it, expect */
+/* global describe, it, expect, jest */
 
 import { buildEvent, parseDsn, redactCredentials, serializeEnvelope } from '../sentryEnvelope';
 import { MESSAGE_WITHHELD, REDACTED, UNKNOWN_ERROR_TYPE } from '../sentryEnvelope';
@@ -113,17 +113,36 @@ describe('buildEvent', () => {
     ]);
   });
 
-  it.each(['Error', 'TypeError', 'ApiValidationError', 'AbortError', 'DOMException'])(
-    'keeps the class-shaped type %s',
-    (name) => {
-      const error = new Error('boom');
-      error.name = name;
+  it.each([
+    'Error',
+    'EvalError',
+    'RangeError',
+    'ReferenceError',
+    'SyntaxError',
+    'TypeError',
+    'URIError',
+    'AggregateError',
+    'AbortError',
+    'DOMException',
+    'ApiError',
+    'ApiValidationError',
+    'ApiTimeoutError',
+    'TranscriptionError',
+    'DocumentUploadError',
+    'DirectVendorError',
+    'EmptyApiKeyError',
+    'EmptyAuthTokenError',
+    'ClientMintedIdError',
+    'SilentRenderError',
+    'MarginSlotInputError',
+  ])('keeps the approved fixed type %s', (name) => {
+    const error = new Error('boom');
+    error.name = name;
 
-      expect(buildEvent(error, undefined, META).exception).toEqual({
-        values: [{ type: name, value: MESSAGE_WITHHELD }],
-      });
-    },
-  );
+    expect(buildEvent(error, undefined, META).exception).toEqual({
+      values: [{ type: name, value: MESSAGE_WITHHELD }],
+    });
+  });
 
   it('carries the exception type and withholds the message', () => {
     const event = buildEvent(new TypeError('cannot read property of undefined'), undefined, META);
@@ -133,7 +152,7 @@ describe('buildEvent', () => {
     });
   });
 
-  it('copies only the two allow-listed contexts', () => {
+  it('discards component stacks and keeps approved boundary metadata', () => {
     const event = buildEvent(
       new Error('boom'),
       {
@@ -144,7 +163,6 @@ describe('buildEvent', () => {
     );
 
     expect(event.contexts).toEqual({
-      react: { componentStack: '\n    in JournalScreen' },
       errorBoundary: { boundary: 'FeatureErrorBoundary', name: 'Journal' },
     });
   });
@@ -288,5 +306,107 @@ describe('serializeEnvelope', () => {
     const event = buildEvent(new Error('boom'), { react: { componentStack: '\n a \n b' } }, META);
 
     expect(serializeEnvelope(event, DSN, META.timestamp).split('\n')).toHaveLength(3);
+  });
+});
+
+describe('closed crash metadata (#3210)', () => {
+  it('rejects private class-shaped error names', () => {
+    const error = new Error('private');
+    error.name = 'PrivateJournalCanaryError';
+    expect(buildEvent(error, undefined, META).exception).toEqual({
+      values: [{ type: 'Error', value: MESSAGE_WITHHELD }],
+    });
+  });
+
+  it.each(SENTINELS)('drops private content in every context field %#', (canary) => {
+    const event = buildEvent(
+      new Error(canary),
+      {
+        react: { componentStack: canary },
+        errorBoundary: { boundary: canary, name: canary },
+      },
+      META,
+    );
+    expect(event.contexts).toEqual({});
+    probes(canary).forEach((probe) => expect(JSON.stringify(event)).not.toContain(probe));
+  });
+
+  it.each(['Auth', 'App', 'Habits', 'Practice', 'Course', 'Journal', 'Map'])(
+    'keeps the fixed feature identifier %s',
+    (name) => {
+      expect(
+        buildEvent(
+          new Error('private'),
+          {
+            errorBoundary: { boundary: 'FeatureErrorBoundary', name },
+          },
+          META,
+        ).contexts,
+      ).toEqual({
+        errorBoundary: { boundary: 'FeatureErrorBoundary', name },
+      });
+    },
+  );
+
+  it('keeps a valid boundary while dropping an unknown feature', () => {
+    expect(
+      buildEvent(
+        new Error('private'),
+        {
+          errorBoundary: { boundary: 'FeatureErrorBoundary', name: 'PrivateJournalCanary' },
+        },
+        META,
+      ).contexts,
+    ).toEqual({ errorBoundary: { boundary: 'FeatureErrorBoundary' } });
+  });
+
+  it('never evaluates getters or toJSON on untrusted crash values', () => {
+    const getter = jest.fn(() => {
+      throw new Error('PRIVATE_GETTER_CANARY');
+    });
+    const error = new Error('private');
+    Object.defineProperty(error, 'name', { get: getter });
+    const contexts = Object.defineProperty({}, 'errorBoundary', { get: getter });
+    const event = buildEvent(error, contexts, META);
+    expect(event.exception).toEqual({ values: [{ type: 'Error', value: MESSAGE_WITHHELD }] });
+    expect(event.contexts).toEqual({});
+    expect(getter).not.toHaveBeenCalled();
+    expect(() => serializeEnvelope(event, DSN, SENT_AT)).not.toThrow();
+  });
+
+  it('does not evaluate nested getters or toJSON even on an approved boundary', () => {
+    const getter = jest.fn(() => {
+      throw new Error('PRIVATE_NESTED_CANARY');
+    });
+    const boundary = Object.defineProperty(
+      { boundary: 'FeatureErrorBoundary', toJSON: getter },
+      'name',
+      { get: getter },
+    );
+    const event = buildEvent(new Error('private'), { errorBoundary: boundary }, META);
+    expect(event.contexts).toEqual({ errorBoundary: { boundary: 'FeatureErrorBoundary' } });
+    expect(() => serializeEnvelope(event, DSN, SENT_AT)).not.toThrow();
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it('contains hostile proxies and cyclic metadata without escaping the boundary', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        getPrototypeOf: () => {
+          throw new Error('PRIVATE_PROXY_CANARY');
+        },
+        getOwnPropertyDescriptor: () => {
+          throw new Error('PRIVATE_PROXY_CANARY');
+        },
+      },
+    );
+    expect(() => serializeEnvelope(buildEvent(hostile, hostile, META), DSN, SENT_AT)).not.toThrow();
+    const cyclic: { errorBoundary?: unknown; toJSON?: () => never } = {};
+    cyclic.errorBoundary = cyclic;
+    cyclic.toJSON = () => {
+      throw new Error('PRIVATE_TOJSON_CANARY');
+    };
+    expect(buildEvent(new Error('private'), cyclic as never, META).contexts).toEqual({});
   });
 });

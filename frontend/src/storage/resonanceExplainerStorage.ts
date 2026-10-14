@@ -5,6 +5,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { scopedKey } from './userScope';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 /**
  * Namespaced per account, deliberately — this is the one dismissal flag in the
  * app that guards a charge.
@@ -44,8 +46,8 @@ export async function saveResonanceExplainerDismissed(value: boolean): Promise<v
   // here rather than escaping as an unhandled rejection — the disclosure simply shows again next session.
   try {
     await AsyncStorage.setItem(dismissedKey(), String(value));
-  } catch (err) {
-    console.warn('[resonanceExplainerStorage] failed to save the dismissal flag', err);
+  } catch {
+    reportDiagnostic('storage_write_failed', { storage: 'resonance_explainer' });
   }
 }
 
@@ -59,8 +61,8 @@ export async function loadResonanceExplainerDismissed(): Promise<boolean> {
   try {
     const raw = await AsyncStorage.getItem(dismissedKey());
     return raw === FLAG_TRUE;
-  } catch (err) {
-    console.warn('[resonanceExplainerStorage] failed to load the dismissal flag', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'resonance_explainer' });
     return false;
   }
 }

@@ -10,6 +10,7 @@ import React, {
 
 import { setLlmApiKeyGetter, setLlmApiKeyReset } from '@/api';
 import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
+import { reportDiagnostic } from '@/observability/diagnostics';
 import { clearLlmApiKey, loadLlmApiKey, saveLlmApiKey } from '@/storage/llmKeyStorage';
 import { loadLocalModelPreferred, saveLocalModelPreferred } from '@/storage/localModelStorage';
 
@@ -173,7 +174,7 @@ function useLoadStoredApiKey(
         setLoadError(null);
       })
       .catch((err: unknown) => {
-        console.warn('[ApiKeyContext] SecureStore load failed', err);
+        reportDiagnostic('provider_storage_failed');
         setApiKey(null);
         setLoadError(err instanceof Error ? err : new Error(String(err)));
       })
@@ -229,7 +230,7 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
       setLoadError(null);
       persisted = true;
     } catch (err: unknown) {
-      console.warn('[ApiKeyContext] SecureStore save failed', err);
+      reportDiagnostic('provider_storage_failed');
       setLoadError(err instanceof Error ? err : new Error(String(err)));
       // Set state anyway so the key is at least usable this session.
     }
@@ -244,7 +245,7 @@ export function ApiKeyProvider({ children }: { children: React.ReactNode }) {
       setLoadError(null);
       cleared = true;
     } catch (err: unknown) {
-      console.warn('[ApiKeyContext] SecureStore clear failed', err);
+      reportDiagnostic('provider_storage_failed');
       setLoadError(err instanceof Error ? err : new Error(String(err)));
       // Drop the key from session state anyway so the user isn't stuck with it.
     }

@@ -26,8 +26,10 @@ for an account whose latest revocation was a refund, a dispute, the end of a
 membership's paid period (#3259 -- never the cancel click itself) or an
 operator's revocation, and which was not re-granted (#1938, B21 E1). It is
 decided by :func:`domain.entitlements.refuse_if_ai_access_revoked` after the
-key check, so a personal key is still admitted, and before the wallet is read,
-so the client is never offered a refill that could not help.
+key check, so a personal key the app provider will use is still admitted, and
+before the wallet is read, so the client is never offered a refill that could
+not help. A key never admits a vault-answered request: the vault does not use
+it, so that request is a credit request whatever header it carries (#3258).
 
 ADR 0009 phase (a) (#3067): the server's ``LLM_API_KEY`` never pays for a
 request carrying a person's content, so credits buy nothing on the app-provider
@@ -75,17 +77,19 @@ async def require_ai_payer(
 ) -> None:
     """Admit a generation only when a personal key or BotMason credits can pay for it.
 
-    ``supplied_key`` is the raw ``X-LLM-API-Key`` header: a well-formed key is a
-    payer by itself (a malformed one is the usual 400). Without one the request
-    needs credits, and -- when ``app_provider`` says the app's own provider
-    would answer rather than the caller's vault -- is refused, because no cloud
-    model answers a person's content without their own key (only the armed
-    stub test seam is admitted). A request credits would pay for is refused
-    ``403 ai_access_revoked`` when the account's entitlement was revoked
-    (#1938, B21 E1); a personal key is admitted whatever the entitlement, since
-    it funds nothing of the operator's. Reads only; spends nothing.
+    ``supplied_key`` is the raw ``X-LLM-API-Key`` header (a malformed one is the
+    usual 400). A well-formed key is a payer by itself only when ``app_provider``
+    says the app's own provider would answer: under the vault boundary the key
+    is never used, so a vault reading needs credits whatever header it carries
+    (#3258, ADR 0009 decision 4). Without a key an app-provider request is
+    refused, because no cloud model answers a person's content without the
+    writer's own key (only the armed stub test seam is admitted). A request
+    credits would pay for is refused ``403 ai_access_revoked`` when the
+    account's entitlement was revoked (#1938, B21 E1); a personal key the app
+    provider will use is admitted whatever the entitlement, since it funds
+    nothing of the operator's. Reads only; spends nothing.
     """
-    if resolve_chat_api_key(supplied_key) is not None:
+    if _key_pays(supplied_key, app_provider=app_provider):
         return
     if app_provider and not server_generation_available():
         raise payment_required(KEY_REQUIRED)
@@ -97,6 +101,16 @@ async def require_ai_payer(
     await refuse_if_ai_access_revoked(session, user_id)
     if not await has_generation_capacity(session, user_id):
         raise payment_required(CREDITS_OR_KEY_REQUIRED)
+
+
+def _key_pays(supplied_key: str | None, *, app_provider: bool) -> bool:
+    """Whether the writer's own key pays for this request (#3258).
+
+    The key is validated either way -- a malformed one is the usual 400 -- but
+    it pays only when the app's own provider answers: a vault answer never uses
+    it, so that request takes a credit whatever header rides along.
+    """
+    return resolve_chat_api_key(supplied_key) is not None and app_provider
 
 
 async def payer_refusal(

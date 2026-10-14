@@ -1176,3 +1176,23 @@ def test_selected_boundary_is_a_target_and_names_the_relay_gap() -> None:
     assert "managed no-retention runtime" in value
     assert "until phase (a), BYOK is relayed through our server" in value
     assert value in prose
+
+
+def test_reviewers_and_budget_record_the_owners_2026_10_14_decision() -> None:
+    """No outside reviewer is hired, and that leaves the independent gate unmet (#3260).
+
+    The owner chose adversarial AI reviews plus their own review, and no paid
+    runtime or paid reviews for now. Neither is independent review, so every
+    owed review stays owed: none may be marked consulted on the strength of it.
+    """
+    text = _flat(_adr_text())
+    reviewers = text[text.index("## Reviewers") : text.index("## Rejected alternatives")]
+    budget = text[text.index("## Budget and staffing") : text.index("## Reviewers")]
+
+    assert "rely on adversarial AI reviews plus the owner's own review" in reviewers
+    assert "No outside reviewer, firm or audit is being hired" in reviewers
+    assert "This does not meet this record's independent-review gate" in reviewers
+    assert "stays uncertified under B24" in reviewers
+    assert "no paid runtime and no paid reviews" in budget
+    statuses = {_as_dict(entry).get("status") for entry in _as_list(_card()["reviewers"])}
+    assert statuses == {_REVIEW_OWED}

@@ -2271,11 +2271,15 @@ def _reflection_clients(
 
 
 async def _resonance_payment(
-    session: AsyncSession, user_id: int, supplied_key: str | None
+    session: AsyncSession, user_id: int, clients: _ReflectionClients
 ) -> tuple[str | None, SpendResult | None]:
-    """Resolve the payer, charging BotMason only when no BYOK key was supplied."""
-    byok_key = resolve_chat_api_key(supplied_key)
-    if byok_key is not None:
+    """Resolve the payer, charging BotMason unless a BYOK key pays the app provider.
+
+    The key pays only when the app's own provider answers. A vault-bound pass
+    never uses it, so it is charged whatever key header it carries (#3258).
+    """
+    byok_key = resolve_chat_api_key(clients.api_key)
+    if byok_key is not None and clients.boundary is ReflectionBoundary.APP_PROVIDER:
         return byok_key, None
     return None, await preflight_deduction(session, user_id)
 
@@ -2291,8 +2295,10 @@ async def run_resonance(
 ) -> ResonanceResponse:
     """Run a resonance pass, charging BotMason only when it pays the provider.
 
-    A validated caller-owned key bypasses both BotMason wallet buckets. Without
-    one, wallet pre-flight deducts one message (402 when out of capacity). That
+    A validated caller-owned key bypasses both BotMason wallet buckets when the
+    app provider answers. Otherwise -- no key, or a vault-bound caller, whose
+    key the vault never uses (#3258) -- wallet pre-flight deducts one message
+    (402 when out of capacity). That
     deduction commits with every read the pass depends on before the first
     outbound call, so no pooled connection is held across the vault probe,
     reflection pass, or completion detection. A failed server-paid pass is
@@ -2422,9 +2428,9 @@ async def _run_admitted_resonance(
     """
     entry_id = cast("int", entry.id)
     # Resolve who pays before touching either BotMason bucket. A valid caller
-    # key pays the provider directly; only the server-key/vault path draws from
-    # the deployment-configured allowance or purchased offerings.
-    byok_key, spent = await _resonance_payment(session, current_user, clients.api_key)
+    # key pays the app provider directly; a vault-answered pass draws from the
+    # allowance or purchased offerings whatever key it carries (#3258).
+    byok_key, spent = await _resonance_payment(session, current_user, clients)
     key = GenerationKey.for_spend(spent)
     # The atomic minute hit, after payment is staged so a 402 or a daily 429
     # never spends it, and before the commit so its refusal leaves the staged

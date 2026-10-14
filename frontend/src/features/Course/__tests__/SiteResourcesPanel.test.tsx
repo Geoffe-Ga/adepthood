@@ -61,11 +61,11 @@ describe('SiteResourcesPanel', () => {
   });
 
   it('stays silent (no panel) when the API call rejects', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const warn = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     courseApi.siteResources.mockRejectedValueOnce(new Error('nope'));
     const { queryByTestId } = render(<SiteResourcesPanel onSelect={jest.fn()} />);
     await waitFor(() => {
-      expect(warn).toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith('course_load_failed');
     });
     expect(queryByTestId('site-resources-panel')).toBeNull();
     warn.mockRestore();

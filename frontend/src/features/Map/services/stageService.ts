@@ -16,6 +16,8 @@ import { useStageStore } from '../../../store/useStageStore';
 import { STAGE_COUNT } from '../stageData';
 import type { StageData } from '../stageData';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 /**
  * What the Map says when the stages did not arrive and the error carries
  * nothing more specific. The raw error text goes to the console, never to
@@ -149,7 +151,7 @@ export const stageService = {
       useStageStore.getState().setStages(sorted.map(toStageData));
     } catch (err) {
       if (isStale(generation)) return;
-      console.error('Failed to load stages:', err);
+      reportDiagnostic('map_load_failed');
       const message = formatApiError(err, { fallback: MAP_LOAD_FAILED_MESSAGE });
       useStageStore.getState().setError(message);
       useStageStore.getState().setLoading(false);
@@ -176,7 +178,7 @@ export const stageService = {
       useStageStore.getState().setCycleNumber(record.cycle_number);
     } catch (err) {
       if (isStale(generation)) return;
-      console.error('Failed to begin again:', err);
+      reportDiagnostic('map_begin_again_failed');
       const message = formatApiError(err, { fallback: BEGIN_AGAIN_FAILED_MESSAGE });
       useStageStore.getState().setError(message);
       return;

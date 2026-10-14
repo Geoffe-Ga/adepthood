@@ -9,12 +9,14 @@
 import React from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity } from 'react-native';
 
+import InferenceReceiptDetails from './InferenceReceiptDetails';
 import { usePressScale } from './motion';
 import { paperMarginCard } from './noteCards';
 import { sourceLabel } from './sourceLabel';
 import { STALE_OPACITY } from './staleTreatment';
 
 import type { Marginalia } from '@/api';
+import { readNoteReceiptMetadata } from '@/api/schemas';
 import { colors, editorialType, spacing } from '@/design/tokens';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 
@@ -24,6 +26,8 @@ export interface MarginNoteProps {
 }
 
 function MarginNote({ note, onOpen }: MarginNoteProps): React.JSX.Element {
+  const parsedReceipt = readNoteReceiptMetadata(note);
+  const receipt = parsedReceipt.success ? parsedReceipt.data : null;
   const isStale = note.status === 'stale';
   const press = usePressScale(useReducedMotion());
   return (
@@ -49,8 +53,15 @@ function MarginNote({ note, onOpen }: MarginNoteProps): React.JSX.Element {
           </Text>
         ) : null}
         <Text style={styles.sourceCaption} testID={`margin-note-source-${note.id}`}>
-          {sourceLabel(note.source)}
+          {sourceLabel(receipt?.source)}
         </Text>
+        {receipt ? (
+          <InferenceReceiptDetails
+            provider={receipt.source_provider}
+            model={receipt.source_model}
+            style={styles.sourceCaption}
+          />
+        ) : null}
         <Text style={styles.open}>Open</Text>
       </TouchableOpacity>
     </Animated.View>

@@ -1,14 +1,15 @@
 """The non-database store inventory is complete, honest about unknowns, and in sync.
 
 The ORM registry covers every table, but a deleted account's writing also lives
-in places no ``MetaData`` can enumerate: two backup legs, logs, client caches,
+in places no ``MetaData`` can enumerate: the platform backup, logs, client caches,
 the Creek vault and its provider's snapshots. :mod:`domain.retention_stores`
 lists them as data. These tests hold it to three properties:
 
 * every store whose deadline nobody knows says so with an open-question marker
   that points at an issue, rather than an empty "unknown";
-* the backup legs' day counts are the same numbers ``DEPLOYMENT.md`` states, so
-  a runbook edit cannot silently diverge from what the code inventories;
+* the backup leg's day count is the number ``DEPLOYMENT.md`` states, so a
+  runbook edit cannot silently diverge from what the code inventories, and the
+  off-host leg the owner retired on 2026-10-14 (#3260) stays retired in both;
 * the drift parser reads rows by their *label*, so unrelated edits that shift
   lines do not break it -- and a changed value does.
 """
@@ -23,8 +24,6 @@ import pytest
 from domain import retention_stores
 from domain.retention_stores import (
     BACKUP_LEGS,
-    OFFHOST_DUMP_INTERVAL_DAYS,
-    OFFHOST_DUMP_RETENTION_DAYS,
     RAILWAY_PLATFORM_BACKUP_DAYS,
     RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS,
     STORES,
@@ -48,14 +47,12 @@ _SCHEDULE_COLUMN = 2
 _RETENTION_COLUMN = 3
 # The runbook names a schedule; the inventory needs it as days between copies.
 _SCHEDULE_DAYS = {"Daily": 1, "Weekly": 7}
-_DUMP_HEADING = "### Taking an off-host dump"
+_RETIRED_HEADING = "### Off-host dumps: retired"
 _BASH_BLOCK = re.compile(r"```bash\n(.*?)```", re.DOTALL)
-_DRAFT_MARKER = "DRAFT for owner review (#3063)"
 
 _EXPECTED_STORES = frozenset(
     {
         "railway_platform_backup",
-        "offhost_pg_dump",
         "application_logs",
         "invalid_license_throttle",
         "client_device_cache",
@@ -97,7 +94,6 @@ def test_deployment_backup_table_matches_inventory() -> None:
     """The runbook's backup retention values are the inventory's constants."""
     rows = _backup_rows(_DEPLOYMENT_DOC.read_text(encoding="utf-8"))
     assert _days_in(rows, "Platform") == RAILWAY_PLATFORM_BACKUP_DAYS
-    assert _days_in(rows, "Off-host") == OFFHOST_DUMP_RETENTION_DAYS
 
 
 def test_drift_parser_notices_a_changed_value() -> None:
@@ -117,10 +113,9 @@ def test_inventory_names_every_known_store() -> None:
 
 
 def test_backup_legs_carry_the_constants() -> None:
-    """The two backup stores are bounded by the same constants the drift test pins."""
+    """The backup store is bounded by the same constant the drift test pins."""
     by_key = {store.key: store for store in STORES}
     assert by_key["railway_platform_backup"].deadline == Days(RAILWAY_PLATFORM_BACKUP_DAYS)
-    assert by_key["offhost_pg_dump"].deadline == Days(OFFHOST_DUMP_RETENTION_DAYS)
 
 
 def test_every_unknown_deadline_carries_an_open_question() -> None:
@@ -188,91 +183,29 @@ def test_deployment_backup_schedule_matches_the_leg_intervals() -> None:
     assert _SCHEDULE_DAYS[rows["Platform"][_SCHEDULE_COLUMN]] == (
         RAILWAY_PLATFORM_BACKUP_INTERVAL_DAYS
     )
-    assert _SCHEDULE_DAYS[rows["Off-host"][_SCHEDULE_COLUMN]] == OFFHOST_DUMP_INTERVAL_DAYS
 
 
 def test_backup_legs_are_the_backup_stores() -> None:
     """Every backup store is a leg with the same retention, and each leg cites evidence."""
     by_key = {store.key: store for store in STORES}
-    assert {leg.key for leg in BACKUP_LEGS} == {"railway_platform_backup", "offhost_pg_dump"}
+    assert {leg.key for leg in BACKUP_LEGS} == {"railway_platform_backup"}
     for leg in BACKUP_LEGS:
         assert by_key[leg.key].deadline == Days(leg.retention_days)
         assert leg.interval_days > 0
         assert leg.evidence.strip()
 
 
-_MINUTES_PER_DAY = 24 * 60
-# ``find -mmin +N`` matches an age strictly greater than N minutes, with the
-# fraction kept (unlike ``-mtime``, which drops whole days), so N in minutes is
-# exactly the model's "older than the retention".
-_PRUNE = re.compile(
-    r"(?P<gate>\[ \"\$DUMP_OK\" = 1 \] && (?:\\\n\s*)?)?"
-    r"find\b[^\n]*\.dump\.gpg[^\n]*-mmin \+\$\(\((?P<expr>[0-9 *]+)\)\)[^\n]*-delete"
-)
+def test_the_runbook_keeps_no_off_host_leg() -> None:
+    """The owner retired the off-host copy (#3260), so the runbook schedules none.
 
-
-def _prune_command() -> re.Match[str]:
-    section = _section(_DEPLOYMENT_DOC.read_text(encoding="utf-8"), _DUMP_HEADING)
-    assert _DRAFT_MARKER in section
-    shell = "\n".join(_BASH_BLOCK.findall(section))
-    assert "-mtime" not in shell, "-mtime drops whole days and prunes a day late"
-    prune = _PRUNE.search(shell)
-    assert prune, "the off-host procedure never deletes expired .gpg dumps by age in minutes"
-    return prune
-
-
-def _minutes(expression: str) -> int:
-    """Evaluate the shell's ``a * b * c`` arithmetic without a shell."""
-    total = 1
-    for factor in expression.split("*"):
-        total *= int(factor.strip())
-    return total
-
-
-def test_offhost_runbook_prunes_dumps_past_their_retention() -> None:
-    """The 90 days is an operation someone performs, at exactly the retention the model uses.
-
-    The weekly dump procedure deletes dumps older than the retention the
-    inventory states, to the minute; the purge floor (retention + interval)
-    depends on that happening and on nothing older surviving a run.
+    The backup table lists the platform leg alone, and the retired section keeps
+    no weekly dump or prune command: a runbook that still told an operator to
+    copy the database off Railway would contradict the policy's "no off-host
+    copy".
     """
-    prune = _prune_command()
-    assert _minutes(prune.group("expr")) == OFFHOST_DUMP_RETENTION_DAYS * _MINUTES_PER_DAY
-
-
-def _dump_shell() -> str:
-    section = _section(_DEPLOYMENT_DOC.read_text(encoding="utf-8"), _DUMP_HEADING)
-    # Join ``\``-continued lines so one chained statement reads as one line.
-    return re.sub(r"\\\n\s*", " ", "\n".join(_BASH_BLOCK.findall(section)))
-
-
-def test_offhost_dump_success_flag_is_set_only_by_a_verified_dump() -> None:
-    """``DUMP_OK=1`` is the last link of one ``&&`` chain: dump, verify, encrypt.
-
-    ``pg_dump -Fc`` creates its file before it connects, and ``gpg`` happily
-    wraps an empty file, so the size of the encrypted file proves nothing.
-    ``pg_restore --list`` reads the archive's table of contents and fails on a
-    truncated or empty one.
-    """
-    shell = _dump_shell()
-    lines = shell.splitlines()
-    reset = next(n for n, line in enumerate(lines) if line.strip() == "DUMP_OK=0")
-    chain_at = next(n for n, line in enumerate(lines) if line.strip().endswith("DUMP_OK=1"))
-    assert reset < chain_at, "DUMP_OK is not cleared before this run's dump"
-    chain = lines[chain_at]
-    assert "||" not in chain, "the chain has a branch that skips a failure"
-    assert ";" not in chain, "the chain has a statement that ignores a failure"
-    links = [link.strip() for link in chain.split("&&")]
-    assert links[0].startswith("pg_dump ")
-    assert links[1].startswith("pg_restore --list ")
-    assert links[2].startswith("gpg ")
-    assert links[-1] == "DUMP_OK=1"
-
-
-def test_offhost_prune_runs_only_after_a_fresh_dump() -> None:
-    """A run whose dump failed must not delete the older dumps it would have replaced.
-
-    The prune is gated on the verified-dump flag, never on the encrypted file
-    merely existing.
-    """
-    assert _prune_command().group("gate"), "the prune is not gated on this run's verified dump"
+    text = _DEPLOYMENT_DOC.read_text(encoding="utf-8")
+    assert set(_backup_rows(text)) == {"Leg", "---", "Platform"}
+    assert "### Taking an off-host dump" not in text
+    retired = _section(text, _RETIRED_HEADING)
+    assert "pg_dump" not in "\n".join(_BASH_BLOCK.findall(retired))
+    assert "-delete" not in retired

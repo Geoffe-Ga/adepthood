@@ -74,10 +74,7 @@ describe('savePromoteExplainerDismissed', () => {
 
     await expect(savePromoteExplainerDismissed(true)).resolves.toBeUndefined();
 
-    expect(warn).toHaveBeenCalledWith(
-      '[promoteExplainerStorage] failed to save the dismissal flag',
-      expect.any(Error),
-    );
+    expect(warn).toHaveBeenCalledWith('storage_write_failed', { storage: 'promote_explainer' });
     warn.mockRestore();
   });
 });
