@@ -2868,6 +2868,13 @@ export interface ContentCompletion {
   completed_at: string;
 }
 
+/** A Start Here resource's read mark, keyed by slug (resources are not rows). */
+export interface ResourceCompletion {
+  id: number;
+  slug: string;
+  completed_at: string;
+}
+
 /** Raw Markdown body + metadata returned by the in-app content endpoints. */
 export interface ContentBody {
   title: string;
@@ -2892,7 +2899,7 @@ export interface StageIntro {
   summary: string | null;
 }
 
-/** The chapter "Read next" opens: earliest unlocked, unread, across open stages. */
+/** What "Read next" opens: an unread Start Here resource first, then a chapter. */
 export type NextUnread = NextUnreadT;
 
 const nextUnreadResponseSchema =
@@ -2915,8 +2922,10 @@ export const course = {
     });
   },
   /**
-   * The earliest unlocked chapter the caller has not read, ordered by stage then
-   * release, or ``null`` once every open chapter is read (#3147).
+   * The lowest-``order`` Start Here resource the caller has not read while one
+   * remains (#3234), else the earliest unlocked chapter they have not read,
+   * ordered by stage then release, or ``null`` once everything open is read
+   * (#3147).
    */
   nextUnread(token?: string): Promise<NextUnread | null> {
     return request<NextUnread | null>('/course/next-unread', {
@@ -2932,6 +2941,13 @@ export const course = {
   },
   siteResources(token?: string): Promise<SiteResource[]> {
     return request<SiteResource[]>('/course/site-resources', { token });
+  },
+  /** Mark a Start Here resource read; idempotent on the backend (#3148). */
+  markResourceRead(slug: string, token?: string): Promise<ResourceCompletion> {
+    return request<ResourceCompletion>(
+      `/course/site-resources/${encodeURIComponent(slug)}/mark-read`,
+      { method: 'POST', token },
+    );
   },
   siteResourceBody(slug: string, token?: string): Promise<ContentBody> {
     return request<ContentBody>(`/course/site-resources/${slug}/body`, { token });
