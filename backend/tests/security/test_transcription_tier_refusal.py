@@ -79,12 +79,15 @@ def _page(classification: str | None) -> dict[str, str]:
     return body
 
 
-def _record_async[**P, R](
-    calls: list[str], name: str, real: Callable[P, Awaitable[R]]
-) -> Callable[P, Awaitable[R]]:
-    """Wrap ``real`` so every await is named in ``calls``, then delegated."""
+def _record_async(
+    calls: list[str], name: str, real: Callable[..., Awaitable[object]]
+) -> Callable[..., Awaitable[object]]:
+    """Wrap ``real`` so every await is named in ``calls``, then delegated.
 
-    async def _spy(*args: P.args, **kwargs: P.kwargs) -> R:
+    Typed without PEP 695 generics: the 3.11 compat job must parse this file.
+    """
+
+    async def _spy(*args: object, **kwargs: object) -> object:
         calls.append(name)
         return await real(*args, **kwargs)
 
