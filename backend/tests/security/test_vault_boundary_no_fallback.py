@@ -20,14 +20,18 @@ The vault-bound boundary is set two ways on purpose. Most cases override the
 route's behaviour for each vault outcome. The not-ready, undialable and
 deployment-owner cases override nothing about the boundary, so they pin the
 resolver too -- those are exactly the cases where the vault client the route is
-served cannot tell "chose a vault" from "has none".
+served cannot tell "chose a vault" from "has none". The mid-flight connection
+change overrides neither: it connects and reconnects through the real
+``/vault/connection`` route, so the destination a pass resolved is the stored
+row's (#3078). The timeout and malformed-handshake cases run the real HTTP
+adapter over a scripted transport, so the handshake parse is production's.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date
 from http import HTTPStatus
@@ -40,6 +44,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from dependencies import creek_vault as creek_vault_dependencies
 from dependencies.creek_vault import (
     OWNER_ENV_VAR,
     get_creek_vault_client,
@@ -72,7 +77,7 @@ from services import creek_vault_reflect, creek_vault_url_resolution
 from services import frequency_classification as frequency_classification_service
 from services import marginalia as marginalia_service
 from services.botmason import STUB_MODEL_NAME, LLMResponse
-from services.creek_vault_client import HttpCreekVaultClient
+from services.creek_vault_client import HandshakeDegradeReason, HttpCreekVaultClient
 from services.reflection_boundary import (
     REFLECTION_SOURCE_UNAVAILABLE,
     ReflectionBoundary,
@@ -81,7 +86,6 @@ from services.reflection_boundary import (
 from services.usage import get_monthly_cap
 from services.user_vault_config import store_vault_config
 from tests.support.reflecting_vault import (
-    DEFAULT_REFLECT_CAPABILITIES,
     ReflectingVaultClient,
     empty_reflection,
 )
@@ -99,6 +103,13 @@ _BYOK_KEY = "sk-abcdef1234567890abcdef1234567890"  # pragma: allowlist secret
 _VAULT_URL = "https://vault.example.test"
 _VAULT_KEY = "creek-vault-boundary-key"  # pragma: allowlist secret
 _CAPABILITIES_PATH = "/v1/capabilities"
+# Creek's published wire names for JOURNAL and REFLECT. ``creek.*`` is
+# adepthood's own vocabulary and never appears on the wire.
+_JOURNAL_WIRE_NAME = "journal-upsert"
+_REFLECT_WIRE_NAME = "reflections"
+_ONTOLOGY_VERSION = "1.0.0"
+_MINOR_COMPONENTS = 2
+_CONTRACT_MINOR = ".".join(CONTRACT_VERSION.split(".")[:_MINOR_COMPONENTS])
 # A loopback answer for a stored vault host: this server must never dial it.
 _PRIVATE_ADDRESS = "127.0.0.1"
 
@@ -343,31 +354,61 @@ async def test_a_vault_with_nothing_usable_is_a_refunded_zero_note_pass(
 # --- the vault cannot answer ----------------------------------------------------
 
 
-class _TimingOutReflect:
-    """A MockTransport handler: a REFLECT-capable handshake, then a timeout on reflect."""
+def _handshake_document(**overrides: object) -> dict[str, object]:
+    """A REFLECT-capable capability document in the shape Creek publishes, then ``overrides``.
+
+    Availability is nested under ``vault``, the version window is advertised, and
+    the capability list carries Creek's wire names -- exactly what the real parser
+    requires. A fixture shaped any other way degrades at the handshake and never
+    reaches the call it means to test.
+    """
+    document: dict[str, object] = {
+        "vault": {"available": True},
+        "capabilities": [_JOURNAL_WIRE_NAME, _REFLECT_WIRE_NAME],
+        "contract_version": CONTRACT_VERSION,
+        "contract_minor": _CONTRACT_MINOR,
+        "supported_contract_minors": [_CONTRACT_MINOR],
+        "ontology_version": _ONTOLOGY_VERSION,
+        "attestation": None,
+    }
+    document.update(overrides)
+    return document
+
+
+class _ScriptedVaultTransport:
+    """A MockTransport handler: one scripted handshake answer, then ``on_call`` for the rest.
+
+    Records every path it is asked for, so a test can prove which calls the
+    real HTTP adapter actually made rather than inferring it from the status.
+    """
+
+    def __init__(self, handshake: httpx.Response) -> None:
+        """Store the handshake answer; every other request times out on the wire."""
+        self.paths: list[str] = []
+        self._handshake = handshake
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         """Answer the capability probe; time out on anything else."""
+        self.paths.append(request.url.path)
         if request.url.path == _CAPABILITIES_PATH:
-            return httpx.Response(
-                HTTPStatus.OK,
-                json={
-                    "available": True,
-                    "capabilities": [c.value for c in DEFAULT_REFLECT_CAPABILITIES],
-                    "contract_version": CONTRACT_VERSION,
-                    "ontology_version": "1.0.0",
-                    "attestation": None,
-                },
-            )
+            return self._handshake
         message = "reflect timed out"
         raise httpx.ReadTimeout(message, request=request)
 
+    @property
+    def capability_calls(self) -> list[str]:
+        """Every request that was not the capability probe."""
+        return [path for path in self.paths if path != _CAPABILITIES_PATH]
+
 
 @pytest_asyncio.fixture
-async def timing_out_vault() -> AsyncGenerator[HttpCreekVaultClient]:
-    """A real HTTP vault client whose reflect call times out on the wire."""
-    http = httpx.AsyncClient(transport=httpx.MockTransport(_TimingOutReflect()))
-    yield HttpCreekVaultClient(_VAULT_URL, _VAULT_KEY, http_client=http)
+async def timing_out_vault() -> AsyncGenerator[
+    tuple[HttpCreekVaultClient, _ScriptedVaultTransport]
+]:
+    """A real HTTP vault client that handshakes cleanly, then times out on reflect."""
+    transport = _ScriptedVaultTransport(httpx.Response(HTTPStatus.OK, json=_handshake_document()))
+    http = httpx.AsyncClient(transport=httpx.MockTransport(transport))
+    yield HttpCreekVaultClient(_VAULT_URL, _VAULT_KEY, http_client=http), transport
     await http.aclose()
 
 
@@ -420,10 +461,16 @@ async def test_a_vault_timeout_on_the_wire_never_falls_back(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
-    timing_out_vault: HttpCreekVaultClient,
+    timing_out_vault: tuple[HttpCreekVaultClient, _ScriptedVaultTransport],
 ) -> None:
-    """A real client timing out mid-reflect is the same refunded 503, through the real adapter."""
-    _vault_bound(timing_out_vault)
+    """A real client timing out mid-reflect is the same refunded 503, through the real adapter.
+
+    The clean handshake and the recorded reflect call are asserted, not assumed:
+    a handshake that degraded first is also a 503, and would leave the timeout
+    path itself untested.
+    """
+    client, transport = timing_out_vault
+    _vault_bound(client)
     writer = await _writer(async_client, db_session, "boundary_timeout")
     sink = _install_sink(monkeypatch)
 
@@ -431,8 +478,226 @@ async def test_a_vault_timeout_on_the_wire_never_falls_back(
 
     assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     assert resp.json()["detail"] == REFLECTION_SOURCE_UNAVAILABLE
+    assert client.last_degrade_reason is None
+    assert transport.capability_calls
     assert sink.calls == []
     await _assert_refunded_failure(async_client, db_session, writer)
+
+
+# --- a malformed capability handshake --------------------------------------------
+
+# Rides inside every malformed document, so a log line that echoed what the
+# vault said would carry it.
+_HANDSHAKE_SENTINEL = "SENTINEL_VAULT_HANDSHAKE_PAYLOAD"
+
+
+@dataclass(frozen=True)
+class _MalformedHandshake:
+    """One malformed capability answer and the closed-vocabulary words it must produce."""
+
+    response: httpx.Response
+    degrade: HandshakeDegradeReason | None
+    refusal: VaultSourceUnavailableReason
+
+
+def _malformed(**overrides: object) -> httpx.Response:
+    """A capability document carrying the sentinel, with ``overrides`` applied."""
+    return httpx.Response(
+        HTTPStatus.OK, json=_handshake_document(ontology_version=_HANDSHAKE_SENTINEL, **overrides)
+    )
+
+
+_MALFORMED = HandshakeDegradeReason.MALFORMED_PAYLOAD
+_UNAVAILABLE = VaultSourceUnavailableReason.UNAVAILABLE
+_MALFORMED_HANDSHAKES = {
+    "not_json": _MalformedHandshake(
+        httpx.Response(HTTPStatus.OK, text=f"<html>{_HANDSHAKE_SENTINEL}</html>"),
+        _MALFORMED,
+        _UNAVAILABLE,
+    ),
+    "not_an_object": _MalformedHandshake(
+        httpx.Response(HTTPStatus.OK, json=[_REFLECT_WIRE_NAME, _HANDSHAKE_SENTINEL]),
+        _MALFORMED,
+        _UNAVAILABLE,
+    ),
+    "capabilities_not_a_list": _MalformedHandshake(
+        _malformed(capabilities=_REFLECT_WIRE_NAME), _MALFORMED, _UNAVAILABLE
+    ),
+    "contract_version_not_a_string": _MalformedHandshake(
+        _malformed(contract_version=None), _MALFORMED, _UNAVAILABLE
+    ),
+    "version_window_not_strings": _MalformedHandshake(
+        _malformed(supported_contract_minors=[0.1]), _MALFORMED, _UNAVAILABLE
+    ),
+    "attestation_wrong_type": _MalformedHandshake(
+        _malformed(attestation=_HANDSHAKE_SENTINEL), _MALFORMED, _UNAVAILABLE
+    ),
+    "available_not_literal_true": _MalformedHandshake(
+        _malformed(vault={"available": "true"}),
+        HandshakeDegradeReason.VAULT_REPORTED_UNAVAILABLE,
+        _UNAVAILABLE,
+    ),
+    # Unknown entries are dropped rather than coerced, so a REFLECT named in a
+    # shape the parser does not read is a vault that never advertised it.
+    "capability_entries_wrong_type": _MalformedHandshake(
+        _malformed(capabilities=[{"name": _REFLECT_WIRE_NAME}]),
+        None,
+        VaultSourceUnavailableReason.CAPABILITY_MISSING,
+    ),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", sorted(_MALFORMED_HANDSHAKES))
+async def test_a_malformed_capability_handshake_fails_closed(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    case: str,
+) -> None:
+    """A capability answer the parser cannot trust is a refunded 503 with a safe reason code.
+
+    Driven through the real HTTP adapter, so the parse is the production one:
+    no reflect call is made, the app provider is not asked, the refusal is
+    logged under a closed-vocabulary reason, and nothing the vault sent reaches
+    any log line.
+    """
+    scripted = _MALFORMED_HANDSHAKES[case]
+    transport = _ScriptedVaultTransport(scripted.response)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        client = HttpCreekVaultClient(_VAULT_URL, _VAULT_KEY, http_client=http)
+        _vault_bound(client)
+        writer = await _writer(async_client, db_session, f"boundary_malformed_{case}")
+        sink = _install_sink(monkeypatch)
+        caplog.set_level(logging.DEBUG)
+
+        resp = await _resonance(async_client, writer)
+
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert resp.json()["detail"] == REFLECTION_SOURCE_UNAVAILABLE
+    assert client.last_degrade_reason == scripted.degrade
+    assert transport.paths
+    assert transport.capability_calls == []
+    assert sink.calls == []
+    refusals = [r for r in caplog.records if r.getMessage() == REFLECTION_SOURCE_UNAVAILABLE]
+    assert [getattr(r, "reason", None) for r in refusals] == [scripted.refusal.value]
+    for record in caplog.records:
+        assert _HANDSHAKE_SENTINEL not in _record_text(record)
+    await _assert_refunded_failure(async_client, db_session, writer)
+
+
+# --- the connection changes while a reflection is in flight -------------------------
+
+_VAULT_URL_BEFORE = "https://vault-before.example.test"
+_VAULT_URL_AFTER = "https://vault-after.example.test"
+# A public answer for both stored hosts, so the real dial-time guard admits them
+# and the only thing deciding where a pass goes is which row it resolved.
+_PUBLIC_ADDRESS = "93.184.216.34"
+
+
+class _ConnectionChangesMidReflect(ReflectingVaultClient):
+    """The vault the pass resolved: mid-reflect, the writer changes their connection, then it fails.
+
+    ``change`` is the writer's own request, made through the real route while
+    this reflect is awaited, so the stored connection really is different by
+    the time the pass has to decide what to do about a vault that went away.
+    """
+
+    def __init__(self, change: Callable[[], Awaitable[httpx.Response]]) -> None:
+        """Store the mid-flight connection change."""
+        super().__init__()
+        self._change = change
+        self.change_status: int | None = None
+
+    async def reflect(self, body: str, tier_ceiling: VaultTierCeiling, /) -> VaultReflection:
+        """Record the call, change the connection through the route, then fail as unavailable."""
+        self.reflect_calls.append((body, tier_ceiling))
+        self.change_status = (await self._change()).status_code
+        message = "creek vault call failed"
+        raise CreekVaultUnavailableError(message)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["reconnect", "disconnect"])
+async def test_a_connection_changed_mid_reflection_is_never_dialed_or_substituted(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    change: str,
+) -> None:
+    """A pass in flight keeps the destination it resolved: no new vault, no app provider, a 503.
+
+    Nothing about the boundary or the client is overridden: the writer connects
+    a vault through ``PUT /vault/connection``, and the route resolves it from the
+    stored row. While the vault is reflecting, the writer reconnects to a
+    different vault -- or disconnects, which makes them an app-provider writer
+    for every *later* request -- and the vault then fails. The pass in flight
+    must neither dial the newly permitted destination nor re-ask the app
+    provider; it answers the honest refunded 503. The follow-up pass proves the
+    change really landed, and that the sink was live all along.
+    """
+    writer = await _writer(async_client, db_session, f"boundary_midflight_{change}")
+
+    async def _public(_host: str) -> tuple[str, ...]:
+        return (_PUBLIC_ADDRESS,)
+
+    monkeypatch.setattr(creek_vault_url_resolution, "resolve_host_addresses", _public)
+
+    async def _change_connection() -> httpx.Response:
+        if change == "reconnect":
+            return await async_client.put(
+                "/vault/connection",
+                json={"vault_url": _VAULT_URL_AFTER, "api_key": _VAULT_KEY},
+                headers=writer.headers,
+            )
+        return await async_client.delete("/vault/connection", headers=writer.headers)
+
+    before = _ConnectionChangesMidReflect(_change_connection)
+    after = ReflectingVaultClient(
+        reflect_result=_note_reflection(
+            VaultReflectionNote(kind="theme", quote=_QUOTE, note=_VAULT_NOTE)
+        )
+    )
+    vaults = {_VAULT_URL_BEFORE: before, _VAULT_URL_AFTER: after}
+    dialed: list[str] = []
+
+    def _build(url: str, _api_key: str) -> ReflectingVaultClient:
+        dialed.append(url)
+        return vaults[url]
+
+    monkeypatch.setattr(creek_vault_dependencies, "build_connected_vault_client", _build)
+    connect = await async_client.put(
+        "/vault/connection",
+        json={"vault_url": _VAULT_URL_BEFORE, "api_key": _VAULT_KEY},
+        headers=writer.headers,
+    )
+    assert connect.status_code == HTTPStatus.OK
+    sink = _install_sink(monkeypatch)
+
+    resp = await _resonance(async_client, writer)
+
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+    assert resp.json()["detail"] == REFLECTION_SOURCE_UNAVAILABLE
+    assert before.change_status in {HTTPStatus.OK, HTTPStatus.NO_CONTENT}
+    assert len(before.reflect_calls) == 1
+    assert dialed == [_VAULT_URL_BEFORE]
+    assert after.handshake_calls == 0
+    assert after.reflect_calls == []
+    assert sink.calls == []
+    await _assert_refunded_failure(async_client, db_session, writer)
+
+    retry = await _resonance(async_client, writer)
+
+    assert retry.status_code == HTTPStatus.OK
+    if change == "reconnect":
+        assert dialed == [_VAULT_URL_BEFORE, _VAULT_URL_AFTER]
+        assert [note["note"] for note in retry.json()["marginalia"]] == [_VAULT_NOTE]
+        assert sink.calls == []
+    else:
+        assert dialed == [_VAULT_URL_BEFORE]
+        assert [note["note"] for note in retry.json()["marginalia"]] == [_CLOUD_NOTE]
+        assert sink.calls
 
 
 @pytest.mark.asyncio

@@ -19,9 +19,9 @@ Notice the structure:
 3. **The shadow leaks or distorts:** It shows up in unhealthy ways.
 4. **The integration begins:** You meet the shadow with compassion.
 5. **The reframe happens:** You see the gift hiding in the wound.
-6. **The transformation completes:** The shadow becomes a conscious strength.
+6. **The shadow finds its role:** It becomes a conscious strength you'll recognize next time it surfaces.
 
-This is Green's alchemy. Every single time.
+This is Green's alchemy. The sequence holds; the timeline doesn't. Some shadows take years.
 
 The rage becomes boundary-setting. The neediness becomes connection. The arrogance becomes confidence. The shame becomes self-compassion. The fear becomes discernment.
 

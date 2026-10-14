@@ -28,6 +28,6 @@ Invite your future self—the version of you who's already integrated this shado
 
 **4. Shadow as Ally Ritual**
 
-Once you've worked with a shadow element enough that it feels less threatening, do a ritual to formally integrate it. Light a candle for the shadow. Speak a vow: "I welcome you home. I honor what you've been protecting. I commit to giving you a healthy role in my life." Blow out the candle. The shadow is no longer shadow—it's part of your conscious self.
+Once you've worked with a shadow element enough that it feels less threatening, do a ritual to formally integrate it. Light a candle for the shadow. Speak a vow: "I welcome you home. I honor what you've been protecting. I commit to giving you a healthy role in my life." Blow out the candle. That part now has a seat at the table of your conscious life. It may knock again later, from a deeper room, and when it does you'll know how to answer the door.
 
 ---

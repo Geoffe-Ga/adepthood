@@ -32,7 +32,7 @@ This is the wisdom of the Tao: "The softest things in the world overcome the har
 
 That's Teal. You're not battling your conditioning (Red). You're not analyzing it (Yellow). You're *being with* it until it softens on its own.
 
-When this energy is balanced, Teal is deeply healing. It's the stage where true rest becomes possible. Where you stop trying to improve yourself and just *meet yourself* as you are. Where the relentless striving finally gives way to grace.
+When this energy is balanced, Teal is deeply healing. It's where real rest becomes possible—not as a permanent address, but as a place you can actually get to. Where you stop trying to improve yourself and just *meet yourself* as you are. Where the striving loosens, for a while, into grace.
 
 When it's imbalanced, Teal becomes passive-aggressive spirituality. "I'm just trusting the universe" becomes an excuse for not taking responsibility. "Everything happens for a reason" becomes a way to avoid grief. Receptivity becomes avoidance.
 

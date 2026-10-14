@@ -20,7 +20,7 @@ This folder contains the modular sections for the ORANGE stage of the APTITUDE c
 - [Tracking Your Progress: The Orange Way](./13-tracking-your-progress-the-orange-way.md)
 - [Alternatives for Orange Practice](./14-alternatives-for-orange-practice.md)
 - [The Default Habit of Orange: Exercise](./15-the-default-habit-of-orange-exercise.md)
-- [Why Exercise is Non-Negotiable for Understanding](./16-why-exercise-is-non-negotiable-for-understanding.md)
+- [Why Exercise Does So Much for Understanding](./16-why-exercise-is-non-negotiable-for-understanding.md)
 - [How to Structure Your Exercise Practice](./17-how-to-structure-your-exercise-practice.md)
 - [Exercise as Meditation: The Flow State](./18-exercise-as-meditation-the-flow-state.md)
 - [Orange's Divine Gender: Divine Masculine—Achievement and Curiosity](./19-oranges-divine-gender-divine-masculineachievement-and-curios.md)

@@ -6,7 +6,7 @@
 
 [The Journaling Prompts of Teal](#the-journaling-prompts-of-teal)
 
-[The Relationship to Free Will at Teal: Witness](#the-relationship-to-free-will-at-teal-witness)
+[The Relationship to Free Will at Teal: True Self Embodier](#the-relationship-to-free-will-at-teal-true-self-embodier)
 
 [The Mode of the Wavelength of Teal: Integrate (Feel)](#the-mode-of-the-wavelength-of-teal-integrate-feel)
 

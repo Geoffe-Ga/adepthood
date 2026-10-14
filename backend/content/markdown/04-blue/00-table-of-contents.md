@@ -14,7 +14,7 @@
 
 [Alternatives for Blue Practice](#alternatives-for-blue-practice)
 
-[The Default Habit of Blue: Looking at Alcohol/Intoxicants](#the-default-habit-of-blue-looking-at-alcoholintoxicants)
+[The Default Habit of Blue: Looking at Scrolling](#the-default-habit-of-blue-looking-at-scrolling)
 
 [Blue's Divine Gender: Divine Feminine—We, Self-Sacrificing](#blues-divine-gender-divine-feminine-we-self-sacrificing)
 

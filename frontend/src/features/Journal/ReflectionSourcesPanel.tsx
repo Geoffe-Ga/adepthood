@@ -88,6 +88,8 @@ const SOURCES_PANE_WIDTH = journalLayout.pageMaxWidth / 2;
 
 /** The desk ground left between the side pane and the viewport's trailing edge. */
 const SOURCES_PANE_GUTTER = journalSheet.deskPaddingH;
+/** Width the inline dock reserves, including its trailing desk gutter. */
+export const SOURCES_PANE_OCCUPIED_WIDTH = SOURCES_PANE_WIDTH + SOURCES_PANE_GUTTER;
 
 /**
  * At/above this viewport width the panel is an inline side pane beside the

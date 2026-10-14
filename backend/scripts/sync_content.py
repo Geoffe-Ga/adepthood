@@ -29,7 +29,9 @@ Complete Map.csv`` from the *same* tarball and SHA (no second pin) to
 the tree digest, and is declared in :data:`VENDORED_EXTRA_FILES`, so
 retiring it after the upstream bump is a one-line deletion. See the ADR
 0001 addendum (2026-09-25) for why this deviation from CONSUMPTION.md §1
-is accepted.
+is accepted. The **Modes of the Wavelength CSV** (#3135), the canonical
+per-stage Rx/OD phase terms, rides the same exception to
+``curriculum/modes_of_the_wavelength.csv``.
 
 Vendoring policy — **``backend/content/`` is committed** (not built at
 deploy time): the image is reproducible from the repo alone and every
@@ -80,11 +82,22 @@ STAGE_CORRESPONDENCE_CSV_SOURCE = (
 #: Where the stage-correspondence CSV is vendored, relative to the content dir.
 STAGE_CORRESPONDENCE_CSV_VENDORED = "curriculum/aptitude_complete_map.csv"
 
+#: Where the canonical per-stage Rx/OD phase terms live inside the tarball
+#: (#3135). Same ``google_docs/`` exception as the Complete Map CSV above.
+WAVELENGTH_MODES_CSV_SOURCE = (
+    "google_docs/database_of_course_curriculum/"
+    "The Archetypal Wavelength - Modes of the Wavelength.csv"
+)
+
+#: Where the Modes of the Wavelength CSV is vendored, relative to the content dir.
+WAVELENGTH_MODES_CSV_VENDORED = "curriculum/modes_of_the_wavelength.csv"
+
 #: Extra ``(tarball path, vendored path)`` files copied verbatim beside the
 #: published surface. Every entry is required: a tarball missing one fails the
 #: sync. Empty this once the upstream manifest carries the data (#2664).
 VENDORED_EXTRA_FILES: tuple[tuple[str, str], ...] = (
     (STAGE_CORRESPONDENCE_CSV_SOURCE, STAGE_CORRESPONDENCE_CSV_VENDORED),
+    (WAVELENGTH_MODES_CSV_SOURCE, WAVELENGTH_MODES_CSV_VENDORED),
 )
 
 #: The audit-trail file recording what is vendored.

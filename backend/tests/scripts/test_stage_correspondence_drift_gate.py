@@ -58,9 +58,17 @@ _GATE_WORKING_DIRECTORY = "working-directory: backend"
 # in the same job, also after the vendored tree is verified.
 _COMPLETENESS_STEP = "Verify Course content completeness and inventories"
 _COMPLETENESS_COMMAND = "python -m scripts.content_completeness --check"
+# Issue #3135: the Map's Rx/OD phase names must equal the vendored Modes of the
+# Wavelength CSV; the gate reads that CSV, so it too runs after verification.
+_TERMS_STEP = "Verify wavelength phase terms match the Modes CSV"
+_TERMS_COMMAND = "python -m scripts.check_wavelength_terms"
 
 # Every gate the job must run, armed, after the vendored-content check.
-_GATES = ((_GATE_STEP, _GATE_COMMAND), (_COMPLETENESS_STEP, _COMPLETENESS_COMMAND))
+_GATES = (
+    (_GATE_STEP, _GATE_COMMAND),
+    (_COMPLETENESS_STEP, _COMPLETENESS_COMMAND),
+    (_TERMS_STEP, _TERMS_COMMAND),
+)
 
 # Anything that lets a step fail without failing the job. Searched for in the
 # comment-stripped job only, so the header explaining why none of these are
@@ -77,6 +85,7 @@ _DISARMING_FRAGMENTS = (
 # The scripts the job runs, whose third-party imports the install step owns.
 _DRIFT_SCRIPTS = (
     _BACKEND / "scripts" / "build_stage_correspondence.py",
+    _BACKEND / "scripts" / "check_wavelength_terms.py",
     _BACKEND / "scripts" / "content_completeness.py",
     _BACKEND / "scripts" / "sync_content.py",
 )
@@ -274,6 +283,32 @@ def test_the_predicates_accept_a_well_formed_completeness_step() -> None:
     assert _gate_problems(good, **kwargs) == []
     assert _ordering_problems(good, step=_COMPLETENESS_STEP) == []
     assert _disarming_fragments(good) == []
+
+
+_TERMS = f"""\
+      - name: {_TERMS_STEP}
+        working-directory: backend
+        run: {_TERMS_COMMAND}
+"""
+
+
+def test_a_job_without_the_wavelength_terms_step_fails() -> None:
+    """Deleting the #3135 phase-term gate is caught; restoring it passes."""
+    missing = _fixture(_SYNC, _GATE, _COMPLETENESS)
+    assert _gate_problems(missing, step=_TERMS_STEP, command=_TERMS_COMMAND) == [
+        f"{_JOB} has no step named {_TERMS_STEP!r}"
+    ]
+    present = _fixture(_SYNC, _GATE, _COMPLETENESS, _TERMS)
+    assert _gate_problems(present, step=_TERMS_STEP, command=_TERMS_COMMAND) == []
+    assert _ordering_problems(present, step=_TERMS_STEP) == []
+
+
+def test_a_wavelength_terms_step_before_the_vendored_content_check_fails() -> None:
+    """The phase-term gate grades the vendored CSV, so it must run after its check."""
+    early = _fixture(_TERMS, _SYNC, _GATE, _COMPLETENESS)
+    assert _ordering_problems(early, step=_TERMS_STEP) == [
+        f"{_TERMS_STEP!r} runs before {_SYNC_STEP!r}, so it grades unverified input"
+    ]
 
 
 def test_a_job_without_the_completeness_step_fails() -> None:

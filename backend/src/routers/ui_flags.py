@@ -30,6 +30,7 @@ def _to_response(flags: UserUiFlags) -> UiFlagsResponse:
         has_seen_welcome=flags.has_seen_welcome,
         energy_scaffolding_archived=flags.energy_scaffolding_archived,
         writing_session_habit_id=flags.writing_session_habit_id,
+        course_last_stage=flags.course_last_stage,
     )
 
 

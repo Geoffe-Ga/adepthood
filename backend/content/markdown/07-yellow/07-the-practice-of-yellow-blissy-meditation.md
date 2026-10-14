@@ -70,9 +70,9 @@ Take a moment to journal—just a few sentences about what you noticed. This hel
 
 Because that's when the magic starts to happen. For the first 10-15 minutes, you're just settling. Your mind is still restless, your body still fidgeting. At 20-30 minutes, things start to stabilize. And after 40 minutes, if you've stayed with it, you begin to touch states of genuine concentration—where the mind unifies, where joy arises spontaneously, where you glimpse what the contemplative traditions have been pointing to for millennia.
 
-This is not hyperbole. This is neuroscience. Sustained meditation rewires the default mode network, strengthens the prefrontal cortex, increases gray matter in areas associated with self-regulation and empathy. It literally changes your brain.
+The research points the same direction, if more quietly than the headlines: long-term sitters show measurable changes in attention networks and in the regions tied to self-regulation and empathy. How much of that you'll feel, and when, is honestly variable—and no scan can tell you what a sit will do for you on a given Tuesday.
 
-But more than that, it changes your *experience* of being alive. You stop being tossed around by every passing thought and emotion. You develop a kind of inner stability that holds through chaos. You become, slowly, an Intentional Actor.
+But more than that, it changes your *experience* of being alive. You get tossed around less. On a good day you find a stability that holds through chaos; on a bad day you at least notice you've lost it faster, and that noticing is most of the skill. You become, slowly and unevenly, an Intentional Actor.
 
 That's why Yellow requires this practice. Because wisdom doesn't come from thinking about it. It comes from *training* the instrument that does the seeing. And 45 minutes a day is the training.
 

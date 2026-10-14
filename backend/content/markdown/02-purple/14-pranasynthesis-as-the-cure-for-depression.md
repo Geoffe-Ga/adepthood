@@ -4,15 +4,15 @@ stage: 2
 chapter: 14
 order: 14
 slug: pranasynthesis-as-the-cure-for-depression
-title: "“Pranasynthesis” as the Cure for Depression"
+title: "“Pranasynthesis”: Taking in Light When You’re Depressed"
 content_type: chapter
 release_day: 13
 media: []
 ---
 
-## “Pranasynthesis” as the Cure for Depression
+## “Pranasynthesis”: Taking in Light When You’re Depressed
 
-There are times when nothing works. The practices stall. The joy is gone. Even rest doesn’t restore, and everything once charged with beauty becomes flat, gray, muffled like a song underwater. This is the Diminishing and Bottoming Out stretch of the Feel Wavelength when traversed without skill—when we resist, when we compare, when we collapse into a sense of terminal brokenness. It is also what much of the modern world simply calls depression.
+There are times when nothing works. The practices stall. The joy is gone. Even rest doesn’t restore, and everything once charged with beauty becomes flat, gray, muffled like a song underwater. This is the Diminishing and Bottoming Out stretch of the Feel Wavelength at its hardest—when we resist, when we compare, when we collapse into a sense of terminal brokenness. For some of us it’s also depression, the clinical kind, and nothing here replaces the help that kind needs.
 
 But what if we treated these bottom phases not as pathologies, but as sacred terrain? What if instead of trying to fight our way out with more effort, we allowed something subtler to take root? What if the answer wasn’t to do more, but to receive more?
 
@@ -26,7 +26,7 @@ To pranasynthesize is to open yourself to receive the tiniest flickers of light 
 In the depressive low, it’s tempting to believe you must figure everything out before you’re allowed to feel better. That you must “fix” something or “understand” your pain before you can move.
 But Pranasynthesis doesn’t require solving. It just requires turning your leaves toward the light, even when it’s dim.
 
-And it works—slowly, gently, inevitably.
+And it helps—slowly, gently, and not every time.
 
 The reason this is different from “gratitude practice” as it’s usually taught is because it’s not a performance of positivity. It’s an attunement practice. You’re not making a list because you should feel grateful. You’re scanning for resonance.
 You’re cultivating the sacred skill of noticing what still shines, what still stirs something, however faint. And from those small glimmers, you begin to photosynthesize.
@@ -43,9 +43,9 @@ It says: You don’t have to be better first. You just have to receive what is a
 
 This might look like sitting in the sun with your eyes closed. Or lighting a candle and watching it flicker. Or holding a stone and feeling its weight. Or listening—truly listening—to the voice of someone who loves you. These aren’t distractions. These are rays. Let them in.
 
-Over time, you will gather enough light. Enough warmth. Enough breath.
+Over time, you may gather enough light. Enough warmth. Enough breath. The wave does turn—though not on your schedule, and sometimes not without a doctor, a friend, or a prescription alongside the candle.
 
-And then, without forcing it, you’ll start to rise again.
+And when it turns, without forcing it, you’ll start to rise again.
 
 Not because you pushed.
 

@@ -13,6 +13,29 @@ _FLAGS_URL = "/ui-flags"
 _FLAG_KEYS = ("has_seen_welcome", "energy_scaffolding_archived")
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", [0, 11, -1])
+async def test_course_reading_stage_is_bounded(async_client: AsyncClient, stage: int) -> None:
+    """Reject values that cannot name a Frequency before touching the row."""
+    headers = await _signup(async_client)
+    response = await async_client.patch(
+        _FLAGS_URL, headers=headers, json={"course_last_stage": stage}
+    )
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_course_reading_stage_can_be_set_and_cleared(async_client: AsyncClient) -> None:
+    """PATCH exposes the same nullable reading state GET returns."""
+    headers = await _signup(async_client)
+    for stage in [1, 10, None]:
+        response = await async_client.patch(
+            _FLAGS_URL, headers=headers, json={"course_last_stage": stage}
+        )
+        assert response.status_code == HTTPStatus.OK
+        assert response.json()["course_last_stage"] == stage
+
+
 async def _signup(client: AsyncClient, username: str = "uiflagsuser") -> dict[str, str]:
     """Create an account and return auth headers."""
     resp = await client.post(

@@ -34,7 +34,7 @@ You begin a Return Journey when you notice that you are overwhelmed—not “bus
 
 Any of those is the bell. You don’t need to earn it, justify it, or wait until things get worse. Pausing your current Stage’s Practice to walk a Return Journey is not falling behind—it is the curriculum. The Wavelength was never going to spare you the troughs; APTITUDE’s promise is that you’ll stop drowning in them.
 
-(And to be clear about sequencing: this tool unlocks *after* Blue, because it requires the Metta skill you’ve just spent three weeks building. If you’re reading ahead, or if the bottom falls out during Orange, Green, Yellow—any Stage from here to the end—this is the move. Come back to this chapter. It will keep.)
+(And to be clear about sequencing: I’m introducing this tool *after* Blue because it leans on the Metta skill you’ve just spent three weeks building. If you’re reading ahead, or if the bottom falls out during Orange, Green, Yellow—any Stage from here to the end—this is the move. Come back to this chapter. It will keep.)
 
 ### The five weeks
 

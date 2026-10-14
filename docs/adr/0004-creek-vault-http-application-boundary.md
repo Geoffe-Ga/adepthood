@@ -1439,3 +1439,89 @@ withdrawal from plaintext files, retrieval and wheel eligibility, one Personal
 remirror under the same stable id, and final deletion. This closes that journal
 lifecycle proof only. Epic #2043's broader operator run across every adopted
 capability and its telemetry remains independently outstanding.
+
+## Note, 2026-10-13 — the reflection boundary: a vault-bound writer is answered by their vault or not at all
+
+Issues [#3061](https://github.com/Geoffe-Ga/adepthood/issues/3061) and
+[#3078](https://github.com/Geoffe-Ga/adepthood/issues/3078); built in #3085.
+This note records a decision about the read side of this boundary that the
+decisions above never made explicit. Before it, a writer who connected a vault
+had their resonance pass quietly re-asked of the app's own model provider
+whenever the vault said nothing, failed, was still provisioning, or was not
+asked at all. Completion detection always went to the app provider, vault or
+not. The writer could not see any of this.
+
+**The split.** Each request resolves one `ReflectionBoundary`
+(`backend/src/services/reflection_boundary.py`):
+
+- `APP_PROVIDER`: the account has no vault, so every AI operation is answered
+  by the app provider, as before.
+- `VAULT_BOUND`: the account has a vault, so every AI operation is answered by
+  that vault or not at all.
+
+`resolve_reflection_boundary` (`backend/src/dependencies/creek_vault.py`)
+decides this from local state only. It runs one indexed read of the stored
+connection row plus the deployment binding. Nothing the client sends feeds it:
+not a body field, not a header, and not a BYOK key. The client attaches a stored
+key to every request, so the key pays for calls and permits none. The resolver
+also never dials the vault, so it gives the same answer during a vault outage.
+It sits beside the vault-client dependency rather than being read off the
+client. That matters because a provisioned-but-not-ready connection and an
+undialable host are both served the local fallback client, exactly like a
+writer with no vault. Only the boundary tells "chose a vault, and it is not
+usable now" apart from "has none."
+
+**No substitution; fail closed.** A vault-bound reflection that the vault
+cannot answer gets an honest, refunded, retryable `503
+reflection_source_unavailable`. It never falls back to the app provider. This
+covers every failure: a handshake that is unavailable or malformed, a missing
+REFLECT capability, a refused, unreadable, credential, or timed-out call, and an
+unknown tier. The refusal is logged under a closed-vocabulary reason
+(`VaultSourceUnavailableReason`) and carries no writing, quote, or key. Nothing
+in `services/creek_vault_reflect.py` holds or can be handed the app provider,
+and `select_reflection_llm` takes no `fallback` parameter. A vault-then-provider
+composite therefore cannot be expressed through it. Two answers are legitimate
+rather than failures: a vault with nothing to say, and one whose notes do not
+anchor to the entry. Both are zero-note passes, explained and refunded. A
+distress-flagged entry is answered with adepthood's own care surface and asks no
+model. So is a care escalation raised by the vault.
+
+**The fallback-permission criterion is waived.** #3078 originally asked for an
+explicit, revocable permission letting a vault-bound reflection fall back to a
+named recipient. The owner waived that criterion on 2026-10-13. Failing closed,
+with no fallback, is the accepted behaviour. No permission path exists, and
+none is planned: an informed-choice prompt would be the same substitution with
+a click in front of it.
+
+**The deployment owner counts as vault-bound.** The bound owner of the
+deployment-wide vault (`CREEK_VAULT_URL` with `CREEK_VAULT_OWNER_USER_ID`,
+Decision 7 and its 2026-08-21 note) is `VAULT_BOUND` alongside every account
+with a stored connection row, whatever that row's state. This is the more
+restrictive reading of a binding the operator made on that user's behalf. The
+owner ratified it as the intended rule on 2026-10-13.
+
+**Completion detection inherits the same boundary.** Under `VAULT_BOUND` the
+resonance pass makes no detection call. Standalone
+`POST /journal/{id}/suggestions/detect` answers `{"items": [], "checked":
+false}` before it reads a single candidate. Creek publishes no detection
+capability, so "the vault or not at all" means "not at all" here until one
+exists.
+
+**A pass keeps the destination it resolved.** The vault client is resolved
+once, when the request starts. If the writer reconnects to a different vault,
+or disconnects, while a reflection is in flight, that pass dials neither the
+new destination nor the app provider. If its own vault then fails, the pass
+answers the same refunded `503`. The change applies from the next request.
+
+**Evidence.** `backend/tests/security/test_vault_boundary_no_fallback.py` pins
+all of the above at the route, against a recording sink installed at both
+app-provider seams. It includes:
+
+- the not-ready, undialable, and deployment-owner cases with no dependency
+  overrides;
+- a real HTTP client timing out on the wire;
+- a matrix of malformed capability handshakes, each failing closed with a safe
+  reason code;
+- a reconnect and a disconnect made through `/vault/connection` mid-reflection.
+
+The no-vault guard proves the sink is live.

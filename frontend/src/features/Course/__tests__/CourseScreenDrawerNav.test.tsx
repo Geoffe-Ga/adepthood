@@ -67,6 +67,7 @@ const mockProgramCalendar = jest.fn(() =>
   }),
 );
 jest.mock('../../../api', () => ({
+  uiFlags: { get: () => Promise.resolve({ course_last_stage: null }) },
   stages: {
     listAll: (...a: unknown[]) => mockStagesList(...a),
     programCalendar: () => mockProgramCalendar(),

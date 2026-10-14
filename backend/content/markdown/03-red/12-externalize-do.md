@@ -14,7 +14,7 @@ media: []
 
 ![](../images/images/image1.png)
 
-Approaching the Archetypal Wavelength from the perspective of Red means looking at what happens when the energy of your being wants to move outward. Where Beige helped you start to Inhabit your experience by building stabilizing behaviors, and Purple deepened that Inhabiting through the receptive “Feel” of sacred symbols and subtle meaning, Red shifts into a new Mode entirely: Express. In the APTITUDE progression, the six Modes—Inhabit, Express, Collaborate, Integrate, Absorb, and Be—guide us step-by-step into Whole Adepthood. And right here, in Red, we begin learning how to do something with the energy we’ve been collecting.
+Approaching the Archetypal Wavelength from the perspective of Red means looking at what happens when the energy of your being wants to move outward. Where Beige helped you start to Inhabit your experience by building stabilizing behaviors, and Purple deepened that Inhabiting through the receptive “Feel” of sacred symbols and subtle meaning, Red shifts into a new Mode entirely: Express. Across the APTITUDE course, the six Modes—Inhabit, Express, Collaborate, Integrate, Absorb, and Be—are six different ways energy can move, and you meet them one at a time. And right here, in Red, we begin learning how to do something with the energy we’ve been collecting.
 
 The Divine Masculine aspect of this Mode is crucial to understand. As always, this doesn’t point to gender roles or social identity—it refers to a quality of energy: directional, active, willing to exert force. The “Do” energy of Red is the first time we externalize the internal rhythm. It’s not about self-stabilization anymore. It’s about your impact. What you say. How you move. What you demand, allow, or reject. We’re learning how to project our own rhythms into the world in a way that is skillful, not self-destructive. Where Purple was Divine Femme “Feel,” Red is Divine Masc “Do”—and you’re going to feel that shift.
 
@@ -66,7 +66,7 @@ Carl Jung said it plainly: "Where power predominates, there love is lacking. The
 
 If you feel yourself tipping into Power-Over, slow down. Literally. Take a breath. Soften your gaze. Ask a question instead of making a statement. Make space. Let someone else's fire burn for a moment. You'll find that when you step back from the need to dominate, your power doesn't diminish—it deepens. Because now it's rooted in love.
 
-Power-With is the summit of Red. It's what happens when confidence meets compassion. And it only becomes possible when you've done the work of learning to love yourself so much that you don't need to prove anything to anyone—not even yourself.
+Power-With is the summit of Red. It's what happens when confidence meets compassion. And it shows up in the moments—never all of them—when you love yourself enough that you don't need to prove anything to anyone, not even yourself.
 
 ### 3. WITHDRAWAL
 

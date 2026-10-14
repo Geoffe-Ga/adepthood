@@ -20,13 +20,13 @@ You get the call. The test results are back. It's cancer. Treatable, but serious
 
 The old you would spiral. Catastrophize. Collapse into fear or rage or denial.
 
-The Teal you feels all of that—the fear is real, the grief is real—but you're also resting in the part of you that's *watching* the fear. You're the sky holding the storm.
+The Teal you feels all of that—the fear is real, the grief is real—but you're also in touch with the part of you that chose this life, storms included. It isn't afraid. It can be asked.
 
 You feel the sensations in your body. The tightness in your chest. The nausea. The racing thoughts. And you breathe. You return to presence. Again. And again.
 
-You're not pretending it's fine. You're not bypassing the terror. You're *with* it. Fully. But you're not *only* it. You're also the awareness that holds it.
+You're not pretending it's fine. You're not bypassing the terror. You're *with* it. Fully. But you're not *only* it. There's an older you in the room too, and it's steady.
 
-And from that space, you can think clearly. Make decisions. Ask for support. Do what needs to be done.
+And from that steadiness, you can think clearly. Make decisions. Ask for support. Do what needs to be done.
 
 This is equanimity. Not invulnerability. Just the capacity to stay present in the storm.
 
@@ -54,6 +54,6 @@ But you also notice: this doesn't *complete* you. It doesn't finally make you "e
 
 So you celebrate. Fully. And then you let it go. You don't cling. You don't make it your identity. You don't need the next achievement to maintain the high.
 
-You return to the practice. To the process. To the Witness that was here before the success and will be here after it fades.
+You return to the practice. To the walk. To the True Self that was here before the success and will be here after it fades.
 
-This is equanimity. Not self-sabotage. Not the refusal to enjoy success. Just the wisdom of impermanence. The recognition that you are not your achievements. You are the awareness in which achievements arise.
+This is equanimity. Not self-sabotage. Not the refusal to enjoy success. Just the wisdom of impermanence. The recognition that you are not your achievements. You're the one who came here to learn something, and the achievement was one lesson among many.

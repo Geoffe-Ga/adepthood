@@ -22,9 +22,9 @@ Ultraviolet is the penultimate stage before Clear Light. It's where the scaffold
 
 If Yellow and Teal were both Third Eye—two altitudes of *seeing*—Ultraviolet is the Crown. The last chakra that still has an address in the body, and the one that spends its whole time pointed at what doesn't.
 
-In Ken Wilber's Integral Theory, this corresponds to the "transpersonal" or "unified" stages—where you've integrated all previous levels and you're beginning to touch non-dual awareness. Not as a peak experience, but as a *stage*. A stable plateau.
+In Ken Wilber's Integral Theory, this is "transpersonal" territory: the capacities you've been building start to sound together, and unity stops being a peak you visit and becomes a note you can play. Not a plateau you park on—the Wavelength keeps turning—but somewhere you know how to get back to.
 
-APTITUDE calls this **Wholeness**, and specifically the recognition of **Developmental Complexity**—not hierarchy in the sense of "better than," but complexity in the sense of "requires more scaffolding." Some capacities are more complex than others. Some include more notes in the chord. Complexity describes the scaffolding required, not the value of the capacity.
+APTITUDE calls this **Being**, and its specific aspect **Unity**—and one of the things unity lets you see clearly is **Developmental Complexity**: not hierarchy in the sense of "better than," but complexity in the sense of "requires more scaffolding." Some capacities are more complex than others. Some include more notes in the chord. Complexity describes the scaffolding required, not the value of the capacity.
 
 Ultraviolet is where you stop flinching at this truth. Without guilt. Without the Green fear that recognizing complexity means devaluing simplicity.
 

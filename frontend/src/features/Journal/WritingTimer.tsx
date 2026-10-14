@@ -61,7 +61,7 @@ import {
   editorialType,
   journalLayout,
   journalSheet,
-  shadows,
+  glass,
   touchTarget,
 } from '@/design/tokens';
 import type {
@@ -93,8 +93,8 @@ export interface WritingTimerProps {
   autoStart?: boolean;
   /** Called once per finished session, however the session ended. */
   onComplete: (result: WritingSessionResult) => void;
-  /** Reports whether sibling content must clear the timer's floating rail. */
-  onFloatingChange?: (_floating: boolean) => void;
+  /** The session surface already supplies the absolute floating band. */
+  withinBand?: boolean;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
@@ -109,7 +109,7 @@ function PresetRow({
 }): React.JSX.Element {
   return (
     <View
-      style={styles.row}
+      style={[styles.row, styles.presetRow]}
       accessibilityRole="radiogroup"
       accessibilityLabel={WRITING_TIMER_PRESET_GROUP_LABEL}
       testID="writing-timer-row-presets"
@@ -171,8 +171,7 @@ function TimerControl({
  * Whichever of start / pause / resume / stop the current state offers.
  *
  * A fragment, not a row of its own: the controls sit beside the readout on the
- * pill's first row, which is what keeps the pill's height a count of rows
- * rather than a consequence of how much fits across a given phone.
+ * pill's first row, while the preset choices can reflow independently below.
  */
 function LiveTimerControls({
   view,
@@ -365,6 +364,7 @@ function useWritingConfig(minutes: number): MeditationTimerConfig {
 }
 
 interface TimerPillProps {
+  expandedRail: boolean;
   compact: boolean;
   docked: boolean;
   idle: boolean;
@@ -392,6 +392,7 @@ function TimerReadout({ view, docked }: { view: TimerView; docked: boolean }): R
 
 /** The paper pill itself, shared by its expanded and desk-side mounts. */
 function TimerPill({
+  expandedRail,
   compact,
   docked,
   idle,
@@ -407,6 +408,7 @@ function TimerPill({
       style={[
         styles.pill,
         compact ? styles.pillCompact : styles.pillExpanded,
+        !compact && expandedRail && styles.pillExpandedRail,
         docked ? styles.pillDocked : null,
       ]}
       pointerEvents="auto"
@@ -438,10 +440,12 @@ function TimerPill({
 function TimerTrack({
   compact,
   docked,
+  expandedRail,
   children,
 }: {
   compact: boolean;
   docked: boolean;
+  expandedRail: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   if (docked) {
@@ -454,7 +458,7 @@ function TimerTrack({
   if (compact) return <>{children}</>;
   return (
     <View
-      style={styles.expandedTrack}
+      style={[styles.expandedTrack, expandedRail && styles.expandedRail]}
       pointerEvents="box-none"
       testID="writing-timer-expanded-track"
     >
@@ -467,17 +471,20 @@ function TimerTrack({
 function TimerMount({
   compact,
   docked,
+  expandedRail,
   idle,
   onExpand,
+  withinBand,
   children,
 }: {
   compact: boolean;
   docked: boolean;
+  expandedRail: boolean;
   idle: boolean;
   onExpand: () => void;
+  withinBand: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
-  const floats = compact || !idle;
   const mountedPill =
     compact && idle ? (
       <TouchableOpacity
@@ -494,46 +501,54 @@ function TimerMount({
   return (
     <View
       style={[
-        floats ? styles.floatingWrapper : styles.inFlowWrapper,
+        styles.floatingWrapper,
+        withinBand && styles.bandWrapper,
         compact ? styles.floatingWrapperCompact : null,
         docked ? styles.floatingWrapperDocked : null,
       ]}
       pointerEvents="box-none"
       testID="writing-timer-wrapper"
     >
-      <TimerTrack compact={compact} docked={docked}>
+      <TimerTrack compact={compact} docked={docked} expandedRail={expandedRail}>
         {mountedPill}
       </TimerTrack>
     </View>
   );
 }
 
-/** Keep sibling clearance aligned with the timer's current mount strategy. */
-function useTimerPlacement(
-  compact: boolean,
+function useTimerActions(
   status: EngineStatus,
-  viewportWidth: number,
-  onFloatingChange: WritingTimerProps['onFloatingChange'],
-): boolean {
-  const floats = compact || status !== 'idle';
-  useEffect(() => onFloatingChange?.(floats), [floats, onFloatingChange]);
-  return compact && viewportWidth >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
+  controls: RitualControls,
+  collapse: () => void,
+  setMinutes: React.Dispatch<React.SetStateAction<number>>,
+): { chooseMinutes: (_next: number) => void; start: () => void } {
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const chooseMinutes = useCallback(
+    (next: number) => {
+      setMinutes((current) => nextDurationMinutes(statusRef.current, current, next));
+    },
+    [setMinutes],
+  );
+  const start = useCallback(() => {
+    collapse();
+    controls.start();
+  }, [collapse, controls]);
+  return { chooseMinutes, start };
 }
 
 function WritingTimer({
   initialMinutes = DEFAULT_WRITING_MINUTES,
   autoStart = false,
   onComplete,
-  onFloatingChange,
+  withinBand = false,
   deps = NO_DEPS,
 }: WritingTimerProps): React.JSX.Element {
-  const viewportWidth = useWindowDimensions().width;
   const [minutes, setMinutes] = useState(initialMinutes);
   const [state, controls] = useRitualEngine(useWritingConfig(minutes), deps);
   const { compact, collapse, expand } = useCompactPill(state.status);
-  const docked = useTimerPlacement(compact, state.status, viewportWidth, onFloatingChange);
-  const statusRef = useRef(state.status);
-  statusRef.current = state.status;
+  const desktopRail = useWindowDimensions().width >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
+  const docked = compact && desktopRail;
   const view = describeTimer({
     status: state.status,
     remainingMs: state.remainingMs,
@@ -546,17 +561,19 @@ function WritingTimer({
     controls,
     onComplete,
   });
-  const chooseMinutes = useCallback((next: number) => {
-    setMinutes((current) => nextDurationMinutes(statusRef.current, current, next));
-  }, []);
-  const start = useCallback(() => {
-    collapse();
-    controls.start();
-  }, [collapse, controls]);
+  const { chooseMinutes, start } = useTimerActions(state.status, controls, collapse, setMinutes);
   useAutoStart(autoStart, start);
   return (
-    <TimerMount compact={compact} docked={docked} idle={state.status === 'idle'} onExpand={expand}>
+    <TimerMount
+      compact={compact}
+      docked={docked}
+      expandedRail={desktopRail}
+      idle={state.status === 'idle'}
+      onExpand={expand}
+      withinBand={withinBand}
+    >
       <TimerPill
+        expandedRail={desktopRail}
         compact={compact}
         docked={docked}
         idle={state.status === 'idle'}
@@ -584,17 +601,9 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: RESONANCE_BUTTON_CLEARANCE,
   },
-  // The expanded idle choice belongs below the page in normal flow. A fixed
-  // viewport offset can land in the middle of a flex-grown textarea even when
-  // the scroll content reserves enough room at its end; flow makes the sheet
-  // yield the pill's real height instead. Running/compact shapes still use the
-  // floating rail above, so the active timer remains continuously reachable.
-  inFlowWrapper: {
-    flexShrink: 0,
-    // Keep a real seam between the clipped page viewport and the idle pill.
-    // The sheet's hairline border otherwise rounds a couple of web pixels into
-    // the next sibling even though the flex regions themselves do not overlap.
-    paddingTop: SPACING.sm,
+  bandWrapper: {
+    position: 'relative',
+    bottom: 0,
   },
   floatingWrapperCompact: {
     left: undefined,
@@ -617,13 +626,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: journalSheet.deskPaddingH,
   },
+  /** Expanded options stay on the paper's trailing edge, clear of the body. */
+  expandedRail: {
+    maxWidth: JOURNAL_SHEET_MAX_WIDTH,
+    alignSelf: 'center',
+    alignItems: 'flex-end',
+    paddingHorizontal: 0,
+  },
   /**
-   * A column of fixed-height rows, spanning the band rather than sizing itself
-   * to its contents. Deliberately NOT a wrapping row: laid out that way the
-   * readout, four presets and Start come to roughly 452dp in this face at this
-   * size, so every phone reflowed it onto two or three rows and the page
-   * reserved space for one. A column of known rows has a height that does not
-   * depend on the width it is given.
+   * Keep the readout and controls together above independently wrapping
+   * presets. The surface measures this column, so larger text can grow the
+   * reserved band without overlapping page controls.
    */
   pill: {
     flexDirection: 'column',
@@ -631,14 +644,17 @@ const styles = StyleSheet.create({
     paddingVertical: WRITING_TIMER_PILL_PADDING_V,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xl,
-    backgroundColor: colors.paper.background,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.paper.hairline,
-    ...shadows.small,
+    ...glass.pill,
+    ...glass.web,
   },
   pillExpanded: {
     width: '100%',
     maxWidth: journalLayout.pageMaxWidth,
+  },
+  pillExpandedRail: {
+    // Fit the margin and its page inset without entering the writing column.
+    width: journalLayout.marginColumnWidth + journalLayout.pageHorizontalPadding,
+    paddingHorizontal: SPACING.sm,
   },
   pillCompact: {
     minWidth: 180,
@@ -657,6 +673,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: SPACING.sm,
     height: WRITING_TIMER_ROW_HEIGHT,
+  },
+  // Larger system text may need another line; measured band clearance grows
+  // with it instead of clipping the unit or shrinking the touch targets.
+  presetRow: {
+    flexWrap: 'wrap',
+    height: 'auto',
+    minHeight: WRITING_TIMER_ROW_HEIGHT,
   },
   rowDocked: {
     flexDirection: 'column',

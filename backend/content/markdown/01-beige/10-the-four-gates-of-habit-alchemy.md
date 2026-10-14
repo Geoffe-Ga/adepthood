@@ -80,6 +80,6 @@ Hide your vape. Leave your phone in the car. Add friction between you and your i
 
 That’s what this whole thing is about: moving from unconscious reactivity to conscious ritual.
 
-These Four Gates aren’t just habit hacks—they're portals to becoming the person you already are, deep down, waiting to melt off the residue and obscurations that have clouded the bright, warm, abundant, loving Sun that is your True Self.
+These Four Gates are habit hacks, sure. They’re also how you scrape the soot off the glass so the Sun that was always burning in there—the warm, bright thing you already are, deep down, your True Self—can warm the room again.
 
 ------------------------------------------------------------------------

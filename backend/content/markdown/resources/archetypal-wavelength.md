@@ -132,9 +132,9 @@ by Rising energy. The first intoxicating flush of a new romance, the
 giddy momentum of a creative surge, the electric charge of epiphany that
 feels more like remembering the truth than uncovering it.
 
-APTITUDE is full of strategies for
-honoring this optimization-focused mood state
-with appropriate effort and self-organization.
+APTITUDE is full of ways to honor this
+revved-up mood—put the energy to work, make a plan,
+build the thing—without burning the house down.
 You are pulled forward by enthusiasm, but
 enthusiasm cannot sustain you forever. In fact, nothing can. Still,
 before the fall, is the Peak.
@@ -254,15 +254,16 @@ Wavelength recognizes a deeper, older truth: even after a piece of the
 narrative that seems like a complete story is over, the cycle continues.
 
 From this perspective, with this broader lens, the
-polycrisis isn’t a cataclysmic end, but the prelude to a new and better
-world.
+polycrisis isn’t necessarily the end of the story—it may be the
+Bottoming Out before something else. What that something is depends
+partly on what we do down here.
 
 APTITUDE teaches that
 Restoration isn’t a re-treading of the glory of
-the past, but a new stage in an infinite spiral toward
-actualization.
+the past, but the next turn of a spiral that never stops
+turning.
 
-### APTITUDE Empowers Temperance and Equanimity in Relating to Life’s Many Varied Archetypal Wavelengths
+### Learning to Surf Every Size of Wave
 
 To surf this wave is to dance with the universe itself,
 to move with the pulse of being rather than against it. Those who fight

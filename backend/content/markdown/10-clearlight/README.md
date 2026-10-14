@@ -19,7 +19,7 @@ This folder contains the modular sections for the CLEARLIGHT stage of the APTITU
 - [The 90-Minute Sit: The Practice of Adepts](./12-the-90-minute-sit-the-practice-of-adepts.md)
 - [The Bodhisattva Vow: Clear Light as Service](./13-the-bodhisattva-vow-clear-light-as-service.md)
 - [What Clear Light Feels Like: A Phenomenological Account](./14-what-clear-light-feels-like-a-phenomenological-account.md)
-- [The Final Integration: All Stages, Always Available](./15-the-final-integration-all-stages-always-available.md)
+- [The Whole Instrument: All Stages, Always Available](./15-the-final-integration-all-stages-always-available.md)
 - [The Practice Never Ends: Maintenance and Deepening](./16-the-practice-never-ends-maintenance-and-deepening.md)
 - [The Ecology of Practice: Sustaining 90 Minutes for Life](./17-the-ecology-of-practice-sustaining-90-minutes-for-life.md)
 - [The Transmission: How Realization Spreads](./18-the-transmission-how-realization-spreads.md)

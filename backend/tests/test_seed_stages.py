@@ -222,8 +222,7 @@ _GOLDEN_STAGE_DEFINITIONS: list[dict[str, str | int]] = [
         "relationship_to_free_will": "Whole Adept",
         "free_will_description": (
             "At Clear Light, the question of Free Will dissolves. Not because it's been answered, "
-            'but because it\'s been seen through. There is no "you" to have free will. And yet, '
-            "choice is obviously happening. Actions arise. Intentions form. Life unfolds."
+            "but because it's been seen through."
         ),
     },
 ]
@@ -369,7 +368,7 @@ _CONTENT_DIR = Path(__file__).resolve().parents[1] / "content"
 _ARTIFACT_PATH = (
     Path(__file__).resolve().parents[1] / "src" / "curriculum" / "stage_correspondence.json"
 )
-_PINNED_SHA = "9d0f8962ef7b2f096ed1b5bb5d031df79e309d20"  # pragma: allowlist secret
+_PINNED_SHA = "b06a58eec8944d9ef750a48da59a1c6e87b261b7"  # pragma: allowlist secret
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 

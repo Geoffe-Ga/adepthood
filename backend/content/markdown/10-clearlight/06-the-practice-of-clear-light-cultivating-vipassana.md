@@ -112,7 +112,7 @@ You'll notice: there's thinking, but no thinker. There's awareness, but no one w
 
 This is *anatta*. Non-self. The deepest characteristic.
 
-When you see this clearly—not as philosophy, but as direct experience—everything shifts. The identification dissolves. And you recognize: you were never separate. You were always this vast, open, luminous awareness.
+When you see this clearly—not as philosophy, but as direct experience—something shifts. The identification loosens. For a moment there's no one separate in here. Then the "I" re-forms, as it does, and now you've seen that it forms.
 
 **The Phenomenology of Anatta:**
 
@@ -152,9 +152,9 @@ This is the most liberating and the most terrifying realization: *You don't exis
 
 Not in the way you thought. There's no separate, solid, continuous self. There's just a flow of experience, arising and passing in awareness.
 
-And paradoxically, this is not annihilation. This is freedom. Because if there's no self, then there's no self to protect, to defend, to improve. There's just life, living itself. And you are that. All of it. Not the small separate you—the vast, boundless you that is everything.
+And paradoxically, this is not annihilation. This is freedom. Because if there's no self, then there's no self to protect, to defend, to improve. There's just life, living itself—and no fixed line where "you" stop and it starts. Not oneness either; just no separate thing to find.
 
-This is anatta. And when it's seen, liberation is inevitable.
+This is anatta. Seeing it once doesn't settle anything—you'll see it, lose it, and see it again. That's the practice.
 
 **5. Rest in Clear Light (Final 10+ min)**
 
@@ -176,7 +176,7 @@ You're just... here. Completely. As you've always been. As you'll always be.
 
 **Why Vipassana?**
 
-Because concentration alone doesn't liberate. You can access jhanic bliss and still be caught in the illusion of self. Vipassana is what cuts through. It's the sword that severs identification. And once that identification is seen through, you're free.
+Because concentration alone doesn't liberate. You can access jhanic bliss and still be caught in the illusion of self. Vipassana is what cuts through. It's the sword that cuts identification—and identification grows back, so you keep cutting. Each cut, a little more freedom.
 
 Not free from life. Free *as* life.
 

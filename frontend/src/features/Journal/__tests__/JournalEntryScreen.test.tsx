@@ -499,10 +499,10 @@ describe('JournalEntryScreen', () => {
     expect(getByTestId('journal-margin-column')).toBeTruthy();
   });
 
-  it('reserves bottom clearance only while the writing timer floats', async () => {
+  it('reserves bottom clearance in every writing timer state', async () => {
     const { getByTestId } = renderScreen();
     const idlePage = StyleSheet.flatten(getByTestId('journal-page').props.style);
-    expect(idlePage.paddingBottom).toBeUndefined();
+    expect(idlePage.paddingBottom).toBe(WRITING_TIMER_CLEARANCE);
 
     fireEvent.press(getByTestId('writing-timer-start'));
 
