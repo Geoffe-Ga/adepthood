@@ -1,5 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { bytesToHex } from '@noble/hashes/utils.js';
+import { validateMnemonic } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english.js';
 
 import { EnvelopeError, type EnvelopeFailure } from '../errors';
 import * as kdf from '../kdf';
@@ -20,6 +22,8 @@ const OWNER = 'owner-a';
 const PASSPHRASE = 'correct horse battery staple, by the creek';
 const WRAP_VERSION = 2;
 const KEY_SAMPLE_SIZE = 64;
+const BIP39_WORD_COUNT = 24;
+const BROKEN_CHECKSUM_PHRASE = Array.from({ length: BIP39_WORD_COUNT }, () => 'abandon').join(' ');
 
 async function failureOf(action: () => Promise<unknown>): Promise<EnvelopeError> {
   try {
@@ -174,19 +178,24 @@ describe('key wrapping', () => {
   });
 
   it('a recovery phrase with a broken checksum is refused before derivation', async () => {
-    const { recoveryPhrase, wrapped } = await enrolFixture();
-    const words = recoveryPhrase.split(' ');
-    const broken = [...words.slice(0, -1), words.at(-1) === 'zoo' ? 'zone' : 'zoo'].join(' ');
+    const { wrapped } = await enrolFixture();
+    // Fixed, not random: 24 x "abandon" is the all-zero-entropy phrase with the
+    // wrong final word (the valid one ends in "art"), so it fails the checksum
+    // on every run. The precondition proves it, so the test cannot pass by luck.
+    expect(validateMnemonic(BROKEN_CHECKSUM_PHRASE, wordlist)).toBe(false);
+    const derive = jest.spyOn(kdf, 'deriveArgon2id');
 
     await expectFailure(
       () =>
         unwrapWithRecoveryPhrase(wrapped.recoveryPhrase, {
           ownerId: OWNER,
-          recoveryPhrase: broken,
+          recoveryPhrase: BROKEN_CHECKSUM_PHRASE,
           minWrapVersion: WRAP_VERSION,
         }),
       'invalid_recovery_phrase',
     );
+    expect(derive).not.toHaveBeenCalled();
+    derive.mockRestore();
   });
 
   it("another owner's binding fails closed", async () => {
