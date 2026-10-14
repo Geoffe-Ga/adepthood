@@ -81,6 +81,7 @@ class SiteResourceMeta:
     slug: str
     title: str
     description: str
+    order: int
 
 
 @dataclass(frozen=True)
@@ -329,19 +330,24 @@ class ContentRepository:
         )
 
     def list_resources(self) -> list[SiteResourceMeta]:
-        """Every site resource, in manifest order (the UI display order).
+        """Every site resource in Start Here reading order (issue #3148).
 
+        Sorted by the manifest's 1-based ``order``, not by list position:
+        upstream lists resources alphabetically by slug, so position carries
+        no meaning. The slug breaks a tie so the order is deterministic.
         Direct ``raw[...]`` access is safe: the schema requires every
         resource field and the manifest was validated at construction.
         """
-        return [
+        resources = [
             SiteResourceMeta(
                 slug=raw["slug"],
                 title=raw["title"],
                 description=raw["description"],
+                order=raw["order"],
             )
             for raw in self._resources.values()
         ]
+        return sorted(resources, key=lambda r: (r.order, r.slug))
 
     def read_resource_body(self, slug: str) -> ContentBody:
         """Raw Markdown + title for a free site resource, by slug."""
