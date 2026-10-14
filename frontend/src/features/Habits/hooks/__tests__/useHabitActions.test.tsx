@@ -5,6 +5,7 @@
  * and the persisted snapshot must roll back, and the milestone toast
  * must NOT fire.
  */
+
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 import React from 'react';
@@ -52,6 +53,10 @@ jest.mock('../../../../api', () => {
 });
 
 jest.mock('../../../../storage/habitStorage', () => ({
+  capturePendingCheckInScope: jest.requireActual<typeof HabitStorageModule>(
+    '../../../../storage/habitStorage',
+  ).capturePendingCheckInScope,
+  removePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   saveHabits: jest.fn(() => Promise.resolve(undefined)),
   loadHabits: jest.fn(() => Promise.resolve(null)),
   loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
@@ -88,6 +93,7 @@ import {
   habits as habitsApi,
 } from '../../../../api';
 import { colors } from '../../../../design/tokens';
+import type * as HabitStorageModule from '../../../../storage/habitStorage';
 import { saveHabits, savePendingCheckIn } from '../../../../storage/habitStorage';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import type { Habit } from '../../Habits.types';

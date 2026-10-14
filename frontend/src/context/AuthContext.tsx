@@ -28,7 +28,14 @@ import { clearFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
 import { clearAllNotificationData } from '@/storage/notificationStorage';
-import { loadDeviceOwner, parseUserId, saveDeviceOwner, setActiveUser } from '@/storage/userScope';
+import { setUserTimezonePending } from '@/storage/userCalendar';
+import {
+  getActiveUser,
+  loadDeviceOwner,
+  parseUserId,
+  saveDeviceOwner,
+  setActiveUser,
+} from '@/storage/userScope';
 import { resetAllStores } from '@/store/registry';
 import { detectDeviceTimezone } from '@/utils/dateUtils';
 import {
@@ -119,6 +126,8 @@ interface AuthContextValue {
    * `backfillResumedTimezone` returns.
    */
   userTimezone: string;
+  /** False only while the calendar is a provisional bootstrap fallback. */
+  userTimezoneReady: boolean;
   /**
    * Push a server-confirmed IANA zone into ``userTimezone`` (issue #261).
    * Call this ONLY with the zone echoed back by ``PUT /users/me/timezone``
@@ -248,6 +257,7 @@ interface AuthMutators {
   setToken: React.Dispatch<React.SetStateAction<string | null>>;
   setAuthStatus: React.Dispatch<React.SetStateAction<AuthStatus>>;
   setUserTimezone: React.Dispatch<React.SetStateAction<string>>;
+  setUserTimezoneReady: (_ready: boolean) => void;
 }
 
 /**
@@ -264,6 +274,7 @@ interface AuthMutators {
 function adoptUserTimezone(mutators: AuthMutators, timezone: string | undefined): void {
   const zone = timezone ?? 'UTC';
   mutators.setUserTimezone(zone);
+  mutators.setUserTimezoneReady(true);
   void saveUserTimezone(zone);
 }
 
@@ -603,6 +614,7 @@ async function bootstrapStoredToken(
   mutators: AuthMutators,
   tokenRef: React.MutableRefObject<string | null>,
 ): Promise<void> {
+  mutators.setUserTimezoneReady(false);
   if (await isLogoutPending()) {
     await drainPendingLogout(mutators);
     return;
@@ -614,6 +626,7 @@ async function bootstrapStoredToken(
     await scopeResumedSession(stored);
     const cachedZone = await loadUserTimezone();
     if (cachedZone !== null) mutators.setUserTimezone(cachedZone);
+    mutators.setUserTimezoneReady(cachedZone !== null);
     // The ref is what every identity guard compares against (and what the API
     // layer's token getter reads), and it is otherwise only written during
     // render. Claiming the resumed token here rather than a render later
@@ -857,6 +870,7 @@ async function tearDownSession(mutators: AuthMutators, where: string): Promise<v
   setActiveUser(null);
   mutators.setToken(null);
   mutators.setUserTimezone('UTC');
+  mutators.setUserTimezoneReady(false);
   mutators.setAuthStatus('anonymous');
 }
 
@@ -920,20 +934,34 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
   );
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [token, setToken] = useState<string | null>(null);
-  const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
+function useUserCalendar() {
   // ``userTimezone`` defaults to ``"UTC"`` so consumers never see a null
   // value -- the same default the user-local helpers fall back to when
   // the column is unset, so behavior is identical across the brief
   // pre-auth window.
   const [userTimezone, setUserTimezone] = useState<string>('UTC');
+  const [userTimezoneReady, setReady] = useState(false);
+  const setUserTimezoneReady = useCallback((ready: boolean) => {
+    setUserTimezonePending(getActiveUser(), !ready);
+    setReady(ready);
+  }, []);
+  return { userTimezone, setUserTimezone, userTimezoneReady, setUserTimezoneReady };
+}
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [token, setToken] = useState<string | null>(null);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
+  const { userTimezone, setUserTimezone, userTimezoneReady, setUserTimezoneReady } =
+    useUserCalendar();
 
   const tokenRef = React.useRef<string | null>(null);
   tokenRef.current = token;
 
   // Stable handle so effects depending on the mutators don't thrash.
-  const mutators = useMemo<AuthMutators>(() => ({ setToken, setAuthStatus, setUserTimezone }), []);
+  const mutators = useMemo<AuthMutators>(
+    () => ({ setToken, setAuthStatus, setUserTimezone, setUserTimezoneReady }),
+    [setUserTimezone, setUserTimezoneReady],
+  );
 
   // ``applyNewToken`` accepts the server's stored timezone from the
   // refresh response so the cold-start → proactive-refresh path keeps
@@ -982,10 +1010,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       token,
       authStatus,
       userTimezone,
+      userTimezoneReady,
       setUserTimezone: adoptCorrectedTimezone,
       ...actions,
     }),
-    [token, authStatus, userTimezone, adoptCorrectedTimezone, actions],
+    [token, authStatus, userTimezone, userTimezoneReady, adoptCorrectedTimezone, actions],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

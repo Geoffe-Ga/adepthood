@@ -33,17 +33,37 @@ jest.mock('../../../../api', () => ({
   },
 }));
 
-jest.mock('../../../../storage/habitStorage', () => ({
-  saveHabits: jest.fn(() => Promise.resolve(undefined)),
-  loadHabits: jest.fn(() => Promise.resolve(null)),
-  savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
-  loadPendingCheckIns: jest.fn(() => Promise.resolve([])),
-  clearPendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
-  replacePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
-  recordDroppedCheckIn: jest.fn(() => Promise.resolve(undefined)),
-  loadDroppedCheckIns: jest.fn(() => Promise.resolve([])),
-  clearDroppedCheckIns: jest.fn(() => Promise.resolve(undefined)),
-}));
+jest.mock('../../../../storage/habitStorage', () => {
+  const loadPending = jest.fn(() => Promise.resolve([]));
+  const clearPending = jest.fn(() => Promise.resolve(undefined));
+  const replacePending = jest.fn((_entries: unknown[]) => Promise.resolve(undefined));
+  return {
+    capturePendingCheckInScope: jest.requireActual<typeof HabitStorageModule>(
+      '../../../../storage/habitStorage',
+    ).capturePendingCheckInScope,
+    saveHabits: jest.fn(() => Promise.resolve(undefined)),
+    loadHabits: jest.fn(() => Promise.resolve(null)),
+    savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
+    loadPendingCheckIns: loadPending,
+    clearPendingCheckIns: clearPending,
+    replacePendingCheckIns: replacePending,
+    // These older policy tests assert the resulting queue. Translate selective
+    // removal into that result; replayRace tests exercise real storage races.
+    removePendingCheckIns: jest.fn(async (completed: unknown[]) => {
+      const pending = (await loadPending.mock.results.at(-1)?.value) as unknown[];
+      const remaining = [...pending];
+      for (const entry of completed) {
+        const index = remaining.findIndex((item) => JSON.stringify(item) === JSON.stringify(entry));
+        if (index >= 0) remaining.splice(index, 1);
+      }
+      if (remaining.length === 0) await clearPending();
+      else await replacePending(remaining);
+    }),
+    recordDroppedCheckIn: jest.fn(() => Promise.resolve(undefined)),
+    loadDroppedCheckIns: jest.fn(() => Promise.resolve([])),
+    clearDroppedCheckIns: jest.fn(() => Promise.resolve(undefined)),
+  };
+});
 
 // A stateful in-memory stand-in for the replay head's out-of-band retry record
 // (#2473). Stateful rather than a bare ``jest.fn`` so a test can seed the record
@@ -91,6 +111,7 @@ import {
   goalGroups as goalGroupsApi,
   goals as goalsApi,
 } from '../../../../api';
+import type * as HabitStorageModule from '../../../../storage/habitStorage';
 import {
   saveHabits,
   loadHabits,
