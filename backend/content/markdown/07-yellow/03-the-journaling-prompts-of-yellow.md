@@ -16,7 +16,7 @@ Yellow's journaling is integrative. You're not exploring one dimension (like Ora
 
 This is systems thinking applied to the self. And it requires rigor.
 
-**Prompt 1: Identify Patterns Across Your Life (At least 4x per week)**
+**Prompt 1: Identify Patterns Across Your Life**
 
 Look back over your life—across relationships, projects, challenges, transitions. What patterns keep repeating?
 
@@ -34,7 +34,7 @@ Finally, ask: *What would it look like to honor the need this pattern is trying 
 
 This is integrative journaling. You're not just seeing the pattern. You're *understanding the architecture* of it. And that understanding is the first step toward choice.
 
-**Prompt 2: Map Your Current State to the Archetypal Wavelength (At least 4x per week)**
+**Prompt 2: Map Your Current State to the Archetypal Wavelength**
 
 You're always somewhere on the Wavelength. Rising, Peaking, Withdrawing, Diminishing, Bottoming Out, or Restoring. Yellow asks you to *track* it consciously.
 
@@ -42,11 +42,11 @@ Each day, journal about where you are. What phase are you in—physically, emoti
 
 Then ask: What's the medicine (Rx) for this phase? What's the poison (OD) I need to avoid? How can I move through this phase skillfully?
 
-For example: "I'm in Diminishing creatively. The medicine is Reorienting—stepping back to reassess the project. The poison is Dithering—endlessly tweaking without committing. Today, I'll pause, reflect, and set a clear intention for the next step."
+For example: "I'm in Diminishing creatively. The medicine is Establish—settling on the one structure that will actually hold the project and putting it on the calendar. The poison is Confusion—re-opening every decision until nothing holds. Today, I'll pick the plan, write it on the wall, and leave it there."
 
 This is practicing *real-time integration*. You're not just living the Wavelength unconsciously. You're *surfing* it. Collaborating with it. Using your awareness to navigate it more skillfully.
 
-**Prompt 3: Reflect on How All Models Are Wrong But Some Are Useful (At least 4x per week)**
+**Prompt 3: Reflect on How All Models Are Wrong But Some Are Useful**
 
 Yellow is the stage that can hold paradox. One of the core paradoxes is: *Every model is incomplete, and models are still essential*.
 
@@ -58,7 +58,7 @@ Pick a model you've been using—Spiral Dynamics, the Enneagram, attachment theo
 
 This practice trains you to use frameworks without being imprisoned by them. To appreciate the map without mistaking it for the territory. To integrate multiple models without needing them to agree.
 
-**Prompt 4: Write About Your Relationship to Determinism and Agency (At least 4x per week)**
+**Prompt 4: Write About Your Relationship to Determinism and Agency**
 
 Yellow is where the free will question gets personal. Journal about:
 - In what areas of my life do I feel I have choice?

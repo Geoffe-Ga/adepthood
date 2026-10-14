@@ -3,8 +3,8 @@
   "source": {
     "csv_path": "google_docs/database_of_course_curriculum/APTITUDE Complete Map.csv",
     "repo": "Geoffe-Ga/aptitude-course",
-    "sha": "9d0f8962ef7b2f096ed1b5bb5d031df79e309d20",
-    "sha256": "f6ab97c693ba0b455bd00973295f9f08959cffd7edf3fbb6a78668616eec4dde"
+    "sha": "c9d1fb8e76cff46d0f2787e0488e3fe7ebeedfea",
+    "sha256": "b9b102370ac9295b3e5a2820b3c35ede6d1413a2216681026e10879f75c0cfec"
   },
   "stages": [
     {
@@ -119,7 +119,7 @@
       "aspect": "Emptiness",
       "category": "Awareness",
       "divine_gender_polarity": "Divine Hermaphrodite",
-      "free_will_description": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through. There is no \"you\" to have free will. And yet, choice is obviously happening. Actions arise. Intentions form. Life unfolds.",
+      "free_will_description": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through.",
       "growing_up_stage": "Pure Awareness",
       "id": "clearlight",
       "relationship_to_free_will": "Whole Adept",
@@ -138,21 +138,14 @@
     },
     {
       "authority": "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md",
-      "csv_value": "Transcendent Wisdom",
+      "csv_value": "True Self Wisdom",
       "field": "aspect",
       "stage_id": "teal",
       "value": "True Self Connection"
     },
     {
-      "authority": "markdown/08-teal/04-the-relationship-to-free-will-at-teal-true-self-embodier.md",
-      "csv_value": "Adept",
-      "field": "relationship_to_free_will",
-      "stage_id": "teal",
-      "value": "True Self Embodier"
-    },
-    {
       "authority": "markdown/01-beige/04-the-relationship-to-free-will-at-beige.md",
-      "csv_value": "Individuals are unaware of the concept of free will. Their actions are purely reactive and instinctual, driven by basic survival needs. This is the bottom of Maslow's Pyramid, the Root Chakra, the first stage Piaget's cognitive development or step one of Erikson's psychosocial development etc.",
+      "csv_value": "When Beige is the loudest note, there's no felt question of free will: action is reactive and instinctual, steered by survival needs. This is the Root Chakra, the base of Maslow's pyramid, Piaget's first stage, Erikson's first task—the ground every other capacity stands on, not the bottom of a ranking.",
       "field": "free_will_description",
       "stage_id": "beige",
       "value": "When we first move through Beige we operate like a Biological Machine—a bundle of reflexes, needs, cravings, and instincts. Basically, a baby. An addict deep in the territory of abuse. A victim of trauma, deprivation, or circumstance struggling to survive. It’s not something to feel guilty about."
@@ -186,25 +179,18 @@
       "value": "Yellow is where you start to see the forces. Where you develop enough metacognitive capacity to observe your own patterns as they arise. And from that observation, you gain the smallest sliver of space—the gap between impulse and action. And in that gap, choice becomes possible."
     },
     {
-      "authority": "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md",
-      "csv_value": "Nonduality",
-      "field": "growing_up_stage",
-      "stage_id": "teal",
-      "value": "True Self Connection"
-    },
-    {
       "authority": "markdown/08-teal/04-the-relationship-to-free-will-at-teal-true-self-embodier.md",
-      "csv_value": "Spiritual development that leads to an experience of the nondual nature of the Kosmos that allows the Adept to burn off karma, develop nonreactivity, break unhealthy and ineffective patterns, escape samsara and unbridle from determinism effectively.",
+      "csv_value": "Connection with the True Self—the Monad, the Higher Self, the eternal part of you that chose to incarnate. Free Will here means getting quiet enough to hear that deeper knowing and letting it steer: breaking patterns that reasoning alone couldn't break, and unbridling from determinism by acting from what you actually are rather than what you were conditioned to be.",
       "field": "free_will_description",
       "stage_id": "teal",
       "value": "The part of you that chose to incarnate into these conditions. The part that has a purpose, a mission, a knowing that the personality cannot access through effort alone."
     },
     {
       "authority": "markdown/10-clearlight/04-the-relationship-to-free-will-at-clear-light-adept.md",
-      "csv_value": "There is no longer an individual who can have Free Will. This body becomes a perfect instrument of the evolution of consciousness, an empty Nobody who simply does the perfect thing in every situation—the thing that will result in the most spiritual growth for all involved.",
+      "csv_value": "The question of who is choosing loosens. When nobody is defending a self, the body becomes a lighter instrument—an empty Nobody doing what the moment actually needs, for everyone involved. The Wavelength still turns, so this is a capacity you keep returning to, not a finish line.",
       "field": "free_will_description",
       "stage_id": "clearlight",
-      "value": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through. There is no \"you\" to have free will. And yet, choice is obviously happening. Actions arise. Intentions form. Life unfolds."
+      "value": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through."
     }
   ]
 }

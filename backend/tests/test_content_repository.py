@@ -54,6 +54,7 @@ _VALID_MANIFEST: dict[str, Any] = {
     ],
     "site_resources": [
         {
+            "order": 1,
             "slug": "getting-started",
             "title": "Getting Started",
             "description": "Orientation guide.",

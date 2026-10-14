@@ -94,6 +94,15 @@ per-phase manifestation copy are pulled from two different sources:
   artifact (see "Consumers"); this dataset's copy of them is held equal to it,
   field by field for every stage, by `backend/tests/test_stage_correspondence.py`
   (#2667) until #2666 retires it.
+- The `c9d1fb8` re-pin (content-v2026.10.14, adepthood #3136) carried the
+  upstream canon pass (aptitude-course #70) into the vendored Complete Map
+  CSV, so Stage 8's `relationship_to_free_will` ("True Self Embodier") and
+  `growing_up_stage` ("True Self Connection") now come from the CSV itself and
+  their supersessions retired as no-ops; the remaining Teal `aspect` override
+  ("True Self Connection" over the CSV's "True Self Wisdom") and the three
+  free-will-description overrides whose CSV sentences were de-laddered
+  upstream (Stages 1, 8, 10) had their `csv_value` refreshed. Stage 10's
+  quoted span shortened to the sentence the re-voiced chapter still carries.
 - `free_will_descriptions_source` — Stages 1, 3, 4, 6, 7, 8 and 10 carry the
   `free_will_description` (and Stage 8 the `growing_up_stage`) that the
   generated `stage_correspondence.json` ships: verbatim spans of the vendored

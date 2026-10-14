@@ -68,12 +68,14 @@ _MANIFEST: dict[str, Any] = {
     ],
     "site_resources": [
         {
+            "order": 1,
             "slug": "about",
             "title": "About Adepthood",
             "description": "What this is.",
             "path": "markdown/site/about.md",
         },
         {
+            "order": 2,
             "slug": "aptitude-stages",
             "title": "APTITUDE Stages",
             "description": "The stage map.",

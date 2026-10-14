@@ -24,9 +24,9 @@ A convention is 10-30 seconds. Three breaths. Feeling your feet. A moment of gra
 
 Do five conventions a day and that's 2-3 minutes of presence practice woven into ordinary life. Over a week: 15-20 minutes. Over a month: an hour. Over a year: 12+ hours of micro-meditation, embedded in your daily routine, requiring almost no willpower.
 
-**3. They Anchor the Witness**
+**3. They Keep the Line Open**
 
-Each convention is a reminder: *Oh right. I'm here. I'm aware.* That recognition—even for 10 seconds—strengthens the Witness. Over time, these micro-moments compound into a baseline of presence.
+Each convention is a reminder: *Oh right. I'm here. There's more of me than the to-do list.* That check-in—even for 10 seconds—keeps the line to your True Self warm. Over time, these micro-moments add up to a presence you can find more often, not one you never lose.
 
 **Examples of Baby Waterfall Conventions:**
 

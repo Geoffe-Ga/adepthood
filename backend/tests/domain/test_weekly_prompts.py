@@ -46,6 +46,7 @@ _BEIGE_PROMPT_COUNT = 3
 _RED_STAGE_NUMBER = 3
 _RED_FIRST_WEEK = 7
 _ORANGE_STAGE_NUMBER = 5
+_BLUE_STAGE_NUMBER = 4
 
 # Each stage's first program week, in stage order: eight three-week stages
 # then two six-week ones.
@@ -196,11 +197,21 @@ def test_stage_prompts_returns_beiges_three() -> None:
 
 
 def test_stage_prompts_carries_the_cadence_the_chapter_states() -> None:
-    """Cadence is opaque display prose, passed through from the content."""
-    stage = stage_prompts(_ORANGE_STAGE_NUMBER)
+    """Cadence is opaque display prose, passed through from the content.
 
-    assert stage is not None
-    assert [p.cadence for p in stage.prompts] == ["At least 4x per week"] * 4
+    Orange's four headlines state no cadence at all since
+    content-v2026.10.14 (aptitude-course#73 ruled every "4x per week" a
+    typo), so each passes through as ``None``; Blue's fourth still states
+    one, which is what proves the pass-through rather than a parser that
+    cannot find cadences.
+    """
+    orange = stage_prompts(_ORANGE_STAGE_NUMBER)
+    blue = stage_prompts(_BLUE_STAGE_NUMBER)
+
+    assert orange is not None
+    assert blue is not None
+    assert [p.cadence for p in orange.prompts] == [None] * 4
+    assert blue.prompts[3].cadence == "At least 2x per week"
 
 
 def test_stage_prompts_first_week_tiles_the_whole_program() -> None:

@@ -42,9 +42,9 @@ how to swim in the mystical without drowning in
 psychosis.
 
 More than anything else, to me, Liminal Creeps
-represent an untapped resource of—typically
+are a crowd of—typically
 neurodivergent—seekers who are ready to be
-finders. Cast-aside shamans who I hope can
+finders, and almost nobody is talking to them. Cast-aside shamans who I hope can
 co-lead ourselves through the APTITUDE framework toward re-integration
 with our meatspace communities. Because it’s only by being deeply
 embedded in our physical communities that our awakened insights can be
@@ -55,8 +55,8 @@ the climate, political, inequality, loneliness, and meaning crises.
 
 There are more. In fact, I’m sure you have one you
 care about above all others. One that keeps you up at night. APTITUDE
-aims to impart the internal resources that allow you to maximally impact
-the issues that leave you most concerned.
+wants to give you enough inner steadiness that you can actually show up
+for that one—and keep showing up.
 
 After all, the list of crises goes on and on, and it
 clearly demands that each of us contribute our unique

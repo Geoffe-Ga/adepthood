@@ -14,7 +14,7 @@ media: []
 
 Although the 5-4-3-2-1 technique is like a great bit of Pratyahara (or yogic “turning inward”), many people find it hard to remember the order or keep the numbers straight.
 
-That extra bit of thinking is part of what grounds you, and employing patience toward it will definitely lower your activation level before you shoot into space, but as with all the Stages, I’ll offer some alternative Practices so you can choose what suits you best.
+That extra bit of thinking is part of what grounds you, and being patient with it will take some of the charge out before you shoot into space, but as with all the Stages, I’ll offer some alternative Practices so you can choose what suits you best.
 
 - Square - Circle - Triangle
   x5: Find things that are those shapes in the room you’re in. Go in a cycle 5 times.

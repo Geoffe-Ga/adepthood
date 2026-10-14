@@ -52,8 +52,9 @@ def test_example_covers_the_contract_surface(example: dict[str, Any]) -> None:
     assert len(example["chapters"]) == 2
     assert len({c["stage"] for c in example["chapters"]}) == 1
     assert len(example["site_resources"]) == 1
-    # schema_version 1.2.0: additive stage_intros[] (1.1.0) + site_resource.media.
-    assert example["schema_version"] == "1.2.0"
+    # schema_version 1.3.0: additive stage_intros[] (1.1.0) + site_resource.media
+    # (1.2.0) + the required site_resource.order (1.3.0, aptitude-course#75).
+    assert example["schema_version"] == "1.3.0"
     assert len(example["stage_intros"]) == 1
     major, minor, patch = example["schema_version"].split(".")
     assert all(part.isdigit() for part in (major, minor, patch))
@@ -103,6 +104,18 @@ def test_site_resource_media_is_optional(
         pytest.param(lambda m: m["chapters"][0].update(release_day=-1), id="negative release_day"),
         pytest.param(lambda m: m.update(surprise_field=True), id="unknown top-level field"),
         pytest.param(lambda m: m["site_resources"][0].pop("slug"), id="site resource missing slug"),
+        pytest.param(
+            lambda m: m["site_resources"][0].pop("order"),
+            id="site resource missing order (schema 1.3.0)",
+        ),
+        pytest.param(
+            lambda m: m["site_resources"][0].update(order=0),
+            id="site resource order below 1",
+        ),
+        pytest.param(
+            lambda m: m["site_resources"][0].update(order="1"),
+            id="site resource order not an integer",
+        ),
         pytest.param(
             lambda m: m["site_resources"][0].update(extra=True),
             id="site resource unknown field",

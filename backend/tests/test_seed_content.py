@@ -37,8 +37,10 @@ from services.content_repository import (
 # ASYNC240) so the real vendored content dir is reusable across tests.
 _VENDORED_CONTENT_DIR = Path(__file__).resolve().parent.parent / "content"
 
-# Stage 1 (Beige) ships exactly 17 chapters in the vendored manifest.
-_VENDORED_STAGE_ONE_CHAPTER_COUNT = 17
+# Stage 1 (Beige) ships exactly 16 chapters in the vendored manifest
+# (17 until content-v2026.10.14 moved Energy Scaffolding into Start Here,
+# aptitude-course#75).
+_VENDORED_STAGE_ONE_CHAPTER_COUNT = 16
 
 
 def _chapter(

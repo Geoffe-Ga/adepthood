@@ -30,13 +30,13 @@ You still feel grief when you lose someone. Anger when you witness injustice. Fe
 
 But again, the relationship shifts. The emotions move through you like weather. They don't stick. They don't define you. You're the sky, not the storm.
 
-And because you're not resisting the emotion or grasping at it, it completes faster. Grief that used to last weeks might last hours. Anger that used to consume you might pass in minutes.
+And because you're resisting it less, it often moves through faster. Not always. Grief takes the time grief takes—but you're less likely to add a second grief on top, about the first.
 
-**Existential Suffering Dissolves**
+**Existential Suffering Loosens Its Grip**
 
 This is the suffering the Buddha was talking about: *dukkha*. The fundamental dissatisfaction that comes from clinging, from wanting things to be different than they are, from identifying with the constructed self.
 
-That suffering? It *does* end. Or more accurately, it becomes optional.
+That suffering? It loosens. Not once and for all—it comes back every time you grab—but you've seen the grabbing, and you can let go sooner.
 
 You still have preferences. You still want things. But you're not *attached* to getting them. You hold your desires lightly. And when they're not met, you don't collapse.
 

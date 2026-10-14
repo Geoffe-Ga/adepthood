@@ -862,7 +862,7 @@ async def test_begin_again_second_loop_increments_to_cycle_3(
 # ── GET /stages/correspondence (#2665) ─────────────────────────────────
 
 _CORRESPONDENCE_PATH = "/stages/correspondence"
-_PINNED_CONTENT_SHA = "9d0f8962ef7b2f096ed1b5bb5d031df79e309d20"  # pragma: allowlist secret
+_PINNED_CONTENT_SHA = "c9d1fb8e76cff46d0f2787e0488e3fe7ebeedfea"  # pragma: allowlist secret
 _ARTIFACT_FILE = (
     Path(__file__).resolve().parents[1] / "src" / "curriculum" / "stage_correspondence.json"
 )

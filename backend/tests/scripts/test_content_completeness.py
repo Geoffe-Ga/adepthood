@@ -60,8 +60,11 @@ _BODY = " ".join(["word"] * MIN_CHAPTER_WORDS)
 
 #: The real tree's thin chapters and numbering gaps on the pinned commit.
 _REAL_THIN = {"teal-7", "orange-7"}
-_REAL_NUMBERING = {"1:12"}
-_REAL_PRACTICE_COUNT = 38
+# Beige 12 has never existed; Beige 8 moved into Start Here (aptitude-course#75) and
+# Orange 26-28 were removed (aptitude-course#74) in content-v2026.10.14. Chapter ids are
+# never reused or renumbered upstream, so these numbers stay retired.
+_REAL_NUMBERING = {"1:8", "1:12", "5:26", "5:27", "5:28"}
+_REAL_PRACTICE_COUNT = 37
 
 
 # --- fixture trees ------------------------------------------------------------
@@ -313,8 +316,8 @@ def test_a_body_opening_with_a_thematic_break_is_not_thin(tree: Tree) -> None:
 # --- numbering ------------------------------------------------------------------------
 
 
-def test_numbering_gaps_on_vendored_tree_are_exactly_1_12(real: Corpus) -> None:
-    """Beige skips chapter 12; every other stage is contiguous from 1."""
+def test_numbering_gaps_on_vendored_tree_are_exactly_the_retired_numbers(real: Corpus) -> None:
+    """Beige skips 8 and 12, Orange skips 26-28; every other stage is contiguous from 1."""
     assert {f.key for f in CHECKS["numbering_gap"](real)} == _REAL_NUMBERING
 
 
@@ -511,12 +514,17 @@ def test_every_recorded_gap_is_pending_owner_review_and_names_upstream() -> None
     assert {(gap.kind, gap.key) for gap in gaps} == {
         ("thin_chapter", "teal-7"),
         ("thin_chapter", "orange-7"),
+        ("numbering_gap", "1:8"),
         ("numbering_gap", "1:12"),
+        ("numbering_gap", "5:26"),
+        ("numbering_gap", "5:27"),
+        ("numbering_gap", "5:28"),
     }
     for gap in gaps:
         assert gap.owner_review == "pending"
         assert gap.upstream == "Geoffe-Ga/aptitude-course"
-        assert gap.issue == "#3070"
+        # #3070 recorded the original audit; #3136 the content-v2026.10.14 re-sync.
+        assert gap.issue in {"#3070", "#3136"}
         assert gap.reason.strip()
 
 

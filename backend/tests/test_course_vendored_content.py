@@ -32,8 +32,10 @@ from services.content_repository import (
 
 _VENDORED_CONTENT_DIR = Path(__file__).resolve().parents[1] / "content"
 
-#: Stage 1 (Beige) ships exactly 17 chapters in the vendored manifest.
-_STAGE_ONE_CHAPTER_COUNT = 17
+#: Stage 1 (Beige) ships exactly 16 chapters in the vendored manifest
+# (17 until content-v2026.10.14 moved Energy Scaffolding into Start Here,
+# aptitude-course#75).
+_STAGE_ONE_CHAPTER_COUNT = 16
 
 #: Only the first three (unlocked) stages get a CourseStage row in the
 #: partial-coverage fixture -- the manifest still ships stages 4-10.
@@ -91,7 +93,7 @@ async def partially_seeded_vendored_course(db_session: AsyncSession) -> AsyncIte
 async def test_stage_one_serves_chapters_when_higher_stages_have_no_row(
     async_client: AsyncClient,
 ) -> None:
-    """P0: unlocked Stage 1 still shows all 17 chapters when stages 4-10 are unmapped."""
+    """P0: unlocked Stage 1 still shows all 16 chapters when stages 4-10 are unmapped."""
     headers = await _signup(async_client, "partial-stage-adept")
 
     resp = await async_client.get("/course/stages/1/progress", headers=headers)
@@ -105,7 +107,7 @@ async def test_stage_one_serves_chapters_when_higher_stages_have_no_row(
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("seeded_vendored_course")
 async def test_stage_one_progress_reflects_vendored_manifest(async_client: AsyncClient) -> None:
-    """Regression: a fresh signup sees all 17 vendored Beige chapters, none read."""
+    """Regression: a fresh signup sees all 16 vendored Beige chapters, none read."""
     headers = await _signup(async_client, "fresh-adept")
 
     resp = await async_client.get("/course/stages/1/progress", headers=headers)

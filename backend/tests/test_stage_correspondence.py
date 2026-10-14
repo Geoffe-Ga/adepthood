@@ -147,7 +147,9 @@ class TestIssue1637Rulings:
     )
 
     #: The ratified departures from the CSV, as (stage_id, field, csv_value, value, authority).
-    #: The eight free-will-description / growing-up-stage rows follow #3043: chapter text wins.
+    #: The seven free-will-description rows follow #3043: chapter text wins. Since the
+    #: content-v2026.10.14 pin (aptitude-course#70 canon pass) the CSV itself carries Teal's
+    #: True Self Embodier / True Self Connection, so those two overrides retired as no-ops.
     _SUPERSESSIONS = frozenset(
         {
             (
@@ -160,25 +162,19 @@ class TestIssue1637Rulings:
             (
                 "teal",
                 "aspect",
-                "Transcendent Wisdom",
+                "True Self Wisdom",
                 "True Self Connection",
                 "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md",
-            ),
-            (
-                "teal",
-                "relationship_to_free_will",
-                "Adept",
-                "True Self Embodier",
-                "markdown/08-teal/04-the-relationship-to-free-will-at-teal-true-self-embodier.md",
             ),
             (
                 "beige",
                 "free_will_description",
                 (
-                    "Individuals are unaware of the concept of free will. Their actions are purely "
-                    "reactive and instinctual, driven by basic survival needs. This is the bottom "
-                    "of Maslow's Pyramid, the Root Chakra, the first stage Piaget's cognitive "
-                    "development or step one of Erikson's psychosocial development etc."
+                    "When Beige is the loudest note, there's no felt question of free will: "
+                    "action is reactive and instinctual, steered by survival needs. This is the "
+                    "Root Chakra, the base of Maslow's pyramid, Piaget's first stage, Erikson's "
+                    "first task\u2014the ground every other capacity stands on, not the bottom "
+                    "of a ranking."
                 ),
                 (
                     "When we first move through Beige we operate like a Biological Machine\u2014a "
@@ -256,19 +252,14 @@ class TestIssue1637Rulings:
             ),
             (
                 "teal",
-                "growing_up_stage",
-                "Nonduality",
-                "True Self Connection",
-                "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md",
-            ),
-            (
-                "teal",
                 "free_will_description",
                 (
-                    "Spiritual development that leads to an experience of the nondual nature of "
-                    "the Kosmos that allows the Adept to burn off karma, develop nonreactivity, "
-                    "break unhealthy and ineffective patterns, escape samsara and unbridle from "
-                    "determinism effectively."
+                    "Connection with the True Self\u2014the Monad, the Higher Self, the eternal "
+                    "part of you that chose to incarnate. Free Will here means getting quiet "
+                    "enough to hear that deeper knowing and letting it steer: breaking patterns "
+                    "that reasoning alone couldn't break, and unbridling from determinism by "
+                    "acting from what you actually are rather than what you were conditioned "
+                    "to be."
                 ),
                 (
                     "The part of you that chose to incarnate into these conditions. The part that "
@@ -281,23 +272,20 @@ class TestIssue1637Rulings:
                 "clearlight",
                 "free_will_description",
                 (
-                    "There is no longer an individual who can have Free Will. This body becomes a "
-                    "perfect instrument of the evolution of consciousness, an empty Nobody who "
-                    "simply does the perfect thing in every situation\u2014the thing that "
-                    "will result "
-                    "in the most spiritual growth for all involved."
+                    "The question of who is choosing loosens. When nobody is defending a self, "
+                    "the body becomes a lighter instrument\u2014an empty Nobody doing what the "
+                    "moment actually needs, for everyone involved. The Wavelength still turns, "
+                    "so this is a capacity you keep returning to, not a finish line."
                 ),
                 (
                     "At Clear Light, the question of Free Will dissolves. Not because it's been "
-                    'answered, but because it\'s been seen through. There is no "you" to have '
-                    "free will. And yet, choice is obviously happening. Actions arise. Intentions "
-                    "form. Life unfolds."
+                    "answered, but because it's been seen through."
                 ),
                 "markdown/10-clearlight/04-the-relationship-to-free-will-at-clear-light-adept.md",
             ),
         }
     )
-    _EXPECTED_SUPERSESSION_COUNT = 11
+    _EXPECTED_SUPERSESSION_COUNT = 9
 
     @staticmethod
     def _artifact() -> dict[str, Any]:

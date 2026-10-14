@@ -59,6 +59,7 @@
   ],
   "site_resources": [
     {
+      "order": 1,
       "slug": "getting-started",
       "title": "Getting Started",
       "description": "Orientation for new adepts.",

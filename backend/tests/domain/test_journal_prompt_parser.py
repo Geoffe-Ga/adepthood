@@ -33,13 +33,14 @@ def _clear_cache() -> None:
 
 
 def test_orange_prompts_parse_in_curriculum_order() -> None:
-    """Orange uses bold ``**Prompt N: Title (cadence)**`` headers."""
+    """Orange uses bold ``**Prompt N: Title**`` headers (cadence-free since #73)."""
     prompts = prompts_for_color("Orange")
 
     assert len(prompts) == 4
     assert [p.ordinal for p in prompts] == [1, 2, 3, 4]
     assert prompts[1].title == "Make a List of 25 Curiosities"
-    assert prompts[1].cadence == "At least 4x per week"
+    # No trailing parenthetical since content-v2026.10.14 (aptitude-course#73).
+    assert prompts[1].cadence is None
     assert "polyvagal theory" in prompts[1].body
 
 
@@ -173,6 +174,6 @@ def test_clear_lights_fourth_prompt_still_reads_its_qualifier_as_a_cadence() -> 
     # divergence in the content rather than a parser that cannot find cadences.
     assert [p.cadence for p in prompts[:3]] == [
         "Whenever they arise",
-        "At least 4x per week",
+        None,  # prompt 2 lost its "(At least 4x per week)" typo upstream (#73)
         "Daily",
     ]

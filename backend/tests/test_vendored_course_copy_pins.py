@@ -41,8 +41,8 @@ _BACKEND_DIR = Path(__file__).resolve().parents[1]
 _RESOURCES_DIR = _BACKEND_DIR / "content" / "markdown" / "resources"
 _DATASET_PATH = _BACKEND_DIR / "src" / "curriculum" / "archetypal_wavelength.json"
 
-_STAGES_FILE = "aptitude-stages.md"
-_ABOUT_FILE = "about.md"
+_STAGES_FILE = "04-aptitude-stages.md"  # NN- prefix = Start Here order (aptitude-course#75)
+_ABOUT_FILE = "02-about.md"
 
 #: The APTITUDE curriculum has exactly ten stages.  Asserted for both parses so
 #: a parser that quietly matched nothing fails loudly instead of vacuously
@@ -112,7 +112,7 @@ _EXPECTED_HEADINGS: tuple[str, ...] = (
     "#### Understanding: Intellectual (Orange, Rationality, The Status Seeker)",
     "#### Understanding; Embodied (Green, Plurality, The Shadow Glorifier)",
     "#### Wisdom: Systems (Yellow, Integrative, The Despairing Analyst)",
-    "#### Wisdom: True Self (Teal, Nonduality, The Adept)",
+    "#### Wisdom: True Self (Teal, True Self Connection, The True Self Embodier)",
     "#### Being: Unity (Ultraviolet, Effortless Being, The Blissy Adept)",
     "#### Awareness: Emptiness (Clear Light, Pure Awareness, Whole Adept)",
 )

@@ -20,7 +20,7 @@ This folder contains the modular sections for the ORANGE stage of the APTITUDE c
 - [Tracking Your Progress: The Orange Way](./13-tracking-your-progress-the-orange-way.md)
 - [Alternatives for Orange Practice](./14-alternatives-for-orange-practice.md)
 - [The Default Habit of Orange: Exercise](./15-the-default-habit-of-orange-exercise.md)
-- [Why Exercise is Non-Negotiable for Understanding](./16-why-exercise-is-non-negotiable-for-understanding.md)
+- [Why Exercise Does So Much for Understanding](./16-why-exercise-is-non-negotiable-for-understanding.md)
 - [How to Structure Your Exercise Practice](./17-how-to-structure-your-exercise-practice.md)
 - [Exercise as Meditation: The Flow State](./18-exercise-as-meditation-the-flow-state.md)
 - [Orange's Divine Gender: Divine Masculine—Achievement and Curiosity](./19-oranges-divine-gender-divine-masculineachievement-and-curios.md)
@@ -30,20 +30,17 @@ This folder contains the modular sections for the ORANGE stage of the APTITUDE c
 - [Orange's Shadow: When Achievement Becomes Addiction](./23-oranges-shadow-when-achievement-becomes-addiction.md)
 - ["COLLABORATE (Do)"—Full 6-Phase Wavelength Breakdown](./24-collaborate-dofull-6-phase-wavelength-breakdown.md)
 - [The Prometheus Principle: Stealing Fire from the Gods](./25-the-prometheus-principle-stealing-fire-from-the-gods.md)
-- [Orange as the Theft of Fire](./26-orange-as-the-theft-of-fire.md)
-- [The Lever and the Fulcrum: Archimedes and the Power of Understanding](./27-the-lever-and-the-fulcrum-archimedes-and-the-power-of-unders.md)
-- [The Library of Alexandria: Knowledge as Sacred Responsibility](./28-the-library-of-alexandria-knowledge-as-sacred-responsibility.md)
 - [Practicing Understanding Off the Cushion](./29-practicing-understanding-off-the-cushion.md)
 
 ## Navigation
 
 - **Previous Stage**: [Stage 4](../04-blue/)
 - **Next Stage**: [Stage 6](../06-green/)
-- **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
-- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
+- **Course Overview**: [APTITUDE Stages Deep Dive](../resources/04-aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/07-notes-and-chords.md)
 
 ## Source
 
 Original monolithic file: `../5.ORANGE.md` (preserved as backup)
 
-Total sections: 30
+Total sections: 27

@@ -12,7 +12,7 @@ media: []
 
 ## “INHABIT (Do)”
 
-Approaching the Archetypal Wavelength from the perspective of Beige, one option is to observe and improve the energetic rhythm of building habits. In this Agentic Yes-And-Ness Aspect of Whole Adepthood, the Wavelength can be thought of as the core behaviors that take care of your meat.
+Seen from Beige, the Archetypal Wavelength is the rhythm of building habits—something you can watch, and then tune. Here, at the Agentic Aspect of Yes-And-Ness, the wave is made of the basic behaviors that take care of your meat.
 
 These are the foundational behaviors that you repeat weekly, daily, hourly. Those that, when you zoom out and take stock of them in their entirety, bubble up into a personality that itself bubbles up into a destiny.
 
@@ -25,7 +25,7 @@ Because the Stage corresponds to personal action, I’ve chosen to depict the B
 
 The next Stage—the Purple, receptive “Yes” in Yes-And-Ness—will also be discussed through the lens of that Rising, Peaking, Withdrawal, Diminishing, Bottoming Out, and Restoration that you Inhabit within your personal experience. The difference will be that Purple, as a receptive Divine Feminine Stage, will be depicted as a “Feeling” wave.
 
-This pattern will continue for all the hot (Divine Masculine, I, Individual, Self-Expressing) and cool (Divine Feminine, We, Collective, Self-Sacraficing) colors of the spiral of APTITUDE. For example the pair of Red’s Divine Masc “Doing” and Blue’s Divine Femme “Feeling” will look at the Wavelength from the perspective of what happens when you project your experience of the rhythms of life outside of yourself. Red looks at how to “Do” a healthy relationship with Power in relationship to others. Blue looks at how to “Feel” an effective, skillful experience of Relating to the outside world.
+This pattern holds for all the hot colors (Divine Masculine—the “I,” the self that expresses) and cool colors (Divine Feminine—the “We,” the self that gives way) of the APTITUDE spiral. For example the pair of Red’s Divine Masc “Doing” and Blue’s Divine Femme “Feeling” will look at the Wavelength from the perspective of what happens when you project your experience of the rhythms of life outside of yourself. Red looks at how to “Do” a healthy relationship with Power in relationship to others. Blue looks at how to “Feel” an effective, skillful experience of Relating to the outside world.
 
 This is another part where I’m going to implore you not to worry about memorizing the information I am introducing. By the end of the next nine months, you’ll have a solid grasp on the motion of the Phases of the Wavelength and the shape of the Stages of the Spiral. I promise.
 
@@ -92,7 +92,7 @@ That voraciousness is seductive, but it's the Overdose form of momentum.
 
 I’ve fallen prey to it so many times. I’ll feel unstoppable. I’ll be glowing, multitasking, flying through my day like a productivity god.
 
-But here’s the truth: Unless it is built brick by brick over a realistic time horizon where each Habit can be fully integrated to the degree that maintaining its inertia is nearly effortless, Thriving is not sustainable. Diligence is.
+But here’s the truth: Unless it’s built brick by brick, slowly enough that each Habit settles in and mostly runs itself, Thriving isn’t sustainable. Diligence is.
 
 Diligence is the subtle daily act of showing up without needing fireworks. I don’t need to feel like a god to know that I am winning. I’ve learned the joy of quiet effort. Of steady burn. It’s a piece of thriving, one that I can actually maintain.
 
@@ -149,7 +149,7 @@ It’s common, at this point, for my brain to start rationalizing, questioning, 
 - or just as often: “Can’t I go back to Thriving??”
 
 
-I have become accustomed to recognizing these thought patterns as the orientation toward growth of Grasping. It’s the Overdose defined by trying to force outcomes. Grasping says: “If I just try harder, I can get back to the Peak.”
+I’ve learned to recognize these thoughts for what they are: Grasping. It’s the Overdose defined by trying to force outcomes. Grasping says: “If I just try harder, I can get back to the Peak.”
 
 But it doesn’t work that way.
 
@@ -165,7 +165,7 @@ I no longer let the Sisyphean task of becoming Whole create a landslide just as 
 
 In my experience, every six to twelve months, a total re-invisioning of the Habit plan of Energy Scaffolding becomes necessary. New priorities have arisen. New obstacles have become unavoidable.
 
-It happens to everyone, eventually. Given that we are incarnated as humans, we can’t help being beset by tragedy and inconvenience. A diagnosis, illness, serious injury, job loss, car breakdown, or death can set even the most advanced Adept back to the earliest stages of self-development and self-actualization.
+It happens to everyone, eventually. Given that we are incarnated as humans, we can’t help being beset by tragedy and inconvenience. A diagnosis, illness, serious injury, job loss, car breakdown, or death can knock any of us—however long we’ve been at this—right back to the Beige basics: eat, sleep, drink water, go outside.
 
 That’s ok. The obstacles are part of the path.
 
@@ -213,7 +213,7 @@ Overwhelm is an OD of the feeling that you just don’t have the energy you nee
 
 Planning is the alternative.
 
-Planning—in its Bottoming Out dosage—isn’t doing. It’s the quiet act of deciding when and where a problem will get your attention, so that it can stop demanding it now. You get to rest in your low energy precisely because the next step has a place to live that isn’t your 2 AM mind. This is where all the work you’ve been putting in becomes deeply embedded. If you calibrate your sense of the necessity of rest toward the effective, you can vent off the extra Bottoming Out darkness that doesn’t serve you.
+Planning—in its Bottoming Out dosage—isn’t doing. It’s the quiet act of deciding when and where a problem will get your attention, so that it can stop demanding it now. You get to rest in your low energy precisely because the next step has a place to live that isn’t your 2 AM mind. This is where all the work you’ve been putting in becomes deeply embedded. If you can treat rest as something that works rather than something you’ve failed into, a lot of the extra darkness of Bottoming Out drains off on its own.
 
 Scaffolding Response: Every emotion has a message. Every phase of the Wavelength serves a purpose. By listening when your body asks you to contract, you can honor its directives. You can avoid the collapse that comes from the inevitable explosion that arises when we try to pretend the shadow doesn’t exist.
 
@@ -227,7 +227,7 @@ Scaffolding Response: Every emotion has a message. Every phase of the Wavelength
 - OD: New Plan
 
 
-The relief of Restoration often feels like it can never come soon enough. We’ll discuss strategies to limit the duration of your low periods (and to maximize the productivity, inspiration, and good vibes of your high periods without getting the pendulum swinging too dangerously) later on in the course.
+The relief of Restoration often feels like it can never come soon enough. Later in the course we’ll get into how to move through the lows with less suffering, and how to enjoy the highs without swinging the pendulum so hard it comes back and clocks you.
 
 But when it comes to this “Inhabit” expression of the Archetypal Wavelength, where we are discussing this first Do-ing aspect of Wholeness, the Restoration phase takes on a slightly different meaning.
 
@@ -241,7 +241,7 @@ Here, and any time you recognize yourself behaving in a way that might qualify 
 Reframe your thinking, let go of the reaching, grasping, aversion, or craving that is inspiring overexertion, and relax into the alternative:
 the Medicine.
 
-Here in Restoration, that looks like picking up the Next Habit in the scaffolding plan that you made for yourself. Utilize the surplus energy you’ve created. Don’t burn the fossil fuel of fantasy that can create a powerful explosion of productivity. It will wreck your inner ecosystem.
+Here in Restoration, that looks like picking up the Next Habit in the scaffolding plan that you made for yourself. Use the extra energy you’ve built up. Don’t burn the fossil fuel of fantasy that can create a powerful explosion of productivity. It will wreck your inner ecosystem.
 
 Scaffolding Response: Add the next habit from your spreadsheet. No rush. No overhaul. Avoid “shiny thing” syndrome at all costs. You made a promise to yourself. It’s time to be true to your word. When you learn to keep your commitments, something incredible happens. When you follow through on your intentions, you start to view yourself as, well, the kind of person who follows through on their intentions.
 

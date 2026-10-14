@@ -22,7 +22,7 @@ And flow is where growth happens. Not just physical growth. Psychological growth
 
 This is the real gift of exercise. Not the six-pack abs or the PR on your deadlift (though those are nice). It's the felt sense of *capacity*. The embodied knowledge that you can do hard things and survive them. That you can push your edge and expand it.
 
-That translates to everything. The hard conversation. The ambitious project. The creative risk. When your body knows it can handle stress, your mind stops catastrophizing. You become braver. More willing to try.
+That translates to everything. The hard conversation. The ambitious project. The creative risk. When your body knows it can handle stress, your mind catastrophizes a little less—or at least you can hear it doing it and move anyway. You get braver. More willing to try.
 
 This is why exercise is the Default Habit of Orange. Because it builds the foundation—physical, neurochemical, psychological—for everything else Orange asks of you.
 

@@ -24,11 +24,11 @@ The Divine Masculine at Orange doesn't chase status for status's sake. It chases
 
 **2. Strategic Action**
 
-This is the capacity to see a goal, map the steps, and execute. It's not reckless (that's Red). It's not passive (that's Purple). It's deliberate, disciplined, and iterative. You take action, gather feedback, adjust, and try again. You're building competence through repetition and reflection.
+This is the capacity to see a goal, map the steps, and execute. It isn't Red's raw push or Purple's open receiving—it's those two capacities aimed at a target. It's deliberate, disciplined, and iterative. You take action, gather feedback, adjust, and try again. You're building competence through repetition and reflection.
 
 **3. Collaborative Individualism**
 
-The Divine Masculine at Orange knows that you can't do it alone. But it also knows that you have to bring your *A-game* to the collaboration. You're not merging into the collective (that's Green). You're showing up as a fully expressed individual within a team. You contribute your unique skills and expect others to do the same. It's co-creation through differentiation.
+The Divine Masculine at Orange knows that you can't do it alone. But it also knows that you have to bring your *A-game* to the collaboration. You're not dissolving into the group—that's Green's shadow, not Green. You're showing up as a fully expressed individual within a team. You contribute your unique skills and expect others to do the same. It's co-creation through differentiation.
 
 Orange's Masculine isn't about dominance. It's about *efficacy*. It's the energy that says, "I can figure this out. I can build this. I can solve this problem—and I can do it better with your help than I could alone."
 

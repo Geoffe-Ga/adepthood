@@ -12,7 +12,7 @@ media: []
 
 ## The Long Game: What Happens After a Year
 
-After 365 days of 45-minute sits, you'll have logged ~275 hours of meditation. That's not mastery—Culadasa estimates 10,000 hours for full awakening—but it's a foundation.
+After 365 days of 45-minute sits, you'll have logged ~275 hours of meditation. That's not mastery—Culadasa talks in terms of 10,000 hours, and even that isn't a finish line—but it's a foundation, and a real one.
 
 Here's what typically shifts:
 

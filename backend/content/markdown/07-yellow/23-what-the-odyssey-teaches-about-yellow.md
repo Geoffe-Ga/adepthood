@@ -26,11 +26,11 @@ Yellow is what emerges when you've done the full circuit. When you've touched ev
 
 When Odysseus returns, disguised as a beggar, even his own dog barely recognizes him. His servants don't know him. The suitors mock him.
 
-This is the loneliness of Yellow. You've changed so much through the journey that the people who knew you before don't recognize who you've become. You speak a different language now. You see things they don't see.
+There's a loneliness in this stretch. You've changed, and the people who knew you before may not have a map for it yet. You speak a slightly different language now. It helps to remember they're carrying notes you aren't playing well either—your roommate's Blue is probably better than yours.
 
 And you can't just *tell* them. You have to show them. Through your actions. Through how you navigate complexity. Through the wisdom you embody.
 
-Yellow is often misunderstood. People who haven't yet unlocked Yellow see its complexity and mistake it for indecisiveness. They see the refusal to cling to one framework and mistake it for lack of conviction.
+Systems-sight is easy to misread from the outside. When you won't commit to one framework, it can look like indecision—and sometimes, honestly, it is. Confusion is Yellow's own poison, and the people calling it out aren't always wrong.
 
 But Odysseus wasn't weak. He was *strategic*. He held his power lightly until the moment to act.
 

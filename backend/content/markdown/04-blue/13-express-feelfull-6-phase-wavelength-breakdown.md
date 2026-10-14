@@ -38,11 +38,11 @@ This is the high point of Blue. You're *connected*. You feel it. The energy is f
 
 Attunement is Blue's superpower. It's the moment when empathy kicks in and you can *feel* what someone else is feeling. Not in a codependent, boundary-less way, but in a connected way. You're attuned. You're present. You're *with* them.
 
-This is the peak you're chasing when you do the work of Blue. This is why belonging matters. Because when it's real, it's *magic*.
+This is the peak Blue's work opens up—not a place to live, just somewhere the wave carries you more often once you've done the work. This is why belonging matters. Because when it's real, it's *magic*.
 
 But when you overdose on this peak—when you try to stay here forever, when you chase the high of connection at the expense of everything else—it curdles into **Leprosy**.
 
-Leprosy is a metaphor from the text: "This is Fucking Ecstasy / This is Fucking Leprosy." At Blue's toxic peak, you *lose yourself* in the other. You merge. You collapse your boundaries. You become so attuned that you can't tell where you end and they begin. You absorb their emotions. You take on their pain. You give and give and give until you're hollow.
+Leprosy is a deliberately ugly word, and it's the right one: the line between *this is fucking ecstasy* and *this is fucking leprosy* is thinner than it feels. At Blue's toxic peak, you *lose yourself* in the other. You merge. You collapse your boundaries. You become so attuned that you can't tell where you end and they begin. You absorb their emotions. You take on their pain. You give and give and give until you're hollow.
 
 And then, inevitably, you get sick. Burned out. Resentful. Used.
 
@@ -66,9 +66,9 @@ When you're in this phase skillfully, you take space. You reflect. You journal. 
 
 But when Withdrawal tips into overdose, it becomes **Self-Medication**. You're pulling back, yes—but not to reflect. To *numb*. To escape. To avoid the discomfort of whatever you're starting to feel.
 
-This is where the habit of Looking at Alcohol/Intoxicants becomes critical. Because Withdrawal is the phase where the urge to self-medicate is strongest. You're tired. You're drained. The high of Attunement is gone, and now you're left with the messy reality of your relational life. And it hurts.
+This is where the habit of Looking at Scrolling becomes critical. Because Withdrawal is the phase where the urge to self-medicate is strongest. You're tired. You're drained. The high of Attunement is gone, and now you're left with the messy reality of your relational life. And it hurts.
 
-So you reach for the thing that makes it stop. The drink. The scroll. The distraction. Anything to not feel this.
+So you reach for the thing that makes it stop. The scroll. The drink. The distraction. Anything to not feel this.
 
 The Self-Care Strategy here is simple: *Don't*. Don't numb. Sit with it. Feel it. Let the discomfort move through you. Call a friend—not to vent, but to be *with*. Do the Metta practice. Take a walk. Cry if you need to.
 

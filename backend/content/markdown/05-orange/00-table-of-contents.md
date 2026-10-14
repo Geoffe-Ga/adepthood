@@ -30,7 +30,7 @@
 
 [The Default Habit of Orange: Exercise](#the-default-habit-of-orange-exercise)
 
-[Why Exercise is Non-Negotiable for Understanding](#why-exercise-is-non-negotiable-for-understanding)
+[Why Exercise Does So Much for Understanding](#why-exercise-does-so-much-for-understanding)
 
 [How to Structure Your Exercise Practice](#how-to-structure-your-exercise-practice)
 
@@ -49,12 +49,6 @@
 ["COLLABORATE (Do)"—Full 6-Phase Wavelength Breakdown](#collaborate-do-full-6-phase-wavelength-breakdown)
 
 [The Prometheus Principle: Stealing Fire from the Gods](#the-prometheus-principle-stealing-fire-from-the-gods)
-
-[Orange as the Theft of Fire](#orange-as-the-theft-of-fire)
-
-[The Lever and the Fulcrum: Archimedes and the Power of Understanding](#the-lever-and-the-fulcrum-archimedes-and-the-power-of-understanding)
-
-[The Library of Alexandria: Knowledge as Sacred Responsibility](#the-library-of-alexandria-knowledge-as-sacred-responsibility)
 
 [Practicing Understanding Off the Cushion](#practicing-understanding-off-the-cushion)
 

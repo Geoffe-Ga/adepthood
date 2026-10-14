@@ -22,7 +22,7 @@ That's it. That's the one.
 
 Not forever. Not rigidly. But for now. For this chapter. This is the work you're stepping into.
 
-And here's the beautiful part: once you find it, the motivation problem disappears. You're not grinding toward some abstract goal. You're *alive* in your work. Because the work is the intersection of love (the problem that breaks your heart) and joy (the curiosity that lights you up).
+And here's the beautiful part: once you find it, motivation stops being the main problem. You'll still have flat weeks—that's the Wavelength, not a verdict—but you stop having to manufacture the will to show up. You're not grinding toward some abstract goal. You're *alive* in your work. Because the work is the intersection of love (the problem that breaks your heart) and joy (the curiosity that lights you up).
 
 Orange gives you the tools to build that map. To test your hypotheses. To iterate. To collaborate with others who share your fire. And to keep going, not because you *have* to, but because you *want* to. Because the work is alive.
 

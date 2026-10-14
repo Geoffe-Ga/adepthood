@@ -10,6 +10,14 @@
       "upstream": "Geoffe-Ga/aptitude-course"
     },
     {
+      "issue": "#3136",
+      "key": "1:8",
+      "kind": "numbering_gap",
+      "owner_review": "pending",
+      "reason": "Beige chapter 8 (Energy Scaffolding) moved into the Start Here resources in content-v2026.10.14 (aptitude-course#75); chapter ids are never reused or renumbered (CONTENT_FORMAT.md §3.2), so the number is intentionally retired. The owner confirms the gap is deliberate or closes the numbering up upstream.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
       "issue": "#3070",
       "key": "orange-7",
       "kind": "thin_chapter",
@@ -23,6 +31,30 @@
       "kind": "thin_chapter",
       "owner_review": "pending",
       "reason": "'Alternatives for Teal Practice' is heading-only: 0 body words. Every other stage's Alternatives chapter has a body; this one needs its upstream text written.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
+      "issue": "#3136",
+      "key": "5:26",
+      "kind": "numbering_gap",
+      "owner_review": "pending",
+      "reason": "Orange chapter 26 was removed by the author in content-v2026.10.14 (aptitude-course#74); chapter ids are never reused or renumbered (CONTENT_FORMAT.md §3.2), so the number is intentionally retired. The owner confirms the gap is deliberate or closes the numbering up upstream.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
+      "issue": "#3136",
+      "key": "5:27",
+      "kind": "numbering_gap",
+      "owner_review": "pending",
+      "reason": "Orange chapter 27 was removed by the author in content-v2026.10.14 (aptitude-course#74); chapter ids are never reused or renumbered (CONTENT_FORMAT.md §3.2), so the number is intentionally retired. The owner confirms the gap is deliberate or closes the numbering up upstream.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
+      "issue": "#3136",
+      "key": "5:28",
+      "kind": "numbering_gap",
+      "owner_review": "pending",
+      "reason": "Orange chapter 28 was removed by the author in content-v2026.10.14 (aptitude-course#74); chapter ids are never reused or renumbered (CONTENT_FORMAT.md §3.2), so the number is intentionally retired. The owner confirms the gap is deliberate or closes the numbering up upstream.",
       "upstream": "Geoffe-Ga/aptitude-course"
     }
   ]
