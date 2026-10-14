@@ -19,10 +19,12 @@
 - **Who decided what.** Geoff made this decision on 2026-10-07. An agent cannot
   ratify a privacy posture, and none did: an agent wrote down the owner's
   decision, scored the options and drafted the plan. Wherever this record and
-  the owner's decision text disagree, the owner's text governs. Budgets,
-  staffing, reviewers and the rest of D03 (pairing, revocation, death or
-  incapacity, support requests, shared devices and export) are still open,
-  and are listed as open questions; the recovery factors are Decision item 11.
+  the owner's decision text disagree, the owner's text governs. On
+  2026-10-14 the owner answered budgets and reviewers for now (see "Budget
+  and staffing" and "Reviewers"); staffing figures, any future independent
+  reviewer and the rest of D03 (pairing, revocation, death or incapacity,
+  support requests, shared devices and export) are still open, and are listed
+  as open questions; the recovery factors are Decision item 11.
 
 ## Context
 
@@ -572,16 +574,29 @@ root is not evidence.
 
 ## Budget and staffing
 
-**Unknown; owner input required.** No figure is recorded for any option or
-phase. The scorecard's money cells are `{"status": "unknown",
+**Owner decision, 2026-10-14 (#3260): no paid runtime and no paid reviews,
+for now.** That is a constraint, not a figure: no dollar amount or staffing
+level is recorded for any option or phase. The scorecard's money cells are `{"status": "unknown",
 "owner_input_required": true}`, and the guard refuses any value that does not
 come from the owner. Fly list prices from the issue are planning inputs,
 not a budget.
 
 ## Reviewers
 
-None has been consulted yet. Four reviews are owed, each before a named phase
-(scorecard `reviewers`):
+**Owner decision, 2026-10-14 (#3260): rely on adversarial AI reviews plus the
+owner's own review.** No outside reviewer, firm or audit is being hired. The
+owner's note: *"I don't have the money for that at the moment, though I may
+aspire to it in the future."* No public copy may say that an independent,
+external or outside party has checked or will check this design.
+
+**This does not meet this record's independent-review gate.** AI reviews and
+the owner's review are not independent of the people who built the system. So
+the four reviews below stay owed, none has been consulted, and every phase gate
+that names one stays unmet. In particular the stronger claim, that Adepthood
+cannot read your journal, is not yet certified and stays uncertified under B24
+([#3076](https://github.com/Geoffe-Ga/adepthood/issues/3076)) until an
+independent review actually happens. The four owed reviews, each before a named
+phase (scorecard `reviewers`):
 
 - an independent cryptography and client-protocol reviewer, before phase
   (b) enrols any real account;
@@ -768,13 +783,47 @@ primitives. Those answers are Decision items 4 and 6-14. What is still open:
   waits for backup expiry.
 - **D02-PRIMITIVES:** reviewer confirmation of the proposed libsodium sealed
   boxes and XChaCha20-Poly1305, and the envelope format.
+
+  *Implementation proposal (B13 phase (b) slice 2), still PROPOSED and not
+  confirmed.* On 2026-10-14 (#3260) the owner chose adversarial AI reviews
+  plus the owner's own review in place of an outside reviewer, so the
+  independent-review gate is not met and no real account may enrol. The code
+  in `frontend/src/crypto/` ships with tests only and nothing in the app
+  imports it (`cryptoUnreachable.test.ts`). What it proposes:
+  - **Library deviation from libsodium.** The enforced CSP is `script-src
+    'self'` with no `'wasm-unsafe-eval'`, so a WASM build of libsodium cannot
+    load on web. The proposal uses audited pure-JavaScript implementations
+    instead, pinned exactly: `@noble/ciphers` 2.4.0 (XChaCha20-Poly1305),
+    `@noble/hashes` 2.4.0 (Argon2id) and `@scure/bip39` 2.4.0 (recovery
+    phrase). Known-answer tests pin draft-irtf-cfrg-xchacha-03 A.3.1 and
+    RFC 9106 section 5.3.
+  - **No sealed boxes yet.** Nothing in this slice needs public-key
+    encryption. Pairing, the likely first user, stays open under D03.
+  - **Envelope v1:** a format byte, a big-endian u64 object version, a fresh
+    24-byte random nonce, then ciphertext and the 16-byte tag. The AAD is a
+    length-prefixed encoding of a label, the format, a domain, and the owner,
+    object type, object id and version. Opening takes a minimum version and
+    refuses anything lower; an unknown or downgraded format fails closed.
+  - **Key hierarchy:** a random 256-bit data key made on the device, wrapped
+    once under an Argon2id key from the passphrase and once under one from a
+    24-word BIP-39 recovery phrase (Decision item 11). Each wrap is a v1
+    envelope bound to its purpose and owner. Proposed Argon2id parameters:
+    64 MiB, 3 passes, 1 lane, about 1.2-1.5 s per derivation in Node 22.
+    The public wrap refuses anything below that floor. Unwrap checks a stored
+    record before deriving: Argon2id, one lane, a 16-byte salt, at least the
+    floor, at most 10 passes and 256 MiB, and at most four times the
+    production work. Without that check, a tampered record could stall or
+    exhaust the client.
 - **BYOK-CONSENT:** a proposal only. Is BYOK consent granted once per key,
   per feature, or per call?
 - **INTIMATE-DEVICE:** may device-side inference, which is never remote,
   ever process INTIMATE? ADR 0002 Decision 1 and the skip-only interim stay
   unchanged until the owner decides.
-- **BUDGET:** budget per active account-month and staffing per phase.
-- **REVIEWERS:** who the four owed reviewers are.
+- **BUDGET:** answered for now on 2026-10-14: no paid runtime, no paid
+  reviews. Still open: any budget or staffing figure, if that changes.
+- **REVIEWERS:** answered for now on 2026-10-14: adversarial AI reviews plus
+  the owner's own. Still open: who the independent reviewers are, if one is
+  ever engaged. Until then the independent-review gate is unmet.
 
 ## What this record does not unlock
 

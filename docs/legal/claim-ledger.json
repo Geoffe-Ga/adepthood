@@ -1,0 +1,376 @@
+{
+  "schema_version": 1,
+  "claims": [
+    {
+      "id": "C01",
+      "sentence": "A journal for brain-dumping, Recovery Dharma inquiries, and Morning Pages.",
+      "sentence_sha256": "sha256:3a1a29717925bece5909401c70fb809745710973b6e8b2afefa777ac2878b1c8",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B20"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C02",
+      "sentence": "Optional AI margin notes designed to feel like the writer’s own thinking reflected back, rather than an anthropomorphic or parasocial chatbot.",
+      "sentence_sha256": "sha256:69dd32d050bff54f5122ff70392ce374ea5122dcf1efaa09d25a1826d1b8a6ea",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B07"
+        ],
+        [
+          "B22"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C03",
+      "sentence": "Your words aren’t stored by me in a way I can access.",
+      "sentence_sha256": "sha256:1effdf058c0f7531b911ecfdc616b81471bc69b1e7bbcf01d41ab5148f3350d5",
+      "audit_status": "false",
+      "required_gates": [
+        [
+          "B02"
+        ],
+        [
+          "B12"
+        ],
+        [
+          "B13",
+          "B14"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C04",
+      "sentence": "Journal content will not train AI models.",
+      "sentence_sha256": "sha256:16eb82c965139a919c040f6cdcc7201ebfbd1f5817fe6dd01fd3ccbe732d00bf",
+      "audit_status": "not_verifiable",
+      "required_gates": [
+        [
+          "B11"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C05",
+      "sentence": "Journal content will not be used to sell things to users.",
+      "sentence_sha256": "sha256:9a780a901ee9201dd35952c78706e8f807d163558543e5db82a620766cfe4e3e",
+      "audit_status": "not_verifiable",
+      "required_gates": [
+        [
+          "B01"
+        ],
+        [
+          "B11"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C06",
+      "sentence": "Journal content will not be sold or disclosed to third parties for their purposes.",
+      "sentence_sha256": "sha256:e2c265b5f7023281957b99632c6b70254af821e7ba6dca60ab2ea7a28050524e",
+      "audit_status": "not_verifiable",
+      "required_gates": [
+        [
+          "B10"
+        ],
+        [
+          "B11"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C07",
+      "sentence": "Intimate entries do not leave the primary private journal boundary.",
+      "sentence_sha256": "sha256:61f93d9152eca339146227cc5054d8ad6401f3325aff280ec1e8c5a41426dc81",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B01"
+        ],
+        [
+          "B03"
+        ],
+        [
+          "B04"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C08",
+      "sentence": "Intimate entries are not used for AI inference.",
+      "sentence_sha256": "sha256:2406ffdd0996f23a54febc610c4d0471ae51b8677117682b9f8eec5815fb981b",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B03"
+        ],
+        [
+          "B15"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C09",
+      "sentence": "Intimate entries are not used for corpus/search indexing or ontology extraction.",
+      "sentence_sha256": "sha256:777b9de10106ba3dcb9e7677e5fdaf072fe3d1f76e2e14b81ace5bbf2b347caf",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B03"
+        ],
+        [
+          "B04"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C10",
+      "sentence": "Intimate entries are not reflections or context for other entries.",
+      "sentence_sha256": "sha256:91d7073a3a694623e798492b536978da25ce42e3248480a95d1945b68320dea7",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B03"
+        ],
+        [
+          "B04"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C11",
+      "sentence": "Intimate entries are not replicated to Creek.",
+      "sentence_sha256": "sha256:b6d10e9edd4e7d1c9a256cf07ecba18536a0bf03d6a856e8e0d62dcbac2b424e",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B04"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C12",
+      "sentence": "Intimate content is absent from analytics, logging and telemetry.",
+      "sentence_sha256": "sha256:2d5468898414f1d07ea02be10120e1cae17d5860527b3a131cd9d5cb543061ea",
+      "audit_status": "not_verifiable",
+      "required_gates": [
+        [
+          "B10"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C13",
+      "sentence": "Activating a vault enables reflections using local, smaller, quantized language models within the intended private boundary.",
+      "sentence_sha256": "sha256:f9161cd0bc395e05936ecc393a69b5f06f8422d690c94fd7bb946004560fd3ae",
+      "audit_status": "not_implemented",
+      "required_gates": [
+        [
+          "B05"
+        ],
+        [
+          "B06"
+        ],
+        [
+          "B07"
+        ],
+        [
+          "B08"
+        ],
+        [
+          "B09"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C14",
+      "sentence": "The Course represents an ontologized map of a whole human experience assembled from cross-cultural work on free will.",
+      "sentence_sha256": "sha256:c344bdc302144d7684e9210ae2733b19f6aa5b76068f1c205004139ca2731b3b",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B17"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C15",
+      "sentence": "A new habit approximately every three weeks as users progress through the Course.",
+      "sentence_sha256": "sha256:77a30386436b229081e28c97b2e469702ab906f7beec2ccc20379e5aa3aa4108",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B18"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C16",
+      "sentence": "The practice timer supports increasingly advanced practices approximately every three weeks.",
+      "sentence_sha256": "sha256:0ba0d72271073026ae7f25d557b579e509212c4d655d0292b54f3543d29fee79",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B19"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C17",
+      "sentence": "A user-configurable repertoire covering the Course’s recommended categories / food pyramid.",
+      "sentence_sha256": "sha256:6d4fcea4ca8e7c61d8dada0c13b27de3394423bf5e5ac63026c653454c8ed645",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B17"
+        ],
+        [
+          "B19"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C18",
+      "sentence": "Every feature and recommendation is optional.",
+      "sentence_sha256": "sha256:2ef141dcaf5c820a4b0557be077c3b5c5a240253f757074fa972cce2bd7a8a12",
+      "audit_status": "partially_true",
+      "required_gates": [
+        [
+          "B20"
+        ],
+        [
+          "B21"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C19",
+      "sentence": "The beta is genuinely available without payment under a gift-economy model.",
+      "sentence_sha256": "sha256:9caddfa44d1756eaff53d7c8a227aee1dec0a6fe5905c29c6e0f608530fc408c",
+      "audit_status": "not_verifiable",
+      "required_gates": [
+        [
+          "B21"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C20",
+      "sentence": "Implied: “encrypted” / “private vault” means no one else can read it.",
+      "sentence_sha256": "sha256:672bd10884218b582ae254273a85000897984c7fd8c9626013d81ef840b78730",
+      "audit_status": "misleading",
+      "required_gates": [
+        [
+          "B01"
+        ],
+        [
+          "B02"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C21",
+      "sentence": "Implied: deleting or marking Intimate removes all prior copies immediately.",
+      "sentence_sha256": "sha256:34b1eace47dba2f1dc97133a0ef88dcd65daa708c97753410eecb50463d4b627",
+      "audit_status": "false",
+      "required_gates": [
+        [
+          "B04"
+        ],
+        [
+          "B08"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C22",
+      "sentence": "Implied: a healthy/ready vault and a successful reflection prove local inference.",
+      "sentence_sha256": "sha256:32ed722ccba528c4234922aedccb9e608e3e9b3e4f66bb72a8d8adc42c195351",
+      "audit_status": "misleading",
+      "required_gates": [
+        [
+          "B05"
+        ],
+        [
+          "B07"
+        ],
+        [
+          "B16"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C23",
+      "sentence": "Implied: local means never leaves my device / never leaves Adepthood / never leaves my vault.",
+      "sentence_sha256": "sha256:f05ef10958be829b7d7e0a9a4eced9aa17d87103c704513d7d1a6ca453cfba74",
+      "audit_status": "false",
+      "required_gates": [
+        [
+          "B01"
+        ],
+        [
+          "B06"
+        ],
+        [
+          "B12"
+        ],
+        [
+          "B13",
+          "B14"
+        ]
+      ],
+      "status": "withheld"
+    },
+    {
+      "id": "C24",
+      "sentence": "Implied: policy, deployment and independent tests prove the promises remain true.",
+      "sentence_sha256": "sha256:67ec935662550134262dda9a1253a433de088f747a45c0e4b204c809af1bb785",
+      "audit_status": "not_verifiable",
+      "required_gates": [
+        [
+          "B01"
+        ],
+        [
+          "B15"
+        ],
+        [
+          "B16"
+        ],
+        [
+          "B23"
+        ],
+        [
+          "B24"
+        ]
+      ],
+      "status": "withheld"
+    }
+  ]
+}

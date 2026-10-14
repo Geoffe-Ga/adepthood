@@ -74,8 +74,8 @@ function integerConstant(constants: Map<string, number>, name: string | undefine
 /**
  * `OLDEST_LIVE_BACKUP_DAYS` as `retention_stores.py` computes it: the largest
  * of each `BACKUP_LEGS` entry's `retention_days + interval_days` and the held
- * bound `HELD_BACKUP_BOUND_DAYS` (copies still kept under an older, longer
- * off-host retention). Each step of that derivation is matched, so a backend
+ * bound `HELD_BACKUP_BOUND_DAYS` (copies that may still be held from the
+ * retired off-host leg). Each step of that derivation is matched, so a backend
  * change to its shape fails here instead of being silently mis-read.
  */
 function backendOldestLiveBackupDays(): number {

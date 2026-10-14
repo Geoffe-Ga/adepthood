@@ -7,9 +7,10 @@ out. The copy says how long that can be, and the number is read from
 built on, themselves pinned to ``DEPLOYMENT.md``'s backup table by
 ``tests/domain/test_retention_store_inventory.py`` -- rather than transcribed.
 
-The bound is only as good as the schedule behind it: the off-platform copies
-are made and pruned by the operator by hand. So the copy presents it as the
-schedule's figure, never as an enforced guarantee, and says who keeps that leg.
+The bound is only as good as the schedule behind it: Railway expires its own
+backups, and any copy left from the retired off-platform leg (#3260) is deleted
+by the operator by hand. So the copy presents it as the schedule's figure, never
+as an enforced guarantee, and says who deletes those older copies.
 """
 
 from __future__ import annotations
@@ -21,8 +22,8 @@ from typing import Final
 import pytest
 
 from domain.retention_stores import (
+    BACKUP_LEGS,
     HELD_OFFHOST_DUMP_RETENTION_DAYS,
-    OFFHOST_DUMP_RETENTION_DAYS,
     OLDEST_LIVE_BACKUP_DAYS,
     RAILWAY_PLATFORM_BACKUP_DAYS,
 )
@@ -63,8 +64,18 @@ _SCHEDULE_DOCUMENTS: Final[tuple[Path, ...]] = (_PRIVACY_POLICY, _YOUR_DATA)
 # back than :data:`_FRAMING_WINDOW_CHARS`.
 _SCHEDULE_FRAMINGS: Final[tuple[str, ...]] = ("on our backup schedule", "on that schedule")
 _FRAMING_WINDOW_CHARS: Final = 160
-# The off-platform leg is the operator's manual work, and the copy says so.
+# Copies left from the retired off-platform leg are the operator's manual work,
+# and the copy says so.
 _MANUAL_LEG: Final = "by the operator by hand"
+# The owner retired the off-platform leg on 2026-10-14 (#3260), and the copy says
+# no new one is made.
+_NO_OFFHOST_COPY: Final = "no longer makes"
+# What the copy said while that leg was live: a 30-day off-platform schedule.
+_RETIRED_OFFHOST_SCHEDULE: Final[tuple[str, ...]] = (
+    "kept off the platform for 30 days",
+    "is kept for 30 days",
+    "two legs",
+)
 
 # What the copy once said: deletion as total and instant, or the backup bound
 # as something enforced.
@@ -180,9 +191,9 @@ _HELD_COPIES_SCOPE: Final = "made before"
 def _unscoped_held_figure_sentences(copy: str) -> list[str]:
     """Sentences naming the held off-platform figure without scoping it to older copies.
 
-    ``HELD_OFFHOST_DUMP_RETENTION_DAYS`` is true only of the copies made before
-    the runbook's retention was shortened; stated bare, it reads as the
-    schedule for every new copy, which is no longer what the runbook does.
+    ``HELD_OFFHOST_DUMP_RETENTION_DAYS`` is true only of copies made before the
+    off-platform leg was retired; stated bare, it reads as a schedule for new
+    copies, which the runbook no longer makes.
     """
     held = f"{HELD_OFFHOST_DUMP_RETENTION_DAYS} days"
     return [
@@ -203,31 +214,27 @@ def test_a_bare_held_figure_is_unscoped() -> None:
 
 
 @pytest.mark.parametrize("document", _SCHEDULE_DOCUMENTS, ids=lambda path: path.name)
-def test_schedule_documents_name_each_leg_and_who_keeps_the_manual_one(document: Path) -> None:
-    """Each leg's retention appears, and the off-platform leg is the operator's, by hand.
+def test_schedule_documents_name_the_one_leg_and_the_held_copies(document: Path) -> None:
+    """The platform leg's retention appears, and the retired leg is named as retired.
 
-    The off-platform leg is stated twice: the retention the runbook now prunes
-    at (``OFFHOST_DUMP_RETENTION_DAYS``), for new copies, and the longer one
-    the copies *still held* were written under
-    (``HELD_OFFHOST_DUMP_RETENTION_DAYS``), scoped to copies made before the
-    change. Until those age out, the ~97-day bound the copy states rests on
-    the longer figure, so it must stay; but stated bare it would misdescribe
-    every new copy. Restating the schedule is the owner's (AC16).
+    The owner retired the off-platform leg on 2026-10-14 (#3260): "No off-host
+    copy; rely on Railway's 6-day backups." The copy names the platform's 6
+    days, says no new off-platform copy is made, and keeps the held figure
+    (``HELD_OFFHOST_DUMP_RETENTION_DAYS``) only scoped to copies made before,
+    because the ~97-day bound it states still rests on them. Lowering that
+    bound is the owner's (#3063 AC16).
     """
     copy = _prose(document)
 
-    # Once the held copies have aged out and the held figure is lowered to the
-    # runbook's, the copy's transition sentence goes, and this test with it.
-    assert HELD_OFFHOST_DUMP_RETENTION_DAYS > OFFHOST_DUMP_RETENTION_DAYS
-    for days in (
-        RAILWAY_PLATFORM_BACKUP_DAYS,
-        OFFHOST_DUMP_RETENTION_DAYS,
-        HELD_OFFHOST_DUMP_RETENTION_DAYS,
-    ):
+    assert {leg.key for leg in BACKUP_LEGS} == {"railway_platform_backup"}
+    for days in (RAILWAY_PLATFORM_BACKUP_DAYS, HELD_OFFHOST_DUMP_RETENTION_DAYS):
         assert f"{days} days" in copy, f"{document.name} does not name the {days}-day retention"
     unscoped = _unscoped_held_figure_sentences(copy)
     assert not unscoped, f"{document.name} states the held figure for every copy: {unscoped}"
-    assert _MANUAL_LEG in copy, f"{document.name} does not say the off-platform leg is manual"
+    assert _NO_OFFHOST_COPY in copy, f"{document.name} does not say the off-platform leg stopped"
+    assert _MANUAL_LEG in copy, f"{document.name} does not say who deletes the older copies"
+    restated = [claim for claim in _RETIRED_OFFHOST_SCHEDULE if claim in copy]
+    assert not restated, f"{document.name} still promises an off-platform schedule: {restated}"
 
 
 # The restore step B08 added to DEPLOYMENT.md, and the marker that says it is

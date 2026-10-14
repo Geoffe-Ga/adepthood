@@ -98,11 +98,11 @@ model answers does not cost you the tokens; a call the model answers does,
 whether or not you liked the answer.
 
 You may instead supply your **own provider key** in Settings. Between calls
-that key stays on your device. When you use it, the production app sends it
-over HTTPS to Adepthood's server, which forwards it over HTTPS to the
-selected model provider for that call. Adepthood never persists, logs or
-returns the key — but the calls it makes are billed to your account with
-that provider, and what they cost is between you and them.
+that key stays on your device. Page reading sends it from your device straight
+to the provider you chose. Other features send it over HTTPS to Adepthood's
+server, which forwards it over HTTPS to that provider for that call. Adepthood
+never persists, logs or returns the key. The calls made with it are billed to
+your account with that provider, and what they cost is between you and them.
 
 ## Availability
 

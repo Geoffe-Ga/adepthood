@@ -68,7 +68,11 @@ function InvitationNote({ invitation, onDismiss }: InvitationNoteProps): React.J
         <DeclineButton
           id={invitation.id}
           label={copy.declineA11y}
-          onDismiss={() => onDismiss(invitation.id)}
+          onDismiss={() => {
+            void Promise.resolve(onDismiss(invitation.id)).catch(() => {
+              // The hook restores the failed row; keep rejection inside the tap handler.
+            });
+          }}
           onPressIn={press.onPressIn}
           onPressOut={press.onPressOut}
         />
