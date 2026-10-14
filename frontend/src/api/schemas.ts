@@ -711,6 +711,20 @@ export const stageIntroSchema = z.object({
 });
 
 /**
+ * The "Read next" target from ``GET /course/next-unread`` (#3147): the earliest
+ * unlocked chapter the reader has not marked read, across every open stage.
+ * The endpoint answers ``null`` when the reader is caught up, which is why the
+ * response schema is this object made nullable rather than the object alone.
+ */
+export const nextUnreadSchema = z.object({
+  content_id: z.number().int().positive(),
+  stage_number: z.number().int().min(1).max(STAGE_DURATIONS_DAYS.length),
+  title: z.string(),
+});
+
+export type NextUnreadT = z.infer<typeof nextUnreadSchema>;
+
+/**
  * Frequency-banner payload from ``GET /user-practices/current/frequency``.
  * Validated at the boundary so a backend field rename/retype raises
  * ``ApiValidationError`` (the "Something changed on the server" path) instead of

@@ -25,6 +25,11 @@ STAGE_DURATIONS_DAYS: tuple[int, ...] = (21, 21, 21, 21, 21, 21, 21, 21, 42, 42)
 # 252 days — exactly the 36-week curriculum (sum of the stage durations).
 TOTAL_PROGRAM_DAYS = sum(STAGE_DURATIONS_DAYS)
 
+# How far before account creation a person may backdate their own program
+# start (issue #3097): one whole program. An anchor any earlier would open
+# with the 36-week cadence already finished, so there is nothing to pace.
+PROGRAM_START_BACKDATE_WINDOW_DAYS = TOTAL_PROGRAM_DAYS
+
 DAYS_PER_WEEK = 7
 
 # Weeks each stage lasts, in stage order: (3, 3, 3, 3, 3, 3, 3, 3, 6, 6).

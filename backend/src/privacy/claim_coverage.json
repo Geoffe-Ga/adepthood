@@ -317,8 +317,12 @@
     "gap": "frontend envelope is proven by Jest (JournalEditorCrashEnvelope.test.tsx), which pytest cannot cite; vault telemetry and llmusagelog are not driven on a failure path"
   },
   "C13": {
-    "status": "uncovered",
-    "tests": [],
+    "status": "partial",
+    "tests": [
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded",
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_deployment_owner_env_vault_is_vault_bound"
+    ],
     "sinks": [
       "net.creek_vault_connected",
       "net.creek_vault_deployment",
@@ -326,8 +330,20 @@
       "net.openai",
       "net.anthropic"
     ],
+    "by_sink": {
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault"
+      ],
+      "net.openai": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault"
+      ]
+    },
     "issue": 2871,
-    "gap": "no managed vault installs a pinned local model; no packet-level test proves the reflection stays in its boundary"
+    "gap": "local model runtime and serving proof (Geoffe-Ga/Creek-Vault#1849, #2871) is outside this repo; adepthood proves only which destinations its AI operations dial"
   },
   "C14": {
     "status": "uncovered",
@@ -432,7 +448,12 @@
     "tests": [
       "backend/tests/security/test_vault_boundary_no_fallback.py::test_vault_notes_with_candidates_make_zero_app_provider_calls",
       "backend/tests/security/test_vault_boundary_no_fallback.py::test_vault_failure_never_falls_back",
-      "backend/tests/security/test_vault_boundary_no_fallback.py::test_byok_header_does_not_authorize_fallback_under_vault_boundary"
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_byok_header_does_not_authorize_fallback_under_vault_boundary",
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_deployment_owner_env_vault_is_vault_bound",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_a_vault_bound_writer_never_reaches_the_app_provider_seam",
+      "backend/tests/security/test_ai_boundary_network_matrix.py::test_the_seam_spy_sees_an_app_provider_writer"
     ],
     "sinks": [
       "net.openai",
@@ -441,8 +462,20 @@
       "net.creek_vault_deployment",
       "net.creek_downstream_model"
     ],
-    "issue": 3161,
-    "gap": "no socket-level matrix proves a vault-bound writer's AI operations dial only their vault with each dependency down"
+    "by_sink": {
+      "net.openai": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault",
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_app_provider_writer_dials_are_recorded"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault"
+      ],
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault"
+      ]
+    },
+    "issue": 2871,
+    "gap": "the deployment-wide vault is proven at the seam, not the socket; whether the vault's own model stays local is Creek's to prove (Geoffe-Ga/Creek-Vault#1849, #2871)"
   },
   "C24": {
     "status": "partial",
