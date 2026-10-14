@@ -12,6 +12,8 @@ the implementation-specialist adds it.  That is the correct RED state.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from domain.care import MEDICATION_GUARDRAIL
@@ -237,3 +239,51 @@ def test_the_essay_prompt_omits_the_section_when_there_are_no_prior_letters(
     prompt = _build_essay_prompt(_BODY, _ANCHOR_TEXT, _KIND, _NOTE, prior_drafts=empty)
     assert _PRIOR_LETTERS_OPEN not in prompt
     assert NO_STYLE_TRANSFER_INSTRUCTION not in prompt
+
+
+# ---------------------------------------------------------------------------
+# authorship -- the Higher Self voice without claiming the person's notes (#3265)
+# ---------------------------------------------------------------------------
+# The letter speaks in the person's own Higher Self's voice, but the prompt must
+# not tell the model that it left or wrote the margin note: that makes the model
+# claim authorship of the person's reflection. The note is labelled neutrally.
+
+#: Phrases that make a model claim it authored the person's notes or anchoring.
+_AUTHORSHIP_CLAIMS = (
+    "note you left",
+    "notes you left",
+    "your margin note",
+    "you anchored",
+)
+
+#: ``backend/src``, whose ``domain`` and ``services`` packages hold every prompt.
+_SRC = Path(__file__).resolve().parents[2] / "src"
+
+
+def test_essay_prompt_keeps_higher_self_voice_and_labels_the_note_neutrally() -> None:
+    """The letter prompt keeps "Higher Self" and labels the note "The margin note"."""
+    prompt = _build_essay_prompt(_BODY, _ANCHOR_TEXT, _KIND, _NOTE)
+
+    assert "in their own Higher Self's voice" in prompt
+    assert f"The margin note: {_NOTE}\n" in prompt
+
+
+@pytest.mark.parametrize("claim", _AUTHORSHIP_CLAIMS)
+def test_essay_prompt_does_not_claim_the_model_wrote_the_note(claim: str) -> None:
+    """Neither the instructions nor the material say the model left the note."""
+    prompt = _build_essay_prompt(_BODY, _ANCHOR_TEXT, _KIND, _NOTE)
+
+    assert claim not in prompt.lower()
+
+
+@pytest.mark.parametrize("package", ["domain", "services"])
+def test_no_prompt_source_claims_authorship_of_the_persons_notes(package: str) -> None:
+    """No module under ``src/domain`` or ``src/services`` carries an authorship claim."""
+    offenders = [
+        f"{path.relative_to(_SRC)}: {claim!r}"
+        for path in sorted((_SRC / package).rglob("*.py"))
+        for claim in _AUTHORSHIP_CLAIMS
+        if claim in path.read_text(encoding="utf-8").lower()
+    ]
+
+    assert offenders == []
