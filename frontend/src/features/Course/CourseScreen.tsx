@@ -13,7 +13,6 @@ import {
   type ContentItem,
   type CourseProgress,
   type NextUnread,
-  type SiteResource,
   type Stage,
 } from '../../api';
 import { decorativeHidden } from '../../components/a11yHidden';
@@ -43,6 +42,7 @@ import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
 import CourseDrawer, { useCourseDrawerBodies, useCourseDrawerContent } from './CourseDrawer';
 import ReadNextButton, { useNextUnread, type NextUnreadState } from './ReadNextButton';
+import ResourceViewer, { type ResourceTarget } from './ResourceViewer';
 import RetryButton from './RetryButton';
 import SiteResourcesPanel from './SiteResourcesPanel';
 import StageIntroCard from './StageIntroCard';
@@ -491,7 +491,7 @@ function useJournalHandoff(
 
 function useCourseViewer(selectedStage: number) {
   const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
-  const [viewingResource, setViewingResource] = useState<SiteResource | null>(null);
+  const [viewingResource, setViewingResource] = useState<ResourceTarget | null>(null);
   const [viewingIntro, setViewingIntro] = useState<number | null>(null);
   // Only set on a warm return; a manual open clears it so no stale scroll leaks.
   const [restoreOffset, setRestoreOffset] = useState<number | undefined>(undefined);
@@ -509,7 +509,7 @@ function useCourseViewer(selectedStage: number) {
     setViewingItem(item);
   }, []);
 
-  const handleResourcePress = useCallback((resource: SiteResource) => {
+  const handleResourcePress = useCallback((resource: ResourceTarget) => {
     setViewingResource(resource);
   }, []);
 
@@ -594,13 +594,25 @@ interface ReadNextProps {
  *  same route-param path a journal return uses, so ``useReaderRestore`` does the
  *  opening once that chapter's stage has loaded. The stage is selected directly
  *  as well, because a route already carrying this stage number would not move
- *  the selection a reader has since changed with the pills. */
-function useReadNext(setSelectedStage: (_stageNumber: number) => void, rearm: () => void) {
+ *  the selection a reader has since changed with the pills.
+ *
+ *  An unread Start Here resource comes before any chapter (#3234); it is not
+ *  stage content, so it opens straight in the resource reader with no route
+ *  params and no stage change. */
+function useReadNext(
+  setSelectedStage: (_stageNumber: number) => void,
+  rearm: () => void,
+  openResource: (_resource: ResourceTarget) => void,
+) {
   const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList, 'Course'>>();
   const nextUnread = useNextUnread();
 
   const openNext = useCallback(
     (target: NextUnread) => {
+      if (target.kind === 'resource') {
+        openResource({ slug: target.slug, title: target.title });
+        return;
+      }
       setSelectedStage(target.stage_number);
       // ``scrollOffset`` is cleared so a stale journal-return offset can never
       // drop the reader halfway down a chapter they have not started.
@@ -611,33 +623,38 @@ function useReadNext(setSelectedStage: (_stageNumber: number) => void, rearm: ()
       });
       rearm();
     },
-    [navigation, setSelectedStage, rearm],
+    [navigation, setSelectedStage, rearm, openResource],
   );
 
   return { state: nextUnread.state, refresh: nextUnread.refresh, openNext };
 }
 
 /** The reader's position across the screen: the journal-return restore, the
- *  "Read next" target, and the mark-read handler that keeps both lists and the
- *  target current. A chapter marked read moves the target, so it is re-asked. */
+ *  "Read next" target, and the mark-read handlers that keep both lists and the
+ *  target current. A chapter or Start Here resource marked read moves the
+ *  target, so it is re-asked. */
 function useCourseReadingPosition(
   stageContent: ReturnType<typeof useStageContent>,
   viewer: ReturnType<typeof useCourseViewer>,
   setSelectedStage: (_stageNumber: number) => void,
-): { readNext: ReadNextProps; onMarkRead: () => void } {
+): { readNext: ReadNextProps; onMarkRead: () => void; onResourceRead: () => void } {
   const { rearm } = useReaderRestore(
     stageContent.content,
     viewer.viewingItem?.id ?? null,
     viewer.openForRestore,
   );
-  const { state, refresh, openNext } = useReadNext(setSelectedStage, rearm);
+  const { state, refresh, openNext } = useReadNext(
+    setSelectedStage,
+    rearm,
+    viewer.handleResourcePress,
+  );
   const { handleMarkRead } = stageContent;
   const onMarkRead = useCallback(() => {
     handleMarkRead();
     refresh();
   }, [handleMarkRead, refresh]);
   const readNext = useMemo(() => ({ state, onOpen: openNext }), [state, openNext]);
-  return { readNext, onMarkRead };
+  return { readNext, onMarkRead, onResourceRead: refresh };
 }
 
 // --- Main component ---
@@ -661,9 +678,15 @@ function buildChapterNav(
   };
 }
 
+/** Mark-read callbacks the overlay readers report back through. */
+interface OverlayReadHandlers {
+  onMarkRead: () => void;
+  onResourceRead: () => void;
+}
+
 function renderOverlay(
   viewer: ReturnType<typeof useCourseViewer>,
-  onMarkRead: () => void,
+  { onMarkRead, onResourceRead }: OverlayReadHandlers,
   content: ContentItem[],
 ): React.JSX.Element | null {
   if (viewer.viewingItem) {
@@ -682,10 +705,10 @@ function renderOverlay(
   }
   if (viewer.viewingResource) {
     return (
-      <ChapterReader
-        source={{ kind: 'resource', slug: viewer.viewingResource.slug }}
-        fallbackTitle={viewer.viewingResource.title}
+      <ResourceViewer
+        resource={viewer.viewingResource}
         onBack={viewer.handleBack}
+        onMarkedRead={onResourceRead}
       />
     );
   }
@@ -902,7 +925,11 @@ const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
   const stageContent = useStageContent(selectedStage, allStages.length > 0);
   const viewer = useCourseViewer(selectedStage);
-  const { readNext, onMarkRead } = useCourseReadingPosition(stageContent, viewer, setSelectedStage);
+  const { readNext, onMarkRead, onResourceRead } = useCourseReadingPosition(
+    stageContent,
+    viewer,
+    setSelectedStage,
+  );
   const drawer = useScreenDrawer('Course');
   const { handleStageSelect, handleChapterPress } = useCourseNavigation(
     setSelectedStage,
@@ -910,7 +937,7 @@ const CourseScreen = (): React.JSX.Element => {
     drawer,
   );
 
-  const overlay = renderOverlay(viewer, onMarkRead, stageContent.content);
+  const overlay = renderOverlay(viewer, { onMarkRead, onResourceRead }, stageContent.content);
   if (overlay !== null) {
     // Drawer must mount alongside the reader so the hamburger works while reading.
     return (

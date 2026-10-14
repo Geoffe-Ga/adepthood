@@ -711,18 +711,41 @@ export const stageIntroSchema = z.object({
 });
 
 /**
- * The "Read next" target from ``GET /course/next-unread`` (#3147): the earliest
- * unlocked chapter the reader has not marked read, across every open stage.
- * The endpoint answers ``null`` when the reader is caught up, which is why the
- * response schema is this object made nullable rather than the object alone.
+ * The "Read next" target from ``GET /course/next-unread`` (#3147, #3234): the
+ * lowest-``order`` Start Here resource the reader has not read while one
+ * remains (``kind: 'resource'``, keyed by ``slug``), then the earliest unlocked
+ * chapter they have not marked read across every open stage
+ * (``kind: 'chapter'``). The endpoint answers ``null`` when the reader is caught
+ * up, which is why the response schema is this object made nullable rather than
+ * the object alone.
+ *
+ * The wire shape is one flat object with nullable keys, so it stays comparable
+ * field-for-field with the OpenAPI component; the refinement is what holds each
+ * ``kind`` to the keys it needs, so a chapter without a ``content_id`` or a
+ * resource without a ``slug`` fails at the boundary instead of in the reader.
  */
-export const nextUnreadSchema = z.object({
-  content_id: z.number().int().positive(),
-  stage_number: z.number().int().min(1).max(STAGE_DURATIONS_DAYS.length),
-  title: z.string(),
-});
+export const nextUnreadSchema = z
+  .object({
+    kind: z.enum(['resource', 'chapter']),
+    slug: z.string().min(1).nullable(),
+    content_id: z.number().int().positive().nullable(),
+    stage_number: z.number().int().min(1).max(STAGE_DURATIONS_DAYS.length).nullable(),
+    title: z.string(),
+  })
+  .superRefine((target, ctx) => {
+    const required =
+      target.kind === 'resource' ? (['slug'] as const) : (['content_id', 'stage_number'] as const);
+    for (const key of required) {
+      if (target[key] === null) {
+        ctx.addIssue({ code: 'custom', path: [key], message: `${target.kind} needs ${key}` });
+      }
+    }
+  });
 
-export type NextUnreadT = z.infer<typeof nextUnreadSchema>;
+/** A "Read next" target, narrowed by ``kind`` to the keys that kind carries. */
+export type NextUnreadT =
+  | { kind: 'resource'; slug: string; content_id: null; stage_number: null; title: string }
+  | { kind: 'chapter'; slug: null; content_id: number; stage_number: number; title: string };
 
 /**
  * Frequency-banner payload from ``GET /user-practices/current/frequency``.
