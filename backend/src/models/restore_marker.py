@@ -52,6 +52,10 @@ class RestoreMarker(SQLModel, table=True):
             "accounts_reapplied >= 0 AND entries_reapplied >= 0 AND identity_mismatches >= 0",
             name="ck_restoremarker_counts_range",
         ),
+        CheckConstraint(
+            "obligations_reapplied >= 0 AND intimate_reapplied >= 0",
+            name="ck_restoremarker_reapply_counts_range",
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -68,4 +72,7 @@ class RestoreMarker(SQLModel, table=True):
     accounts_reapplied: int = Field(default=0, nullable=False)
     entries_reapplied: int = Field(default=0, nullable=False)
     identity_mismatches: int = Field(default=0, nullable=False)
+    #: Owed withdrawals and Intimate re-stamps re-applied (tombstone format v3, #3237).
+    obligations_reapplied: int = Field(default=0, nullable=False)
+    intimate_reapplied: int = Field(default=0, nullable=False)
     build_version: str | None = Field(default=None, max_length=_BUILD_VERSION_WIDTH)

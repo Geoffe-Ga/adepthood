@@ -714,6 +714,8 @@ async def _close_marker(
         marker.accounts_reapplied = tally.accounts_reapplied
         marker.entries_reapplied = tally.entries_reapplied
         marker.identity_mismatches = tally.identity_mismatches
+        marker.obligations_reapplied = tally.obligations_reapplied
+        marker.intimate_reapplied = tally.intimate_reapplied
         marker.build_version = configured_release()
         session.add(marker)
         await session.commit()
@@ -722,7 +724,13 @@ async def _close_marker(
 async def _reapply_all(
     factory: async_sessionmaker[AsyncSession], tombstones: TombstoneSet, tally: _Tally
 ) -> None:
-    """Apply every tombstone, accounts first: an erased account owes nothing else."""
+    """Apply every tombstone, accounts first: an erased account owes nothing else.
+
+    Obligations before Intimate re-stamps is order-safe. Neither step reads what
+    the other writes: the obligation step ignores the tier, and the Intimate step
+    ignores obligations. The local withdrawal they share is idempotent, so a page
+    that has both tombstones ends in the same state whichever runs first.
+    """
     for account in tombstones.accounts:
         await _reapply_account(factory, account, tally)
     for entry in tombstones.entries:
