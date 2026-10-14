@@ -25,9 +25,12 @@ This is a narrowing of where writing may be sent. It says nothing about where a
 vault itself sends it: a vault may route work to its own models, local or not,
 and that is the vault's boundary to declare, not this module's to promise.
 
-:func:`app_provider_llm` is the only place in the reflection and detection
-routes that constructs the app-provider adapter, so the boundary is enforced by
-construction rather than by each call site remembering to check it.
+:func:`app_provider_llm` is the only place that constructs the app-provider
+adapter -- for reflection, completion detection and essay expansion alike -- so
+the boundary is enforced by construction rather than by each call site
+remembering to check it. The two operations that dial the provider without the
+adapter, frequency classification and page transcription, are gated by
+:func:`require_app_provider_boundary` in the very function that dials.
 """
 
 from __future__ import annotations
@@ -99,6 +102,24 @@ class AppProviderRefusedError(RuntimeError):
     def __init__(self) -> None:
         """Carry a static message naming the refusal, nothing about the caller."""
         super().__init__("app provider refused under a vault-bound boundary")
+
+
+def require_app_provider_boundary(boundary: ReflectionBoundary) -> None:
+    """Refuse, loudly, to let the app provider be dialled for a vault-bound caller.
+
+    The gate for the call sites that reach the provider *without* the adapter --
+    frequency classification and page transcription call
+    :func:`services.botmason.generate_response` directly. Each calls this first,
+    in the same function as the dial, and the structural test
+    ``tests/security/test_app_provider_construction_chokepoint.py`` fails any
+    direct dial that does not. Like :func:`require_app_provider_llm` it raises
+    rather than returning a flag: a route answers the vault-bound caller its own
+    honest refusal before it gets here, so reaching this under
+    :attr:`ReflectionBoundary.VAULT_BOUND` is a missing check at the call site,
+    and it should be a 500 rather than a silent dial.
+    """
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        raise AppProviderRefusedError
 
 
 def app_provider_llm(

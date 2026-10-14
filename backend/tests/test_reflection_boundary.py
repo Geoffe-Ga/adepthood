@@ -27,6 +27,7 @@ from services.reflection_boundary import (
     VaultSourceUnavailableError,
     VaultSourceUnavailableReason,
     app_provider_llm,
+    require_app_provider_boundary,
     require_app_provider_llm,
 )
 from services.user_vault_config import store_vault_config
@@ -58,6 +59,14 @@ def test_require_refuses_loudly_under_the_vault_boundary() -> None:
     assert isinstance(
         require_app_provider_llm(ReflectionBoundary.APP_PROVIDER, None), BotmasonResonanceLLM
     )
+
+
+def test_the_bare_dial_gate_refuses_only_the_vault_boundary() -> None:
+    """The gate in front of every adapter-less dial (#3156): silent, or loud when vault-bound."""
+    with pytest.raises(AppProviderRefusedError):
+        require_app_provider_boundary(ReflectionBoundary.VAULT_BOUND)
+
+    require_app_provider_boundary(ReflectionBoundary.APP_PROVIDER)  # returns without raising
 
 
 def test_the_unavailable_error_carries_only_closed_vocabulary() -> None:

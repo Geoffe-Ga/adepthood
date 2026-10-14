@@ -460,13 +460,19 @@ async def test_demo_essay_is_not_charged_and_labelled(
 async def test_vault_note_with_provider_essay_shows_both_sources(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The letter's source is its own: a vault note can carry an app-provider letter."""
+    """The letter's source is its own: a vault note can carry an app-provider letter.
+
+    Only once the writer is no longer vault-bound -- a vault-bound writer is
+    refused a letter outright, since no vault writes one (#3156) -- so the note
+    is written while bound and the letter asked for after the vault is gone.
+    """
     _bind_to_vault(_vault_with_note())
     _answer_as(monkeypatch, provider="anthropic", model=_REAL_MODEL)
     headers = await _signup(async_client, "prov_both")
     entry_id = await _create_entry(async_client, headers)
     resonance = await async_client.post(f"/journal/{entry_id}/resonance", headers=headers)
     note_id = resonance.json()["marginalia"][0]["id"]
+    app.dependency_overrides[get_reflection_boundary] = lambda: ReflectionBoundary.APP_PROVIDER
     before = await _user(db_session, "prov_both")
     used_before = before.monthly_messages_used
 
