@@ -370,6 +370,44 @@ def test_gate_set_must_mirror_the_ledger() -> None:
     assert _validate(record) == _invalid(Reason.GATE_SET_MISMATCH)
 
 
+def test_reordered_any_of_group_still_certifies() -> None:
+    """#3287: order inside an any-of group carries no meaning."""
+    record = _certified()
+    record["required_gates"][2].reverse()
+    assert [gate["item"] for gate in record["required_gates"][2]] == ["B14", "B13"]
+    assert _validate(record) == (cert.EXIT_CERTIFIED, ())
+
+
+def _pending(item: str) -> dict[str, object]:
+    return {"item": item, "status": "pending", "evidence_ref": None}
+
+
+@pytest.mark.parametrize(
+    "custody_group",
+    [
+        pytest.param([_passed("B13")], id="missing-item"),
+        pytest.param([_passed("B13"), _pending("B14"), _pending("B15")], id="extra-item"),
+        pytest.param([_passed("B13"), _pending("B14"), _pending("B14")], id="duplicate-item"),
+        pytest.param([_passed("B13"), _passed("B13"), _pending("B14")], id="duplicate-met-item"),
+    ],
+)
+def test_any_of_group_must_hold_exactly_the_ledger_items(
+    custody_group: list[dict[str, object]],
+) -> None:
+    """#3287: a set comparison must not hide a missing, extra or repeated item."""
+    record = _certified()
+    record["required_gates"][2] = custody_group
+    assert _validate(record) == _invalid(Reason.GATE_SET_MISMATCH)
+
+
+def test_gate_groups_follow_the_ledger_order() -> None:
+    """#3287: groups pair with the ledger's groups by position (the documented contract)."""
+    record = _certified()
+    first, second, custody = record["required_gates"]
+    record["required_gates"] = [second, first, custody]
+    assert _validate(record) == _invalid(Reason.GATE_SET_MISMATCH)
+
+
 def test_any_of_custody_group_needs_only_selected_branch() -> None:
     record = _certified()
     assert _validate(record) == (cert.EXIT_CERTIFIED, ())

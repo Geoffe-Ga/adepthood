@@ -481,9 +481,22 @@ def _claim_matches(ctx: _Context) -> list[Reason]:
     return [] if ctx.record["claim_id"] == ctx.claim.id else [Reason.CLAIM_MISMATCH]
 
 
+def _group_items(group: Sequence[str]) -> frozenset[str] | None:
+    """An any-of group's items as a set, or ``None`` when an item repeats."""
+    items = frozenset(group)
+    return items if len(items) == len(group) else None
+
+
 def _gate_set(ctx: _Context) -> list[Reason]:
-    groups = tuple(tuple(gate["item"] for gate in group) for group in ctx.record["required_gates"])
-    return [] if groups == ctx.claim.required_gates else [Reason.GATE_SET_MISMATCH]
+    """Groups pair with the ledger's by position; items within a group in any order.
+
+    A repeated item is a mismatch outright, so the set comparison cannot hide it.
+    """
+    record = [
+        _group_items([gate["item"] for gate in group]) for group in ctx.record["required_gates"]
+    ]
+    ledger = [frozenset(group) for group in ctx.claim.required_gates]
+    return [] if None not in record and record == ledger else [Reason.GATE_SET_MISMATCH]
 
 
 def _issued_in_past(ctx: _Context) -> list[Reason]:
