@@ -19,6 +19,7 @@ import {
   type SetStateAction,
 } from 'react';
 
+import { aiAccessRevoked } from './aiAccessRevoked';
 import { mergeByIdSorted, useHydrateOnOpen } from './entryList';
 import { fundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
@@ -461,7 +462,8 @@ interface PassFailureDeps extends PassFailureContext {
   /**
    * Whether the line may invite another pass "whenever you like". False for a
    * generation-guardrail refusal (#623), whose own copy says when asking again
-   * can work: once the one in flight finishes, or after midnight UTC.
+   * can work: once the one in flight finishes, or after midnight UTC. False too
+   * for a revoked entitlement (#1938), where asking again cannot succeed.
    */
   retryInvited: boolean;
 }
@@ -514,7 +516,7 @@ async function settlePassFailure(
     // Funding has its own immediate, actionable surface. Detection still runs
     // and merges offers, but must not announce a contradictory retry error.
     surfaceError: funding === null,
-    retryInvited: generationRefusal(error) === null,
+    retryInvited: generationRefusal(error) === null && !aiAccessRevoked(error),
   });
   if (funding !== null) {
     // Payment recovery is local and actionable. Do not hold it behind the

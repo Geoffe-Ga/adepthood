@@ -44,6 +44,7 @@ from models import (
     PracticeShareLink,
     PracticeTag,
     PromptResponse,
+    ResourceCompletion,
     RevokedToken,
     StageContent,
     StageProgress,
@@ -71,6 +72,7 @@ EXPECTED_TABLES: dict[type, str] = {
     PracticeRecipe: "practicerecipe",
     PracticeRecipeStep: "practicerecipestep",
     ContentCompletion: "contentcompletion",
+    ResourceCompletion: "resourcecompletion",
     EnergyPlan: "energyplan",
     PracticeSessionSpend: "practicesessionspend",
     WalletAudit: "walletaudit",
@@ -107,6 +109,7 @@ FOREIGN_KEYS: list[tuple[type, str, str, str | None]] = [
     (PracticeRecipeStep, "recipe_id", "practicerecipe", "CASCADE"),
     (ContentCompletion, "user_id", "user", "CASCADE"),
     (ContentCompletion, "content_id", "stagecontent", None),
+    (ResourceCompletion, "user_id", "user", "CASCADE"),
     (EnergyPlan, "user_id", "user", "CASCADE"),
     (PracticeSessionSpend, "user_id", "user", "CASCADE"),
     (PracticeSessionSpend, "session_id", "practicesession", "CASCADE"),
@@ -123,6 +126,7 @@ COMPOSITE_UNIQUES: list[tuple[type, str]] = [
     (PromptResponse, "uq_promptresponse_user_week"),
     (PracticeSessionSpend, "uq_practicesessionspend_user_idem_key"),
     (ContentCompletion, "uq_contentcompletion_user_content"),
+    (ResourceCompletion, "uq_resourcecompletion_user_slug"),
     (LicenseBinding, "uq_licensebinding_gumroad_sale_id"),
 ]
 
@@ -211,11 +215,16 @@ def test_string_column_max_lengths() -> None:
     assert _max_length(User, "email") == 254
     assert _max_length(PracticeShareLink, "token") == 64
     assert _max_length(RevokedToken, "jti") == 64
+    assert _max_length(ResourceCompletion, "slug") == 100
 
 
 @pytest.mark.parametrize(
     ("model", "column"),
-    [(GoalCompletion, "timestamp"), (RevokedToken, "expires_at")],
+    [
+        (GoalCompletion, "timestamp"),
+        (RevokedToken, "expires_at"),
+        (ResourceCompletion, "completed_at"),
+    ],
 )
 def test_datetime_columns_are_tz_aware_non_null(model: type[SQLModel], column: str) -> None:
     """Timestamp columns are non-null timezone-aware DateTimes."""
@@ -230,6 +239,8 @@ def test_key_columns_are_non_null() -> None:
     assert _table(Habit).columns["user_id"].nullable is False
     assert _table(GoalCompletion).columns["goal_id"].nullable is False
     assert _table(PracticeSession).columns["user_id"].nullable is False
+    assert _table(ResourceCompletion).columns["user_id"].nullable is False
+    assert _table(ResourceCompletion).columns["slug"].nullable is False
 
 
 def test_no_runtime_side_effects_on_import() -> None:

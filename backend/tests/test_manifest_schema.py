@@ -85,21 +85,22 @@ def test_site_resource_media_is_optional(
     Draft202012Validator(schema).validate(no_media)
 
 
-def test_site_resource_order_is_accepted_but_optional(
+def test_site_resource_order_is_required(
     schema: dict[str, Any],
     example: dict[str, Any],
 ) -> None:
-    """schema_version 1.3.0: upstream emits a 1-based site_resource.order.
+    """schema_version 1.3.0: every site resource carries a 1-based ``order``.
 
-    aptitude-course#76 made ``order`` required upstream; this copy only has
-    to accept it so a 1.3.0 manifest vendors, and stays tolerant of the
-    older manifests that omit it.
+    aptitude-course#76 made ``order`` required upstream and the backend now
+    serves Start Here in that order (#3148), so a resource without one is a
+    contract violation rather than something to guess a position for.
     """
     assert example["site_resources"][0]["order"] == 1
     Draft202012Validator(schema).validate(example)
     no_order = json.loads(json.dumps(example))
     no_order["site_resources"][0].pop("order")
-    Draft202012Validator(schema).validate(no_order)
+    with pytest.raises(ValidationError, match="'order' is a required property"):
+        Draft202012Validator(schema).validate(no_order)
 
 
 @pytest.mark.parametrize("bad_order", [0, -1, "1", 1.5])
