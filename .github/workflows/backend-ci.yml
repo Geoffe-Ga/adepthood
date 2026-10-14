@@ -166,7 +166,7 @@ jobs:
   # (3.12 is already covered by the backend-quality job).
   backend-compat:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.compat != 'false') }}
     runs-on: ubuntu-latest
     strategy:
       # This job is the transitive-dependency canary: a red leg must not cancel

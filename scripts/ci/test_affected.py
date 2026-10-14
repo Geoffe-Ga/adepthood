@@ -23,6 +23,7 @@ class LaneSelection(unittest.TestCase):
             affected.affected(["frontend/src/App.tsx"]),
             {
                 "backend": False,
+                "compat": False,
                 "cross": True,
                 "content": False,
                 "e2e": True,
@@ -34,6 +35,7 @@ class LaneSelection(unittest.TestCase):
             affected.affected(["backend/src/routers/auth.py"]),
             {
                 "backend": True,
+                "compat": True,
                 "cross": True,
                 "content": False,
                 "e2e": True,
@@ -43,6 +45,19 @@ class LaneSelection(unittest.TestCase):
     def test_meta_tests_do_not_boot_services(self):
         lanes = affected.affected(["backend/tests/scripts/test_gate.py"])
         self.assertFalse(any(lanes[key] for key in ["backend", "content", "e2e"]))
+
+    def test_meta_tests_keep_python_compatibility_without_runtime_services(self):
+        for path in [
+            "backend/tests/scripts/test_gate.py",
+            "backend/tests/scripts/dast/test_contract_workflow.py",
+            "backend/tests/scripts/new_test.py",
+        ]:
+            with self.subTest(path=path):
+                lanes = affected.affected([path])
+                self.assertTrue(lanes.get("compat", False))
+                self.assertFalse(
+                    any(lanes[key] for key in ["backend", "content", "e2e"])
+                )
 
     def test_non_source_cross_boundary_inputs_run_frontend_guards(self):
         for path in [
@@ -201,6 +216,21 @@ class GitHistory(unittest.TestCase):
 
 
 class WorkflowWiring(unittest.TestCase):
+    def test_selector_outputs_reach_the_caller_workflows(self):
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/_affected.yml").read_text()
+        for lane in ["backend", "compat", "cross", "content", "e2e"]:
+            with self.subTest(lane=lane):
+                self.assertIn(
+                    f"      {lane}:\n"
+                    f"        value: ${{{{ jobs.changes.outputs.{lane} }}}}",
+                    text,
+                )
+                self.assertIn(
+                    f"      {lane}: ${{{{ steps.detect.outputs.{lane} }}}}",
+                    text,
+                )
+
     def test_backend_quality_is_independent_of_the_selector(self):
         root = Path(__file__).resolve().parents[2]
         text = (root / ".github/workflows/backend-ci.yml").read_text()
@@ -212,7 +242,7 @@ class WorkflowWiring(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         scopes = {
             "backend-ci.yml": {
-                "backend-compat": "backend",
+                "backend-compat": "compat",
                 "openapi-drift": "backend",
                 "migration-drift": "backend",
                 "backend-integration": "backend",

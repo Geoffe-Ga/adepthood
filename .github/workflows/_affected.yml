@@ -5,6 +5,8 @@ on:
     outputs:
       backend:
         value: ${{ jobs.changes.outputs.backend }}
+      compat:
+        value: ${{ jobs.changes.outputs.compat }}
       cross:
         value: ${{ jobs.changes.outputs.cross }}
       content:
@@ -21,6 +23,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.detect.outputs.backend }}
+      compat: ${{ steps.detect.outputs.compat }}
       cross: ${{ steps.detect.outputs.cross }}
       content: ${{ steps.detect.outputs.content }}
       e2e: ${{ steps.detect.outputs.e2e }}

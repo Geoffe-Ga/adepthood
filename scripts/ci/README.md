@@ -8,7 +8,7 @@ and both sides of a rename count; unavailable history runs every lane.
 | Changed input | Jobs selected in addition to backend quality |
 | --- | --- |
 | Docs and root guard inputs | No runtime jobs |
-| Backend meta-tests | Cross-boundary guards; no Python runtime or E2E jobs |
+| Backend meta-tests | Python compatibility and cross-boundary guards; no schema, Postgres, or E2E jobs |
 | Backend source | Python compatibility, OpenAPI, migrations, integration, cross-boundary guards, E2E |
 | Backend unit tests | Python compatibility, OpenAPI, migrations, integration, cross-boundary guards |
 | Backend journey helpers (`backend/tests/e2e/`) | Python lanes, cross-boundary guards, E2E |
@@ -24,6 +24,9 @@ Backend quality retains its existing trigger paths because its tests read
 documents, graph data, scripts, and frontend dependency/security configuration.
 Skipping it for those changes would leave existing repository guards blind.
 It has no dependency on the selector, so a selector failure cannot skip it.
+The Python compatibility matrix has a separate selector from the runtime jobs:
+all backend test changes, including script meta-tests, still run on Python 3.11
+and 3.13 so incompatible test syntax or imports cannot merge undetected.
 The small cross-boundary Jest lane watches all of `backend/`: its helper allows
 guards to read arbitrary backend paths, including shared fixtures, configuration
 examples, and contract assertions in backend tests.

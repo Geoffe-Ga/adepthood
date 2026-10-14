@@ -25,6 +25,9 @@ def affected(paths: list[str]) -> dict[str, bool]:
             for path in paths
         )
     )
+    # Every test module is collected on the compatibility matrix. Meta-tests
+    # still need that coverage when no app or database behavior has changed.
+    compat = backend or any(path.startswith("backend/tests/") for path in paths)
     cross = (
         shared
         or backend_workflow
@@ -78,7 +81,13 @@ def affected(paths: list[str]) -> dict[str, bool]:
             for path in paths
         )
     )
-    return {"backend": backend, "cross": cross, "content": content, "e2e": e2e}
+    return {
+        "backend": backend,
+        "compat": compat,
+        "cross": cross,
+        "content": content,
+        "e2e": e2e,
+    }
 
 
 def changed_paths(event_name: str, event: dict) -> list[str] | None:
