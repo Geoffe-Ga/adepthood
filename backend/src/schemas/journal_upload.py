@@ -209,9 +209,15 @@ UPLOAD_MESSAGES: Mapping[VaultUploadStatus, str] = MappingProxyType(
             "vault yet — update your vault if a newer version is out, and keep the file "
             "until one of you has caught up."
         ),
+        # Answered after the document went over the wire, so it cannot say the
+        # vault is unchanged: a vault can keep the file and then have its reply
+        # time out, drop, or arrive unreadable (#3052). "Unconfirmed" is the one
+        # thing true of every path here. Sending again is safe because the
+        # upload's external id is stable, so a re-send updates in place.
         VaultUploadStatus.DEGRADED: (
-            "The upload didn't complete and the document wasn't stored. Nothing was "
-            "changed in your vault — please try again."
+            "We couldn't confirm whether the upload finished — your vault may or may "
+            "not have the document. Please try again; sending the same file again "
+            "updates it in place rather than adding a second copy."
         ),
     }
 )
