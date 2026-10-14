@@ -261,6 +261,14 @@ export type {
 /** Image encodings the transcription endpoint accepts (mirrors the backend allowlist). */
 export type MediaType = 'image/jpeg' | 'image/png' | 'image/webp';
 
+/** One page to read, and the declared tier of the entry it belongs to (#3059 AC15). */
+export interface TranscribePageInput {
+  imageBase64: string;
+  mediaType: MediaType;
+  /** Judged by the server before anything else: only `personal` and `public` are read. */
+  classification: JournalClassification;
+}
+
 /**
  * The stable, UI-facing failure taxonomy for photographed-text transcription. Every
  * server / transport error is collapsed into one of these so callers branch on
@@ -273,6 +281,11 @@ export type TranscriptionErrorKind =
   // the model declined. Neither is billed, and a fresh shot is the next move.
   | 'no_text_found'
   | 'transcription_refused'
+  // The server will not read a page of the tier it was told (#3059 AC15): any
+  // tier but `personal` or `public`. Defence in depth behind the capture
+  // screen's own Intimate gate (#1882), and terminal -- the same page declared
+  // the same way is refused the same way, so typing it is the way forward.
+  | 'tier_refused'
   | 'wallet_exhausted'
   // No personal key, on a server with nothing credits could buy (#3096): only a
   // key of the writer's own can read the page, so it is terminal until one is added.
@@ -1832,6 +1845,7 @@ const byokHeaders = (apiKey?: string | null): Record<string, string> | undefined
 
 /** Statuses this endpoint answers with more than one distinct condition. */
 const TRANSCRIBE_PAYMENT_REQUIRED = 402;
+const TRANSCRIBE_FORBIDDEN = 403;
 const TRANSCRIBE_UNPROCESSABLE = 422;
 
 /** One status's `detail` sub-map, paired with what an unlisted detail means. */
@@ -1843,7 +1857,8 @@ interface TranscribeDetailRule {
 /**
  * Per-status `detail` rules: the endpoint reuses one status for several distinct
  * conditions, so the status alone cannot classify them. A 402 is a spent monthly
- * wallet, a spent provider balance, or a missing key; a 422 is a bad image, a
+ * wallet, a spent provider balance, or a missing key; a 403 `tier_refused` is a
+ * declared tier the server will not read (#3059); a 422 is a bad image, a
  * text-only model, or an unusable read (no text found, or a refused read). The 422
  * fallback also absorbs the Pydantic array-detail case that `extractErrorDetail`
  * collapses to `'Request failed'`.
@@ -1857,6 +1872,12 @@ const TRANSCRIBE_DETAIL_RULES: Record<number, TranscribeDetailRule> = {
       llm_credit_exhausted: 'credit_exhausted',
     },
     fallback: 'wallet_exhausted',
+  },
+  [TRANSCRIBE_FORBIDDEN]: {
+    // Only the tier refusal is named: any other 403 is not something this
+    // surface can say anything specific about.
+    kinds: { tier_refused: 'tier_refused' },
+    fallback: 'unknown',
   },
   [TRANSCRIBE_UNPROCESSABLE]: {
     kinds: {
@@ -1925,23 +1946,34 @@ function directToTranscriptionError(err: unknown): TranscriptionError {
  * key's vendor (ADR 0009 phase (a), #3067). Neither the key nor the page goes
  * to Adepthood: the only request it sees is the content-free admission, which
  * answers 503 `ai_suspended` while an operator has switched external AI off for
- * a privacy incident (#3075). Admission fails closed -- the page is not sent
- * when Adepthood cannot be asked -- and a reply that is no text or a refusal is
- * its typed kind, never the page's text, exactly as the server judged it.
+ * a privacy incident (#3075), and 403 `tier_refused` for a page whose declared
+ * tier may not be read (#3059). The admission carries that tier and nothing
+ * else. Admission fails closed -- the page is not sent when Adepthood cannot
+ * be asked -- and a reply that is no text or a refusal is its typed kind, never
+ * the page's text, exactly as the server judged it.
  */
 async function transcribePageDirect(
   key: string,
-  page: { imageBase64: string; mediaType: MediaType },
+  page: TranscribePageInput,
   token: string | undefined,
 ): Promise<TranscribePageT> {
   try {
-    await request<void>('/journal/transcribe-page/direct-admission', { method: 'POST', token });
+    await request<void>('/journal/transcribe-page/direct-admission', {
+      method: 'POST',
+      body: { classification: page.classification },
+      token,
+    });
   } catch (err: unknown) {
     throw toTranscriptionError(err);
   }
   let text: string;
   try {
-    text = await readImageDirect(key, page, { timeoutMs: TRANSCRIBE_TIMEOUT_MS });
+    const { imageBase64, mediaType } = page;
+    text = await readImageDirect(
+      key,
+      { imageBase64, mediaType },
+      { timeoutMs: TRANSCRIBE_TIMEOUT_MS },
+    );
   } catch (err: unknown) {
     throw directToTranscriptionError(err);
   }
@@ -2135,22 +2167,28 @@ export const journal = {
    * build, whose local server's stub test seam can answer it. Deliberately
    * NON-idempotent: no auto-retry, and callers must not resend on a transient
    * failure without the writer asking. PRIVACY: the image payload is never
-   * logged, and a {@link TranscriptionError} message never carries it.
+   * logged, and a {@link TranscriptionError} message never carries it. Both
+   * paths declare the page's tier, and the server refuses any tier it may not
+   * read with the terminal `tier_refused` kind (#3059 AC15).
    */
   async transcribePage(
-    { imageBase64, mediaType }: { imageBase64: string; mediaType: MediaType },
+    page: TranscribePageInput,
     token?: string,
     apiKey?: string,
   ): Promise<TranscribePageT> {
     const key = apiKey === undefined ? (llmApiKeyGetter?.() ?? null) : apiKey;
-    if (key) return transcribePageDirect(key, { imageBase64, mediaType }, token);
+    if (key) return transcribePageDirect(key, page, token);
     // Outside a development build the server can only refuse a keyless page,
     // so it is refused here and the page goes nowhere.
     if (!KEYLESS_PAGE_READ_REACHES_SERVER) throw new TranscriptionError('key_required', null);
     try {
       return await request<TranscribePageT>('/journal/transcribe-page', {
         method: 'POST',
-        body: { image_base64: imageBase64, media_type: mediaType },
+        body: {
+          image_base64: page.imageBase64,
+          media_type: page.mediaType,
+          classification: page.classification,
+        },
         token,
         timeoutMs: TRANSCRIBE_TIMEOUT_MS,
         schema: transcribePageSchema as unknown as z.ZodType<TranscribePageT>,

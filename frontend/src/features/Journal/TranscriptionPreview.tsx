@@ -13,6 +13,7 @@
 import React, { useState } from 'react';
 import { ActivityIndicator, Text, TextInput, View } from 'react-native';
 
+import { INTIMATE_TRANSCRIPTION_GATE_COPY } from './CaptureClassificationControl';
 import type { CapturePage } from './captureSession';
 import styles from './JournalPhotograph.styles';
 import { SeamOverlapSlot } from './SeamOverlapNotice';
@@ -56,6 +57,9 @@ const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = 
     'The helper declined to read that page. Try once more, or type it in by hand.',
   image_too_large:
     'That photo is a little large to read. Retake it, or use a lower-resolution shot.',
+  // The server refused the declared tier (#3059 AC15): the capture screen's own
+  // Intimate gate (#1882) says the same thing, in the same words.
+  tier_refused: INTIMATE_TRANSCRIPTION_GATE_COPY,
   wallet_exhausted: INSUFFICIENT_OFFERINGS_COPY,
   key_required: LLM_KEY_REQUIRED_COPY,
   // Sourced from the shared code map rather than written again here: this

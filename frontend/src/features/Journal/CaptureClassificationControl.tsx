@@ -21,8 +21,10 @@ import type { PrivacyTier } from './PrivacyTierControl';
 
 import { Button } from '@/components/Button';
 
-/** The one-promise gate copy: warm, declinable, and specific to transcription. */
-const INTIMATE_GATE_COPY =
+/** The one-promise gate copy: warm, declinable, and specific to transcription.
+ *  Also the copy for the server's own refusal of the declared tier (#3059 AC15),
+ *  so the same promise reads the same wherever it is kept. */
+export const INTIMATE_TRANSCRIPTION_GATE_COPY =
   'Intimate writing is never handed to an outside AI, so photo transcription is off for this entry. You can type it privately instead.';
 const TYPE_INSTEAD_LABEL = 'Type it instead';
 const KEEP_PERSONAL_LABEL = 'Keep as Personal';
@@ -50,7 +52,7 @@ function IntimateGate({
   return (
     <View testID="capture-intimate-gate" style={styles.intimateGate}>
       <Text testID="capture-intimate-explainer" style={styles.intimateGateText}>
-        {INTIMATE_GATE_COPY}
+        {INTIMATE_TRANSCRIPTION_GATE_COPY}
       </Text>
       <Button
         testID="capture-type-instead"

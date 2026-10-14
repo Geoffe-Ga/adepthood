@@ -504,7 +504,13 @@ describe('TERMINAL_ERROR_KINDS', () => {
   it('names only failures a page read can still produce', () => {
     // model_lacks_vision is gone: the server no longer reads a page with a
     // writer's key, and the device only ever asks for a vision model (#3067).
-    expect([...TERMINAL_ERROR_KINDS].sort()).toEqual(['credit_exhausted', 'key_required']);
+    // tier_refused: the server will not read the declared tier (#3059 AC15), and
+    // every page of the run declares the same one.
+    expect([...TERMINAL_ERROR_KINDS].sort()).toEqual([
+      'credit_exhausted',
+      'key_required',
+      'tier_refused',
+    ]);
   });
 });
 
@@ -547,7 +553,7 @@ describe('selectStartable — a terminal failure stops the run, not just the but
     return transcriptionRunReducer(state, { type: 'reject', id: 'p1', attempt: 1, error });
   }
 
-  it.each<TranscriptionErrorKind>(['credit_exhausted', 'key_required'])(
+  it.each<TranscriptionErrorKind>(['credit_exhausted', 'key_required', 'tier_refused'])(
     'dispatches nothing more once a page has failed with %s',
     (error) => {
       const state = failFirstPageWith(error);

@@ -54,7 +54,7 @@ import type { SentPage } from './replayReconcile';
 import { saveFinishedEntry } from './saveFinishedEntry';
 import { TranscriptionPreview } from './TranscriptionPreview';
 import { useTranscriptionRun } from './useTranscriptionRun';
-import type { TranscriptionRunModel } from './useTranscriptionRun';
+import type { TranscriptionRunModel, UseTranscriptionRunArgs } from './useTranscriptionRun';
 
 import { Button } from '@/components/Button';
 import DatePicker, { toISODate } from '@/components/DatePicker';
@@ -617,15 +617,13 @@ function useReorderPages(
 /** Wire the progressive run to the session, its two page-swapping offramps, and the
  *  per-page transient-file release fired once a page has been read. */
 function useCaptureRun(
-  pages: CapturePage[],
-  started: boolean,
+  run: Pick<UseTranscriptionRunArgs, 'pages' | 'started' | 'classification'>,
   retakePage: (_id: string) => void,
   removePage: (_id: string) => void,
   releasePageById: (_id: string) => void,
 ): TranscriptionRunModel {
   return useTranscriptionRun({
-    pages,
-    started,
+    ...run,
     onRetake: retakePage,
     onRemove: removePage,
     onPageTranscribed: releasePageById,
@@ -711,7 +709,8 @@ function useCaptureEngine(args: CaptureEngineArgs): CaptureEngine {
   const retakePage = useRetakePage({ dispatch, pagesRef, counterRef, releasePageById });
   const { started, transcribe, disarm } = useTranscribeGate(pagesRef, setPhase, classificationRef);
   useEmptyReviewGuard(phase.step, pages.length, disarm, setPhase);
-  const run = useCaptureRun(pages, started, retakePage, removePage, releasePageById);
+  const capture = { pages, started, classification };
+  const run = useCaptureRun(capture, retakePage, removePage, releasePageById);
   const { save, saving, saveFailed } = useConfirmGesture({
     navigation,
     appendTo,
