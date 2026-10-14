@@ -165,7 +165,10 @@ async def _anchored_candidates(session: AsyncSession, user_id: int) -> list[Habi
     The row is provisioned only on behalf of a laddered habit whose invitation is
     still pending: a habit off the ladder has no ring to wait for, and an empty
     or fully consumed list has nothing for an anchor to open. It is the same
-    provisioner, with the same anchor semantics, the course router uses.
+    provisioner, with the same anchor semantics, the course router uses. The
+    ``now`` it stamps is a default, not a verdict: the person may pick or move
+    the date with ``PUT /stages/program-calendar`` (#3097), and this pass reads
+    whatever anchor that left -- an invitation it already stamped stays stamped.
 
     Provisioning commits, so the candidates are read again after it rather than
     reused: that keeps the result sound whatever the session factory's
