@@ -151,8 +151,11 @@ should outlive account deletion was not part of that decision and stays open.
   the account, so after account deletion nothing records that a copy may
   remain. The account-deletion receipt's vault guidance is the only tell.
 - **Backup restore.** A restore from a backup taken before the erase reapplies
-  the page's deletion tombstone (B08 restore suppression). It does not recreate
-  the obligation row: tombstones carry no obligations.
+  the page's deletion tombstone (B08 restore suppression) and, since #3214,
+  re-records the open obligation too, bound to the same vault fingerprint, so
+  the sweep still owes the copy. An obligation whose page was already purged
+  is not exported: the purge waits until no live backup can hold the page
+  undeleted, so every usable backup already carries that row.
 - **Legacy unbound copies.** As above, they are never confirmed, live or
   erased (#3095, pinned by
   `test_legacy_unbound_marker_is_never_confirmed_by_the_current_vault` and
