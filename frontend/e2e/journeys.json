@@ -1143,17 +1143,20 @@
   },
   {
     "id": "course.read-next-opens-earliest-unread",
-    "description": "A reader taps Read next in the Course header and lands in the earliest unlocked chapter they have not read, across every open stage: lowest stage first, then release order. Marking chapter 1 read moves the target to chapter 2, whose reader body is served; once a stage is read through the target crosses into the next open stage, and with nothing open left unread the button reads All caught up. The covering spec drives the real client against a live server after moving only the program anchor; the tap itself -- setParams into the route-param path useReaderRestore already opens, and the re-fetch after mark-read -- is pinned in-process by src/features/Course/__tests__/CourseScreenReadNext.test.tsx.",
+    "description": "A reader taps Read next in the Course header and lands on the next page they have not read. While any Start Here resource is unread that is the lowest-order one, opened in the resource reader, whose body is served; marking it read moves the target to the next resource, and once Start Here is read through the target is the earliest unlocked chapter they have not read, across every open stage: lowest stage first, then release order. Marking chapter 1 read moves the target to chapter 2, whose reader body is served; once a stage is read through the target crosses into the next open stage, and with nothing open left unread the button reads All caught up. The covering spec drives the real client against a live server after moving only the program anchor; the tap itself -- setParams into the route-param path useReaderRestore already opens, a resource target opening the resource reader, and the re-fetch after either mark-read -- is pinned in-process by src/features/Course/__tests__/CourseScreenReadNext.test.tsx.",
     "crosses": {
       "screen": "frontend/src/features/Course/CourseScreen.tsx",
       "client": ["course"],
       "routes": [
         "GET /course/next-unread",
+        "GET /course/site-resources",
+        "GET /course/site-resources/{slug}/body",
+        "POST /course/site-resources/{slug}/mark-read",
         "GET /course/stages/{stage_number}/content",
         "GET /course/content/{content_id}/body",
         "POST /course/content/{content_id}/mark-read"
       ],
-      "tables": ["stagecontent", "contentcompletion"]
+      "tables": ["stagecontent", "contentcompletion", "resourcecompletion"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/course-read-next.e2e.test.ts"

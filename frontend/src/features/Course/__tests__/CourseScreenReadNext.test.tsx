@@ -3,10 +3,21 @@
  * where the reader left off, opens that chapter through the route-param path
  * ``useReaderRestore`` already serves, and asks again after a chapter is marked
  * read.
+ *
+ * An unread Start Here resource comes before any chapter (#3234): "Read next"
+ * opens it in the resource reader without touching the route or the stage, and
+ * marking it read there asks for the next target.
  */
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 
-import type { ContentBody, ContentCompletion, ContentItem, NextUnread, Stage } from '../../../api';
+import type {
+  ContentBody,
+  ContentCompletion,
+  ContentItem,
+  NextUnread,
+  ResourceCompletion,
+  Stage,
+} from '../../../api';
 import { useProgramStore } from '../../../store/useProgramStore';
 
 import { settle } from '@/testing/asyncSettle';
@@ -40,7 +51,20 @@ const chapter = (id: number, title: string, isRead = false): ContentItem => ({
 
 const STAGE_ONE = [chapter(11, 'Beige One', true), chapter(12, 'Beige Two')];
 const STAGE_TWO = [chapter(21, 'Purple One'), chapter(22, 'Purple Two')];
-const PURPLE_TARGET: NextUnread = { content_id: 21, stage_number: 2, title: 'Purple One' };
+const PURPLE_TARGET: NextUnread = {
+  kind: 'chapter',
+  slug: null,
+  content_id: 21,
+  stage_number: 2,
+  title: 'Purple One',
+};
+const START_HERE_TARGET: NextUnread = {
+  kind: 'resource',
+  slug: 'liminal-creep',
+  content_id: null,
+  stage_number: null,
+  title: 'Who Benefits?',
+};
 
 type CourseParams = { stageNumber?: number; contentId?: number; scrollOffset?: number };
 
@@ -48,6 +72,8 @@ const mockNextUnread = jest.fn<() => Promise<NextUnread | null>>();
 const mockStageContent = jest.fn<(_stageNumber: number) => Promise<ContentItem[]>>();
 const mockMarkRead = jest.fn<(_contentId: number) => Promise<ContentCompletion>>();
 const mockContentBody = jest.fn<(_contentId: number) => Promise<ContentBody>>();
+const mockResourceBody = jest.fn<(_slug: string) => Promise<ContentBody>>();
+const mockMarkResourceRead = jest.fn<(_slug: string) => Promise<ResourceCompletion>>();
 const mockSetParams = jest.fn<(_params: CourseParams) => void>();
 let mockRouteParams: CourseParams | undefined;
 
@@ -70,6 +96,8 @@ jest.mock('../../../api', () => ({
     markRead: (contentId: number) => mockMarkRead(contentId),
     contentBody: (contentId: number) => mockContentBody(contentId),
     siteResources: () => Promise.resolve([]),
+    siteResourceBody: (slug: string) => mockResourceBody(slug),
+    markResourceRead: (slug: string) => mockMarkResourceRead(slug),
     stageIntro: () => Promise.reject(new Error('content_not_found')),
   },
 }));
@@ -127,6 +155,16 @@ beforeEach(() => {
     title: 'Purple One',
     content_type: 'essay',
     body_markdown: 'Purple body.\n',
+  });
+  mockResourceBody.mockResolvedValue({
+    title: 'Who Benefits?',
+    content_type: 'resource',
+    body_markdown: 'Who this is for.\n',
+  });
+  mockMarkResourceRead.mockResolvedValue({
+    id: 1,
+    slug: 'liminal-creep',
+    completed_at: '2026-10-14T00:00:00Z',
   });
 });
 
@@ -238,5 +276,73 @@ describe('Read next navigation', () => {
 
     expect(mockMarkRead).toHaveBeenCalledWith(21);
     expect(mockNextUnread).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Read next to a Start Here resource (#3234)', () => {
+  beforeEach(() => {
+    mockNextUnread.mockResolvedValue(START_HERE_TARGET);
+  });
+
+  it('names the resource and opens it in the resource reader, not a chapter', async () => {
+    const { getByTestId } = renderCourse();
+    await settle();
+    expect(getByTestId('read-next').props.accessibilityLabel).toBe('Read next: Who Benefits?');
+
+    await pressReadNext(getByTestId);
+
+    expect(getByTestId('chapter-reader')).toBeTruthy();
+    expect(mockResourceBody).toHaveBeenLastCalledWith('liminal-creep');
+    expect(mockContentBody).not.toHaveBeenCalled();
+    expect(mockSetParams).not.toHaveBeenCalled();
+    expect(mockStageContent).toHaveBeenLastCalledWith(1);
+  });
+
+  it('marks the resource read at its end and asks for the next target', async () => {
+    const { getByTestId, findByTestId, getByText } = renderCourse();
+    await settle();
+    await pressReadNext(getByTestId);
+    expect(mockNextUnread).toHaveBeenCalledTimes(1);
+
+    await readToTheEnd(findByTestId);
+    await act(async () => {
+      fireEvent.press(getByTestId('resource-mark-read-button'));
+    });
+    await settle();
+
+    expect(mockMarkResourceRead).toHaveBeenCalledWith('liminal-creep');
+    expect(mockNextUnread).toHaveBeenCalledTimes(2);
+    expect(getByText('✓ Read')).toBeTruthy();
+    expect(getByTestId('resource-mark-read-button').props.accessibilityState).toMatchObject({
+      disabled: true,
+    });
+  });
+
+  it('keeps the resource unread when the mark fails', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockMarkResourceRead.mockRejectedValue(new Error('offline'));
+    const { getByTestId, findByTestId, getByText } = renderCourse();
+    await settle();
+    await pressReadNext(getByTestId);
+
+    await readToTheEnd(findByTestId);
+    await act(async () => {
+      fireEvent.press(getByTestId('resource-mark-read-button'));
+    });
+    await settle();
+
+    expect(mockNextUnread).toHaveBeenCalledTimes(1);
+    expect(getByText('Mark as Read')).toBeTruthy();
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it('keeps the mark control out of the way until the page end is in view', async () => {
+    const { getByTestId, findByTestId, queryByTestId } = renderCourse();
+    await settle();
+    await pressReadNext(getByTestId);
+    await findByTestId('reader-markdown');
+
+    expect(queryByTestId('resource-mark-read-button')).toBeNull();
   });
 });
