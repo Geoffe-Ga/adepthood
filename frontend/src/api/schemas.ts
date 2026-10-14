@@ -645,6 +645,9 @@ export const userPracticeSchema = z.object({
   end_date: isoDate.nullable(),
   custom_name: z.string().nullish(),
   mode_config_override: z.record(z.string(), z.unknown()).nullish(),
+  // The habit this practice's sessions count toward, or null when unlinked
+  // (#3151). Set via ``PATCH /user-practices/{id}/habit``.
+  habit_id: z.number().int().nullish(),
   effective_name: z.string().nullish(),
   effective_config: z.record(z.string(), z.unknown()).nullish(),
 });

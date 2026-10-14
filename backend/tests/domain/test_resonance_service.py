@@ -217,9 +217,10 @@ def test_the_retry_prompt_carries_the_prior_letters_too() -> None:
 def test_the_essay_prompt_carries_prior_letters_under_the_same_rule() -> None:
     """The essay half gets the same block, and the same anti-imitation rule.
 
-    This is the half that reaches every account: ``_cache_essay`` builds a cloud
-    LLM unconditionally, while the resonance half is discarded wholesale by a
-    connected vault (see ``tests/test_creek_vault_reflect.py``).
+    This is the half that reaches every app-provider-bound account: a letter is
+    only ever written by the app provider (a vault-bound writer is refused one,
+    #3156), while the resonance half is discarded wholesale by a connected vault
+    (see ``tests/test_creek_vault_reflect.py``).
     """
     prompt = _build_essay_prompt(
         _BODY, _ANCHOR_TEXT, _KIND, _NOTE, prior_drafts=[_MARCH_LETTER_SENTINEL]

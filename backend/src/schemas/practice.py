@@ -188,6 +188,7 @@ class UserPracticeResponse(OwnedResourcePublic):
     end_date: date | None = None
     custom_name: str | None = None
     mode_config_override: dict[str, Any] | None = None
+    habit_id: int | None = None
     effective_name: str | None = None
     effective_config: ModeConfig | None = None
 
@@ -215,6 +216,7 @@ class UserPracticeDetail(OwnedResourcePublic):
     end_date: date | None = None
     custom_name: str | None = None
     mode_config_override: dict[str, Any] | None = None
+    habit_id: int | None = None
     effective_name: str | None = None
     effective_config: ModeConfig | None = None
     # ``sessions`` is the newest-first *capped* embed (issue #474). The page
@@ -223,6 +225,21 @@ class UserPracticeDetail(OwnedResourcePublic):
     sessions: list[PracticeSessionSummary]
     sessions_total: int = 0
     sessions_has_more: bool = False
+
+
+class UserPracticeHabitLink(BaseModel):
+    """PATCH body for ``/user-practices/{id}/habit`` (#3151).
+
+    ``habit_id`` is required and nullable: an id links the practice to that
+    habit once the caller is shown to own it, and an explicit ``null`` clears
+    the link. Requiring the field keeps an empty body a 422 rather than a
+    silent unlink. The id is bounded like every other row id, so ``0``, a
+    negative or a value past int32 is a 422 rather than a database lookup.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    habit_id: RowIdField | None
 
 
 class UserPracticeCustomize(BaseModel):

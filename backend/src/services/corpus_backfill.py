@@ -144,8 +144,13 @@ from services.corpus_consent import ConsentChange, load_consent
 from services.corpus_ingest import INGEST_SOURCE, ingest_journal_entry
 from services.journal_withdrawal_obligation import deletion_in_progress_clause
 from services.privacy_suspension import external_ai_suspended
+from services.reflection_boundary import ReflectionBoundary
 
 logger = logging.getLogger(__name__)
+
+#: The log line a sweep writes when it stops for the writer's vault boundary
+#: (#3156): ids and this word only.
+BOUNDARY_REFUSED_EVENT: Final[str] = "corpus_backfill_boundary_refused"
 
 #: How many of an account's existing entries one grant may ontologize. The
 #: sweep costs one provider call per entry on a request somebody is waiting on,
@@ -406,7 +411,30 @@ async def _consent_still_stands(session: AsyncSession, user_id: int) -> bool:
     return (await load_consent(session, user_id=user_id, source=INGEST_SOURCE)).granted
 
 
-async def _offer_one(session: AsyncSession, *, entry: JournalEntry, user_id: int) -> _Offer:
+def _no_classifier_may_be_asked(user_id: int, boundary: ReflectionBoundary) -> bool:
+    """Whether the sweep must stop before offering, for a reason about the account.
+
+    Two such reasons, and both stop rather than offer, because offering would let
+    the entry come back "unclassified" and the mark would then demote writing no
+    classifier ever saw -- a marked entry goes behind every never-offered one:
+
+    * The operator has suspended every cloud call (#3075), which the classifier
+      would otherwise degrade to "unclassified".
+    * The writer is vault-bound (#3156): the only classifier the corpus writer
+      can call is the app provider's, which never answers them. Said once, in
+      ids and a closed word.
+    """
+    if external_ai_suspended():
+        return True
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        logger.info(BOUNDARY_REFUSED_EVENT, extra={"user_id": user_id, "reason": "vault_bound"})
+        return True
+    return False
+
+
+async def _offer_one(
+    session: AsyncSession, *, entry: JournalEntry, user_id: int, boundary: ReflectionBoundary
+) -> _Offer:
     """Offer one entry to the corpus writer, inside this account's egress barrier.
 
     The barrier is taken **per entry, never across the sweep**, and that is the
@@ -437,14 +465,11 @@ async def _offer_one(session: AsyncSession, *, entry: JournalEntry, user_id: int
         current = await _still_a_candidate(session, entry_id=entry.id, user_id=user_id)
         if current is None:
             return _SKIPPED
-        if external_ai_suspended():
-            # The operator has suspended every cloud call (#3075). The classifier
-            # would degrade that refusal to "unclassified" and the mark below
-            # would demote an entry no provider saw, so stop as a spent balance does.
+        if _no_classifier_may_be_asked(user_id, boundary):
             return _STOPPED
         try:
             fragment = await ingest_journal_entry(
-                session, current, timeout_seconds=BACKFILL_ENTRY_SECONDS
+                session, current, boundary=boundary, timeout_seconds=BACKFILL_ENTRY_SECONDS
             )
         except LLMCreditExhaustedError:
             return _STOPPED
@@ -454,7 +479,12 @@ async def _offer_one(session: AsyncSession, *, entry: JournalEntry, user_id: int
 
 
 async def _offer_batch(
-    session: AsyncSession, *, user_id: int, candidates: list[JournalEntry], deadline: float
+    session: AsyncSession,
+    *,
+    user_id: int,
+    candidates: list[JournalEntry],
+    deadline: float,
+    boundary: ReflectionBoundary,
 ) -> tuple[int, int]:
     """Offer each candidate to the corpus writer; return what was reached and stored.
 
@@ -493,11 +523,13 @@ async def _offer_batch(
     the sweep rather than about the entry, and :func:`_offer_one` reports all
     three by asking it to stop. An operator's ``PRIVACY_SUSPEND_EXTERNAL_AI``
     is a fourth, and the same kind of fact: a refusal no provider saw (#3075).
+    A vault-bound writer is a fifth (#3156): the boundary forbids the only
+    classifier there is, for every entry alike.
     """
     considered = 0
     added = 0
     for entry in candidates:
-        offer = await _offer_one(session, entry=entry, user_id=user_id)
+        offer = await _offer_one(session, entry=entry, user_id=user_id, boundary=boundary)
         if offer.stop:
             break
         considered += offer.considered
@@ -507,7 +539,9 @@ async def _offer_batch(
     return considered, added
 
 
-async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutcome:
+async def _sweep_journal(
+    session: AsyncSession, *, user_id: int, boundary: ReflectionBoundary
+) -> BackfillOutcome:
     """Offer this account's un-ontologized writing to the ordinary corpus writer.
 
     Each entry is offered under :data:`BACKFILL_ENTRY_SECONDS` and the loop
@@ -544,6 +578,7 @@ async def _sweep_journal(session: AsyncSession, *, user_id: int) -> BackfillOutc
         user_id=user_id,
         candidates=candidates,
         deadline=time.monotonic() + BACKFILL_DEADLINE_SECONDS,
+        boundary=boundary,
     )
     outcome = BackfillOutcome(
         entries_considered=considered,
@@ -629,7 +664,11 @@ def _says_nothing_new(previous: CorpusSweep | None, outcome: BackfillOutcome) ->
 
 
 async def backfill_after_consent(
-    session: AsyncSession, *, user_id: int, change: ConsentChange
+    session: AsyncSession,
+    *,
+    user_id: int,
+    change: ConsentChange,
+    boundary: ReflectionBoundary,
 ) -> BackfillOutcome:
     """Run whatever ``change`` reaches backwards over, and log the reach.
 
@@ -665,11 +704,17 @@ async def backfill_after_consent(
     a provider was slow was a permission the account had given and not been
     granted -- but it is a different one. Pinned by
     ``test_an_abandoned_sweep_keeps_its_fragments_and_loses_its_receipt``.
+
+    ``boundary`` is the account's resolved
+    :class:`~services.reflection_boundary.ReflectionBoundary`, required so a
+    caller cannot omit it (#3156). Under ``VAULT_BOUND`` the sweep stops before
+    its first offer, every entry unmarked, so the decision is recorded and the
+    writing waits rather than being demoted for a refusal it did not cause.
     """
     consent_event_id = _authorising_event_id(change, user_id)
     if consent_event_id is None:
         return _NOTHING_SWEPT
-    outcome = await _sweep_journal(session, user_id=user_id)
+    outcome = await _sweep_journal(session, user_id=user_id, boundary=boundary)
     if outcome.entries_considered <= _NOTHING_CONSIDERED:
         return outcome
     previous = await _newest_sweep(session, consent_event_id=consent_event_id)

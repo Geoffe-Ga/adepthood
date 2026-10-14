@@ -407,12 +407,19 @@ async def test_the_classifier_degrades_without_a_key_and_dials_with_one(
     cloud_ready: EgressSpy,
 ) -> None:
     """Keyless: unclassified and silent. With the writer's key: the vendor is asked."""
-    keyless = await classify_frequencies(_BODY, classification="personal")
+    keyless = await classify_frequencies(
+        _BODY, classification="personal", boundary=ReflectionBoundary.APP_PROVIDER
+    )
 
     assert keyless == UNCLASSIFIED
     cloud_ready.assert_silent()
 
-    await classify_frequencies(_BODY, classification="personal", api_key=OPENAI_KEY)
+    await classify_frequencies(
+        _BODY,
+        classification="personal",
+        api_key=OPENAI_KEY,
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
     assert cloud_ready.clients == ["openai"]
     assert cloud_ready.requests() == 1
 

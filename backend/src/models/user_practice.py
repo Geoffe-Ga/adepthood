@@ -54,6 +54,19 @@ class UserPractice(SQLModel, table=True):
         max_length=255,
         description="Per-user display name; falls back to Practice.name when null.",
     )
+    habit_id: int | None = Field(
+        default=None,
+        foreign_key="habit.id",
+        ondelete="SET NULL",
+        nullable=True,
+        index=True,
+    )
+    """The habit this practice's sessions count toward, or ``None`` when unlinked (#3151).
+
+    One per selection, so two practices can feed two habits. ``ON DELETE SET
+    NULL`` so deleting the habit unlinks the practice instead of deleting the
+    selection; ``delete_habit`` also clears it explicitly.
+    """
     # ``mode`` itself is intentionally not overridable — a user who wants a
     # different mode should select a different preset / submit a new
     # practice. The override only swaps fields *within* the catalog mode.

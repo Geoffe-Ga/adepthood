@@ -717,9 +717,9 @@ async def test_prior_letters_never_cross_the_vault_seam() -> None:
     nobody should later read those green prompt tests as coverage of it.
 
     The asymmetry is worth stating precisely, because it does not extend to the
-    other half: ``routers.journal._cache_essay`` builds a cloud LLM
-    unconditionally with no ``select_reflection_llm`` on that path, so the essay
-    prompt's prior letters DO reach every account.
+    other half: a letter is only ever written by the app provider, so the essay
+    prompt's prior letters DO reach every app-provider-bound account (a
+    vault-bound writer is refused a letter outright, #3156).
 
     The silver lining is a privacy one, and it is why the policy's Creek Vault
     paragraph needed no amendment: a prompt the vault never receives cannot

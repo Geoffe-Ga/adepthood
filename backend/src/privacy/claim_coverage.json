@@ -247,7 +247,12 @@
       "backend/tests/security/test_telemetry_sentinels.py::test_uvicorns_access_logger_is_switched_off",
       "backend/tests/security/test_telemetry_sentinels.py::test_outbound_request_urls_stay_out_of_the_info_stream",
       "backend/tests/security/test_telemetry_sentinels.py::test_a_rate_limited_share_token_never_reaches_the_log",
-      "backend/tests/security/test_telemetry_sentinels.py::test_a_search_query_string_reaches_no_log"
+      "backend/tests/security/test_telemetry_sentinels.py::test_a_search_query_string_reaches_no_log",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
     ],
     "sinks": [
       "telemetry.sentry_envelope",
@@ -261,8 +266,55 @@
       "telemetry.vault_telemetry",
       "db.llmusagelog"
     ],
-    "issue": 3160,
-    "gap": "database and middleware error paths carrying Intimate canaries are not yet driven end-to-end"
+    "by_sink": {
+      "telemetry.sentry_envelope": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_route_raising_a_canary_ships_a_clean_but_diagnosable_event",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.root_log": [
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.access_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_share_token_never_reaches_the_access_log",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.uvicorn_error_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_uvicorns_own_traceback_is_content_free",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.uvicorn_access_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_uvicorns_access_logger_is_switched_off"
+      ],
+      "telemetry.outbound_client_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_outbound_request_urls_stay_out_of_the_info_stream",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary"
+      ],
+      "telemetry.rate_limit_log": [
+        "backend/tests/security/test_telemetry_sentinels.py::test_a_rate_limited_share_token_never_reaches_the_log"
+      ]
+    },
+    "issue": 3064,
+    "gap": "frontend envelope is proven by Jest (JournalEditorCrashEnvelope.test.tsx), which pytest cannot cite; vault telemetry and llmusagelog are not driven on a failure path"
   },
   "C13": {
     "status": "uncovered",
