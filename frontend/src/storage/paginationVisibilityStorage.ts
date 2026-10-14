@@ -1,8 +1,10 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 // Persists whether the Habits screen's in-body pagination bar is hidden. A
 // single global flag (toggled from the header drawer) so the choice survives
 // relaunches. Mirrors ``reflectionDismissalStorage.ts``, but global rather than
 // per-scope.
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORAGE_KEY = '@adepthood/habits_pagination_hidden';
 const FLAG_TRUE = 'true';
@@ -15,8 +17,8 @@ const FLAG_TRUE = 'true';
 export async function savePaginationBarHidden(hidden: boolean): Promise<void> {
   try {
     await AsyncStorage.setItem(STORAGE_KEY, String(hidden));
-  } catch (err) {
-    console.warn('[paginationVisibilityStorage] failed to save hidden flag', err);
+  } catch {
+    reportDiagnostic('storage_write_failed', { storage: 'pagination_visibility' });
   }
 }
 
@@ -29,8 +31,8 @@ export async function loadPaginationBarHidden(): Promise<boolean> {
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     return raw === FLAG_TRUE;
-  } catch (err) {
-    console.warn('[paginationVisibilityStorage] failed to load hidden flag', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'pagination_visibility' });
     return false;
   }
 }

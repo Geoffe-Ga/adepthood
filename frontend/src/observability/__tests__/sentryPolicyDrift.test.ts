@@ -34,7 +34,6 @@ const DISCLOSED_EVENT_KEYS: Record<string, string> = {
 
 /** Each disclosed context, and the words the policy discloses it under. */
 const DISCLOSED_CONTEXTS: Record<string, string> = {
-  react: 'component stack',
   errorBoundary: 'which error screen caught it',
 };
 
@@ -61,11 +60,6 @@ const NESTED_SHAPES: Record<string, NestedShape> = {
   'exception.values[0]': {
     pick: (event) => (event.exception as { values: unknown[] }).values[0],
     disclosed: { type: "the error's type", value: 'message is withheld' },
-    bookkeeping: [],
-  },
-  'contexts.react': {
-    pick: (event) => (event.contexts as Record<string, unknown>).react,
-    disclosed: { componentStack: 'component stack' },
     bookkeeping: [],
   },
   'contexts.errorBoundary': {
@@ -96,7 +90,7 @@ function fullEvent(): Record<string, unknown> {
     new TypeError('a message that must never ship'),
     {
       react: { componentStack: '\n    in JournalEntryScreen' },
-      errorBoundary: { boundary: 'feature', name: 'Journal' },
+      errorBoundary: { boundary: 'FeatureErrorBoundary', name: 'Journal' },
     },
     {
       eventId: 'e'.repeat(32),
@@ -153,6 +147,13 @@ describe('privacy policy vs the client crash report', () => {
     expect(exception.values[0]?.value).toBe(MESSAGE_WITHHELD);
     expect(sentryParagraphs).toContain('reported straight from your device');
     expect(sentryParagraphs).toContain('message is withheld');
+  });
+
+  it('the policy discloses fixed metadata and omitted component stacks', () => {
+    expect(sentryParagraphs).toContain("the error's type from a fixed list");
+    expect(sentryParagraphs).toContain('fixed boundary and feature names');
+    expect(sentryParagraphs).toContain('component stacks are omitted');
+    expect(fullEvent().contexts).not.toHaveProperty('react');
   });
 
   it('the policy says Sentry sees the network address a device report comes from', () => {

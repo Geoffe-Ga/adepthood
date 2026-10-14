@@ -157,7 +157,7 @@ describe('stageService', () => {
     // The person reads the Map's own sentence; the raw error text is for the console.
     expect(state.error).toBe(MAP_LOAD_FAILED_MESSAGE);
     expect(state.error).not.toContain('Network error');
-    expect(consoleError).toHaveBeenCalledWith('Failed to load stages:', expect.any(Error));
+    expect(consoleError).toHaveBeenCalledWith('map_load_failed');
     expect(state.loading).toBe(false);
     expect(state.stages).toHaveLength(0);
     consoleError.mockRestore();
@@ -687,7 +687,7 @@ describe('stageService', () => {
       expect(typeof state.error).toBe('string');
       expect(state.error).toBe(BEGIN_AGAIN_FAILED_MESSAGE);
       expect(state.error).not.toContain('boom');
-      expect(consoleError).toHaveBeenCalledWith('Failed to begin again:', expect.any(Error));
+      expect(consoleError).toHaveBeenCalledWith('map_begin_again_failed');
       consoleError.mockRestore();
       // Failure short-circuits: no reload and no cycle bump from a bad response.
       expect(mockList).not.toHaveBeenCalled();

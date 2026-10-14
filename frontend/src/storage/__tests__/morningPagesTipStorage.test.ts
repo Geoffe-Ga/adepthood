@@ -118,10 +118,7 @@ describe('morningPagesTipStorage', () => {
       setAsideOn: null,
       neverOffer: false,
     });
-    expect(warn).toHaveBeenCalledWith(
-      '[morningPagesTipStorage] failed to load dismissal state',
-      error,
-    );
+    expect(warn).toHaveBeenCalledWith('storage_read_failed', { storage: 'morning_pages' });
   });
 
   test('a never-offer decline resolves that it saved, for the Settings switch', async () => {
@@ -166,10 +163,7 @@ describe('morningPagesTipStorage', () => {
       mockAsyncStorage.setItem.mockRejectedValueOnce(error);
 
       await expect(write()).resolves.toBe(resolved);
-      expect(warn).toHaveBeenCalledWith(
-        '[morningPagesTipStorage] failed to save dismissal state',
-        error,
-      );
+      expect(warn).toHaveBeenCalledWith('storage_write_failed', { storage: 'morning_pages' });
     },
   );
 
@@ -211,6 +205,6 @@ describe('morningPagesTipStorage', () => {
     mockAsyncStorage.setItem.mockRejectedValueOnce(error);
 
     await expect(restoreMorningPagesTip()).resolves.toBe(false);
-    expect(warn).toHaveBeenCalledWith('[morningPagesTipStorage] failed to restore the tip', error);
+    expect(warn).toHaveBeenCalledWith('storage_clear_failed', { storage: 'morning_pages' });
   });
 });

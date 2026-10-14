@@ -1,3 +1,6 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 /**
  * Persists the "Use Adepthood's own model" choice from the API-key screen.
  *
@@ -13,7 +16,6 @@
  * same reason; a write resolves whether it landed, and never rejects, so the
  * switch can show only a position the device has kept.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const LOCAL_MODEL_PREFERRED_KEY = '@adepthood/local_model_preferred';
 const FLAG_TRUE = 'true';
@@ -26,8 +28,8 @@ export async function loadLocalModelPreferred(): Promise<boolean | null> {
     if (raw === FLAG_TRUE) return true;
     if (raw === FLAG_FALSE) return false;
     return null;
-  } catch (err) {
-    console.warn('[localModelStorage] failed to load the choice', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'local_model' });
     return null;
   }
 }
@@ -37,8 +39,8 @@ export async function saveLocalModelPreferred(value: boolean): Promise<boolean> 
   try {
     await AsyncStorage.setItem(LOCAL_MODEL_PREFERRED_KEY, value ? FLAG_TRUE : FLAG_FALSE);
     return true;
-  } catch (err) {
-    console.warn('[localModelStorage] failed to save the choice', err);
+  } catch {
+    reportDiagnostic('storage_write_failed', { storage: 'local_model' });
     return false;
   }
 }

@@ -15,6 +15,8 @@ import {
 
 import { registerStoreReset } from './registry';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 export interface WelcomeStoreState {
   // ``null`` while the persisted flag has not yet been read from storage; the
   // welcome gate stays closed until hydration resolves so returning users never
@@ -34,8 +36,8 @@ const INITIAL_STATE = {
 
 const persistAsync = (seen: boolean): void => {
   const op = seen ? saveHasSeenWelcome() : clearHasSeenWelcome();
-  op.catch((err) => {
-    console.warn('[useWelcomeStore] failed to persist welcome flag', err);
+  op.catch(() => {
+    reportDiagnostic('storage_write_failed', { storage: 'welcome' });
   });
 };
 
@@ -60,8 +62,8 @@ export const useWelcomeStore = create<WelcomeStoreState>((set) => ({
   markWelcomeSeen: (token) => {
     set({ hasSeenWelcome: true });
     persistAsync(true);
-    uiFlags.update({ has_seen_welcome: true }, token).catch((err) => {
-      console.warn('[useWelcomeStore] failed to sync welcome flag', err);
+    uiFlags.update({ has_seen_welcome: true }, token).catch(() => {
+      reportDiagnostic('storage_write_failed', { storage: 'welcome' });
     });
   },
   reset: () => {

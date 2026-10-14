@@ -140,7 +140,7 @@ describe('asking a page for its resonance, against a live server', () => {
     // This lane serves the stub provider: the note is recorded as a demo, on
     // the note and on the pass, and nobody paid for it (#3062).
     expect(note.source).toBe('demo');
-    expect(pass.provenance?.notes.source).toBe('demo');
+    expect(pass.provenance?.notes?.source).toBe('demo');
     expect(pass.provenance?.paid_by).toBe('free');
     keptNoteId = note.id;
 

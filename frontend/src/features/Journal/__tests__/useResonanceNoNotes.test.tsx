@@ -164,9 +164,14 @@ describe('useResonance — pass source threading (#3062)', () => {
       source: 'demo' as const,
       provider: 'stub' as const,
       model: 'stub',
-      receipt_version: 1,
+      receipt_version: 1 as const,
     },
-    detection: { source: 'none' as const, provider: null, model: null, receipt_version: 1 },
+    detection: {
+      source: 'none' as const,
+      provider: null,
+      model: null,
+      receipt_version: 1 as const,
+    },
     detection_checked: true,
     paid_by: 'free' as const,
   };
@@ -178,16 +183,60 @@ describe('useResonance — pass source threading (#3062)', () => {
     const { result } = renderHook(() =>
       useResonance({ routeEntryId: null, flush, userTimezone: TEST_TIMEZONE }),
     );
-    expect(result.current.notesSource).toBeNull();
+    expect(result.current.passProvenance?.notes?.source ?? null).toBeNull();
 
     await act(async () => {
       await result.current.requestResonance();
     });
-    expect(result.current.notesSource).toBe('demo');
+    expect(result.current.passProvenance?.notes?.source ?? null).toBe('demo');
 
     await act(async () => {
       await result.current.requestResonance();
     });
-    expect(result.current.notesSource).toBeNull();
+    expect(result.current.passProvenance?.notes?.source ?? null).toBeNull();
+  });
+});
+
+describe('useResonance live receipt lifecycle (#3206)', () => {
+  it('keeps a live payer only until the next request clears the pass, including failure', async () => {
+    const provenance: NonNullable<ResonanceResponse['provenance']> = {
+      notes: { source: 'app_provider', provider: 'openai', model: 'observed', receipt_version: 1 },
+      detection: { source: 'none', provider: null, model: null, receipt_version: 1 },
+      detection_checked: false,
+      paid_by: 'own_key',
+    };
+    mockGenerate.mockResolvedValueOnce(resonancePayload({ provenance }));
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: null, flush: async () => 42, userTimezone: TEST_TIMEZONE }),
+    );
+    expect(result.current.passProvenance).toBeUndefined();
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+    expect(result.current.passProvenance).toEqual(provenance);
+    mockGenerate.mockRejectedValueOnce(new Error('offline'));
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+    expect(result.current.passProvenance).toBeUndefined();
+  });
+
+  it('does not reconstruct a live payer from persisted notes on load', async () => {
+    mockList.mockResolvedValue({
+      items: [
+        note({
+          id: 1,
+          source: 'app_provider',
+          source_provider: 'openai',
+          source_model: 'old',
+          receipt_version: 1,
+        }),
+      ],
+    });
+    const { result } = renderHook(() =>
+      useResonance({ routeEntryId: 7, flush: async () => 7, userTimezone: TEST_TIMEZONE }),
+    );
+    await waitFor(() => expect(result.current.marginalia).toHaveLength(1));
+    expect(result.current.passProvenance).toBeUndefined();
   });
 });

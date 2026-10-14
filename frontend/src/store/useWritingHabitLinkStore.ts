@@ -24,6 +24,8 @@ import { uiFlags } from '../api';
 
 import { registerStoreReset } from './registry';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 export interface WritingHabitLinkState {
   /** The linked habit's id, or ``null`` when none is linked (or not yet known). */
   habitId: number | null;
@@ -74,8 +76,8 @@ export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get)
         if (startedIn !== generation) return;
         set({ habitId: flags.writing_session_habit_id, hydrated: true });
       })
-      .catch((err: unknown) => {
-        console.warn('[useWritingHabitLinkStore] failed to read the writing habit link', err);
+      .catch(() => {
+        reportDiagnostic('linked_habit_failed');
       })
       .finally(() => {
         if (inFlight === request) inFlight = null;
@@ -89,8 +91,8 @@ export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get)
       const flags = await uiFlags.update({ writing_session_habit_id: habitId }, token);
       set({ habitId: flags.writing_session_habit_id, hydrated: true });
       return true;
-    } catch (err) {
-      console.warn('[useWritingHabitLinkStore] failed to save the writing habit link', err);
+    } catch {
+      reportDiagnostic('linked_habit_failed');
       return false;
     }
   },

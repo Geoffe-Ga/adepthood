@@ -2,26 +2,25 @@
  * Error monitoring for the React Native client.
  *
  * The two error boundaries already call {@link reportException} on every crash
- * they catch; until now that call only reached `console.error`, which nobody
- * reads on a stranger's phone. This module gives it a destination when one is
- * configured, and leaves everything else exactly as it was when one is not.
+ * they catch. Each call records a fixed diagnostic code locally and sends a
+ * bounded envelope to the monitoring destination when one is configured.
  *
  * **Optional, on the backend's terms.** With `EXPO_PUBLIC_SENTRY_DSN` unset the
  * app runs normally and says so once at startup. A DSN that cannot be parsed
  * degrades the same way, with one warning. Degrading is never swallowing: the
- * `console.error` record is written first, on every path, configured or not.
+ * fixed diagnostic record is written first, on every path, configured or not.
  *
  * **Privacy.** The payload is built by allow-list in `sentryEnvelope.ts` —
  * see that module for why it is hand-built rather than delegated to
- * `@sentry/react-native`, and for what the two remaining free-text fields do
- * about it. There are no breadcrumbs anywhere in this design, so no keystroke
- * buffer exists to leak.
+ * `@sentry/react-native`. Untrusted error text and component stacks are
+ * withheld. There are no breadcrumbs, so no keystroke buffer exists to leak.
  */
 
 import { v4 as uuidv4 } from 'uuid';
 
 import { resolveEnv } from '../config';
 
+import { reportDiagnostic } from './diagnostics';
 import type { ReportContexts, SentryTarget } from './sentryEnvelope';
 import { buildEvent, parseDsn, serializeEnvelope } from './sentryEnvelope';
 
@@ -127,10 +126,11 @@ function deliver(target: SentryTarget, body: string): void {
  * Forward a crash caught by an error boundary.
  *
  * Always writes the console record first — that is the floor, and it is why an
- * unconfigured build loses the operator inbox rather than the diagnosis.
+ * unconfigured build still records that a crash was caught without logging
+ * its private error or context objects.
  */
 export function reportException(error: unknown, contexts?: ReportContexts): void {
-  console.error('[reportException]', error, contexts ?? {});
+  reportDiagnostic('crash_caught');
   const { target } = state;
   if (!target) {
     return;

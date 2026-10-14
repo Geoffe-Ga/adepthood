@@ -234,7 +234,12 @@ const BottomTabs = (): React.JSX.Element => {
     <Tab.Navigator
       initialRouteName={REDIRECT_TARGET}
       tabBar={renderTabBar}
-      screenOptions={{ headerRight: renderHeaderRight, headerTitleAlign: HEADER_TITLE_ALIGN }}
+      screenOptions={{
+        headerRight: renderHeaderRight,
+        headerTitleAlign: HEADER_TITLE_ALIGN,
+        headerTitleContainerStyle: styles.headerTitle,
+        headerRightContainerStyle: styles.headerActions,
+      }}
     >
       {destinations.map(({ name }) => (
         <Tab.Screen key={name} name={name} component={SCREEN_COMPONENT_BY_NAME[name]} />
@@ -244,6 +249,11 @@ const BottomTabs = (): React.JSX.Element => {
 };
 
 const styles = StyleSheet.create({
+  // Reserve the actions' real width before the one-line title takes the rest.
+  // Navigation's default zero-basis end slot lets enlarged labels paint over
+  // the title even though every button retains its own touch target.
+  headerTitle: { flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  headerActions: { flexGrow: 0, flexBasis: 'auto' },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -5,6 +5,8 @@ import type { StageData } from '../features/Map/stageData';
 import { createNormalizedById } from './normalizedCollection';
 import { registerStoreReset } from './registry';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 /**
  * Stage store — a dumb state container. API calls live in
  * `features/Map/services/stageService.ts`; this module only holds and mutates
@@ -97,10 +99,7 @@ export const useStageStore = create<StageStoreState>((set, get) => ({
         // backend that added a new stage.  Logging at ``warn`` keeps the
         // UI quiet (no thrown error, no broken render) while surfacing
         // the drift to Sentry / console reporters.
-        console.warn('[useStageStore] updateStageProgress called for unknown stage', {
-          stageNumber,
-          progress,
-        });
+        reportDiagnostic('unknown_stage_progress', { stage: stageNumber, progress });
         return state;
       }
       const stagesByNumber = {

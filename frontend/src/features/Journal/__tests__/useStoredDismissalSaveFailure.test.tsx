@@ -42,7 +42,7 @@ afterEach(() => {
 
 describe.each(FLAGS)(
   'the %s explainer dismissal, when the disk write fails',
-  (_name, load, save) => {
+  (name, load, save) => {
     it('keeps the dismissal in memory, warns, and leaves no unhandled rejection', async () => {
       // Cast through `unknown`: process is a real EventEmitter at runtime, but
       // this project's tsconfig omits ambient Node types.
@@ -53,7 +53,9 @@ describe.each(FLAGS)(
       };
       emitter.on('unhandledRejection', onUnhandled);
       const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-      jest.spyOn(AsyncStorage, 'setItem').mockRejectedValue(new Error('QuotaExceededError'));
+      jest
+        .spyOn(AsyncStorage, 'setItem')
+        .mockRejectedValue(new Error('private dismissal storage failure'));
       try {
         const { result } = renderHook(() => useStoredDismissal(load, save));
         await act(async () => {
@@ -66,10 +68,9 @@ describe.each(FLAGS)(
         await new Promise((resolve) => setTimeout(resolve, 0));
 
         expect(rejections).toEqual([]);
-        expect(warn).toHaveBeenCalledWith(
-          expect.stringContaining('failed to save the dismissal flag'),
-          expect.any(Error),
-        );
+        expect(warn).toHaveBeenCalledWith('storage_write_failed', { storage: `${name}_explainer` });
+        expect(JSON.stringify(warn.mock.calls)).not.toContain('private dismissal storage failure');
+        expect(warn.mock.calls.flat().some((value) => value instanceof Error)).toBe(false);
         expect(result.current.known()).toBe(true);
       } finally {
         emitter.off('unhandledRejection', onUnhandled);

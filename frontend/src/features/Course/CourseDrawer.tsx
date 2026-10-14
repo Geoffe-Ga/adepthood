@@ -40,6 +40,7 @@ import {
 } from './stageDisplay';
 
 import { useMountedRef } from '@/hooks/useMountedRef';
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 /** Copy for the inline per-section retry row after a failed fetch. */
 const RETRY_LABEL = 'Content failed to load. Tap to retry.';
@@ -115,10 +116,10 @@ export function useCourseDrawerContent(
             setSections((prev) => ({ ...prev, [stageNumber]: { status: 'loaded', items } }));
           }
         })
-        .catch((err: unknown) => {
+        .catch(() => {
           // A per-section failure must not blank the drawer: flag only this stage
           // so it shows an inline retry while siblings keep their chapters.
-          console.error('Failed to load drawer stage content:', err);
+          reportDiagnostic('course_load_failed');
           if (isLatest()) {
             setSections((prev) => ({ ...prev, [stageNumber]: { status: 'error' } }));
           }

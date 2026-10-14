@@ -12,6 +12,8 @@ import { MS_PER_DAY } from '../utils/dateUtils';
 
 import { registerStoreReset } from './registry';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 const DAYS_PER_WEEK = 7;
 const STAGE_COUNT = STAGE_DURATIONS_DAYS.length;
 const TOTAL_PROGRAM_DAYS = STAGE_DURATIONS_DAYS.reduce((sum, d) => sum + d, 0);
@@ -69,8 +71,8 @@ const localDateFromDayKey = (dayKey: string): Date | null => {
 
 const persistAsync = (date: Date | null): void => {
   const op = date === null ? clearProgramStartDate() : saveProgramStartDate(date);
-  op.catch((err) => {
-    console.warn('[useProgramStore] failed to persist program start date', err);
+  op.catch(() => {
+    reportDiagnostic('storage_write_failed', { storage: 'program' });
   });
 };
 

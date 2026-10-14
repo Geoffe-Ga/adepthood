@@ -61,6 +61,7 @@ import {
 } from '@/features/Journal/saveAsHabitCopy';
 import WritingHabitPicker from '@/features/Journal/WritingHabitPicker';
 import type { SettingsFocus } from '@/navigation/RootStack';
+import { reportDiagnostic } from '@/observability/diagnostics';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 
@@ -74,8 +75,8 @@ function rowLabelFor(habitId: number | null, habits: readonly Habit[]): string {
 
 /** Read the habits quietly: a failure leaves the pending label, never an error. */
 function loadHabitsQuietly(tz: string): void {
-  habitManager.loadHabits(tz).catch((err: unknown) => {
-    console.warn('[JournalSection] failed to read habits', err);
+  habitManager.loadHabits(tz).catch(() => {
+    reportDiagnostic('linked_habit_failed');
   });
 }
 
