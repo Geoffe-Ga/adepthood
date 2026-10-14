@@ -1,7 +1,7 @@
 """Encrypt the embedding and the vault tags: two lists derived from a person's writing.
 
 Revision ID: e8a3c5f7b9d2
-Revises: b1937b21d2f9
+Revises: c4e6a8b0d2f4
 Create Date: 2026-10-14 00:00:00.000000
 
 ``corpusfragment.embedding`` (a float array computed from the encrypted
@@ -43,7 +43,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "e8a3c5f7b9d2"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "b1937b21d2f9"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "c4e6a8b0d2f4"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

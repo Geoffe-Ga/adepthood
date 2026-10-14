@@ -26,7 +26,7 @@ from sqlalchemy import Connection, create_engine, text
 
 from services import journal_encryption as je
 
-_BASE_REVISION = "b1937b21d2f9"  # pragma: allowlist secret
+_BASE_REVISION = "c4e6a8b0d2f4"  # pragma: allowlist secret
 _REVISION = "e8a3c5f7b9d2"  # pragma: allowlist secret
 _MARKER = "enc::v1::"
 
