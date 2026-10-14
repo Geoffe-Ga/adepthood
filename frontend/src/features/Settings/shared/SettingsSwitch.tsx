@@ -1,5 +1,5 @@
 import React from 'react';
-import { Switch, type SwitchProps } from 'react-native';
+import { Platform, Switch, type SwitchProps } from 'react-native';
 
 import { accent, surface } from '@/design/tokens';
 
@@ -18,7 +18,9 @@ const WEB_THUMB_PROPS: { activeThumbColor: string } = { activeThumbColor: surfac
 
 export const SettingsSwitch = (props: SwitchProps): React.JSX.Element => (
   <Switch
-    accessibilityRole="switch"
+    // RN Web already gives its native input the switch role and keyboard stop.
+    // Repeating it on the outer View creates a second, unlabelled focus target.
+    accessibilityRole={Platform.OS === 'web' ? undefined : 'switch'}
     trackColor={{ false: surface.hairline, true: accent.primary }}
     thumbColor={surface.raised}
     {...WEB_THUMB_PROPS}

@@ -34,6 +34,8 @@ const mockApi = jest.requireMock('../../api') as {
   };
 };
 
+import { setActiveUser } from '@/storage/userScope';
+
 const ALL_ON = {
   enable_habits: true,
   enable_practices: true,
@@ -242,4 +244,130 @@ describe('useDepthPreferencesStore', () => {
     expect(useDepthPreferencesStore.getState().enable_habits).toBe(true);
     expect(useDepthPreferencesStore.getState().enable_sangha).toBe(true);
   });
+});
+
+function deferredPreferences() {
+  let resolve!: (_value: DepthPreferences) => void;
+  const promise = new Promise<DepthPreferences>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+describe('preference response ownership', () => {
+  beforeEach(() => {
+    setActiveUser(1);
+    const { useDepthPreferencesStore } = require('../useDepthPreferencesStore');
+    useDepthPreferencesStore.getState().reset();
+  });
+
+  it.each(['load', 'update'] as const)('ignores %s after reset', async (operation) => {
+    const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+    const pending = deferredPreferences();
+    if (operation === 'load') mockApi.depthPreferences.get.mockReturnValueOnce(pending.promise);
+    else mockApi.depthPreferences.update.mockReturnValueOnce(pending.promise);
+    const work =
+      operation === 'load' ? store.getState().load('a') : store.getState().update({}, 'a');
+    store.getState().reset();
+    pending.resolve({ ...ALL_ON, enable_course: false });
+    await work;
+    expect(store.getState().enable_course).toBe(true);
+  });
+
+  it.each(['load', 'update'] as const)('ignores %s from a previous account', async (operation) => {
+    const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+    const pending = deferredPreferences();
+    if (operation === 'load') mockApi.depthPreferences.get.mockReturnValueOnce(pending.promise);
+    else mockApi.depthPreferences.update.mockReturnValueOnce(pending.promise);
+    const work =
+      operation === 'load' ? store.getState().load('a') : store.getState().update({}, 'a');
+    setActiveUser(2);
+    pending.resolve({ ...ALL_ON, enable_course: false });
+    await work;
+    expect(store.getState().enable_course).toBe(true);
+  });
+
+  it('keeps a confirmed choice when an earlier GET finishes late', async () => {
+    const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+    const pending = deferredPreferences();
+    mockApi.depthPreferences.get.mockReturnValueOnce(pending.promise);
+    const read = store.getState().load('a');
+    mockApi.depthPreferences.update.mockResolvedValueOnce({ ...ALL_ON, enable_course: false });
+    await store.getState().update({ enable_course: false }, 'a');
+    pending.resolve(ALL_ON);
+    await read;
+    expect(store.getState().enable_course).toBe(false);
+  });
+
+  it('keeps the newer confirmed PATCH when answers arrive backwards', async () => {
+    const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+    const pending = deferredPreferences();
+    mockApi.depthPreferences.update.mockReturnValueOnce(pending.promise);
+    const first = store.getState().update({ enable_course: false }, 'a');
+    mockApi.depthPreferences.update.mockResolvedValueOnce(ALL_ON);
+    await store.getState().update({ enable_course: true }, 'a');
+    pending.resolve({ ...ALL_ON, enable_course: false });
+    await first;
+    expect(store.getState().enable_course).toBe(true);
+  });
+});
+
+it('preserves independently confirmed fields when PATCH snapshots arrive backwards', async () => {
+  const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+  setActiveUser(1);
+  store.getState().reset();
+  const pending = deferredPreferences();
+  mockApi.depthPreferences.update.mockReturnValueOnce(pending.promise);
+  const first = store.getState().update({ enable_course: false }, 'a');
+  mockApi.depthPreferences.update.mockResolvedValueOnce({ ...ALL_ON, enable_habits: false });
+  await store.getState().update({ enable_habits: false }, 'a');
+  pending.resolve({ ...ALL_ON, enable_course: false });
+  await first;
+  expect(store.getState().enable_course).toBe(false);
+  expect(store.getState().enable_habits).toBe(false);
+});
+
+it('keeps a PATCH confirmation when a later GET read the field before the write committed', async () => {
+  const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+  setActiveUser(1);
+  store.getState().reset();
+  const pending = deferredPreferences();
+  mockApi.depthPreferences.update.mockReturnValueOnce(pending.promise);
+  const write = store.getState().update({ enable_habits: false }, 'a');
+  mockApi.depthPreferences.get.mockResolvedValueOnce(ALL_ON);
+  await store.getState().load('a');
+  pending.resolve({ ...ALL_ON, enable_habits: false });
+  await write;
+  expect(store.getState().enable_habits).toBe(false);
+});
+
+it('ignores a GET begun during a write even when its answer arrives after confirmation', async () => {
+  const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+  setActiveUser(1);
+  store.getState().reset();
+  const writeAnswer = deferredPreferences();
+  const readAnswer = deferredPreferences();
+  mockApi.depthPreferences.update.mockReturnValueOnce(writeAnswer.promise);
+  mockApi.depthPreferences.get.mockReturnValueOnce(readAnswer.promise);
+  const write = store.getState().update({ enable_course: false }, 'a');
+  const read = store.getState().load('a');
+  writeAnswer.resolve({ ...ALL_ON, enable_course: false });
+  await write;
+  readAnswer.resolve(ALL_ON);
+  await read;
+  expect(store.getState().enable_course).toBe(false);
+});
+
+it('keeps a newer GET when two read answers arrive backwards', async () => {
+  const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+  setActiveUser(1);
+  store.getState().reset();
+  const answer = deferredPreferences();
+  mockApi.depthPreferences.get.mockReturnValueOnce(answer.promise);
+  const earlier = store.getState().load('a');
+  mockApi.depthPreferences.get.mockResolvedValueOnce({ ...ALL_ON, enable_course: false });
+  await store.getState().load('a');
+  answer.resolve(ALL_ON);
+  await earlier;
+  expect(store.getState().enable_course).toBe(false);
 });
