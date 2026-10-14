@@ -58,6 +58,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import SQLModel, col
 
+from domain.privacy_tier import admits_egress, egress_denied_clause
 from domain.retention import retention_gaps, tombstone_gaps
 from models.account_deletion_audit import AccountDeletionAudit
 from models.journal_entry import VAULT_DESTINATION_WIDTH, JournalClassification, JournalEntry
@@ -431,7 +432,10 @@ async def _entry_tombstones(session: AsyncSession) -> tuple[EntryTombstone, ...]
 
 
 async def _intimate_tombstones(session: AsyncSession) -> tuple[IntimateTombstone, ...]:
-    """Every live entry whose tier is Intimate.
+    """Every live entry whose tier may not leave the boundary (Intimate, by policy).
+
+    Judged by :mod:`domain.privacy_tier`, never an inline comparison: a tier
+    the allowlist does not admit is withheld, so it is re-stamped Intimate.
 
     A soft-deleted Intimate page is already an entry tombstone, which is the
     stricter of the two, so it is not exported again here.
@@ -439,7 +443,7 @@ async def _intimate_tombstones(session: AsyncSession) -> tuple[IntimateTombstone
     rows = await session.execute(
         select(col(JournalEntry.id), col(JournalEntry.user_id), col(JournalEntry.timestamp))
         .where(
-            col(JournalEntry.classification) == JournalClassification.INTIMATE.value,
+            egress_denied_clause(col(JournalEntry.classification)),
             col(JournalEntry.deleted_at).is_(None),
         )
         .order_by(col(JournalEntry.id))
@@ -683,11 +687,7 @@ async def _reapply_intimate(
     """
     async with factory() as session:
         entry = await session.get(JournalEntry, tombstone.entry_id)
-        if (
-            entry is None
-            or entry.deleted_at is not None
-            or entry.classification == JournalClassification.INTIMATE
-        ):
+        if entry is None or entry.deleted_at is not None or not admits_egress(entry.classification):
             tally.intimate_absent += 1
             return
         if not _is_described_page(entry, user_id=tombstone.user_id, timestamp=tombstone.timestamp):
