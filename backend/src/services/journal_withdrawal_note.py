@@ -185,6 +185,36 @@ async def _due_notes(
     return rows
 
 
+async def _snapshot(
+    factory: async_sessionmaker[AsyncSession],
+    vaults: Sequence[DetachedVault],
+    schedule: JournalRetrySchedule,
+    moment: datetime,
+) -> list[tuple[DetachedVault, int]]:
+    """Pair each due note with the vault that can confirm it, on a short-lived session."""
+    by_destination = {vault.destination: vault for vault in vaults}
+    async with factory() as session:
+        due = await _due_notes(session, tuple(by_destination), schedule, moment)
+    return [(by_destination[destination], entry_id) for entry_id, destination in due]
+
+
+async def _work_note(
+    factory: async_sessionmaker[AsyncSession],
+    vault: DetachedVault,
+    entry_id: int,
+    *,
+    schedule: JournalRetrySchedule,
+    moment: datetime,
+) -> bool:
+    """Ask ``vault`` to withdraw one entry; delete its note on confirmation. Whether it settled."""
+    confirmed = await withdraw_journal_from_vault(vault.connect(), entry_id=entry_id)
+    schedule.record(entry_id, moment, confirmed=confirmed)
+    if not confirmed:
+        return False
+    async with factory() as session:
+        return await settle_detached_note(session, entry_id=entry_id, destination=vault.destination)
+
+
 async def resume_detached_withdrawal_notes(
     factory: async_sessionmaker[AsyncSession],
     vaults: Sequence[DetachedVault],
@@ -203,17 +233,7 @@ async def resume_detached_withdrawal_notes(
         return 0
     moment = now if now is not None else _utcnow()
     schedule = retries if retries is not None else _NOTE_RETRIES
-    by_destination = {vault.destination: vault for vault in vaults}
-    async with factory() as session:
-        due = await _due_notes(session, tuple(by_destination), schedule, moment)
     settled = 0
-    for entry_id, destination in due:
-        client = by_destination[destination].connect()
-        confirmed = await withdraw_journal_from_vault(client, entry_id=entry_id)
-        schedule.record(entry_id, moment, confirmed=confirmed)
-        if confirmed:
-            async with factory() as session:
-                settled += await settle_detached_note(
-                    session, entry_id=entry_id, destination=destination
-                )
+    for vault, entry_id in await _snapshot(factory, vaults, schedule, moment):
+        settled += await _work_note(factory, vault, entry_id, schedule=schedule, moment=moment)
     return settled
