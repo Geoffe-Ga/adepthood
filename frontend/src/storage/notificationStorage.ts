@@ -4,6 +4,8 @@ import * as SecureStore from 'expo-secure-store';
 import { getJsonArray } from './jsonStore';
 import { scopedKey } from './userScope';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 const KEY_PREFIX = '@adepthood/notifications';
 // expo-secure-store only allows alphanumerics plus `.`, `-`, `_` in keys,
 // so this one cannot share the `@adepthood/...` prefix with AsyncStorage keys.
@@ -72,8 +74,8 @@ export async function savePushToken(token: string): Promise<void> {
 export async function loadPushToken(): Promise<string | null> {
   try {
     return await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
-  } catch (err: unknown) {
-    console.warn('[storage] SecureStore push-token load failed', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'notifications' });
     return null;
   }
 }

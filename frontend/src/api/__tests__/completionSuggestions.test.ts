@@ -94,10 +94,11 @@ describe('completionSuggestions.detect', () => {
       await expect(completionSuggestions.detect(7, 'tok')).rejects.toBeInstanceOf(
         ApiValidationError,
       );
-      expect(warn).toHaveBeenCalledWith(
-        '[api] response validation failed',
-        expect.objectContaining({ path: '/journal/7/suggestions/detect' }),
-      );
+      expect(warn).toHaveBeenCalledWith('api_response_invalid', {
+        route: 'unknown_route',
+        status: 200,
+        issueCount: 1,
+      });
     } finally {
       warn.mockRestore();
     }

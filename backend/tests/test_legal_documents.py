@@ -289,6 +289,11 @@ _DERIVED_PLAINTEXT_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
         "completionsuggestion.completed_on": "**detected amounts and dates**",
         "completionsuggestion.anchor_start": "where in the entry",
         "completionsuggestion.anchor_end": "where in the entry",
+        # Named on 2026-10-14 (#3260, #3058 AC5): kept plaintext and disclosed.
+        "journalentry.classification": "**an entry's tier**",
+        "journalentry.tag": "**an entry's tag**",
+        "journalentry.reflection_scope_key": "**an entry's reflection scope**",
+        "corpusfragment.tier": "**a corpus passage's tier**",
     }
 )
 
@@ -310,6 +315,13 @@ def test_the_policy_discloses_the_derived_data_it_stores_unencrypted() -> None:
     prose = _prose(_PRIVACY_POLICY)
     encrypted = _encrypted_columns()
 
+    every_column = {
+        f"{table.name}.{column.name}"
+        for table in SQLModel.metadata.tables.values()
+        for column in table.columns
+    }
+    missing = sorted(set(_DERIVED_PLAINTEXT_DISCLOSURES) - every_column)
+    assert not missing, f"no longer in the schema; update the disclosure: {missing}"
     still_encrypted = sorted(set(_DERIVED_PLAINTEXT_DISCLOSURES) & encrypted)
     assert not still_encrypted, f"now encrypted; narrow the disclosure: {still_encrypted}"
     undisclosed = sorted(
@@ -1534,3 +1546,52 @@ def test_your_data_says_operator_triage_goes_with_the_report() -> None:
     assert "are not in your export" in your_data
     assert "they do not outlive the report they describe" in your_data
     assert "your report's words are never published" in your_data
+
+
+# The owner's own-key wording (2026-10-14, #3260, #3067 B01). Page reading goes
+# from the device straight to the vendor, which sees the device's address; the
+# other features still cross Adepthood's server. The policy says both, names the
+# provider by the saved key rather than by deployment configuration, and drops
+# the sentence that sent every key through Adepthood.
+_OWN_KEY_PROMISES: Final[tuple[str, ...]] = (
+    "the provider whose key you saved",
+    "page reading goes directly from your device to the provider you chose",
+    "which sees your device's ip address and browser or app details",
+    "request carries neither the key nor the page",
+    "every other feature that uses the key still passes through adepthood's server",
+    "including resonance notes, letters and completion checks",
+)
+_RETIRED_OWN_KEY_CLAIMS: Final[tuple[str, ...]] = (
+    "depending on how the deployment is configured",
+    "anthropic or openai",
+    "if you bring your own key, the production app sends it over https",
+)
+
+
+def test_the_policy_says_where_an_own_key_travels_for_each_feature() -> None:
+    """Page reading is device-to-vendor; everything else crosses Adepthood (#3260)."""
+    prose = _prose(_PRIVACY_POLICY)
+
+    missing = [promise for promise in _OWN_KEY_PROMISES if promise not in prose]
+    assert not missing, f"the policy drops the owner's own-key wording: {missing}"
+    restated = [claim for claim in _RETIRED_OWN_KEY_CLAIMS if claim in prose]
+    assert not restated, f"the policy still makes a retired own-key claim: {restated}"
+
+
+# The off-host backup copy the owner retired on 2026-10-14 (#3260): "No off-host
+# copy; rely on Railway's 6-day backups." No public document may still promise it.
+_RETIRED_OFFHOST_CLAIMS: Final[tuple[str, ...]] = (
+    "30-day off-host",
+    "off-host backups",
+    "kept off the hosting platform",
+    "once a week the operator copies the whole database",
+    "kept off the platform for 30 days",
+)
+
+
+def test_no_public_document_promises_an_off_host_backup() -> None:
+    """The retired off-host leg is promised nowhere a reader looks."""
+    for document in (_PRIVACY_POLICY, _TERMS_OF_SERVICE, _YOUR_DATA):
+        prose = _prose(document)
+        restated = [claim for claim in _RETIRED_OFFHOST_CLAIMS if claim.lower() in prose]
+        assert not restated, f"{document.name} still promises an off-host copy: {restated}"

@@ -487,7 +487,16 @@ describe('cancelForHabit', () => {
   });
 
   it('handles errors gracefully', async () => {
-    mockStorage.loadNotificationIds.mockRejectedValue(new Error('storage error'));
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockStorage.loadNotificationIds.mockRejectedValue(new Error('PRIVATE_NOTIFICATION_CANARY'));
     await expect(cancelForHabit(42)).resolves.toBeUndefined();
+    expect(errorSpy).toHaveBeenCalledWith('notification_cancel_failed');
+    for (const call of errorSpy.mock.calls) {
+      for (const arg of call) {
+        expect(arg).not.toBeInstanceOf(Error);
+        expect(String(arg)).not.toContain('PRIVATE_NOTIFICATION_CANARY');
+      }
+    }
+    errorSpy.mockRestore();
   });
 });

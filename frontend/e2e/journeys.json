@@ -1363,7 +1363,7 @@
   },
   {
     "id": "account.byok-key-crosses-two-service-boundaries",
-    "description": "Someone saves their own OpenAI or Anthropic key on the device, then uses a model-powered feature. The production app sends the key over HTTPS to Adepthood in the X-LLM-API-Key header, and Adepthood forwards it over HTTPS to the selected provider for that request without persisting, logging, or returning it. Both Settings surfaces disclose those two service boundaries before the key is used. The copy and wire contract are pinned together by src/features/Settings/__tests__/byokDisclosure.test.ts and the rendered-screen specs beside it. The real-wire lane cannot cover the whole journey because it neither mounts SecureStore-backed Settings screens nor sends a live credential to an external model provider; doing so would turn a test fixture into a production secret and a billable third-party call. Page reading is the exception since ADR 0009 phase (a)'s second half (#3067): with a key, the device sends the key and the page straight to that key's vendor, Adepthood sees only a content-free admission request and declares no key header on its page-read route, so the two-boundary copy now overstates that one feature's exposure (owner's copy decision). That path is journal.page-read-with-own-key-goes-device-to-vendor.",
+    "description": "Someone saves their own OpenAI or Anthropic key on the device, then uses a model-powered feature. The production app sends the key over HTTPS to Adepthood in the X-LLM-API-Key header, and Adepthood forwards it over HTTPS to the selected provider for that request without persisting, logging, or returning it. Both Settings surfaces disclose those two service boundaries before the key is used. The copy and wire contract are pinned together by src/features/Settings/__tests__/byokDisclosure.test.ts and the rendered-screen specs beside it. The real-wire lane cannot cover the whole journey because it neither mounts SecureStore-backed Settings screens nor sends a live credential to an external model provider; doing so would turn a test fixture into a production secret and a billable third-party call. Page reading is the exception since ADR 0009 phase (a)'s second half (#3067): with a key, the device sends the key and the page straight to that key's vendor, Adepthood sees only a content-free admission request and declares no key header on its page-read route, and both Settings surfaces and the privacy policy say so in the owner's 2026-10-14 wording (#3260). That path is journal.page-read-with-own-key-goes-device-to-vendor.",
     "crosses": {
       "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
       "client": ["journal", "resonance"],
@@ -1440,6 +1440,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/account-deletion.e2e.test.ts"
+  },
+  {
+    "id": "errors.api-recovery-with-content-free-diagnostics",
+    "description": "At phone and desktop sizes, an authenticated Habits read fails with a malformed response or server error containing private canaries. The existing error card and Retry remain reachable; every captured console argument omits private prose, request IDs and validation issue text. Clearing the fault and retrying reads a real persisted habit through the authenticated API and restores the Habits surface. Crash-envelope minimization is separately tested at the production transport boundary; this journey does not claim the renderer crash flow.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["GET /habits/"],
+      "tables": ["habit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/client-diagnostics.browser.e2e.test.ts"
   },
   {
     "id": "errors.boundary-recovers-and-reports",
@@ -2227,7 +2239,7 @@
   },
   {
     "id": "practice.every-mode-family-launches-from-the-catalog",
-    "description": "A practitioner picks any seeded practice from the catalog -- each of the eleven engine modes, every stage's canonical preset and the course's own alternatives (Yellow's and Ultraviolet's forty-five-minute alternatives among them) -- and can start it, pause and resume it where the view offers that, finish it and save it. Uncovered in the browser: presetLaunchMatrix.test.tsx launches every seeded preset end to end in jest from a fixture the backend gates equal to PRESET_PRACTICES, and modeParity.test.tsx holds every backend PracticeMode to a picker entry, a configurator form, valid defaults and a session view, but no browser spec yet walks one preset per mode family from the catalog through a real save (#3072 AC19). Stage 10 Clear Light has no alternatives chapter in the course, so it offers only its canonical sit.",
+    "description": "A practitioner picks any seeded practice from the catalog -- each of the eleven engine modes, every stage's canonical preset and the course's own alternatives (Yellow's and Ultraviolet's forty-five-minute alternatives among them) -- and can start it, pause and resume it where the view offers that, finish it and save it. Uncovered in the browser: presetLaunchMatrix.test.tsx launches every seeded preset end to end in jest from a fixture the backend gates equal to PRESET_PRACTICES, and modeParity.test.tsx holds every backend PracticeMode to a picker entry, a configurator form, valid defaults and a session view, but the browser does not yet walk every seeded canonical and alternative preset through a real save (#3072 AC19). Stage 10 Clear Light has no alternatives chapter in the course, so it offers only its canonical sit.",
     "crosses": {
       "screen": "frontend/src/features/Practice/screens/PracticeCatalogScreen.tsx",
       "client": ["practices", "userPractices", "practiceSessions"],
@@ -2236,6 +2248,24 @@
     },
     "status": "uncovered",
     "issue": 3072
+  },
+  {
+    "id": "practice.supported-engine-families-persist-browser-sessions",
+    "description": "A practitioner takes every supported engine family through real browser UI and a persisted sitting (#3212, bounded #3072 proof): seven real catalog presets (5-4-3-2-1 grounding, Body Scan, Find Colors, Mindful Eating, Tarot meditation, Shadow work and Shadow Drawing) are chosen and adopted through the embedded catalog; four other families (interval bell, random interval bell, rep counter and card meditation) are authored from scratch with the wizard's valid defaults and a stage assignment. Each reloads its saved selection, reaches its actual player, starts, pauses/resumes where offered, completes and saves once. The server accepts the caller-owned adoption, expected mode metadata and a window equal to active practice time; a fresh session-list read after reload proves persistence. Playwright's page clock accelerates the sitting while all HTTP stays real. Phone and desktop frames at normal and 200% text plus viewport/hit tests verify reachable controls. The shell reserves real action width so its one-line title never overlaps Feedback, menu or Settings (#3248), preserving full accessible names. The card name retains its full glyph height while its contained artwork yields space; symbolism remains readable through actual nested scrolling, and long custom names wrap within the identity row, and bell schedule times stay on one line beside human-readable cue labels (#3256). The presetLaunchMatrix component suite still covers every seeded canonical and alternative preset; this browser matrix represents all eleven engine families, not every Course category or physical-device audio/haptic/background behavior. Journaling's separate quick-launch path remains in its existing browser journey.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practices", "userPractices", "practiceSessions"],
+      "routes": [
+        "GET /practices/",
+        "POST /practices/",
+        "POST /user-practices/",
+        "GET /user-practices/",
+        "POST /practice-sessions/"
+      ],
+      "tables": ["practice", "userpractice", "practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-repertoire.browser.e2e.test.ts"
   },
   {
     "id": "practice.session-returns-from-the-background-calmly",
@@ -2341,5 +2371,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habits-recovery.browser.e2e.test.ts"
+  },
+  {
+    "id": "release.claim-certification",
+    "description": "An operator, not a user, decides whether a public privacy or product claim (C01-C24 in docs/legal/claim-ledger.json) may be published. The publish gate (backend/scripts/claim_certification.py, run by backend/tests/scripts/test_claim_publish_gate.py) refuses any ledger claim marked published without a current certificate in docs/qa/claim-certifications.json: an independent reviewer who implemented nothing and is not the loop, tested commits equal to the backend and frontend releases the serving receipts report, resolving non-xfail tests and covered journeys, passed dependency gates, a human signoff on the exact sentence digest, and an unexpired 90-day window. It renders no screen; the crossing below names the journal surface the strongest claims (C03, C07-C12, C20-C23) are about. Uncovered (#3076): no claim is certified, because certification needs an appointed independent human reviewer and live synthetic journeys on the serving build, both owner actions, so nothing can cross this seam yet.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/PrivacyTierControl.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 3076
   }
 ]

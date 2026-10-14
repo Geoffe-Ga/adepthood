@@ -210,7 +210,7 @@ describe('ApiKeyProvider', () => {
   });
 
   test('sets loadError when the initial SecureStore read fails', async () => {
-    mockStorage.loadLlmApiKey.mockRejectedValueOnce(new Error('keychain locked'));
+    mockStorage.loadLlmApiKey.mockRejectedValueOnce(new Error('PRIVATE_KEYCHAIN_CANARY'));
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     let ctx: ReturnType<typeof useApiKey> | null = null;
     render(
@@ -227,7 +227,14 @@ describe('ApiKeyProvider', () => {
 
     expect(ctx!.apiKey).toBeNull();
     expect(ctx!.loadError).toBeInstanceOf(Error);
-    expect(ctx!.loadError?.message).toBe('keychain locked');
+    expect(ctx!.loadError?.message).toBe('PRIVATE_KEYCHAIN_CANARY');
+    expect(warnSpy).toHaveBeenCalledWith('provider_storage_failed');
+    for (const call of warnSpy.mock.calls) {
+      for (const arg of call) {
+        expect(arg).not.toBeInstanceOf(Error);
+        expect(String(arg)).not.toContain('PRIVATE_KEYCHAIN_CANARY');
+      }
+    }
     warnSpy.mockRestore();
   });
 

@@ -5,10 +5,11 @@
  * swallowed — the OS reclaims its cache eventually, and cleanup must never
  * block or break the writing flow.
  *
- * PRIVACY: warnings emitted here carry only a cache-relative filename — never
- * a full device path, and never any image contents.
+ * PRIVACY: warnings emit only a fixed code, without filenames, device paths or contents.
  */
-import { File, Paths } from 'expo-file-system';
+import { File } from 'expo-file-system';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 /** The two transient device files a capture page owns. */
 export interface CapturePageFiles {
@@ -16,20 +17,6 @@ export interface CapturePageFiles {
   sourceUri: string;
   /** The downscaled manipulator-output file sent for transcription. */
   uri: string;
-}
-
-/**
- * Reduce a file uri to its cache-relative name for logging: the path under
- * the cache directory when it lives there, otherwise just the basename.
- * Never the full uri — device paths (and anything beyond metadata) stay out
- * of logs.
- */
-function cacheRelativeName(uri: string): string {
-  const cacheRoot = Paths.cache.uri;
-  if (cacheRoot && uri.startsWith(cacheRoot)) {
-    return uri.slice(cacheRoot.length);
-  }
-  return uri.split('/').at(-1) ?? uri;
 }
 
 /** Delete one transient file, idempotently; a failure only warns, metadata-only. */
@@ -45,8 +32,8 @@ function deleteQuietly(uri: string): void {
     }
   } catch {
     // Deliberately swallowed: cleanup is best-effort, and the raised error can
-    // embed the full path — so only the cache-relative name is surfaced.
-    console.warn(`Journal capture: could not delete transient file ${cacheRelativeName(uri)}`);
+    // embed paths and private filenames, so only a fixed code is surfaced.
+    reportDiagnostic('capture_cleanup_failed');
   }
 }
 

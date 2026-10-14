@@ -23,15 +23,15 @@ suppression can no longer re-delete it. That is safe only when no backup still
 alive holds the entry *undeleted*. Each backup leg keeps a copy for its
 retention and prunes it on a later run, so its oldest live copy is at most
 retention plus one interval old
-(:data:`~domain.retention_stores.OLDEST_LIVE_BACKUP_DAYS`, today 90 + 7: the
-weekly off-host dumps still held under the 90-day retention, which outlast the
-ratified 30-day one until they age out). An entry soft-deleted longer ago than that was already
-stamped deleted in every copy still alive, and restoring any of them brings it
-back hidden.
+(:data:`~domain.retention_stores.OLDEST_LIVE_BACKUP_DAYS`, today 90 + 7: a
+weekly dump the retired off-host leg's draft runbook kept for 90 days may still
+be held, and outlasts Railway's 6-day platform backups until it is deleted). An
+entry soft-deleted longer ago than that was already stamped deleted in every
+copy still alive, and restoring any of them brings it back hidden.
 
 This is a **condition, not a guarantee**: it holds only while backups are
-expired as DEPLOYMENT.md says -- Railway's own expiry for the platform leg and
-the manual weekly prune for the off-host leg. A dump kept past its retention,
+expired as DEPLOYMENT.md says -- Railway's own expiry for the platform leg, and
+no dump from the retired off-host leg kept past 90 days. A dump kept longer,
 or a retention raised without raising the constants (pinned to DEPLOYMENT.md
 by a drift test), breaks it. Below the floor the purge refuses.
 

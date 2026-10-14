@@ -1,3 +1,6 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 // Persists "the offer made in the finished-writing note has been answered", so
 // it is made once and then let go.
 //
@@ -27,7 +30,6 @@
 // suppressing it: a flaky disk should not silently withhold something the
 // person has not been asked about yet. One extra offer after a read blip is a
 // smaller harm than never offering again.
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const WRITING_OFFER_ANSWERED_KEY = '@adepthood/writing_habit_offer_answered';
 const FLAG_TRUE = 'true';
@@ -42,8 +44,8 @@ export async function loadWritingOfferAnswered(): Promise<boolean> {
   try {
     const raw = await AsyncStorage.getItem(WRITING_OFFER_ANSWERED_KEY);
     return raw === FLAG_TRUE;
-  } catch (err) {
-    console.warn('[writingOfferStorage] failed to load the answered flag', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'writing_offer' });
     return false;
   }
 }

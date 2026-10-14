@@ -458,27 +458,30 @@ invalidates every issued JWT (everyone is logged out) but destroys no data.
 
 ### What is backed up, on what schedule, and where it lands
 
-Two independent legs, because each one fails in a way the other survives.
+One leg: Railway's own platform backup.
 
 | Leg | Mechanism | Schedule | Retention | Survives |
 | --- | --- | --- | --- | --- |
 | Platform | Railway volume backup, configured per-database in the service's **Backups** tab | Daily | 6 days | Dropped table, bad migration, accidental delete |
-| Off-host | `pg_dump -Fc`, encrypted, copied off Railway | Weekly | 30 days | Railway account loss, project deletion, region loss |
 
-The owner ratified both legs' retention on 2026-10-13 (#3063 AC15): the platform
-leg unchanged, the off-host leg lowered from 90 days to 30. The decision record
-is [docs/privacy/retention-proposal.md](docs/privacy/retention-proposal.md).
-The shorter off-host retention does **not** lower the journal purge floor: it
-stays at 97 days (90 + 7) until every dump kept under the old 90-day retention
-has been pruned, locally and at the off-host destination. Lowering it to 37
-days is a separate, later change, made only once that is confirmed.
+The owner ratified the platform leg's retention on 2026-10-13 (#3063 AC15). On
+2026-10-14 the owner retired the second, off-host leg: "No off-host copy; rely
+on Railway's 6-day backups" (#3260). The decision record is
+[docs/privacy/retention-proposal.md](docs/privacy/retention-proposal.md).
 
-**Railway's own backups are not off-host in the sense that matters.** They are
-copy-on-write volume backups restorable only **into the same project and
-environment**, with no documented export path. That makes them excellent for the
-mistakes you make and useless for the platform going away — which is exactly why
-the second leg exists. Railway's own schedule choices are Daily (kept 6 days),
-Weekly (kept 1 month), and Monthly (kept 3 months); pick Daily.
+Retiring the off-host leg does **not** lower the journal purge floor. Its draft
+runbook kept weekly dumps for up to 90 days, and a dump made under it is held
+until someone deletes it, so the floor stays at 97 days (90 + 7). Lowering it to
+Railway's own 7 days (6 + 1) is a separate, later change, made only once the
+owner confirms no such dump is held.
+
+**What this leaves uncovered.** Railway's backups are copy-on-write volume
+backups restorable only **into the same project and environment**, with no
+documented export path. They recover from the mistakes you make. They do not
+recover from losing the Railway account, deleting the project, or losing the
+region. With no off-host copy, those events lose the data. Railway's own
+schedule choices are Daily (kept 6 days), Weekly (kept 1 month), and Monthly
+(kept 3 months); pick Daily.
 
 `[HUMAN ACTION]` to enable the platform leg: Railway dashboard → Postgres
 service → **Backups** → set schedule to Daily → confirm a backup appears within
@@ -487,71 +490,20 @@ tracked this, closed without the Daily schedule being confirmed, so treat the
 platform leg as unverified until someone has seen a Daily backup appear (#3058).
 
 **Recovery point objective (RPO): 24 hours.** Up to a day of writing can be lost
-in a total-loss scenario. **Recovery time objective (RTO): 1 hour** — the time
-from deciding to restore to the app serving reads again. Both are modest on
-purpose; a smaller RPO means continuous archiving (WAL shipping), which is not
-configured and should not be claimed.
+when a platform backup is restored. **Recovery time objective (RTO): 1 hour**,
+the time from deciding to restore to the app serving reads again. Both are
+modest on purpose; a smaller RPO means continuous archiving (WAL shipping),
+which is not configured and should not be claimed.
 
-### Taking an off-host dump
+### Off-host dumps: retired
 
-**Use the public connection string, not the injected one.** The `DATABASE_URL`
-Railway injects into the backend service points at `postgres.railway.internal`,
-which resolves only from inside the project's private network — a laptop cannot
-reach it, and neither can `railway run`. For an external dump, take
-`DATABASE_PUBLIC_URL` (the TCP-proxy address, `…proxy.rlwy.net:<port>`) from the
-Railway dashboard → PostgreSQL service → **Variables**. Paste it into the shell
-rather than committing it anywhere.
+There is no scheduled copy of the database off Railway. The weekly encrypted
+dump and its prune step, a draft (#3063), were retired on 2026-10-14 (#3260).
 
-`umask 077` first, so the dump is never world-readable — not even for the
-seconds before it is encrypted.
-
-```bash
-umask 077
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-
-# Paste DATABASE_PUBLIC_URL here; do not persist it in a dotfile or history.
-read -rs PGURL && export PGURL
-
-# DUMP_OK is set only if the dump, its verification and its encryption all
-# succeed. pg_dump creates its file before it connects, so a failed dump can
-# leave an empty or truncated archive that gpg would still encrypt; the
-# pg_restore --list step reads the archive and fails on one.
-# Encrypt before it leaves the machine. Passphrase lives in the password
-# manager, NOT beside the file and NOT with JOURNAL_ENCRYPTION_KEYS.
-DUMP_OK=0
-pg_dump "$PGURL" -Fc -f "adepthood-$STAMP.dump" && \
-  pg_restore --list "adepthood-$STAMP.dump" >/dev/null && \
-  gpg --symmetric --cipher-algo AES256 "adepthood-$STAMP.dump" && \
-  DUMP_OK=1
-shred -u "adepthood-$STAMP.dump" 2>/dev/null || rm -P "adepthood-$STAMP.dump"
-```
-
-Then copy `adepthood-$STAMP.dump.gpg` to storage that is not Railway. The
-custom format (`-Fc`) is required: it is what `pg_restore` reads, it compresses,
-and it lets you restore selectively.
-
-**Prune expired dumps on every weekly run.** *DRAFT for owner review (#3063);
-where the off-host copies live is still undecided.* "Kept 30 days" is only true
-if someone deletes the older ones. Once this run's dump is verified, delete every
-dump older than 30 days, locally and at the off-host destination:
-```bash
-# Local copies older than the 30-day retention, to the minute: an age in whole
-# days would round down and keep a dump a day too long. Runs only when this
-# run's dump verified and encrypted (DUMP_OK=1 above); a failed run deletes
-# nothing.
-[ "$DUMP_OK" = 1 ] && \
-  find . -maxdepth 1 -name 'adepthood-*.dump.gpg' -mmin +$((30 * 24 * 60)) -delete
-```
-Then, only once the new copy is confirmed present at the off-host destination,
-remove the same-aged `adepthood-*.dump.gpg` files there with that store's own
-tooling. The journal-entry purge's minimum
-window (`POST /admin/maintenance/journal-entries`) assumes this happens: a dump
-kept longer can still hold a purged page undeleted.
-
-> This leg is **manual today**. It is written down honestly rather than
-> described as automated: a weekly calendar reminder is the current mechanism,
-> and automating it needs a credential store and a destination bucket that do
-> not yet exist.
+`[HUMAN ACTION]` If a dump of production was ever made under that draft, delete
+it wherever it is kept, then say so on #3063. The 97-day purge floor rests on
+the assumption that such a dump may still exist; it can come down only after
+that confirmation.
 
 ### Restoring, step by step
 
@@ -570,7 +522,7 @@ costs.
 
    createdb -h "$HOST" -p "$PORT" -U "$USER" "$TARGET_DB"
    ```
-3. **Decrypt the dump** (off-host leg only): `gpg --decrypt adepthood-<stamp>.dump.gpg > restore.dump`
+3. **Decrypt the dump** (an encrypted dump only): `gpg --decrypt adepthood-<stamp>.dump.gpg > restore.dump`
 4. **Restore.** `--exit-on-error` is not optional: without it `pg_restore`
    reports success-ish while skipping objects it could not create.
    ```bash
@@ -711,8 +663,8 @@ What was run, and what was observed:
     dangerous — it looks fine and is not trustworthy.
 
 **What this drill did not prove.** It ran against a local cluster, so the
-Railway-side restore path (steps 1 and 2 of the procedure), the encrypted
-off-host copy, and the platform Backups tab are documented from Railway's
+Railway-side restore path (steps 1 and 2 of the procedure) and the platform
+Backups tab are documented from Railway's
 reference and from the local drill's logic — not from a production rehearsal.
 The next drill should be run against a Railway staging database restored from a
 real platform backup, and this record updated with its date.

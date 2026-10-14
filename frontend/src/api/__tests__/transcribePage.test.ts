@@ -523,6 +523,10 @@ describe('journal.transcribePage privacy', () => {
   function assertNoSecretLeak(spy: jest.SpyInstance): void {
     for (const call of spy.mock.calls) {
       expect(JSON.stringify(call)).not.toContain(SENTINEL_PAYLOAD);
+      for (const arg of call) {
+        expect(arg).not.toBeInstanceOf(Error);
+        expect(String(arg)).not.toContain(SENTINEL_PAYLOAD);
+      }
     }
   }
 
@@ -534,10 +538,15 @@ describe('journal.transcribePage privacy', () => {
         'tok',
       ),
     );
-    // A mapped transport error emits no console output at all, so the leak scan
-    // would pass vacuously; assert silence explicitly to lock that in.
+    // The failure records only bounded transport metadata; the payload remains private.
+    expect(warnSpy).toHaveBeenCalledWith('api_server_error', {
+      route: 'unknown_route',
+      status: 502,
+    });
+    assertNoSecretLeak(logSpy);
+    assertNoSecretLeak(warnSpy);
+    assertNoSecretLeak(errorSpy);
     expect(logSpy).not.toHaveBeenCalled();
-    expect(warnSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
     expect((err as TranscriptionErrorInstance).message).not.toContain(SENTINEL_PAYLOAD);
   });

@@ -550,7 +550,11 @@ def test_receipt_for_maps_a_response_into_the_closed_vocabulary(
 async def test_vault_bound_pass_with_a_byok_header_is_not_paid_by_own_key(
     async_client: AsyncClient, *, vault_has_notes: bool
 ) -> None:
-    """The client sends its key on every request; a vault-bound pass never uses it."""
+    """The client sends its key on every request; a vault-bound pass never uses it.
+
+    So the vault's answer is paid from the wallet, key or no key (#3258): a pass
+    with notes keeps its credit, and an empty one is refunded and costs nothing.
+    """
     _bind_to_vault(_vault_with_note() if vault_has_notes else ReflectingVaultClient())
     headers = await _signup(async_client, f"prov_vault_byok_{vault_has_notes}")
     entry_id = await _create_entry(async_client, headers)
@@ -560,7 +564,7 @@ async def test_vault_bound_pass_with_a_byok_header_is_not_paid_by_own_key(
     assert resp.status_code == HTTPStatus.OK
     provenance = resp.json()["provenance"]
     assert provenance["notes"]["source"] == "creek_vault"
-    assert provenance["paid_by"] == "free"
+    assert provenance["paid_by"] == ("wallet" if vault_has_notes else "free")
 
 
 @pytest.mark.asyncio

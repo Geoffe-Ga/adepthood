@@ -77,10 +77,7 @@ describe('saveResonanceExplainerDismissed', () => {
 
     await expect(saveResonanceExplainerDismissed(true)).resolves.toBeUndefined();
 
-    expect(warn).toHaveBeenCalledWith(
-      '[resonanceExplainerStorage] failed to save the dismissal flag',
-      expect.any(Error),
-    );
+    expect(warn).toHaveBeenCalledWith('storage_write_failed', { storage: 'resonance_explainer' });
     warn.mockRestore();
   });
 });

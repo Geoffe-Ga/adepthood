@@ -8,6 +8,7 @@ import ChapterReader from './ChapterReader';
 import styles from './Course.styles';
 
 import { useMountedRef } from '@/hooks/useMountedRef';
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 /** The two keys a Start Here reader needs: which page, and what to call it. */
 export type ResourceTarget = Pick<SiteResource, 'slug' | 'title'>;
@@ -49,8 +50,8 @@ function useResourceMarkRead(
       // reading position is re-asked regardless.
       onMarkedRead();
       if (currentSlugRef.current === requestedSlug) setIsRead(true);
-    } catch (err) {
-      console.error('Failed to mark resource as read:', err);
+    } catch {
+      reportDiagnostic('course_read_failed');
     } finally {
       if (isMountedRef.current && currentSlugRef.current === requestedSlug) setMarking(false);
     }

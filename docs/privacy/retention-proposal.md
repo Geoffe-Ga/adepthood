@@ -7,15 +7,19 @@ written, with its conditions, including the rows that were marked "to confirm".
 This is the owner's decision record, not a published retention schedule.
 Publishing one is a separate decision (#3063 AC16, B01).
 
+**2026-10-14: the off-host leg is retired.** The owner decided: "No off-host
+copy; rely on Railway's 6-day backups" (#3260). The 30-day off-host period
+ratified on 2026-10-13 is withdrawn with the leg, and its row is gone from the
+stores table below. Railway's platform backup, kept 6 days, is the only backup.
+
 **One nightly sweep applies every database period.** Ratifying a period decides
 it; the nightly retention sweep (`backend/scripts/retention_sweep.py`, run by a
 Railway cron service, #3266) deletes what has passed it. Where an operator sweep
 already existed, its default window is now the ratified one (energy plans, the
-journal purge), and the off-host dump's manual weekly prune now prunes at 30
-days. The nightly sweep calls those same operator sweeps and applies every other
-database period too. Nothing is deleted until the owner creates its cron service
-(DEPLOYMENT.md, "Nightly retention sweep"). A store outside the database waits
-for its prune or a vendor setting.
+journal purge). The nightly sweep calls those same operator sweeps and applies
+every other database period too. Nothing is deleted until the owner creates its
+cron service (DEPLOYMENT.md, "Nightly retention sweep"). A store outside the
+database waits for a vendor setting.
 
 ## What this is
 
@@ -33,18 +37,19 @@ The values followed these rules:
   than the one before. Two could not be compared (application logs, Fly
   snapshots), because today's vendor setting is not known.
 - **The 97-day backup bound.** A backup copy can be up to retention plus one
-  interval old: 90 + 7 days for the weekly off-host dump. Two kinds of record
-  are restore tombstones, so they have to outlive that bound: a soft-deleted
+  interval old: 90 + 7 days for a weekly off-host dump made under the retired
+  leg's draft runbook. Two kinds of record are restore tombstones, so they
+  have to outlive that bound: a soft-deleted
   page and an erasure receipt. Without them, a restore would bring deleted data
   back with nothing to delete it again.
-- **The shorter backup retention does not shorten the bound yet.** The off-host
-  dump is now kept 30 days, but dumps kept under the 90-day retention still
-  exist until they are pruned. The bound, the journal purge floor and the
-  soft-deleted page's period therefore stay at 97 days while those copies are
-  held. The code enforces this through `HELD_OFFHOST_DUMP_RETENTION_DAYS`: the
-  floor is the larger of today's legs and the copies still held. Lowering it to
-  37 days is a **second, later change**, made only once every 90-day-era dump
-  has been pruned.
+- **Retiring the off-host leg does not shorten the bound yet.** A dump made
+  under the 90-day draft may still exist until someone deletes it. The bound,
+  the journal purge floor and the soft-deleted page's period therefore stay at
+  97 days. The code enforces this through `HELD_BACKUP_BOUND_DAYS`: the floor
+  is the larger of Railway's leg (6 + 1 = 7 days) and the copies that may still
+  be held. **Proposed, not applied:** once the owner confirms no off-host dump
+  is held, lower the floor to 7 days. That also shortens the soft-deleted
+  page's period from 97 days to 7, so it is the owner's decision (#3260).
 - **Some periods are conditional.** Open obligations (`pending_delete`,
   `unconfirmed`, `mirror_intent`, `pending`), unconfirmed teardowns and
   unfinished restores are never eligible. These exemptions are stored as data
@@ -103,7 +108,6 @@ claim path. It is never stamped, so its clock never starts.
 | Store | Data kind | Ratified period | Compared with before | Rationale | In force today |
 | --- | --- | --- | --- | --- | --- |
 | `railway_platform_backup` | Whole-database snapshot | 6 days (keep) | same | Daily, kept 6 days, is already Railway's shortest schedule, and it is the leg that recovers from everyday mistakes. | 6 days, if enabled. Enabling it is unverified (#3058). |
-| `offhost_pg_dump` | Encrypted whole-database dump | 30 days | shorter | Four weekly copies still cover a month of late-found damage or platform loss. Transition: the purge floor stays at 97 days until every dump kept under the 90-day retention has aged out and been pruned. Only a later change lowers it, to 37. | The runbook's manual weekly prune now deletes dumps older than 30 days (DEPLOYMENT.md; where the off-host copies live is still undecided). Dumps kept under the 90-day retention may still exist until that prune has run at the off-host destination too. |
 | `application_logs` | Content-free logs that name account ids | 30 days or the vendor's current setting, whichever is shorter | unknown | 30 days is common security-log practice. Today's vendor retention is unverified, so it cannot yet be called shorter. It may be 7 days on some plans, and then that shorter setting is kept. | Vendor defaults, unverified (#3064). The ratified period takes effect once the vendor setting is checked and applied. |
 | `fly_volume_snapshots` | Snapshots of the managed vault volume | 1 day | unknown | The vault mirrors the journal, so a snapshot only needs to bridge a day. Set the vendor's minimum and destroy snapshots at teardown, subject to the AC19 vendor check. | The pilot keeps 7 days. Per-user volumes use the vendor default. Survival after the volume is destroyed is unverified (AC19). |
 | `creek_vault_volume` | Mirrored entries and essays | no fixed period | same | Each copy is tied to an event, not a clock: it lives until its verified withdrawal, or the vault's teardown at account deletion. | As ratified. |

@@ -13,6 +13,7 @@ import ChapterReader, { type WriteNotePassage } from './ChapterReader';
 import styles from './Course.styles';
 
 import { useMountedRef } from '@/hooks/useMountedRef';
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 // Read-toast choreography: fade in, hold, fade out. Hold plus exit fade must
 // finish comfortably inside the reader tests' 5s settle window.
@@ -385,8 +386,8 @@ function useMarkReadHandler(
         setIsRead(true);
         onMarkedRead();
       }
-    } catch (err) {
-      console.error('Failed to mark content as read:', err);
+    } catch {
+      reportDiagnostic('course_read_failed');
     } finally {
       if (isMountedRef.current && currentItemIdRef.current === requestedId) setMarking(false);
     }

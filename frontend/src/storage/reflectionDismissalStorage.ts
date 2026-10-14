@@ -1,8 +1,10 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 // Persists a "this reflection invitation was set aside" flag, keyed per
 // reflection scope so a decline is honoured across launches for that scope only
 // — a later scope (a new week/stage) still surfaces its own fresh invitation.
 // Mirrors ``returnOfferStorage.ts``, but scoped rather than global.
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const KEY_PREFIX = '@adepthood/reflection_dismissed:';
 const FLAG_TRUE = 'true';
@@ -26,8 +28,8 @@ export async function loadReflectionDismissed(scopeKey: string): Promise<boolean
   try {
     const raw = await AsyncStorage.getItem(storageKey(scopeKey));
     return raw === FLAG_TRUE;
-  } catch (err) {
-    console.warn('[reflectionDismissalStorage] failed to load dismissal flag', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'reflection_dismissal' });
     return false;
   }
 }

@@ -1,3 +1,4 @@
+import { reportDiagnostic } from '@/observability/diagnostics';
 /**
  * The three device-kept "offer it or not" flags behind Settings → Journal, each
  * read as a switch: ``read`` answers whether the thing is currently offered,
@@ -36,8 +37,8 @@ export const WRITING_OFFER_SWITCH: OfferSwitchStorage = {
     try {
       await saveWritingOfferAnswered(!offered);
       return true;
-    } catch (err) {
-      console.warn('[journalOfferSwitches] failed to save the offer answer', err);
+    } catch {
+      reportDiagnostic('offer_persistence_failed');
       return false;
     }
   },

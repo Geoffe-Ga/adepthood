@@ -5,6 +5,8 @@ import { course as courseApi, type SiteResource } from '../../api';
 
 import styles from './Course.styles';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 interface SiteResourcesPanelProps {
   onSelect: (resource: SiteResource) => void;
 }
@@ -33,10 +35,10 @@ const SiteResourcesPanel = ({ onSelect }: SiteResourcesPanelProps): React.JSX.El
       .then((list) => {
         if (active) setResources(list);
       })
-      .catch((err: unknown) => {
+      .catch(() => {
         // Don't surface a banner — the resources panel is supplementary.
         // Logging keeps the failure visible in dev without spooking users.
-        console.warn('Failed to load site resources:', err);
+        reportDiagnostic('course_load_failed');
       });
     return () => {
       active = false;
