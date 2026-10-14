@@ -20,7 +20,7 @@ export const TITLE_STAGE_NUMBERS: readonly number[] = [10, 9];
 /** An aspect needs at least this many words before the arrow label shortens it. */
 export const MIN_ASPECT_WORDS_TO_SHORTEN = 2;
 
-/** How many trailing words a shortened arrow label drops ('True Self Connection' -> 'True Self'). */
+/** How many trailing words a shortened arrow label drops ('True Self Wisdom' -> 'True Self'). */
 export const ASPECT_WORDS_DROPPED_ON_ARROW = 1;
 
 /** What separates the words of an aspect. */

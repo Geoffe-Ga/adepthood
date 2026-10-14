@@ -52,8 +52,9 @@ per-phase manifestation copy are pulled from two different sources:
   `free_will_description`) come from `APTITUDE Complete Map.csv` in the
   `aptitude-course` repository's `database_of_course_curriculum`, including
   the December 2025 supersessions recorded in that repository's `CLAUDE.md`
-  (Stage 4 aspect "Community Love"; Stage 8 color "Teal", aspect "True Self
-  Connection", free-will archetype "True Self Embodier"). This is the
+  (Stage 4 aspect "Community Love"; Stage 8 color "Teal" and free-will
+  archetype "True Self Embodier"). Stage 8's aspect is "True Self Wisdom", the
+  CSV's own cell (owner ruling 2026-10-13, #2664). This is the
   canonical APTITUDE ontology, not the *Archetypal Wavelength* spreadsheet.
 - `manifestations_source` — the titles and six-phase `Rx` (integrated) / `OD`
   (shadow) manifestation copy come from *The Archetypal Wavelength*

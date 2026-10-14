@@ -182,7 +182,7 @@ _GOLDEN_STAGE_DEFINITIONS: list[dict[str, str | int]] = [
         "subtitle": "True Self Wisdom",
         "overview_url": "",
         "category": "Wisdom",
-        "aspect": "True Self Connection",
+        "aspect": "True Self Wisdom",
         "spiral_dynamics_color": "Teal",
         "growing_up_stage": "True Self Connection",
         "divine_gender_polarity": "Divine Feminine",
