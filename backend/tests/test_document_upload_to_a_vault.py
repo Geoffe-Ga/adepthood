@@ -26,13 +26,16 @@ Four properties are pinned here that no lower layer can guarantee alone:
 from __future__ import annotations
 
 import base64
+import json
+import re
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from http import HTTPStatus
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient
+from httpx import AsyncClient, MockTransport, ReadTimeout, RemoteProtocolError, Request, Response
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.corpus_import import ImportDestination
@@ -62,6 +65,8 @@ from schemas.journal_upload import (
     UPLOAD_MESSAGES,
     UPLOAD_RATE_LIMIT,
 )
+from services.creek_vault_client import HttpCreekVaultClient
+from tests.test_creek_vault_http_client import _handshake_payload
 from tests.vault_client_doubles import NoPipelineVaultDouble
 
 _SIGNUP_PASSWORD = "secret12345"  # pragma: allowlist secret
@@ -654,3 +659,91 @@ def _as_vault_client(client: CreekVaultClient) -> CreekVaultClient:
 def test_scripted_client_satisfies_the_vault_protocol() -> None:
     """The fake must implement the whole seam, upload included."""
     assert _as_vault_client(ScriptedUploadClient()) is not None
+
+
+@dataclass
+class _CommitThenLoseVault:
+    """A vault that durably keeps every upload, then loses the answer on the way back.
+
+    The document is recorded as committed *before* the reply is spoiled, which
+    is the ordering a real vault has no way to undo: the write lands, and only
+    then does the response time out or arrive as something adepthood cannot
+    read. Nothing about that outcome lets adepthood say the vault was unchanged.
+    """
+
+    lose_with: Exception | None = None
+    unreadable_body: str = ""
+    committed: list[str] = field(default_factory=list)
+
+    def __call__(self, request: Request) -> Response:
+        """Answer the capability probe honestly; commit the upload, then lose the reply."""
+        if request.url.path.endswith("/v1/capabilities"):
+            return Response(
+                HTTPStatus.OK, json=_handshake_payload(capabilities=["journal", "upload"])
+            )
+        self.committed.append(str(json.loads(request.content)["external_id"]))
+        if self.lose_with is not None:
+            raise self.lose_with
+        return Response(HTTPStatus.OK, text=self.unreadable_body)
+
+
+def _lost_reply_vaults() -> list[object]:
+    """Build one fresh committing vault per way a reply can be lost."""
+    return [
+        pytest.param(ReadTimeout("synthetic lost response"), "", id="timeout"),
+        pytest.param(RemoteProtocolError("synthetic dropped connection"), "", id="dropped"),
+        pytest.param(None, "<html>proxy error page</html>", id="unreadable-2xx"),
+    ]
+
+
+# Every way of saying the vault was left untouched, which an unconfirmed upload
+# has no evidence for.
+_UNCHANGED_CLAIMS = re.compile(
+    r"wasn't stored|was not stored|nothing was|nothing in your vault|wasn't sent|unchanged",
+    re.IGNORECASE,
+)
+
+
+@pytest.mark.parametrize(("lose_with", "unreadable_body"), _lost_reply_vaults())
+@pytest.mark.asyncio
+async def test_an_upload_whose_reply_was_lost_never_claims_nothing_was_stored(
+    async_client: AsyncClient, lose_with: Exception | None, unreadable_body: str
+) -> None:
+    """The vault may have the document, so the answer may only say it is unconfirmed.
+
+    Driven through the real HTTP adapter rather than a scripted client, because
+    the ambiguity lives in the adapter: a transport error or an undecodable 2xx
+    is normalised there into the same failure a refused connection is, and the
+    copy chosen for it has to be true of the worst case it covers.
+    """
+    vault_script = _CommitThenLoseVault(lose_with=lose_with, unreadable_body=unreadable_body)
+    headers = await _signup(async_client, "uploader-lost-reply")
+    async with AsyncClient(transport=MockTransport(vault_script)) as http:
+        client = HttpCreekVaultClient(
+            "https://vault.example.test", "vault-key", http_client=http, pin_destination=False
+        )
+        app.dependency_overrides[get_creek_vault_client] = lambda: client
+        try:
+            response = await async_client.post(_IMPORT_PATH, json=_payload(), headers=headers)
+        finally:
+            app.dependency_overrides.pop(get_creek_vault_client, None)
+    body = response.json()
+    assert vault_script.committed, "the synthetic vault must have committed the document"
+    assert response.status_code == HTTPStatus.ACCEPTED
+    assert body["vault_status"] == VaultUploadStatus.DEGRADED.value
+    assert body["vault_ref"] is None
+    assert body["message"] == UPLOAD_MESSAGES[VaultUploadStatus.DEGRADED]
+    assert "confirm" in body["message"].lower()
+    assert not _UNCHANGED_CLAIMS.search(body["message"])
+    assert _FILENAME not in response.text
+
+
+def test_only_a_pre_send_refusal_says_the_document_was_not_sent() -> None:
+    """The not-sent wording stays where it is known true, and only there.
+
+    ``vault_unavailable`` is decided by the handshake, before a document is on
+    any wire, so "wasn't sent" is a fact there. ``degraded`` is answered after
+    the call was made, so the same words would be a guess.
+    """
+    assert "wasn't sent" in UPLOAD_MESSAGES[VaultUploadStatus.VAULT_UNAVAILABLE]
+    assert not _UNCHANGED_CLAIMS.search(UPLOAD_MESSAGES[VaultUploadStatus.DEGRADED])
