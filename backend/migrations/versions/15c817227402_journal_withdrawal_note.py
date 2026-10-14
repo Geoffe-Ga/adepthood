@@ -1,7 +1,7 @@
 """Add the detached, content-free journal withdrawal note (#3267).
 
 Revision ID: 15c817227402
-Revises: b1937b21d2f9
+Revises: c4e6a8b0d2f4
 Create Date: 2026-10-14 00:00:00.000000
 
 ``journalwithdrawalnote`` is what an open ``journalwithdrawalobligation``
@@ -28,7 +28,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "15c817227402"  # pragma: allowlist secret
-down_revision: str | Sequence[str] | None = "b1937b21d2f9"  # pragma: allowlist secret
+down_revision: str | Sequence[str] | None = "c4e6a8b0d2f4"  # pragma: allowlist secret
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
