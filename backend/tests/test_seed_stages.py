@@ -182,7 +182,7 @@ _GOLDEN_STAGE_DEFINITIONS: list[dict[str, str | int]] = [
         "subtitle": "True Self Wisdom",
         "overview_url": "",
         "category": "Wisdom",
-        "aspect": "True Self Connection",
+        "aspect": "True Self Wisdom",
         "spiral_dynamics_color": "Teal",
         "growing_up_stage": "True Self Connection",
         "divine_gender_polarity": "Divine Feminine",
@@ -368,7 +368,7 @@ _CONTENT_DIR = Path(__file__).resolve().parents[1] / "content"
 _ARTIFACT_PATH = (
     Path(__file__).resolve().parents[1] / "src" / "curriculum" / "stage_correspondence.json"
 )
-_PINNED_SHA = "b06a58eec8944d9ef750a48da59a1c6e87b261b7"  # pragma: allowlist secret
+_PINNED_SHA = "59df2a259f042559989086d0ed4b0efd54faca35"  # pragma: allowlist secret
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 

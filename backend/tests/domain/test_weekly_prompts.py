@@ -46,6 +46,11 @@ _BEIGE_PROMPT_COUNT = 3
 _RED_STAGE_NUMBER = 3
 _RED_FIRST_WEEK = 7
 _ORANGE_STAGE_NUMBER = 5
+_BLUE_STAGE_NUMBER = 4
+# Blue prompt 4 (zero-based index 3) keeps the one deliberate weekly cadence.
+_BLUE_TWICE_WEEKLY_PROMPT_INDEX = 3
+# The cadence the author ruled a typo and removed upstream (#3136).
+_RETIRED_CADENCE = "At least 4x per week"
 
 # Each stage's first program week, in stage order: eight three-week stages
 # then two six-week ones.
@@ -195,12 +200,32 @@ def test_stage_prompts_returns_beiges_three() -> None:
     assert len(stage.prompts) == _BEIGE_PROMPT_COUNT
 
 
-def test_stage_prompts_carries_the_cadence_the_chapter_states() -> None:
-    """Cadence is opaque display prose, passed through from the content."""
+def test_stage_prompts_carries_no_cadence_where_the_chapter_states_none() -> None:
+    """A headline with no trailing parenthetical yields no cadence (#3136).
+
+    Orange's four headlines once ended in "(At least 4x per week)", which the
+    author ruled a typo; upstream removed it, so the cadence is ``None``.
+    """
     stage = stage_prompts(_ORANGE_STAGE_NUMBER)
 
     assert stage is not None
-    assert [p.cadence for p in stage.prompts] == ["At least 4x per week"] * 4
+    assert [p.cadence for p in stage.prompts] == [None] * len(stage.prompts)
+
+
+def test_no_stage_prompt_carries_the_retired_four_times_a_week_cadence() -> None:
+    """The "At least 4x per week" typo is gone from every stage (#3136)."""
+    stages = [stage_prompts(number) for number in range(1, len(PROMPT_BANDS) + 1)]
+
+    cadences = [p.cadence for stage in stages if stage is not None for p in stage.prompts]
+    assert _RETIRED_CADENCE not in cadences
+
+
+def test_stage_prompts_keeps_the_deliberate_cadences() -> None:
+    """Blue prompt 4's "At least 2x per week" is a real cadence and survives."""
+    stage = stage_prompts(_BLUE_STAGE_NUMBER)
+
+    assert stage is not None
+    assert stage.prompts[_BLUE_TWICE_WEEKLY_PROMPT_INDEX].cadence == "At least 2x per week"
 
 
 def test_stage_prompts_first_week_tiles_the_whole_program() -> None:

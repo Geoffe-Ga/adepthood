@@ -158,13 +158,22 @@ for any state fact that was not the required value and explain it only in the
 sanitized artifact. A drifted served release may be recorded as the exact SHA
 that answered, never as a label.
 
-Two limits apply to schema v3. The frontend build receipt is not shipped yet
-(#2871 AC23), so there is nothing to observe for `frontend_receipt_present` or
-`frontend_served_release`. Until it ships, record both as `null` and do not
-mark the record passed. The validator requires both on a passed record but
-cannot tell whether a frontend receipt exists, so copying the backend SHA would
-satisfy it without being true; this is an operator obligation, not a check.
-And `local_model_claim` stays `unknown` until a model digest and inference
+Observe the web build independently at `https://<frontend-host>/build-receipt.json`
+(#3164, #2871 AC23). It is a static build-time receipt served with
+`Cache-Control: no-store` and JSON content type. Capture the sampled response
+and headers alongside the backend receipt; expect exactly `receipt_schema: 1`,
+`surface: "web"`, and `release`, with no other fields. A full lowercase 40-hex
+`release` is the frontend's `frontend_served_release`; record
+`frontend_receipt_present: true` only after observing this receipt. An absent,
+malformed or unexpected receipt leaves both facts `null`; a valid receipt with
+`release: "unknown"` means it is present but `frontend_served_release` is `null`.
+Neither case can pass. Never copy a backend SHA, a free-form release label or
+an expected commit into this field: observe what the frontend actually serves.
+The validator cannot inspect the deployment itself, so truthful independent
+sampling remains an operator obligation. Native builds are outside this web
+pilot's receipt contract.
+
+`local_model_claim` stays `unknown` until a model digest and inference
 probe exist (B05/B07); claiming local-model readiness needs a later schema
 version.
 

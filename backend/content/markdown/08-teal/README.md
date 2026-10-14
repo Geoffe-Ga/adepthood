@@ -34,8 +34,8 @@ This folder contains the modular sections for the TEAL stage of the APTITUDE cou
 
 - **Previous Stage**: [Stage 7](../07-yellow/)
 - **Next Stage**: [Stage 9](../09-ultraviolet/)
-- **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
-- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
+- **Course Overview**: [APTITUDE Stages Deep Dive](../resources/04-aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/07-notes-and-chords.md)
 
 ## Source
 

@@ -596,12 +596,12 @@ def test_committed_supersessions_are_exactly_the_ratified_departures() -> None:
 
     Teal's Growing Up stage and free-will archetype left the list at the
     ``b06a58e`` re-pin (#3135): upstream's CSV adopted both values, so the
-    entries became no-ops.
+    entries became no-ops. Teal's aspect left at the ``59df2a2`` re-pin: the
+    owner ruled it "True Self Wisdom" (2026-10-13, #2664), the CSV's own cell.
     """
     entries = load_supersessions(generator.SUPERSESSIONS_PATH)
     assert {(entry.stage_id, entry.field) for entry in entries} == {
         ("blue", "aspect"),
-        ("teal", "aspect"),
         ("beige", "free_will_description"),
         ("red", "free_will_description"),
         ("blue", "free_will_description"),

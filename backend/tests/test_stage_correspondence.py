@@ -149,7 +149,9 @@ class TestIssue1637Rulings:
     #: The ratified departures from the CSV, as (stage_id, field, csv_value, value, authority).
     #: The seven free-will-description rows follow #3043: chapter text wins. Teal's
     #: growing-up-stage and archetype rows retired at the b06a58e re-pin (#3135),
-    #: when the upstream CSV adopted both values.
+    #: when the upstream CSV adopted both values. Teal's aspect row retired at the
+    #: 59df2a2 re-pin: the owner ruled stage 8's aspect "True Self Wisdom"
+    #: (2026-10-13, #2664), which is the CSV's own cell.
     _SUPERSESSIONS = frozenset(
         {
             (
@@ -158,13 +160,6 @@ class TestIssue1637Rulings:
                 "Universal Love",
                 "Community Love",
                 "markdown/04-blue/02-the-mood-of-blue-lovecommunity-love.md",
-            ),
-            (
-                "teal",
-                "aspect",
-                "True Self Wisdom",
-                "True Self Connection",
-                "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md",
             ),
             (
                 "beige",
@@ -285,7 +280,7 @@ class TestIssue1637Rulings:
             ),
         }
     )
-    _EXPECTED_SUPERSESSION_COUNT = 9
+    _EXPECTED_SUPERSESSION_COUNT = 8
 
     @staticmethod
     def _artifact() -> dict[str, Any]:

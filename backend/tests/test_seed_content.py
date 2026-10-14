@@ -37,8 +37,10 @@ from services.content_repository import (
 # ASYNC240) so the real vendored content dir is reusable across tests.
 _VENDORED_CONTENT_DIR = Path(__file__).resolve().parent.parent / "content"
 
-# Stage 1 (Beige) ships exactly 17 chapters in the vendored manifest.
-_VENDORED_STAGE_ONE_CHAPTER_COUNT = 17
+# Stage 1 (Beige) ships exactly 16 chapters in the vendored manifest; it shipped
+# 17 until "Energy Scaffolding" (beige-8) moved upstream to the site resources
+# (aptitude-course#76).
+_VENDORED_STAGE_ONE_CHAPTER_COUNT = 16
 
 
 def _chapter(
@@ -913,6 +915,96 @@ async def test_seed_content_prunes_fossil_and_drops_orphan_completion(
     assert match.group(1) == "1"
     assert match.group(2) == "0"
     assert match.group(3) == "1"
+
+
+#: The three Orange essays removed upstream (#3137, aptitude-course#74).
+_REMOVED_ORANGE_ESSAYS = (
+    ("orange-26", "Orange as the Theft of Fire"),
+    ("orange-27", "The Lever and the Fulcrum: Archimedes and the Power of Understanding"),
+    ("orange-28", "The Library of Alexandria: Knowledge as Sacred Responsibility"),
+)
+_ORANGE_STAGE_NUMBER = 5
+_FIRST_FOSSIL_RELEASE_DAY = 25
+
+
+def test_vendored_manifest_no_longer_lists_the_removed_orange_essays() -> None:
+    """#3137: the re-pinned manifest drops orange-26, orange-27 and orange-28."""
+    repo = ContentRepository(_VENDORED_CONTENT_DIR)
+    chapter_ids = {chapter.id for chapter in repo.list_chapters()}
+
+    assert chapter_ids.isdisjoint({essay_id for essay_id, _ in _REMOVED_ORANGE_ESSAYS})
+
+
+@pytest.mark.asyncio
+async def test_seed_content_prunes_the_removed_orange_essays_and_their_read_marks(
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#3137: a DB seeded from the old pin loses orange-26..28 and their marks on boot.
+
+    No surviving Orange chapter shares their titles, so their read marks have
+    nowhere to be repointed and are deleted with the rows.
+    """
+    set_content_repository_for_tests(ContentRepository(_VENDORED_CONTENT_DIR))
+    try:
+        await _seed_stages(db_session, count=10)
+        orange = (
+            (
+                await db_session.execute(
+                    select(CourseStage).where(CourseStage.stage_number == _ORANGE_STAGE_NUMBER)
+                )
+            )
+            .scalars()
+            .one()
+        )
+        fossils = [
+            StageContent(
+                course_stage_id=orange.id,
+                title=title,
+                content_type="essay",
+                release_day=_FIRST_FOSSIL_RELEASE_DAY + offset,
+                url=content_ref(essay_id),
+            )
+            for offset, (essay_id, title) in enumerate(_REMOVED_ORANGE_ESSAYS)
+        ]
+        db_session.add_all(fossils)
+        reader = User(email="orange-reader@example.com", password_hash="x")
+        db_session.add(reader)
+        await db_session.commit()
+        assert reader.id is not None
+        assert fossils[0].id is not None
+        db_session.add(ContentCompletion(user_id=reader.id, content_id=fossils[0].id))
+        await db_session.commit()
+        fossil_ids = {fossil.id for fossil in fossils}
+
+        with caplog.at_level(logging.WARNING, logger="seed_content"):
+            await seed_content(db_session)
+
+        remaining = (await db_session.execute(select(StageContent))).scalars().all()
+        assert fossil_ids.isdisjoint({row.id for row in remaining})
+        removed_refs = {content_ref(essay_id) for essay_id, _ in _REMOVED_ORANGE_ESSAYS}
+        assert removed_refs.isdisjoint({row.url for row in remaining})
+        marks = (
+            (
+                await db_session.execute(
+                    select(ContentCompletion).where(ContentCompletion.user_id == reader.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert marks == []
+
+        prune_records = [r for r in caplog.records if "content_seed_pruned" in r.getMessage()]
+        assert len(prune_records) == 1
+        match = re.search(
+            r"rows=(\d+) completions_repointed=(\d+) completions_deleted=(\d+)",
+            prune_records[0].getMessage(),
+        )
+        assert match is not None
+        assert match.groups() == (str(len(_REMOVED_ORANGE_ESSAYS)), "0", "1")
+    finally:
+        reset_content_repository_for_tests()
 
 
 async def _stage_fossil_prune(

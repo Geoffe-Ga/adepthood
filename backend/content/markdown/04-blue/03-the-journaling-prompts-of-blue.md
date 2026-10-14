@@ -16,7 +16,7 @@ Blue is the stage of relational reflection. The journaling prompts here are desi
 
 As always: set a timer, keep your pen moving, no crossing out. Let the truth surface.
 
-**Prompt 1: Make a List of Things You "Have To" Do (At least 4x per week)**
+**Prompt 1: Make a List of Things You "Have To" Do**
 
 This is the central inquiry of Blue. What are all the things you tell yourself you *have* to do? Not want to. Not choose to. Have to.
 
@@ -30,7 +30,7 @@ This is the alchemical move. You're shifting from *obligation* to *agency*. From
 
 The goal is not to eliminate all obligations. It's to reclaim your power within them. To see that even in the most constrained circumstances, you have *some* degree of choice. And that awareness changes everything.
 
-**Prompt 2: List 10 Systems That Demand Your Conformity (At least 4x per week)**
+**Prompt 2: List 10 Systems That Demand Your Conformity**
 
 What are the systems—social, cultural, economic, familial, institutional—that expect you to behave a certain way? That punish deviation and reward compliance?
 
@@ -45,7 +45,7 @@ Write them down. Name them. See them clearly.
 
 This isn't about becoming a rebel or rejecting all structure. It's about developing discernment. Some of these systems serve you. Some don't. But you can't choose which ones to engage with until you're aware of how many invisible hands are shaping your behavior.
 
-**Prompt 3: Gratitude List (At least 4x per week)**
+**Prompt 3: Gratitude List**
 
 Write down 10 things you're grateful for. Or pick 3 and go deep—describe them in sensory detail, name why they matter, feel the warmth of the gratitude in your chest as you write.
 

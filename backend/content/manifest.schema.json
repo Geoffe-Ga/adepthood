@@ -146,6 +146,11 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "order": {
+          "description": "1-based position of the resource in the Start Here reading list (added in schema_version 1.3.0). Required upstream; optional here so older manifests still validate.",
+          "type": "integer",
+          "minimum": 1
         }
       }
     },

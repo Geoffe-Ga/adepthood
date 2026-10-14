@@ -59,7 +59,9 @@ const WHAT_GOES = [
 /** What deliberately survives — stated here rather than discovered later. */
 const WHAT_STAYS = [
   'Practices you contributed to the shared catalogue stay in it, no longer linked to you.',
-  'Purchase receipts stay, including the address on them, so a licence you paid for still works if you ever come back.',
+  'Purchase receipts stay, but the email address is removed from every purchase linked to this account; ' +
+    'a licence key you paid for can still be redeemed if you ever come back. ' +
+    'A purchase never linked to any account keeps its address, because that is how it is claimed.',
   'A dated note that a deletion happened — counts only, none of what you wrote.',
 ];
 

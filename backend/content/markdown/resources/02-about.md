@@ -22,15 +22,16 @@ your map.
 This 36-week, 10-stage rite of passage is designed for
 Liminal Creeps who feel stuck
 between insight and embodiment. Pulled in two directions and, with the
-hinderance of the inevitable toxic baggage we all accrue, unable to
-actualize either.
+hindrance of the inevitable toxic baggage we all accrue, unable to
+actualize either. Realization three times, life unchanged? Not more
+insight. Scaffolding.
 
 This is for you if you’re one
 of the drowning mystics who’ve briefly experienced the
 sacred but who struggles with changing your oil before your head gasket
 blows. It’s for you if you see the ways humans can get stuck acting as
 biological machines—conditioned by systems, habits, traumas, an
-oppressive society—but are ready to stop being cog, yourself.
+oppressive society—but are ready to stop being a cog yourself.
 
 APTITUDE is about integration.
 Not bypassing. Not escaping. It’s about fully experiencing the messy,
@@ -54,10 +55,10 @@ this liminal space, those who have cultivated
 awareness, resilience, and Free
 Will will shape what comes next.
 
-And something
+And I think something
 is coming
-next. After the excruciating contractions of labor, comes the miracle of
-birth.
+next. After the excruciating contractions of labor comes the miracle of
+birth. I can’t promise that.
 
 APTITUDE gives you a structure that
 bends: enough scaffolding to stay upright in, and maybe do some good
@@ -65,7 +66,9 @@ inside, those many, many crises—sometimes
 called the polycrisis. Each Stage of APTITUDE introduces key habits and
 practices, scaffolding energy so that growth is
 sustainable, not
-overwhelming.
+overwhelming: one new habit every three weeks, a practice that starts
+at one minute and climbs to forty-five. A one-minute habit kept for
+twenty-one days is how you find out you’re someone who keeps habits.
 
 If you’ve ever:
 
@@ -79,6 +82,12 @@ If you’ve ever:
   trapped in cycles of stagnation—
 
 Then this course is for you.
+
+Two objections, answered. “This is for people who have their act
+together”: it was built for the person who doesn’t, by one who didn’t,
+and the first Stage asks for a minute a day so nobody has to earn their way
+in. “I already understand the models”: good. You don’t need more map.
+You need the one-minute thing done on a Tuesday.
 
 ------------------------------------------------------------------------
 
@@ -128,7 +137,8 @@ Each stage includes:
   powerful shifts that accumulate over time)
 - A Self-Inquiry
   Process (journaling questions to guide your
-  progress)
+  progress—kept, in the app, so the page can read you back your own
+  clearest sentence on the day you can’t hear yourself)
 
 This isn’t a crash course. It’s an extensive
 initiation into lasting transformation.
@@ -177,7 +187,9 @@ finally training you to do.
   is no enlightenment you can effortlessly rest in forever. There is no
   Good Vibes Only style safe space. There will always
   be the ups and downs, but APTITUDE teaches you to be present
-  with them without unneeded suffering.
+  with them without unneeded suffering. Every phase of the Wavelength
+  has a medicine, the trough included, so a missed week is a phase,
+  not a broken streak.
 
 Prepare to grow comfortable surfing that cyclical
 pattern—The Archetypal
@@ -193,9 +205,12 @@ awareness, and intention.
 
 ### What You Get When You Join
 
-- A complete roadmap to Adepthood
+- A complete roadmap to Adepthood, entered at your own depth. A journal
+  page a day is a whole way through; each deeper ring is worth coming
+  back for.
 - A supportive community of
-  fellow seekers in the Creekmason Digital Sangha
+  fellow seekers in the Creekmason Digital Sangha—not a feed. You meet
+  them to feel less alone in the room you’re actually in.
 - Guided practices and habit-building
   strategies
 - A framework you can return to for life

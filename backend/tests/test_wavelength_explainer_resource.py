@@ -1,6 +1,6 @@
 """Copy-contract guard for the vendored Wavelength explainer resource.
 
-Pins the raw Markdown at ``content/markdown/resources/wavelength-explainer.md``
+Pins the raw Markdown at ``content/markdown/resources/06-wavelength-explainer.md``
 against content drift: the five core concepts, all six wave phases, and the
 absence of shaming or ranking language must survive future edits.
 """
@@ -16,7 +16,7 @@ _RESOURCE_PATH: Final[Path] = (
     / "content"
     / "markdown"
     / "resources"
-    / "wavelength-explainer.md"
+    / "06-wavelength-explainer.md"
 )
 
 _REQUIRED_KEYWORDS: Final[tuple[str, ...]] = (

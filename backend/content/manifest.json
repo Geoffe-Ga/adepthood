@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.3.0",
   "chapters": [
     {
       "id": "beige-1",
@@ -84,18 +84,6 @@
       "release_day": 6,
       "media": [],
       "path": "markdown/01-beige/07-the-default-habit-of-beige-take-work-seriously.md"
-    },
-    {
-      "id": "beige-8",
-      "stage": 1,
-      "chapter": 8,
-      "order": 8,
-      "slug": "energy-scaffolding",
-      "title": "Energy Scaffolding",
-      "content_type": "chapter",
-      "release_day": 7,
-      "media": [],
-      "path": "markdown/01-beige/08-energy-scaffolding.md"
     },
     {
       "id": "beige-9",
@@ -1034,42 +1022,6 @@
       "path": "markdown/05-orange/25-the-prometheus-principle-stealing-fire-from-the-gods.md"
     },
     {
-      "id": "orange-26",
-      "stage": 5,
-      "chapter": 26,
-      "order": 26,
-      "slug": "orange-as-the-theft-of-fire",
-      "title": "Orange as the Theft of Fire",
-      "content_type": "chapter",
-      "release_day": 25,
-      "media": [],
-      "path": "markdown/05-orange/26-orange-as-the-theft-of-fire.md"
-    },
-    {
-      "id": "orange-27",
-      "stage": 5,
-      "chapter": 27,
-      "order": 27,
-      "slug": "the-lever-and-the-fulcrum-archimedes-and-the-power-of-unders",
-      "title": "The Lever and the Fulcrum: Archimedes and the Power of Understanding",
-      "content_type": "chapter",
-      "release_day": 26,
-      "media": [],
-      "path": "markdown/05-orange/27-the-lever-and-the-fulcrum-archimedes-and-the-power-of-unders.md"
-    },
-    {
-      "id": "orange-28",
-      "stage": 5,
-      "chapter": 28,
-      "order": 28,
-      "slug": "the-library-of-alexandria-knowledge-as-sacred-responsibility",
-      "title": "The Library of Alexandria: Knowledge as Sacred Responsibility",
-      "content_type": "chapter",
-      "release_day": 27,
-      "media": [],
-      "path": "markdown/05-orange/28-the-library-of-alexandria-knowledge-as-sacred-responsibility.md"
-    },
-    {
       "id": "orange-29",
       "stage": 5,
       "chapter": 29,
@@ -1077,7 +1029,7 @@
       "slug": "practicing-understanding-off-the-cushion",
       "title": "Practicing Understanding Off the Cushion",
       "content_type": "chapter",
-      "release_day": 28,
+      "release_day": 25,
       "media": [],
       "path": "markdown/05-orange/29-practicing-understanding-off-the-cushion.md"
     },
@@ -2512,46 +2464,60 @@
   ],
   "site_resources": [
     {
-      "slug": "about",
-      "title": "APTITUDE Intro",
-      "description": "Welcome to the APTITUDE Course: what Adepthood is and what the course offers.",
-      "media": [],
-      "path": "markdown/resources/about.md"
-    },
-    {
-      "slug": "aptitude-stages",
-      "title": "APTITUDE Stages",
-      "description": "A deep dive into the ten stages of Adepthood, from Beige to Clear Light.",
-      "media": [],
-      "path": "markdown/resources/aptitude-stages.md"
-    },
-    {
-      "slug": "archetypal-wavelength",
-      "title": "Archetypal Wavelength Intro",
-      "description": "The six-phase wave underlying every cycle, and how Whole Adepts surf it.",
-      "media": [],
-      "path": "markdown/resources/archetypal-wavelength.md"
-    },
-    {
+      "order": 1,
       "slug": "liminal-creep",
       "title": "Who Benefits?",
       "description": "From Liminal Creep to Whole Adept: who this course is for.",
       "media": [],
-      "path": "markdown/resources/liminal-creep.md"
+      "path": "markdown/resources/01-liminal-creep.md"
     },
     {
-      "slug": "notes-and-chords",
-      "title": "Notes and Chords",
-      "description": "Why the course teaches one Stage at a time, why life never asks for one at a time, and what Wholeness actually means.",
+      "order": 2,
+      "slug": "about",
+      "title": "APTITUDE Intro",
+      "description": "Welcome to the APTITUDE Course: what Adepthood is and what the course offers.",
       "media": [],
-      "path": "markdown/resources/notes-and-chords.md"
+      "path": "markdown/resources/02-about.md"
     },
     {
+      "order": 3,
+      "slug": "energy-scaffolding",
+      "title": "Energy Scaffolding",
+      "description": "The habit method the whole program hangs on: one new behavior every 21 days, chosen because it gives back more energy than it takes.",
+      "media": [],
+      "path": "markdown/resources/03-energy-scaffolding.md"
+    },
+    {
+      "order": 4,
+      "slug": "aptitude-stages",
+      "title": "APTITUDE Stages",
+      "description": "A deep dive into the ten stages of Adepthood, from Beige to Clear Light.",
+      "media": [],
+      "path": "markdown/resources/04-aptitude-stages.md"
+    },
+    {
+      "order": 5,
+      "slug": "archetypal-wavelength",
+      "title": "Archetypal Wavelength Intro",
+      "description": "The six-phase wave underlying every cycle, and how Whole Adepts surf it.",
+      "media": [],
+      "path": "markdown/resources/05-archetypal-wavelength.md"
+    },
+    {
+      "order": 6,
       "slug": "wavelength-explainer",
       "title": "How the Wavelength works",
       "description": "A living picture of the Wavelength — torus, spiral, compression waves, rising octaves, and the chord of a single act.",
       "media": [],
-      "path": "markdown/resources/wavelength-explainer.md"
+      "path": "markdown/resources/06-wavelength-explainer.md"
+    },
+    {
+      "order": 7,
+      "slug": "notes-and-chords",
+      "title": "Notes and Chords",
+      "description": "Why the course teaches one Stage at a time, why life never asks for one at a time, and what Wholeness actually means.",
+      "media": [],
+      "path": "markdown/resources/07-notes-and-chords.md"
     }
   ],
   "stage_intros": [
