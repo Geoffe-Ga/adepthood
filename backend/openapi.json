@@ -7084,6 +7084,31 @@
         "title": "ResonanceResponse",
         "type": "object"
       },
+      "ResourceCompletionResponse": {
+        "description": "Response after marking a Start Here site resource as read (#3148).\n\nKeyed by ``slug`` because resources are manifest entries, not rows.\n``user_id`` is excluded for the same reason as on\n:class:`ContentCompletionResponse`.",
+        "properties": {
+          "completed_at": {
+            "format": "date-time",
+            "title": "Completed At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "completed_at"
+        ],
+        "title": "ResourceCompletionResponse",
+        "type": "object"
+      },
       "ReturnArcResponse": {
         "description": "The caller's active Return arc, without any owner key.\n\n``week`` is the arc's current (or, when paused, frozen) week; ``paused``\nreflects whether the arc is resting. No ``user_id`` or row ``id`` is exposed.\n``complete`` is True once the fifth week has fully closed — a reflective\nclose, never a reward or rank.",
         "properties": {
@@ -7553,11 +7578,19 @@
         "type": "object"
       },
       "SiteResourceResponse": {
-        "description": "One entry in the always-available \"Site Resources\" list.",
+        "description": "One entry in the always-available Start Here (\"Site Resources\") list.\n\n``order`` is the manifest's 1-based reading position (the list is served\nsorted by it) and ``is_read`` is the caller's own read mark (#3148).",
         "properties": {
           "description": {
             "title": "Description",
             "type": "string"
+          },
+          "is_read": {
+            "title": "Is Read",
+            "type": "boolean"
+          },
+          "order": {
+            "title": "Order",
+            "type": "integer"
           },
           "slug": {
             "title": "Slug",
@@ -7576,7 +7609,9 @@
           "slug",
           "title",
           "description",
-          "url"
+          "url",
+          "order",
+          "is_read"
         ],
         "title": "SiteResourceResponse",
         "type": "object"
@@ -13930,7 +13965,7 @@
     },
     "/course/site-resources": {
       "get": {
-        "description": "Return the site-wide resource links from the content manifest.\n\nThese pages (philosophy, about, …) are not stage-gated, but we still\nrequire authentication so the list is not crawlable by anyone with\nthe URL.  The manifest's ``site_resources[]`` is the source of truth\n(issue #395); without a usable manifest — the bootstrap state before\nthe first content pin — the list is simply empty.  ``url`` is kept\nfor response-surface stability and carries the local content\nreference, not a fetchable address.",
+        "description": "Return the Start Here resources in reading order with the caller's read marks.\n\nThese pages (philosophy, about, …) are not stage-gated, but we still\nrequire authentication so the list is not crawlable by anyone with\nthe URL.  The manifest's ``site_resources[]`` is the source of truth\n(issue #395) and its ``order`` the reading order (issue #3148);\nwithout a usable manifest the list is simply empty.  ``url`` is kept\nfor response-surface stability and carries the local content\nreference, not a fetchable address.",
         "operationId": "list_site_resources_course_site_resources_get",
         "parameters": [
           {
@@ -14156,6 +14191,127 @@
           }
         },
         "summary": "Get Site Resource Body",
+        "tags": [
+          "course"
+        ]
+      }
+    },
+    "/course/site-resources/{slug}/mark-read": {
+      "post": {
+        "description": "Mark a Start Here resource as read. Idempotent — a repeat returns the existing mark.\n\nThe manifest is the gate on which slugs exist: an unknown slug is a\nplain ``content_not_found`` and writes nothing.  Mirrors\n:func:`mark_content_read`: the pre-check is the fast path, and two\nconcurrent calls that both pass it are collapsed onto one row by the\n``uq_resourcecompletion_user_slug`` constraint inside a savepoint.\nStart Here is ungated, so there is no stage or drip check.",
+        "operationId": "mark_site_resource_read_course_site_resources__slug__mark_read_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 100,
+              "minLength": 1,
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceCompletionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          }
+        },
+        "summary": "Mark Site Resource Read",
         "tags": [
           "course"
         ]
@@ -14674,6 +14830,116 @@
           }
         },
         "summary": "Get Course Progress",
+        "tags": [
+          "course"
+        ]
+      }
+    },
+    "/course/start-here/progress": {
+      "get": {
+        "description": "Read-progress across the Start Here resources, shaped like a stage's.\n\n``total_items`` is every resource the current pin ships and\n``read_items`` how many of those the caller has marked read.  Start\nHere is never drip-fed, so ``next_unlock_day`` is always ``None``.",
+        "operationId": "get_start_here_progress_course_start_here_progress_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseProgressResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          }
+        },
+        "summary": "Get Start Here Progress",
         "tags": [
           "course"
         ]

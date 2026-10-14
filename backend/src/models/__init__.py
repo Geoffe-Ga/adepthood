@@ -40,6 +40,7 @@ from .practice_tag import PracticeTag
 from .promoted_quote import PromotedQuote
 from .prompt_dismissal import PromptDismissal
 from .prompt_response import PromptResponse
+from .resource_completion import ResourceCompletion
 from .restore_marker import RestoreMarker
 from .revoked_token import RevokedToken
 from .stage_content import StageContent
@@ -103,6 +104,7 @@ __all__ = [
     "PromotedQuote",
     "PromptDismissal",
     "PromptResponse",
+    "ResourceCompletion",
     "RestoreMarker",
     "RevokedToken",
     "StageContent",

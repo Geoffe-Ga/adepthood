@@ -156,6 +156,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "coursestage.subtitle",
             "coursestage.title",
             "promptresponse.question",
+            "resourcecompletion.slug",
             "stagecontent.content_type",
             "stagecontent.title",
             "stagecontent.url",

@@ -494,6 +494,9 @@ RETENTION: Mapping[str, RetentionRule] = {
     ),
     "promptdismissal": until_account_deletion("Prompts the account set aside."),
     "promptresponse": until_account_deletion("Answers to the weekly prompts."),
+    "resourcecompletion": until_account_deletion(
+        "Which Start Here resources the account marked read."
+    ),
     "restoremarker": conditional(
         fixed_days(
             RESTORE_MARKER_RETENTION_DAYS,
