@@ -29,7 +29,7 @@ def affected(paths: list[str]) -> dict[str, bool]:
         shared
         or backend_workflow
         or any(
-            path.startswith(("backend/src/", "frontend/"))
+            path.startswith(("backend/src/", "backend/tests/e2e/", "frontend/"))
             or path == "scripts/frontend/cross-boundary-drift.sh"
             for path in paths
         )
@@ -61,12 +61,18 @@ def affected(paths: list[str]) -> dict[str, bool]:
                     "backend/src/",
                     "backend/content/",
                     "backend/migrations/",
+                    "backend/tests/e2e/",
                     "backend/requirements",
                     "scripts/backend/",
                     "frontend/",
                 )
             )
-            or path in {"backend/alembic.ini", "backend/pyproject.toml"}
+            or path
+            in {
+                "backend/alembic.ini",
+                "backend/pyproject.toml",
+                "backend/tests/__init__.py",
+            }
             for path in paths
         )
     )

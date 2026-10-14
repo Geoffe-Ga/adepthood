@@ -50,6 +50,15 @@ class LaneSelection(unittest.TestCase):
         self.assertTrue(lanes["backend"])
         self.assertFalse(lanes["e2e"])
 
+    def test_backend_journey_helpers_run_e2e(self):
+        for path in [
+            "backend/tests/e2e/server.py",
+            "backend/tests/e2e/promote_admin.py",
+        ]:
+            with self.subTest(path=path):
+                self.assertTrue(affected.affected([path])["e2e"])
+                self.assertTrue(affected.affected([path])["cross"])
+
     def test_content_markdown_runs_content_and_e2e(self):
         lanes = affected.affected(["backend/content/markdown/intro.md"])
         self.assertTrue(lanes["content"])

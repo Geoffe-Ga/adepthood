@@ -10,6 +10,7 @@ and both sides of a rename count; unavailable history runs every lane.
 | Docs, root guard inputs, backend meta-tests | No runtime jobs |
 | Backend source | Python compatibility, OpenAPI, migrations, integration, cross-boundary guards, E2E |
 | Backend unit tests | Python compatibility, OpenAPI, migrations, integration |
+| Backend journey helpers (`backend/tests/e2e/`) | Python lanes, cross-boundary guards, E2E |
 | Frontend source | Frontend CI, E2E; cross-boundary guards run in Frontend CI |
 | Vendored content or curriculum artifacts | Content drift and E2E; non-Markdown backend inputs also select Python lanes |
 | Content generation scripts | Content drift and Python lanes |
