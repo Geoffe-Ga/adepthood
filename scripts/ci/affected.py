@@ -32,8 +32,7 @@ def affected(paths: list[str]) -> dict[str, bool]:
             # backendSource.ts deliberately accepts any backend path, including
             # shared fixtures, config examples and test-owned contract inputs.
             # Keep this cheap lane broad so new readers cannot evade it.
-            path.startswith(("backend/", "frontend/"))
-            or path == "scripts/frontend/cross-boundary-drift.sh"
+            path.startswith(("backend/", "frontend/", "scripts/frontend/"))
             for path in paths
         )
     )

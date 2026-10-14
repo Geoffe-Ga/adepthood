@@ -13,6 +13,7 @@ and both sides of a rename count; unavailable history runs every lane.
 | Backend unit tests | Python compatibility, OpenAPI, migrations, integration, cross-boundary guards |
 | Backend journey helpers (`backend/tests/e2e/`) | Python lanes, cross-boundary guards, E2E |
 | Frontend source | Frontend CI, E2E; cross-boundary guards run in Frontend CI |
+| Frontend runner scripts (`scripts/frontend/`) | Cross-boundary guards; no Python runtime or E2E jobs |
 | Vendored content or curriculum artifacts | Content drift and E2E; non-Markdown backend inputs also select Python lanes |
 | Content generation scripts | Content drift and Python lanes |
 | Backend dependency files | Python lanes, cross-boundary guards, content drift, E2E |
@@ -26,6 +27,8 @@ It has no dependency on the selector, so a selector failure cannot skip it.
 The small cross-boundary Jest lane watches all of `backend/`: its helper allows
 guards to read arbitrary backend paths, including shared fixtures, configuration
 examples, and contract assertions in backend tests.
+It also watches `scripts/frontend/`, which owns the runner and its dependency
+and lockfile helpers, so helper changes exercise the job that consumes them.
 Graph tests and scheduled/manual scans retain their existing scopes.
 
 Selection happens at job level, so unrelated jobs are skipped before dependencies

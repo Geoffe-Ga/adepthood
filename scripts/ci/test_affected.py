@@ -56,6 +56,19 @@ class LaneSelection(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(affected.affected([path])["cross"])
 
+    def test_cross_boundary_runner_helpers_select_the_cross_lane(self):
+        for path in [
+            "scripts/frontend/cross-boundary-drift.sh",
+            "scripts/frontend/require-node-modules.sh",
+            "scripts/frontend/lockfile-drift.mjs",
+        ]:
+            with self.subTest(path=path):
+                lanes = affected.affected([path])
+                self.assertTrue(lanes["cross"])
+                self.assertFalse(
+                    any(lanes[key] for key in ["backend", "content", "e2e"])
+                )
+
     def test_backend_test_runs_python_lanes_without_e2e(self):
         lanes = affected.affected(["backend/tests/test_auth.py"])
         self.assertTrue(lanes["backend"])
