@@ -366,7 +366,6 @@ def harness(
 class Writer:
     """One signed-up writer, and whatever the operation under test arranged."""
 
-    username: str
     headers: dict[str, str]
     user_id: int
     target: int = 0
@@ -385,7 +384,7 @@ async def _signup(client: AsyncClient, session: AsyncSession, username: str) -> 
         await session.execute(select(User).where(col(User.email) == f"{username}@example.com"))
     ).scalar_one()
     assert user.id is not None
-    return Writer(username, {"Authorization": f"Bearer {resp.json()['token']}"}, user.id)
+    return Writer({"Authorization": f"Bearer {resp.json()['token']}"}, user.id)
 
 
 def _vault_url(host: str) -> str:
@@ -799,4 +798,6 @@ async def test_the_seam_spy_sees_an_app_provider_writer(
     await op.drive(harness.client, writer, byok=False)
 
     assert spy.calls > 0
-    assert harness.edge.names() <= _PROVIDER_HOSTS
+    # Keyless, so no cloud provider is reached (ADR 0009 phase (a)): the seam,
+    # not the socket, is the only place these calls can be seen.
+    assert harness.edge.names() == set()
