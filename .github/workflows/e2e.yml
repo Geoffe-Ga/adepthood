@@ -15,11 +15,17 @@ on:
       - "frontend/**"
       - "backend/**"
       - ".github/workflows/e2e.yml"
+      - ".github/workflows/_affected.yml"
+      - "scripts/ci/**"
+      - "scripts/backend/**"
   pull_request:
     paths:
       - "frontend/**"
       - "backend/**"
       - ".github/workflows/e2e.yml"
+      - ".github/workflows/_affected.yml"
+      - "scripts/ci/**"
+      - "scripts/backend/**"
 
 # One in-flight run per PR, mirroring the sibling workflows.
 concurrency:
@@ -30,6 +36,9 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    uses: ./.github/workflows/_affected.yml
+
   # The bookkeeping gate. It needs no server and no database: it reads the
   # ledger in frontend/e2e/journeys.json and checks the claims in it are still
   # true of the tree -- every declared journey names a spec that exists and
@@ -42,6 +51,8 @@ jobs:
   # stale and a server that will not boot are different defects, and reading
   # them off one red X wastes the signal.
   journey-ledger:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -63,6 +74,8 @@ jobs:
         run: npm run check:journeys
 
   e2e-journeys:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
     runs-on: ubuntu-latest
     # A slow gate gets skipped and a skipped gate is worse than none, so the
     # budget is explicit: the lane boots a server, migrates a schema and runs
@@ -128,6 +141,8 @@ jobs:
   # Node journey process. This lane drives the production Expo web bundle in a
   # real Chromium process against the same real FastAPI/Postgres boundary.
   browser-journey:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
     runs-on: ubuntu-latest
     # Measured, not guessed: at 15 minutes this job was already at its cap on
     # main -- run 36363745320 (56267069) was cancelled after 13m51s of
