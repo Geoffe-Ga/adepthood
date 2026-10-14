@@ -835,6 +835,26 @@ describe('JournalEntryScreen — the letter offer names who pays', () => {
 });
 
 /**
+ * A revoked entitlement (#1938, B21 E1) refuses a keyless pass with a 403. The
+ * margin carries the plain copy, and never invites the writer to try resonance
+ * again: asking again cannot succeed, and no refill would help.
+ */
+describe('JournalEntryScreen — a revoked entitlement is not a retry', () => {
+  it('renders 403 ai_access_revoked without the retry invitation or the refill', async () => {
+    mockGenerate.mockRejectedValueOnce(apiError(403, 'ai_access_revoked'));
+    const view = await openEntryAndAsk();
+    fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
+
+    const line = await view.findByTestId('journal-resonance-error');
+    expect(line).toHaveTextContent(/APTITUDE membership is no longer active/u);
+    expect(line).toHaveTextContent(/We still checked it for completed habits\.$/u);
+    expect(line).not.toHaveTextContent(/try resonance again/u);
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+    expect(mockGenerate).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
  * The generation guardrails (#623) refuse a pass with a 429 before anything is
  * charged. The margin says why, in the line a screen reader already announces,
  * and never opens the 402 refill invitation: no refill would help. Copy is

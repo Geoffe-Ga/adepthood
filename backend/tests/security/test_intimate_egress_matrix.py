@@ -20,8 +20,10 @@ that file's gate, so a new egress route lands here by way of both.
 Columns are the lifecycle steps the canary can enter an Intimate entry by
 (:class:`Step`): created Intimate, edited while Intimate, reclassified
 Personal->Intimate, reclassified while an operation is in flight, and the same
-entry after a restart replays durable work. A combination that cannot apply is
-skipped with its reason written beside the row, never silently dropped.
+entry after a restart replays durable work. Every cell runs: none is skipped
+(:func:`test_every_cell_runs`). Where a row's act is the create itself, the
+reclassify cells reclassify the row the create already committed -- after it
+answered, or while its own outward dial is held open.
 
 Every cell runs its flow twice, on two accounts sharing the recorders. The
 Intimate run asserts the canary is absent at every recorder outside the primary
@@ -56,12 +58,14 @@ import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from datetime import date
+from functools import partial
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Final
 
 import pytest
 import pytest_asyncio
 import sentry_sdk
+from sqlmodel import col, select
 
 from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
 from domain.creek_vault import VaultPipelineStage
@@ -69,6 +73,7 @@ from domain.frequencies import Frequency
 from main import app
 from models.goal import Goal
 from models.habit import Habit
+from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from services import creek_vault_pipeline as pipeline
@@ -146,6 +151,16 @@ class Expect(enum.Enum):
 # ── The harness ──────────────────────────────────────────────────────────────
 
 
+def mint_canaries(unique: str) -> tuple[str, str]:
+    """An account's (body, title) canaries, ``unique`` first (#3223).
+
+    The probe (:func:`tests.helpers.telemetry_canaries.probes`) reads only a
+    canary's head, so a shared prefix in front of the unique part would let
+    one account's canary satisfy another's check.
+    """
+    return f"BODY_{unique}_{SHORT_CANARY}", f"TITLE_{unique}_{SHORT_CANARY}"
+
+
 @dataclass
 class Harness:
     """One account, its canaries, and every recorder, for one cell."""
@@ -173,8 +188,7 @@ class Harness:
     async def signup(self) -> None:
         """Create the account this harness writes as, and mint its canaries."""
         unique = uuid.uuid4().hex
-        self.canary = f"{SHORT_CANARY}_BODY_{unique}"
-        self.title_canary = f"{SHORT_CANARY}_TITLE_{unique}"
+        self.canary, self.title_canary = mint_canaries(unique)
         tag = unique[:12]
         response = await self.client.post(
             "/auth/signup",
@@ -395,23 +409,6 @@ async def _act_resume(h: Harness, _entry_id: int) -> None:
 
 _Door = tuple[str, str] | str
 
-_CREATE_IS_THE_ROUTE: Final = (
-    "the canary enters by PATCH in this step, so the PATCH row drives this route's code"
-)
-_CREATE_CANNOT_RACE: Final = (
-    "a reclassification names an entry, so it cannot be sent before the create it would "
-    "race has answered with an id; the PATCH row races an in-flight ingest instead"
-)
-_CONTENT_FREE_DOOR: Final = (
-    "this door sends Creek stage names and job ids, never text, so there is no content "
-    "dial for a reclassification to race; its ordering against erasure is pinned by "
-    "tests/test_account_egress_barrier_continuation.py"
-)
-_LADDER_AFTER_RESTART: Final = (
-    "after a restart the ladder is reached only through the boot-time resume, which is the next row"
-)
-_THIS_ROW_IS_THE_RESTART: Final = "this row is the restart: the replay is its act"
-
 
 @dataclass(frozen=True)
 class Row:
@@ -421,7 +418,6 @@ class Row:
     variant: str
     act: Act
     expects: Mapping[Recorder, Expect]
-    skips: Mapping[Step, str] = field(default_factory=dict)
     boundary: ReflectionBoundary = ReflectionBoundary.APP_PROVIDER
     #: Consent to ontologize is given before the step, so the corpus is live.
     preconsent: bool = True
@@ -449,11 +445,6 @@ ROWS: Final[tuple[Row, ...]] = (
         "",
         _act_nothing,
         _WRITE_PATH,
-        skips={
-            Step.EDIT: _CREATE_IS_THE_ROUTE,
-            Step.RECLASSIFY: _CREATE_IS_THE_ROUTE,
-            Step.RECLASSIFY_RACE: _CREATE_CANNOT_RACE,
-        },
     ),
     Row(("PATCH", "/journal/{entry_id}"), "body edit", _act_edit, _WRITE_PATH),
     Row(
@@ -516,14 +507,12 @@ ROWS: Final[tuple[Row, ...]] = (
         "",
         _act_ladder,
         {Recorder.VAULT: Expect.FIRES},
-        skips={Step.RECLASSIFY_RACE: _CONTENT_FREE_DOOR, Step.RESTART: _LADDER_AFTER_RESTART},
     ),
     Row(
         "the boot-time resume of durable pipeline runs",
         "",
         _act_resume,
         {Recorder.VAULT: Expect.FIRES},
-        skips={Step.RECLASSIFY_RACE: _CONTENT_FREE_DOOR, Step.RESTART: _THIS_ROW_IS_THE_RESTART},
     ),
 )
 
@@ -536,17 +525,10 @@ def missing_rows(
     return frozenset[_Door](barriered | detached) - covered
 
 
-#: Every (row, step) cell, each skip carrying its written reason.
-CELLS: Final = [
-    pytest.param(
-        row,
-        step,
-        id=f"{row.id}-{step}",
-        marks=[pytest.mark.skip(reason=row.skips[step])] if step in row.skips else [],
-    )
-    for row in ROWS
-    for step in Step
-]
+#: Every (row, step) cell. None carries a mark: a skipped cell is a silent gap in
+#: the claim (#3200), so a cell that cannot run must be argued out of the matrix
+#: in ``docs/privacy/claim-coverage.md``, not skipped in it.
+CELLS: Final = [pytest.param(row, step, id=f"{row.id}-{step}") for row in ROWS for step in Step]
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -592,22 +574,47 @@ async def harness(
 # ── Driving one cell ─────────────────────────────────────────────────────────
 
 
-async def _race(h: Harness, row: Row, entry_id: int, tier: str) -> int:
-    """Hold the row's first dial open, reclassify meanwhile, then let it finish.
+async def _newest_entry_id(h: Harness) -> int:
+    """The id of the account's most recently committed entry, read from the database."""
+    async with h.factory() as session:
+        newest = (
+            select(JournalEntry.id)
+            .where(col(JournalEntry.user_id) == h.user_id)
+            .order_by(col(JournalEntry.id).desc())
+        )
+        found: int | None = (await session.execute(newest)).scalars().first()
+    assert found is not None, "the create dialled out before committing its row"
+    return found
 
-    Returns the mark after which nothing may carry the canary: the moment the
-    reclassification answered. For the Personal twin nothing is reclassified,
-    and the mark is where the act began.
+
+async def _race(
+    h: Harness,
+    tier: str,
+    flight: Callable[[], Coroutine[object, object, object]],
+    entry_id: int | None,
+) -> tuple[int, int]:
+    """Hold ``flight``'s first dial open, reclassify meanwhile, then let it finish.
+
+    ``entry_id`` is the entry to reclassify; ``None`` means ``flight`` is the
+    create itself, which commits its row before it dials out
+    (``routers.journal.create_journal_entry``), so the id is read from the
+    database while the dial is held -- the response has not been sent yet.
+
+    Returns the entry and the mark after which nothing may carry the canary:
+    the moment the reclassification answered. For the Personal twin nothing is
+    reclassified, and the mark is where the flight began.
     """
     start = h.ledger.mark()
     h.ledger.arm_pause(frozenset({Recorder.VAULT, Recorder.PROVIDER, Recorder.CLASSIFIER}))
-    in_flight = asyncio.create_task(row.act(h, entry_id))
+    in_flight = asyncio.create_task(flight())
     try:
         await asyncio.wait_for(h.ledger.paused.wait(), _RENDEZVOUS_SECONDS)
+        if entry_id is None:
+            entry_id = await _newest_entry_id(h)
         if tier == _PERSONAL:
             h.ledger.release.set()
             await in_flight
-            return start
+            return entry_id, start
         reclassifying = asyncio.create_task(h.patch(entry_id, classification=_INTIMATE))
         await asyncio.sleep(_QUEUE_PROBE_SECONDS)
         h.ledger.release.set()
@@ -616,7 +623,7 @@ async def _race(h: Harness, row: Row, entry_id: int, tier: str) -> int:
     finally:
         h.ledger.disarm_pause()
     assert reclassified.status_code in {HTTPStatus.OK, HTTPStatus.NOT_FOUND}, reclassified.text
-    return h.ledger.mark()
+    return entry_id, h.ledger.mark()
 
 
 async def _drive(h: Harness, row: Row, step: Step, tier: str) -> tuple[int, int]:
@@ -624,7 +631,9 @@ async def _drive(h: Harness, row: Row, step: Step, tier: str) -> tuple[int, int]
 
     The mark is the first ledger position that counts for this flow: where it
     began, or -- after a Personal->Intimate reclassification -- where the entry
-    stopped being Personal.
+    stopped being Personal. A Personal twin whose row has no act of its own (the
+    create is the act) keeps the mark where it began, so its create is what it
+    must show reaching the recorders.
     """
     mark = h.ledger.mark()
     if row.preconsent:
@@ -636,13 +645,18 @@ async def _drive(h: Harness, row: Row, step: Step, tier: str) -> tuple[int, int]
     elif step is Step.EDIT:
         entry_id = await h.create(message="A quiet morning.", title=None, tier=tier)
         _ok(await h.patch(entry_id, message=h.body(), title=h.title_canary))
+    elif step is Step.RECLASSIFY_RACE and row.act is _act_nothing:
+        return await _race(
+            h, tier, partial(h.create, message=h.body(), title=h.title_canary, tier=_PERSONAL), None
+        )
     else:
         entry_id = await h.create(message=h.body(), title=h.title_canary, tier=_PERSONAL)
         if step is Step.RECLASSIFY_RACE:
-            return entry_id, await _race(h, row, entry_id, tier)
+            return await _race(h, tier, partial(row.act, h, entry_id), entry_id)
         if tier == _INTIMATE:
             _ok(await h.patch(entry_id, classification=_INTIMATE))
-        mark = h.ledger.mark()
+        if tier == _INTIMATE or row.act is not _act_nothing:
+            mark = h.ledger.mark()
     await row.act(h, entry_id)
     if step is Step.RESTART:
         await _restart(h)
@@ -717,7 +731,7 @@ async def test_intimate_canary_reaches_no_forbidden_sink(
     assert harness.telemetry.carrying(harness.title_canary) == []
 
 
-# ── Derivation, skips and recorder liveness ──────────────────────────────────
+# ── Derivation, cells and recorder liveness ──────────────────────────────────
 
 
 def test_every_egress_door_has_a_matrix_row() -> None:
@@ -743,11 +757,12 @@ def test_every_row_names_a_live_door() -> None:
     assert {row.door for row in ROWS} <= live
 
 
-def test_every_skipped_cell_carries_a_written_reason() -> None:
-    """A skip is a decision somebody wrote down, never an empty string."""
-    for row in ROWS:
-        for step, reason in row.skips.items():
-            assert reason.strip(), f"{row.id} skips {step} with no reason"
+def test_every_cell_runs() -> None:
+    """Every door meets every step, and no cell is skipped or expected to fail (#3200)."""
+    marked = [cell.id for cell in CELLS if cell.marks]
+
+    assert len(CELLS) == len(ROWS) * len(Step)
+    assert marked == []
 
 
 def test_every_content_recorder_has_a_carrying_twin() -> None:
@@ -780,6 +795,53 @@ async def test_the_telemetry_recorder_detects_a_planted_canary(harness: Harness)
 
     assert harness.telemetry.carrying(harness.canary), "a planted log record was not seen"
     assert len(harness.telemetry.sentry_events) > before, "no Sentry envelope was captured"
+
+
+# ── Canaries: one account's never satisfies another's probe (#3223) ──────────
+
+#: Two account tags that differ only in their final character: the worst case
+#: for a probe that reads a canary's head.
+_NEAR_TWIN_TAGS: Final = ("0" * 32, "0" * 31 + "1")
+
+
+def test_canaries_are_distinct_within_the_probe_window() -> None:
+    """No probe of one canary occurs in another: every minted canary is unique where it is read.
+
+    The probe reads a fixed-length head of the canary, so the part that tells
+    two accounts (and a body from a title) apart must sit inside that head.
+    """
+    minted = [canary for tag in _NEAR_TWIN_TAGS for canary in mint_canaries(tag)]
+
+    collisions = [
+        (mine, other)
+        for mine in minted
+        for other in minted
+        if mine != other and carries(other, mine)
+    ]
+
+    assert len(set(minted)) == len(minted)
+    assert collisions == []
+
+
+@pytest.mark.asyncio
+async def test_another_accounts_canary_satisfies_neither_check(harness: Harness) -> None:
+    """Negative control: account A's canary planted where only B's belongs fails the matrix.
+
+    It must not pass B's Personal positive control, must not read as B's leak,
+    and must still be found as A's own.
+    """
+    twin = await harness.another()
+    mark = harness.ledger.mark()
+    planted = f"{harness.body()} {harness.title_canary}"
+    harness.ledger.record(Recorder.VAULT, "ingest_journal", planted)
+    row = Row("a planted door", "", _act_nothing, {Recorder.VAULT: Expect.CARRIES})
+
+    with pytest.raises(AssertionError, match="never carried the twin's canary"):
+        await _assert_reached(twin, row, mark)
+    assert _leaks(twin, twin.canary, mark) == []
+    assert _leaks(twin, twin.title_canary, mark) == []
+    assert _leaks(harness, harness.canary, mark)
+    assert _leaks(harness, harness.title_canary, mark)
 
 
 # ── C10: the transitive leg ──────────────────────────────────────────────────
