@@ -32,7 +32,21 @@ const EXPECTED_CRYPTO_MODULES = [
   'kdf.ts',
   'keyHierarchy.ts',
   'recoveryPhrase.ts',
+  'wrapCore.ts',
 ];
+const CRYPTO_TESTS_DIR = path.join(CRYPTO_DIR, '__tests__');
+/**
+ * Modules that can set a KDF floor below production: the floor-parameterised
+ * core and the TEST-ONLY seam and parameters built on it. Only the public
+ * keyHierarchy.ts (which pins the production floor) and the crypto test suites
+ * may import them, so a later enrolment caller cannot wrap a real key cheaply.
+ */
+const FLOOR_SEAM_MODULES = [
+  path.join(CRYPTO_DIR, 'wrapCore'),
+  path.join(CRYPTO_TESTS_DIR, 'testKeyHierarchy'),
+  path.join(CRYPTO_TESTS_DIR, 'testKdfParams'),
+];
+const FLOOR_SEAM_IMPORTERS = new Set([path.join(CRYPTO_DIR, 'keyHierarchy.ts')]);
 
 const isProductionSource = (name: string): boolean =>
   /\.tsx?$/u.test(name) && !/\.(test|spec)\.tsx?$/u.test(name) && !name.endsWith('.d.ts');
@@ -44,6 +58,19 @@ function walk(dir: string): string[] {
     if (entry.isDirectory() && !IGNORED_DIRS.has(entry.name)) {
       found.push(...walk(full));
     } else if (entry.isFile() && isProductionSource(entry.name)) {
+      found.push(full);
+    }
+  }
+  return found;
+}
+
+function walkEverything(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory() && entry.name !== 'node_modules') {
+      found.push(...walkEverything(full));
+    } else if (entry.isFile() && /\.tsx?$/u.test(entry.name)) {
       found.push(full);
     }
   }
@@ -108,6 +135,32 @@ function reachesCrypto(fromFile: string, specifier: string): boolean {
   return false;
 }
 
+/** The absolute, extensionless path a local specifier names, or undefined for a package. */
+function resolveLocal(fromFile: string, specifier: string): string | undefined {
+  if (specifier.startsWith(ALIAS_PREFIX)) {
+    return path.join(SRC, specifier.slice(ALIAS_PREFIX.length));
+  }
+  if (BARE_CRYPTO_PATH.test(specifier)) {
+    return path.join(SRC, specifier);
+  }
+  return specifier.startsWith('.') ? path.resolve(path.dirname(fromFile), specifier) : undefined;
+}
+
+const withoutExtension = (file: string): string => file.replace(/\.tsx?$/u, '');
+
+/** `file -> specifier` for each import of a floor seam by a file not allowed to use one. */
+function floorSeamImports(fileName: string, text: string): string[] {
+  if (FLOOR_SEAM_IMPORTERS.has(fileName) || isInside(fileName, CRYPTO_TESTS_DIR)) {
+    return [];
+  }
+  return moduleSpecifiers(fileName, text)
+    .filter((specifier) => {
+      const target = resolveLocal(fileName, specifier);
+      return target !== undefined && FLOOR_SEAM_MODULES.includes(withoutExtension(target));
+    })
+    .map((specifier) => `${path.relative(SRC, fileName)} -> ${specifier}`);
+}
+
 /** `file -> specifier` for each import that reaches the crypto module or its primitives. */
 function cryptoImports(fileName: string, text: string): string[] {
   return moduleSpecifiers(fileName, text)
@@ -150,6 +203,71 @@ describe('the client crypto module is unreachable from the app (B13 phase (b))',
 
     expect(exported.length).toBeGreaterThan(0);
     expect(exported.filter((name) => /enrol|enroll|onboard/iu.test(name))).toEqual([]);
+  });
+
+  it('only keyHierarchy.ts and the crypto test suites import a sub-production KDF floor seam', () => {
+    const everyModule = walkEverything(SRC);
+    const offenders = everyModule.flatMap((file) =>
+      floorSeamImports(file, fs.readFileSync(file, 'utf-8')),
+    );
+    const sanctioned = everyModule.filter((file) =>
+      moduleSpecifiers(file, fs.readFileSync(file, 'utf-8')).some((specifier) => {
+        const target = resolveLocal(file, specifier);
+        return target !== undefined && FLOOR_SEAM_MODULES.includes(withoutExtension(target));
+      }),
+    );
+
+    expect(offenders).toEqual([]);
+    // Non-vacuity: the sanctioned importers really are seen by the walk.
+    expect(sanctioned).toContain(path.join(CRYPTO_DIR, 'keyHierarchy.ts'));
+    expect(sanctioned).toContain(path.join(CRYPTO_TESTS_DIR, 'keyHierarchy.test.ts'));
+  });
+
+  describe('the floor-seam detector itself', () => {
+    it.each([
+      [
+        'another crypto module',
+        path.join(CRYPTO_DIR, 'envelope.ts'),
+        "import { keyHierarchyWithFloor } from './wrapCore';",
+      ],
+      [
+        'a screen',
+        path.join(SRC, 'features', 'Journal', 'Probe.tsx'),
+        "import { keyHierarchyWithFloor } from '@/crypto/wrapCore';",
+      ],
+      [
+        'a test outside the crypto suites',
+        path.join(SRC, 'features', '__tests__', 'Probe.test.ts'),
+        "import { testOnlyKeyHierarchy } from '../../crypto/__tests__/testKeyHierarchy';",
+      ],
+      [
+        'a screen via the bare path',
+        path.join(SRC, 'features', 'Probe.tsx'),
+        "import { TEST_ONLY_KDF_PARAMS } from 'crypto/__tests__/testKdfParams';",
+      ],
+    ])('flags %s importing a floor seam', (_label, file, text) => {
+      expect(floorSeamImports(file, text)).toHaveLength(1);
+    });
+
+    it.each([
+      [
+        'keyHierarchy.ts',
+        path.join(CRYPTO_DIR, 'keyHierarchy.ts'),
+        "import { keyHierarchyWithFloor } from './wrapCore';",
+      ],
+      [
+        'a crypto suite',
+        path.join(CRYPTO_TESTS_DIR, 'x.test.ts'),
+        "import { testOnlyKeyHierarchy } from './testKeyHierarchy';",
+      ],
+      [
+        'the public API',
+        path.join(SRC, 'features', 'Probe.tsx'),
+        "import { wrapDataKey } from '@/crypto/keyHierarchy';",
+      ],
+    ])('allows %s', (_label, file, text) => {
+      expect(floorSeamImports(file, text)).toEqual([]);
+    });
   });
 
   describe('the detector itself', () => {

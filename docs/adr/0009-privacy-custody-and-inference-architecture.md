@@ -809,6 +809,11 @@ primitives. Those answers are Decision items 4 and 6-14. What is still open:
     24-word BIP-39 recovery phrase (Decision item 11). Each wrap is a v1
     envelope bound to its purpose and owner. Proposed Argon2id parameters:
     64 MiB, 3 passes, 1 lane, about 1.2-1.5 s per derivation in Node 22.
+    The public wrap refuses anything below that floor. Unwrap checks a stored
+    record before deriving: Argon2id, one lane, a 16-byte salt, at least the
+    floor, at most 10 passes and 256 MiB, and at most four times the
+    production work. Without that check, a tampered record could stall or
+    exhaust the client.
 - **BYOK-CONSENT:** a proposal only. Is BYOK consent granted once per key,
   per feature, or per call?
 - **INTIMATE-DEVICE:** may device-side inference, which is never remote,

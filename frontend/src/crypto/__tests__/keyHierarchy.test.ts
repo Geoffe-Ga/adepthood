@@ -5,18 +5,28 @@ import { wordlist } from '@scure/bip39/wordlists/english.js';
 
 import { EnvelopeError, type EnvelopeFailure } from '../errors';
 import * as kdf from '../kdf';
-import { PRODUCTION_KDF_PARAMS } from '../kdf';
+import {
+  KDF_SALT_BYTES,
+  MAX_KDF_ITERATIONS,
+  MAX_KDF_MEMORY_KIB,
+  MAX_KDF_WORK_KIB_PASSES,
+  PRODUCTION_KDF_PARAMS,
+  deriveArgon2id,
+  type KdfParams,
+} from '../kdf';
+import * as productionApi from '../keyHierarchy';
 import {
   DATA_KEY_BYTES,
   generateDataKey,
-  unwrapWithPassphrase,
-  unwrapWithRecoveryPhrase,
-  wrapDataKey,
+  type WrappedDataKey,
   type WrappedDataKeys,
 } from '../keyHierarchy';
 import { generateRecoveryPhrase } from '../recoveryPhrase';
 
 import { TEST_ONLY_KDF_PARAMS } from './testKdfParams';
+import { testOnlyKeyHierarchy } from './testKeyHierarchy';
+
+const { wrapDataKey, unwrapWithPassphrase, unwrapWithRecoveryPhrase } = testOnlyKeyHierarchy;
 
 const OWNER = 'owner-a';
 const PASSPHRASE = 'correct horse battery staple, by the creek';
@@ -249,16 +259,18 @@ describe('key wrapping', () => {
     );
   });
 
-  it('a stored record with weakened KDF parameters fails closed', async () => {
+  it('a stored record whose KDF parameters were altered within bounds fails closed', async () => {
+    // Argon2id hashes t, m and p into its first block, so a record whose
+    // parameters were changed derives a different key and cannot authenticate.
     const { wrapped } = await enrolFixture();
-    const weakened = {
+    const altered = {
       ...wrapped.passphrase,
-      kdf: { ...wrapped.passphrase.kdf, memoryKiB: wrapped.passphrase.kdf.memoryKiB / 2 },
+      kdf: { ...wrapped.passphrase.kdf, iterations: wrapped.passphrase.kdf.iterations + 1 },
     };
 
     await expectFailure(
       () =>
-        unwrapWithPassphrase(weakened, {
+        unwrapWithPassphrase(altered, {
           ownerId: OWNER,
           passphrase: PASSPHRASE,
           minWrapVersion: WRAP_VERSION,
@@ -311,16 +323,12 @@ describe('key wrapping', () => {
     );
   });
 
-  it('refuses KDF parameters the algorithm cannot run', async () => {
+  it('maps a parameter set the Argon2 library refuses to a content-free invalid_input', async () => {
     await expectFailure(
       () =>
-        wrapDataKey({
-          dataKey: generateDataKey(),
-          ownerId: OWNER,
-          passphrase: PASSPHRASE,
-          recoveryPhrase: generateRecoveryPhrase(),
-          wrapVersion: WRAP_VERSION,
-          kdfParams: { ...TEST_ONLY_KDF_PARAMS, memoryKiB: 1 },
+        deriveArgon2id(new Uint8Array(1), new Uint8Array(KDF_SALT_BYTES), {
+          ...TEST_ONLY_KDF_PARAMS,
+          memoryKiB: 1,
         }),
       'invalid_input',
     );
@@ -341,15 +349,16 @@ describe('key wrapping', () => {
         }),
       'authentication_failed',
     );
+    // The message is a fixed constant per code, and the error carries no
+    // fields beyond name and code, so no secret word can be in either. The
+    // stack is checked for whole secrets only: single BIP-39 words such as
+    // "process" legitimately occur in Node's stack-frame paths.
+    expect(error.message).toBe(new EnvelopeError('authentication_failed').message);
+    expect(Object.keys(error).sort()).toEqual(['code', 'name']);
     const rendered = [error.message, String(error), error.stack ?? '', JSON.stringify(error)].join(
       '\n',
     );
-
-    for (const secret of [
-      PASSPHRASE,
-      bytesToHex(dataKey),
-      ...recoveryPhrase.split(' ').filter((w) => w.length > 4),
-    ]) {
+    for (const secret of [PASSPHRASE, bytesToHex(dataKey), recoveryPhrase]) {
       expect(rendered).not.toContain(secret);
     }
     for (const spy of consoleSpies) {
@@ -379,7 +388,7 @@ describe('production KDF parameters', () => {
       .spyOn(kdf, 'deriveArgon2id')
       .mockImplementation(() => Promise.resolve(new Uint8Array(DATA_KEY_BYTES).fill(0x5a)));
 
-    const wrapped = await wrapDataKey({
+    const wrapped = await productionApi.wrapDataKey({
       dataKey: generateDataKey(),
       ownerId: OWNER,
       passphrase: PASSPHRASE,
@@ -394,5 +403,179 @@ describe('production KDF parameters', () => {
     expect(wrapped.passphrase.kdf).toBe(PRODUCTION_KDF_PARAMS);
     expect(wrapped.recoveryPhrase.kdf).toBe(PRODUCTION_KDF_PARAMS);
     derive.mockRestore();
+  });
+});
+
+describe('KDF parameter bounds', () => {
+  const STUB_KEY = new Uint8Array(DATA_KEY_BYTES).fill(0x5a);
+  const ONE_GIB_IN_KIB = 1024 * 1024;
+
+  function spyOnDerive() {
+    return jest.spyOn(kdf, 'deriveArgon2id').mockImplementation(() => Promise.resolve(STUB_KEY));
+  }
+
+  async function expectRejectedBeforeDerivation(
+    action: () => Promise<unknown>,
+    code: EnvelopeFailure,
+  ): Promise<void> {
+    const derive = spyOnDerive();
+    try {
+      await expectFailure(action, code);
+      expect(derive).not.toHaveBeenCalled();
+    } finally {
+      derive.mockRestore();
+    }
+  }
+
+  function withKdf(
+    record: WrappedDataKey,
+    override: Partial<Record<keyof KdfParams, unknown>>,
+  ): WrappedDataKey {
+    return { ...record, kdf: { ...record.kdf, ...override } as KdfParams };
+  }
+
+  it('names a ceiling of 10 passes, 256 MiB and four times the production work', () => {
+    expect(MAX_KDF_ITERATIONS).toBe(10);
+    expect(MAX_KDF_MEMORY_KIB).toBe(256 * 1024);
+    expect(MAX_KDF_WORK_KIB_PASSES).toBe(
+      4 * PRODUCTION_KDF_PARAMS.iterations * PRODUCTION_KDF_PARAMS.memoryKiB,
+    );
+  });
+
+  it('the public wrap refuses parameters below the production floor', async () => {
+    await expectRejectedBeforeDerivation(
+      () =>
+        productionApi.wrapDataKey({
+          dataKey: generateDataKey(),
+          ownerId: OWNER,
+          passphrase: PASSPHRASE,
+          recoveryPhrase: generateRecoveryPhrase(),
+          wrapVersion: WRAP_VERSION,
+          kdfParams: TEST_ONLY_KDF_PARAMS,
+        }),
+      'kdf_out_of_bounds',
+    );
+  });
+
+  it('the public wrap accepts parameters raised above the production floor', async () => {
+    const raised = { ...PRODUCTION_KDF_PARAMS, iterations: PRODUCTION_KDF_PARAMS.iterations + 1 };
+    const derive = spyOnDerive();
+
+    const wrapped = await productionApi.wrapDataKey({
+      dataKey: generateDataKey(),
+      ownerId: OWNER,
+      passphrase: PASSPHRASE,
+      recoveryPhrase: generateRecoveryPhrase(),
+      wrapVersion: WRAP_VERSION,
+      kdfParams: raised,
+    });
+
+    expect(wrapped.passphrase.kdf).toEqual(raised);
+    expect(derive).toHaveBeenCalledTimes(2);
+    derive.mockRestore();
+  });
+
+  it('the public unwrap refuses a stored record below the production floor', async () => {
+    const { wrapped } = await enrolFixture();
+
+    await expectRejectedBeforeDerivation(
+      () =>
+        productionApi.unwrapWithPassphrase(wrapped.passphrase, {
+          ownerId: OWNER,
+          passphrase: PASSPHRASE,
+          minWrapVersion: WRAP_VERSION,
+        }),
+      'kdf_out_of_bounds',
+    );
+  });
+
+  it('the test-only seam still refuses a wrap below its own floor', async () => {
+    await expectRejectedBeforeDerivation(
+      () =>
+        wrapDataKey({
+          dataKey: generateDataKey(),
+          ownerId: OWNER,
+          passphrase: PASSPHRASE,
+          recoveryPhrase: generateRecoveryPhrase(),
+          wrapVersion: WRAP_VERSION,
+          kdfParams: { ...TEST_ONLY_KDF_PARAMS, memoryKiB: TEST_ONLY_KDF_PARAMS.memoryKiB / 2 },
+        }),
+      'kdf_out_of_bounds',
+    );
+  });
+
+  it.each([
+    ['inflated iterations (1e6)', { iterations: 1e6 }],
+    ['inflated iterations (2^31)', { iterations: 2 ** 31 }],
+    ['iterations one above the ceiling', { iterations: MAX_KDF_ITERATIONS + 1 }],
+    ['inflated memory (1 GiB)', { memoryKiB: ONE_GIB_IN_KIB }],
+    ['memory one above the ceiling', { memoryKiB: MAX_KDF_MEMORY_KIB + 1 }],
+    [
+      'each value at its ceiling but the work over the cap',
+      { iterations: MAX_KDF_ITERATIONS, memoryKiB: MAX_KDF_MEMORY_KIB },
+    ],
+    ['fractional iterations', { iterations: 1.5 }],
+    ['non-numeric memory', { memoryKiB: Number.NaN }],
+    ['another Argon2 variant', { algorithm: 'argon2d' }],
+    ['more than one lane', { parallelism: 4 }],
+  ])('a stored record with %s is refused before deriving', async (_label, override) => {
+    const { wrapped } = await enrolFixture();
+    const record = withKdf(wrapped.passphrase, override);
+
+    await expectRejectedBeforeDerivation(
+      () =>
+        unwrapWithPassphrase(record, {
+          ownerId: OWNER,
+          passphrase: PASSPHRASE,
+          minWrapVersion: WRAP_VERSION,
+        }),
+      'kdf_out_of_bounds',
+    );
+    await expectRejectedBeforeDerivation(
+      () =>
+        productionApi.unwrapWithPassphrase(
+          withKdf(withKdf(wrapped.passphrase, { ...PRODUCTION_KDF_PARAMS }), override),
+          {
+            ownerId: OWNER,
+            passphrase: PASSPHRASE,
+            minWrapVersion: WRAP_VERSION,
+          },
+        ),
+      'kdf_out_of_bounds',
+    );
+  });
+
+  it('a production-memory record with 2^31 passes is refused by the public unwrap', async () => {
+    const { wrapped } = await enrolFixture();
+    const record = withKdf(wrapped.passphrase, { ...PRODUCTION_KDF_PARAMS, iterations: 2 ** 31 });
+
+    await expectRejectedBeforeDerivation(
+      () =>
+        productionApi.unwrapWithRecoveryPhrase(record, {
+          ownerId: OWNER,
+          recoveryPhrase: generateRecoveryPhrase(),
+          minWrapVersion: WRAP_VERSION,
+        }),
+      'kdf_out_of_bounds',
+    );
+  });
+
+  it.each([
+    ['short', KDF_SALT_BYTES - 1],
+    ['long', KDF_SALT_BYTES + 1],
+    ['empty', 0],
+  ])('a stored record with a %s salt is refused before deriving', async (_label, length) => {
+    const { wrapped } = await enrolFixture();
+    const record = { ...wrapped.passphrase, salt: new Uint8Array(length) };
+
+    await expectRejectedBeforeDerivation(
+      () =>
+        unwrapWithPassphrase(record, {
+          ownerId: OWNER,
+          passphrase: PASSPHRASE,
+          minWrapVersion: WRAP_VERSION,
+        }),
+      'malformed',
+    );
   });
 });

@@ -47,6 +47,48 @@ export const PRODUCTION_KDF_PARAMS: KdfParams = Object.freeze({
 });
 
 export const KDF_SALT_BYTES = 16;
+
+/**
+ * Ceilings on stored parameters. A wrapped-key record is server-side data, and
+ * the server is an adversary in this threat model: without a ceiling, a record
+ * with t = 2^31 never finishes deriving (the async KDF yields, so the UI stays
+ * live while the unlock spins forever), and one with m near 4 GiB tries an
+ * allocation that kills a mobile tab. Either locks the person out.
+ *
+ * - 256 MiB is four times production memory: room to raise the cost later,
+ *   and about the most a desktop browser tab can allocate reliably.
+ * - 10 passes is just over three times production.
+ * - Total work (passes x KiB) is capped at four times production, about 5-6 s
+ *   in Node 22, so the two ceilings cannot be combined into a ~40 s unlock.
+ */
+export const MAX_KDF_ITERATIONS = 10;
+export const MAX_KDF_MEMORY_KIB = 256 * 1024;
+const MAX_KDF_WORK_FACTOR = 4;
+export const MAX_KDF_WORK_KIB_PASSES =
+  MAX_KDF_WORK_FACTOR * PRODUCTION_ITERATIONS * PRODUCTION_MEMORY_KIB;
+/** The pure-JS implementation is single-threaded, so only one lane is accepted. */
+const KDF_PARALLELISM = PRODUCTION_PARALLELISM;
+
+const within = (value: number, floor: number, ceiling: number): boolean =>
+  Number.isSafeInteger(value) && value >= floor && value <= ceiling;
+
+/**
+ * Throw a content-free `kdf_out_of_bounds` unless `params` are Argon2id with
+ * one lane, at or above `floor`, and at or below the named ceilings. Runs
+ * before any derivation, so a hostile record fails fast.
+ */
+export function assertKdfParamsWithin(params: KdfParams, floor: KdfParams): void {
+  const acceptable = [
+    params.algorithm === 'argon2id',
+    params.parallelism === KDF_PARALLELISM,
+    within(params.iterations, floor.iterations, MAX_KDF_ITERATIONS),
+    within(params.memoryKiB, floor.memoryKiB, MAX_KDF_MEMORY_KIB),
+    params.iterations * params.memoryKiB <= MAX_KDF_WORK_KIB_PASSES,
+  ].every(Boolean);
+  if (!acceptable) {
+    throw new EnvelopeError('kdf_out_of_bounds');
+  }
+}
 export const DERIVED_KEY_BYTES = 32;
 
 /** Optional Argon2 inputs, used only by the RFC 9106 known-answer test. */

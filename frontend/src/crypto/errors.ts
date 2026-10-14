@@ -19,6 +19,8 @@ export type EnvelopeFailure =
   | 'authentication_failed'
   /** The recovery phrase fails the wordlist or checksum. */
   | 'invalid_recovery_phrase'
+  /** KDF parameters outside the named floor and ceiling (a weak wrap or a tampered record). */
+  | 'kdf_out_of_bounds'
   /** The caller passed an argument the module refuses to seal or derive with. */
   | 'invalid_input';
 
@@ -28,6 +30,7 @@ const MESSAGES: Readonly<Record<EnvelopeFailure, string>> = {
   rollback: 'Encrypted data is older than the required version.',
   authentication_failed: 'Encrypted data could not be authenticated.',
   invalid_recovery_phrase: 'Recovery phrase is not valid.',
+  kdf_out_of_bounds: 'Key derivation parameters are outside the allowed range.',
   invalid_input: 'Invalid input to the encryption module.',
 };
 
