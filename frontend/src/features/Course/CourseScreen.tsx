@@ -1,3 +1,4 @@
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Hourglass, TriangleAlert } from 'lucide-react-native';
@@ -11,6 +12,7 @@ import {
   uiFlags,
   type ContentItem,
   type CourseProgress,
+  type NextUnread,
   type SiteResource,
   type Stage,
 } from '../../api';
@@ -29,6 +31,7 @@ import { EditorialSection } from '../../components/layout/EditorialSection';
 import { ScreenHeader } from '../../components/layout/ScreenHeader';
 import { ShowcaseCard } from '../../components/layout/ShowcaseCard';
 import { ink, resolveStageColor } from '../../design/tokens';
+import type { RootTabParamList } from '../../navigation/BottomTabs';
 import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
 import { useProgramStore, programStage } from '../../store/useProgramStore';
@@ -39,6 +42,7 @@ import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
 import CourseDrawer, { useCourseDrawerBodies, useCourseDrawerContent } from './CourseDrawer';
+import ReadNextButton, { useNextUnread, type NextUnreadState } from './ReadNextButton';
 import RetryButton from './RetryButton';
 import SiteResourcesPanel from './SiteResourcesPanel';
 import StageIntroCard from './StageIntroCard';
@@ -547,16 +551,27 @@ function useCourseViewer(selectedStage: number) {
  *  the id already restored and refuses to re-fire — otherwise backing out of the
  *  reader (viewing id → null) or revisiting the tab would re-open it unbidden.
  *  Keyed on primitive params + loaded content (never object identity) so it fires
- *  once and never loops. */
+ *  once and never loops.
+ *
+ *  ``rearm`` is the one deliberate exception: "Read next" asks for the routed
+ *  chapter to open again even when the route already names it (the reader backed
+ *  out without finishing it), so it forgets the restored id and re-runs the
+ *  effect once. */
 function useReaderRestore(
   content: ContentItem[],
   currentViewingId: number | null,
   openForRestore: (_item: ContentItem, _offset: number) => void,
-): void {
+): { rearm: () => void } {
   const route = useAppRoute<'Course'>();
   const contentId = route.params?.contentId ?? null;
   const scrollOffset = route.params?.scrollOffset ?? 0;
   const restoredIdRef = useRef<number | null>(null);
+  const [armSeq, setArmSeq] = useState(0);
+
+  const rearm = useCallback(() => {
+    restoredIdRef.current = null;
+    setArmSeq((seq) => seq + 1);
+  }, []);
 
   useEffect(() => {
     if (contentId === null || restoredIdRef.current === contentId) return;
@@ -565,7 +580,64 @@ function useReaderRestore(
     if (!item || item.is_locked) return;
     restoredIdRef.current = contentId;
     openForRestore(item, scrollOffset);
-  }, [contentId, scrollOffset, currentViewingId, content, openForRestore]);
+  }, [contentId, scrollOffset, currentViewingId, content, openForRestore, armSeq]);
+
+  return { rearm };
+}
+
+interface ReadNextProps {
+  state: NextUnreadState;
+  onOpen: (_target: NextUnread) => void;
+}
+
+/** "Read next" (#3147): open the server's earliest unread chapter through the
+ *  same route-param path a journal return uses, so ``useReaderRestore`` does the
+ *  opening once that chapter's stage has loaded. The stage is selected directly
+ *  as well, because a route already carrying this stage number would not move
+ *  the selection a reader has since changed with the pills. */
+function useReadNext(setSelectedStage: (_stageNumber: number) => void, rearm: () => void) {
+  const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList, 'Course'>>();
+  const nextUnread = useNextUnread();
+
+  const openNext = useCallback(
+    (target: NextUnread) => {
+      setSelectedStage(target.stage_number);
+      // ``scrollOffset`` is cleared so a stale journal-return offset can never
+      // drop the reader halfway down a chapter they have not started.
+      navigation.setParams({
+        stageNumber: target.stage_number,
+        contentId: target.content_id,
+        scrollOffset: undefined,
+      });
+      rearm();
+    },
+    [navigation, setSelectedStage, rearm],
+  );
+
+  return { state: nextUnread.state, refresh: nextUnread.refresh, openNext };
+}
+
+/** The reader's position across the screen: the journal-return restore, the
+ *  "Read next" target, and the mark-read handler that keeps both lists and the
+ *  target current. A chapter marked read moves the target, so it is re-asked. */
+function useCourseReadingPosition(
+  stageContent: ReturnType<typeof useStageContent>,
+  viewer: ReturnType<typeof useCourseViewer>,
+  setSelectedStage: (_stageNumber: number) => void,
+): { readNext: ReadNextProps; onMarkRead: () => void } {
+  const { rearm } = useReaderRestore(
+    stageContent.content,
+    viewer.viewingItem?.id ?? null,
+    viewer.openForRestore,
+  );
+  const { state, refresh, openNext } = useReadNext(setSelectedStage, rearm);
+  const { handleMarkRead } = stageContent;
+  const onMarkRead = useCallback(() => {
+    handleMarkRead();
+    refresh();
+  }, [handleMarkRead, refresh]);
+  const readNext = useMemo(() => ({ state, onOpen: openNext }), [state, openNext]);
+  return { readNext, onMarkRead };
 }
 
 // --- Main component ---
@@ -637,6 +709,7 @@ interface StagePanelProps {
   selectedStageData: Stage | undefined;
   stageContent: ReturnType<typeof useStageContent>;
   viewer: ReturnType<typeof useCourseViewer>;
+  readNext: ReadNextProps;
 }
 
 /** The selected stage's cover, metadata, progress, and intro — the pinned
@@ -646,6 +719,7 @@ const StageHeader = ({
   selectedStageData,
   stageContent,
   viewer,
+  readNext,
 }: StagePanelProps): React.JSX.Element => (
   <>
     {selectedStageData && (
@@ -667,6 +741,7 @@ const StageHeader = ({
         <StageIntroCard stageNumber={selectedStage} onOpen={viewer.handleIntroPress} />
       </EditorialSection>
     </View>
+    <ReadNextButton state={readNext.state} onOpen={readNext.onOpen} />
     <View style={styles.sectionBand}>
       <Text style={styles.sectionBandLabel}>Chapters</Text>
     </View>
@@ -680,6 +755,7 @@ const StagePanel = ({
   selectedStageData,
   stageContent,
   viewer,
+  readNext,
 }: StagePanelProps): React.JSX.Element => {
   // While loading or after a failed fetch the list is empty so the header stays
   // pinned and the loading/error state renders in ListEmptyComponent.
@@ -700,6 +776,7 @@ const StagePanel = ({
           selectedStageData={selectedStageData}
           stageContent={stageContent}
           viewer={viewer}
+          readNext={readNext}
         />
       }
       onContentPress={viewer.handleContentPress}
@@ -773,6 +850,7 @@ interface CourseLandingProps {
   stageContent: ReturnType<typeof useStageContent>;
   viewer: ReturnType<typeof useCourseViewer>;
   drawer: ScreenDrawerState;
+  readNext: ReadNextProps;
   onStageSelect: (_stageNumber: number) => void;
   onChapterPress: (_stageNumber: number, _item: ContentItem) => void;
 }
@@ -785,6 +863,7 @@ const CourseLanding = ({
   stageContent,
   viewer,
   drawer,
+  readNext,
   onStageSelect,
   onChapterPress,
 }: CourseLandingProps): React.JSX.Element => {
@@ -805,6 +884,7 @@ const CourseLanding = ({
           selectedStageData={selectedStageData}
           stageContent={stageContent}
           viewer={viewer}
+          readNext={readNext}
         />
         <BottomFade />
         <CourseScreenDrawer
@@ -822,7 +902,7 @@ const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
   const stageContent = useStageContent(selectedStage, allStages.length > 0);
   const viewer = useCourseViewer(selectedStage);
-  useReaderRestore(stageContent.content, viewer.viewingItem?.id ?? null, viewer.openForRestore);
+  const { readNext, onMarkRead } = useCourseReadingPosition(stageContent, viewer, setSelectedStage);
   const drawer = useScreenDrawer('Course');
   const { handleStageSelect, handleChapterPress } = useCourseNavigation(
     setSelectedStage,
@@ -830,7 +910,7 @@ const CourseScreen = (): React.JSX.Element => {
     drawer,
   );
 
-  const overlay = renderOverlay(viewer, stageContent.handleMarkRead, stageContent.content);
+  const overlay = renderOverlay(viewer, onMarkRead, stageContent.content);
   if (overlay !== null) {
     // Drawer must mount alongside the reader so the hamburger works while reading.
     return (
@@ -864,6 +944,7 @@ const CourseScreen = (): React.JSX.Element => {
       stageContent={stageContent}
       viewer={viewer}
       drawer={drawer}
+      readNext={readNext}
       onStageSelect={handleStageSelect}
       onChapterPress={handleChapterPress}
     />
