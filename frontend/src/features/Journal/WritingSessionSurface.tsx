@@ -35,16 +35,21 @@
  * {@link WritingSessionBanner}.
  */
 import React, { useCallback, useRef, useState } from 'react';
+import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
+import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from './JournalEntry.styles';
 import type { WritingSessionResult } from './writingSession';
 import WritingSessionBanner from './WritingSessionBanner';
 import WritingTimer from './WritingTimer';
 
+import { SPACING, journalSheet } from '@/design/tokens';
 import type { EngineDeps } from '@/features/Practice/engine/types';
 
 export interface WritingSessionSurfaceProps {
   /** The length the timer opens at; the writer can change it before starting. */
   initialMinutes?: number;
+  /** Keep floating controls inside the writing desk when Sources occupy a side pane. */
+  rightInset?: number;
   /**
    * Begin the session on mount, because the page was opened in order to run it.
    *
@@ -73,8 +78,8 @@ export interface WritingSessionSurfaceProps {
    * way to close it.
    */
   renderOffer?: (_result: WritingSessionResult) => React.ReactNode;
-  /** Reports whether the timer overlaps its page rather than sitting below it. */
-  onFloatingChange?: (_floating: boolean) => void;
+  /** Reserve the measured note and timer together in the page scroller. */
+  onClearanceChange?: (_clearance: number) => void;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
   deps?: EngineDeps;
 }
@@ -93,16 +98,31 @@ interface StandingNote {
   ordinal: number;
 }
 
+function useBandClearance(onClearanceChange: WritingSessionSurfaceProps['onClearanceChange']) {
+  const reportLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onClearanceChange?.(
+        Math.max(
+          WRITING_TIMER_CLEARANCE,
+          event.nativeEvent.layout.height + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
+        ),
+      );
+    },
+    [onClearanceChange],
+  );
+  return reportLayout;
+}
+
 function WritingSessionSurface({
   initialMinutes,
+  rightInset = 0,
   autoStart,
   renderOffer,
   onSession,
-  onFloatingChange,
+  onClearanceChange,
   deps,
 }: WritingSessionSurfaceProps): React.JSX.Element {
   const [note, setNote] = useState<StandingNote | null>(null);
-  const [timerFloating, setTimerFloating] = useState(false);
   const dismiss = useCallback(() => setNote(null), []);
   // Held through a ref so ``record`` keeps one identity for the life of the
   // mount: it is the ticking timer's ``onComplete``, and a consumer that
@@ -110,39 +130,58 @@ function WritingSessionSurface({
   // times a second.
   const onSessionRef = useRef(onSession);
   onSessionRef.current = onSession;
-  const onFloatingChangeRef = useRef(onFloatingChange);
-  onFloatingChangeRef.current = onFloatingChange;
-  const reportFloating = useCallback((floating: boolean) => {
-    setTimerFloating(floating);
-    onFloatingChangeRef.current?.(floating);
-  }, []);
+  const reportLayout = useBandClearance(onClearanceChange);
   const record = useCallback((result: WritingSessionResult) => {
     onSessionRef.current?.(result);
     if (!result.reachedFullDuration) return;
     setNote((previous) => ({ result, ordinal: (previous?.ordinal ?? 0) + 1 }));
   }, []);
   return (
-    <>
-      {note === null ? null : (
-        <WritingSessionBanner
-          result={note.result}
-          onDismiss={dismiss}
-          clearsFloatingTimer={timerFloating}
-        >
-          {renderOffer === undefined ? null : (
-            <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
-          )}
-        </WritingSessionBanner>
-      )}
-      <WritingTimer
-        initialMinutes={initialMinutes}
-        autoStart={autoStart}
-        onComplete={record}
-        onFloatingChange={reportFloating}
-        deps={deps}
-      />
-    </>
+    <View
+      style={[styles.band, { right: rightInset }]}
+      pointerEvents="box-none"
+      testID="writing-session-band"
+    >
+      <View
+        style={styles.content}
+        pointerEvents="box-none"
+        onLayout={reportLayout}
+        testID="writing-session-band-content"
+      >
+        {note === null ? null : (
+          <WritingSessionBanner result={note.result} onDismiss={dismiss}>
+            {renderOffer === undefined ? null : (
+              <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
+            )}
+          </WritingSessionBanner>
+        )}
+        <WritingTimer
+          initialMinutes={initialMinutes}
+          autoStart={autoStart}
+          onComplete={record}
+          withinBand
+          deps={deps}
+        />
+      </View>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  content: {
+    flexShrink: 1,
+    maxHeight: '100%',
+  },
+  band: {
+    position: 'absolute',
+    // Leave the upper half for the page's actions; long offers scroll below.
+    top: '50%',
+    justifyContent: 'flex-end',
+    left: 0,
+    right: 0,
+    bottom: RESONANCE_BUTTON_CLEARANCE,
+    paddingHorizontal: journalSheet.deskPaddingH,
+  },
+});
 
 export default WritingSessionSurface;

@@ -79,7 +79,7 @@ _MINIMUM_PROMPT_COUNT = 2
 # "journaling-prompt-expansion-..." chapter, which this prefix excludes.
 _PROMPT_CHAPTER_SLUG_PREFIX = "the-journaling-prompts-of"
 
-# ``**Prompt 3: Some Title (At least 4x per week)**`` and the variant that
+# ``**Prompt 4: Some Title (At least 2x per week)**`` and the variant that
 # carries the cadence as an italic suffix outside the bold span.
 _BOLD_HEADER = re.compile(
     r"^\*\*Prompt\s+(?P<ordinal>\d+)\s*:\s*(?P<label>.+?)\*\*"

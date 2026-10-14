@@ -86,7 +86,7 @@ _CANONICAL_STAGE_ONTOLOGY: dict[int, dict[str, str]] = {
     },
     8: {
         "category": "Wisdom",
-        "aspect": "True Self Connection",
+        "aspect": "True Self Wisdom",
         "spiral_dynamics_color": "Teal",
         "growing_up_stage": "True Self Connection",
         "divine_gender_polarity": "Divine Feminine",

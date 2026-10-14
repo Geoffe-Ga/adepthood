@@ -490,19 +490,23 @@ the account row itself.
 
 Three things survive, each for a stated reason: a practice you contributed
 to the shared catalogue stays and stops naming you, because other people
-may already have it assigned; a **purchase receipt** stays with the email
-address on it, because that address is how something you paid for is
-matched back to you, and because retaining a payment record is the ordinary
-carve-out in data-protection law; and a note that a deletion happened —
-date, counts, and an internal id that now names nobody.
+may already have it assigned; a **purchase receipt** stays, because
+retaining a payment record is the ordinary carve-out in data-protection law,
+but on a purchase linked to your account (a licence bound to it, or a token
+pack credited to it) the email address is blanked, and so is the sale record
+as Gumroad sent it — a purchase never linked to any account keeps its email
+address, because that address is the only way it can still be claimed; and a
+note that a deletion happened — date, counts, and an internal id that now
+names nobody.
 
 **Backups age out; they are not edited.** The database is backed up, and a
 backup taken before you deleted still holds what your account held then, with
 your writing encrypted in it as it is in the database. No backup is altered to
 remove one account. Our backup schedule keeps the hosting platform's daily
 backups for 6 days and the weekly encrypted copies kept off the platform for
-90 days; those off-platform copies are made, and the expired ones deleted, by
-the operator by hand. On that schedule, the last copy of your data in
+30 days. Off-platform copies made before that period was shortened from 90
+days may be kept for up to 90 days, until they age out. Those off-platform
+copies are made, and the expired ones deleted, by the operator by hand. On that schedule, the last copy of your data in
 Adepthood's own backups ages out within about 97 days of your deletion. That
 bound is Adepthood's alone: each party under "Who else receives your data"
 keeps what it received under its own retention, which this page does not set.

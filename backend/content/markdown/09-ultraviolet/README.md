@@ -31,8 +31,8 @@ This folder contains the modular sections for the ULTRAVIOLET stage of the APTIT
 
 - **Previous Stage**: [Stage 8](../08-teal/)
 - **Next Stage**: [Stage 10](../10-clearlight/)
-- **Course Overview**: [APTITUDE Stages Deep Dive](../resources/aptitude-stages.md)
-- **How the Stages Become a Life**: [Notes and Chords](../resources/notes-and-chords.md)
+- **Course Overview**: [APTITUDE Stages Deep Dive](../resources/04-aptitude-stages.md)
+- **How the Stages Become a Life**: [Notes and Chords](../resources/07-notes-and-chords.md)
 
 ## Source
 

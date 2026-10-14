@@ -196,7 +196,7 @@ export const CANON_STAGE_OVERRIDES: Readonly<Record<number, CanonOverrides>> = {
   8: {
     title: 'True Self Connection',
     category: 'Wisdom',
-    aspect: 'True Self Connection',
+    aspect: 'True Self Wisdom',
     relationshipToFreeWill: 'True Self Embodier',
   },
   9: {

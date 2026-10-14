@@ -304,7 +304,7 @@ Nor should you identify with the wave. It is a model
 for noticing impermanence, dissatisfaction, and the absence of anything
 solid at the center of any of it—not a new personality to wear.
 
-See [Notes and Chords](./notes-and-chords.md) for
+See [Notes and Chords](./07-notes-and-chords.md) for
 how the capacities work together.
 
 Sign up!

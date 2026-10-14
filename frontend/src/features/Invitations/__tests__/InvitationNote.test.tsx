@@ -14,6 +14,7 @@ import InvitationNote from '../InvitationNote';
 
 import type { Invitation } from '@/api';
 import { touchTarget } from '@/design/tokens';
+import { BANNED_PHRASES } from '@/testing/bannedInvitationPhrases';
 
 function invitation(overrides: Partial<Invitation> = {}): Invitation {
   return {
@@ -27,27 +28,6 @@ function invitation(overrides: Partial<Invitation> = {}): Invitation {
 }
 
 const noop = () => Promise.resolve();
-
-const BANNED_PHRASES = [
-  'missing out',
-  "don't miss",
-  'dont miss',
-  'streak',
-  'falling behind',
-  'keep it up',
-  'last chance',
-  'almost there',
-  'you should',
-  'you need to',
-  "don't lose",
-  'dont lose',
-  'break your streak',
-  'broke your streak',
-  'on track',
-  'expire',
-  'hurry',
-  'now or never',
-] as const;
 
 /** Smallest of the flattened minHeight/minWidth on a pressable, for 44dp checks. */
 function StyleSheetMin(node: { props: { style: unknown } }): number {

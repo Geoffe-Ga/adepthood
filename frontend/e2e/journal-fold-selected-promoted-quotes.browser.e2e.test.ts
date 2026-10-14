@@ -66,7 +66,7 @@ async function seedPromotedSource(
 
 test('a writer checks several promoted quotes and folds them into the review at once', async ({
   page,
-}) => {
+}, testInfo) => {
   const { headers, quoteIds } = await seedPromotedSource(page, 'fold-selected-quotes');
   const [firstId, secondId, thirdId] = quoteIds;
 
@@ -102,6 +102,13 @@ test('a writer checks several promoted quotes and folds them into the review at 
   await expect(row(secondId)).toHaveAttribute('aria-checked', 'false');
   await expect(action).toHaveText('Fold 2 quotes into this review');
   await expect(action).toBeInViewport();
+  const paneBox = await page.getByTestId('reflection-sources-pane').boundingBox();
+  const timerBox = await page.getByTestId('writing-timer-pill').boundingBox();
+  if (paneBox === null || timerBox === null) throw new Error('Sources or timer has no layout');
+  expect(timerBox.x + timerBox.width, 'idle timer enters the Sources pane').toBeLessThanOrEqual(
+    paneBox.x,
+  );
+  await page.screenshot({ path: testInfo.outputPath('sources-timer-clearance.png') });
   await action.click();
 
   await expect(page.locator('[data-testid="journal-save-hint"]:visible')).toHaveText('Saved');

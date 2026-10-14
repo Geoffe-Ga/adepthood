@@ -16,7 +16,7 @@ Orange is the stage of synthesis—of taking the raw materials of your life (cur
 
 As always: set a timer, keep your pen moving, don't censor yourself. Let the questions lead you somewhere unexpected.
 
-**Prompt 1: Combine Multiple Curiosities in Service of Tackling One Problem (At least 4x per week)**
+**Prompt 1: Combine Multiple Curiosities in Service of Tackling One Problem**
 
 This is the central alchemical work of Orange. You're going to identify a problem that matters to you—something that genuinely keeps you up at night, something you feel called to address—and then you're going to explore how multiple curiosities from different domains could converge to solve it.
 
@@ -28,7 +28,7 @@ The structure:
 
 This is how you begin to see your Four Quadrants: a Problem you care about, Curiosities that light you up, an Aspirational Identity that calls you forward, and the implicit Vow that emerges when you commit to this path.
 
-**Prompt 2: Make a List of 25 Curiosities (At least 4x per week)**
+**Prompt 2: Make a List of 25 Curiosities**
 
 What are you genuinely curious about? Not what you think you *should* be interested in. Not what would look impressive on a resume. What makes you lean forward in your chair, lose track of time, go down rabbit holes at 2am?
 
@@ -49,7 +49,7 @@ Your list will evolve. That's expected. Some curiosities will fade. New ones wil
 
 And here's the secret: the curiosities that keep showing up, week after week, month after month—those are the real ones. Those are the threads of your Aspirational Identity. Follow them.
 
-**Prompt 3: Make a List of 15 Problems That Keep You Up at Night (At least 4x per week)**
+**Prompt 3: Make a List of 15 Problems That Keep You Up at Night**
 
 What's broken in the world that you wish you could fix? What makes you angry, sad, or restless? What gap do you see that others seem to ignore?
 
@@ -72,7 +72,7 @@ And here's a crucial distinction: a problem is not the same as a complaint. A co
 
 Some of these will make you feel hopeless. That's allowed—hopelessness is usually grief with its coat on. When it hits, shrink the frame: not "the food system is broken" but "this block has no grocery store." Then look at what's left as a *gap*—the space between what is and what could be. A gap that size can be bridged. That's what you're training to do.
 
-**Prompt 4: Formulate Your Answer to Prompt 1 as a Four Quadrant Vow and Share It (At least 4x per week)**
+**Prompt 4: Formulate Your Answer to Prompt 1 as a Four Quadrant Vow and Share It**
 
 Once you've done the alchemical work of combining curiosities and problems, distill it into a vow. This is a public declaration—not a rigid contract, but a stake in the ground. A way of saying, "This is the work I'm stepping into."
 

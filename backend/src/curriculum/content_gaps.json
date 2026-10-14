@@ -10,6 +10,38 @@
       "upstream": "Geoffe-Ga/aptitude-course"
     },
     {
+      "issue": "#3148",
+      "key": "1:8",
+      "kind": "numbering_gap",
+      "owner_review": "pending",
+      "reason": "Beige chapter 8 ('Energy Scaffolding') moved upstream to the site resources as the Start Here essay energy-scaffolding (aptitude-course#75, merged in #76). Chapter ids are never reused or renumbered upstream, so the gap is deliberate; the owner decides whether the gate should learn retired ids or the numbering should close up.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
+      "issue": "#3137",
+      "key": "5:26",
+      "kind": "numbering_gap",
+      "owner_review": "pending",
+      "reason": "Orange chapter 26 ('Orange as the Theft of Fire') was removed upstream by the owner (aptitude-course#74, merged in #76). Chapter ids are never reused or renumbered upstream, so the gap is deliberate; the owner decides whether the gate should learn retired ids or the numbering should close up.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
+      "issue": "#3137",
+      "key": "5:27",
+      "kind": "numbering_gap",
+      "owner_review": "pending",
+      "reason": "Orange chapter 27 ('The Lever and the Fulcrum: Archimedes and the Power of Understanding') was removed upstream by the owner (aptitude-course#74, merged in #76). Chapter ids are never reused or renumbered upstream, so the gap is deliberate; the owner decides whether the gate should learn retired ids or the numbering should close up.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
+      "issue": "#3137",
+      "key": "5:28",
+      "kind": "numbering_gap",
+      "owner_review": "pending",
+      "reason": "Orange chapter 28 ('The Library of Alexandria: Knowledge as Sacred Responsibility') was removed upstream by the owner (aptitude-course#74, merged in #76). Chapter ids are never reused or renumbered upstream, so the gap is deliberate; the owner decides whether the gate should learn retired ids or the numbering should close up.",
+      "upstream": "Geoffe-Ga/aptitude-course"
+    },
+    {
       "issue": "#3070",
       "key": "orange-7",
       "kind": "thin_chapter",

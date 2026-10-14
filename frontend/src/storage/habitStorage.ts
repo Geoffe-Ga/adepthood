@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { v4 as uuidv4 } from 'uuid';
 
 import type { Habit } from '../features/Habits/Habits.types';
 
@@ -58,6 +59,8 @@ export interface PendingCheckIn {
   completed_units?: number;
   /** Durable identity for exactly-once replay of an explicit signed delta. */
   operation_id?: string;
+  /** Device-only identity for legacy replay; never sent as a backend operation ID. */
+  replay_id?: string;
   timestamp: string;
   /** Explicit backfill day for a backdated log; replay forwards it verbatim. */
   completed_on?: string;
@@ -71,6 +74,8 @@ export interface DroppedCheckIn {
   completed_units?: number;
   /** Exactly-once operation identity carried over from the pending entry. */
   operation_id?: string;
+  /** Device-only identity for legacy replay; never sent as a backend operation ID. */
+  replay_id?: string;
   timestamp: string;
   /** Explicit backfill day carried over from the queued entry, if it had one. */
   completed_on?: string;
@@ -169,8 +174,31 @@ export async function replacePendingCheckIns(checkIns: PendingCheckIn[]): Promis
 
 export async function loadPendingCheckIns(
   scope: PendingCheckInScope = capturePendingCheckInScope(),
+  prepareForReplay = false,
 ): Promise<PendingCheckIn[]> {
-  return (await getJsonArray<PendingCheckIn>(scope.key)) ?? [];
+  if (!prepareForReplay) return (await getJsonArray<PendingCheckIn>(scope.key)) ?? [];
+  return serialize(scope.key, () => preparePendingReplay(scope));
+}
+
+/** Persist identities under the append lane before any legacy entry reaches a POST. */
+async function preparePendingReplay(scope: PendingCheckInScope): Promise<PendingCheckIn[]> {
+  if (getActiveUser() !== scope.owner) return [];
+  try {
+    const entries = (await getJsonArrayForUpdate<PendingCheckIn>(scope.key)) ?? [];
+    if (getActiveUser() !== scope.owner) return [];
+    let changed = false;
+    const prepared = entries.map((entry) => {
+      if (entry.operation_id || entry.replay_id) return entry;
+      changed = true;
+      return { ...entry, replay_id: uuidv4() };
+    });
+    if (changed) await AsyncStorage.setItem(scope.key, JSON.stringify(prepared));
+    return getActiveUser() === scope.owner ? prepared : [];
+  } catch {
+    // A failed read or identity write must retain the queue and defer the POST.
+    console.warn('[storage] could not prepare pending check-in identities; retaining queue');
+    return [];
+  }
 }
 
 /**
@@ -215,12 +243,15 @@ export async function removePendingCheckIns(
       const index = remaining.findIndex((candidate) =>
         entry.operation_id
           ? candidate.operation_id === entry.operation_id
-          : candidate.operation_id === undefined &&
-            candidate.goal_id === entry.goal_id &&
-            candidate.timestamp === entry.timestamp &&
-            candidate.did_complete === entry.did_complete &&
-            candidate.completed_units === entry.completed_units &&
-            candidate.completed_on === entry.completed_on,
+          : entry.replay_id
+            ? candidate.replay_id === entry.replay_id
+            : candidate.operation_id === undefined &&
+              candidate.replay_id === undefined &&
+              candidate.goal_id === entry.goal_id &&
+              candidate.timestamp === entry.timestamp &&
+              candidate.did_complete === entry.did_complete &&
+              candidate.completed_units === entry.completed_units &&
+              candidate.completed_on === entry.completed_on,
       );
       if (index >= 0) remaining.splice(index, 1);
     }
@@ -254,9 +285,14 @@ async function appendDroppedCheckIn(
     return;
   }
   const existing = result ?? [];
-  if (entry.operation_id && existing.some((item) => item.operation_id === entry.operation_id)) {
+  if (
+    existing.some((item) =>
+      entry.operation_id
+        ? item.operation_id === entry.operation_id
+        : entry.replay_id !== undefined && item.replay_id === entry.replay_id,
+    )
+  )
     return;
-  }
   existing.push(entry);
   // Oldest-first storage, so trimming from the front evicts the oldest.
   if (getActiveUser() !== owner) return;

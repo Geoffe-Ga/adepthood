@@ -42,7 +42,8 @@ valid):
   `release_day`, `order`, and `path` (the Markdown file).
 * `site_resources[]` — free evergreen pages (philosophy, about, …),
   each with `slug`, `title`, `description`, `path`, and an optional
-  `media[]` (asset paths, added in `schema_version 1.2.0`). Served
+  `media[]` (asset paths, added in `schema_version 1.2.0`) and an
+  optional 1-based `order` (added in `schema_version 1.3.0`). Served
   authenticated but never stage-gated.
 * `stage_intros[]` — optional per-stage course introductions, each with
   `stage`, `id`, `slug`, `title`, `path`, and optional `summary`. Unlike
@@ -102,8 +103,8 @@ the `CourseStage` table (e.g. a failed `seed_stages` run) blanked
 one, and surfaced in production as "0 of 0 read" / "No Content Yet"
 across the whole Course screen. The regression test suite had no case
 covering "one manifest stage is unmapped, do the mapped stages still
-seed?"; that gap is now pinned by a test asserting Stage 1 serves its
-17 chapters even when stages 4–10 have no `CourseStage` row.
+seed?"; that gap is now pinned by a test asserting Stage 1 serves all its
+chapters even when stages 4–10 have no `CourseStage` row.
 
 Seeding is also **multi-worker safe**. The production image boots
 uvicorn with `--workers 2`, so every seeder runs once per worker,

@@ -35,7 +35,7 @@ F4      Blue          Community Love                Conformity            Expres
 F5      Orange        Intellectual Understanding    Achievist             Collaborate (Do)
 F6      Green         Embodied Understanding        Pluralist             Collaborate (Feel)
 F7      Yellow        Systems Wisdom                Integrative           Integrate (Do)
-F8      Teal          True Self Connection          True Self Connection  Integrate (Feel)
+F8      Teal          True Self Wisdom              True Self Connection  Integrate (Feel)
 F9      Ultraviolet   Unity                         Effortless Being      Absorb (Do/Feel)
 F10     Clear Light   Emptiness                     Pure Awareness        Be (Both/Neither)
 ======  ============  ============================  ====================  ==================
