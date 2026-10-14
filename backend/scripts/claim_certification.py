@@ -30,16 +30,21 @@ Usage::
 
     cd backend
     python -m pytest --collect-only -q > /tmp/collected.txt
-    python -m pytest --collect-only -q -m "xfail" > /tmp/non-running.txt
+    python -m pytest --collect-only -q -m "xfail or skip or skipif" > /tmp/non-running.txt
     python -m scripts.claim_certification ../docs/qa/claim-certifications.json \
         --collected /tmp/collected.txt --non-running /tmp/non-running.txt
     python -m scripts.claim_certification ../docs/qa/claim-certifications.json --gate
 
+Both collections are required to verify pytest evidence: without the second,
+xfail and skip status was never checked, so pytest references are
+unverifiable rather than present.
+
 Exit codes (records):
-    0 -- every record is certified.
+    0 -- the file holds at least one record, and every record is certified.
     1 -- every record is well formed, but at least one is withheld, incomplete,
          drifted or expired.
-    2 -- at least one record (or an input file) is malformed or unsafe.
+    2 -- at least one record (or an input file) is malformed or unsafe, or the
+         file holds no records.
 
 Exit codes (``--gate``):
     0 -- the ledger and certifications are total and well formed, and every
@@ -69,6 +74,12 @@ SCHEMA_VERSION: Final = 1
 
 #: A certificate is a dated decision, not a standing licence. Owner-tunable.
 MAX_CERTIFICATE_AGE_DAYS: Final = 90
+#: Evidence (live journeys, serving receipt) and the signoff must be gathered
+#: within this many days before ``issued_on``: a certificate is not a licence to
+#: reuse an old run. Owner-tunable.
+MAX_EVIDENCE_AGE_DAYS: Final = 30
+#: The ``-m`` expression whose collection lists tests that never assert.
+NON_RUNNING_MARKERS: Final = "xfail or skip or skipif"
 
 _FIRST_CLAIM: Final = 1
 _LAST_CLAIM: Final = 24
@@ -208,7 +219,7 @@ class Reason(enum.StrEnum):
     FRONTEND_RELEASE_DRIFT = "FRONTEND_RELEASE_DRIFT"
     AUTOMATED_EVIDENCE_MISSING = "AUTOMATED_EVIDENCE_MISSING"
     UNVERIFIABLE_PYTEST_EVIDENCE = "UNVERIFIABLE_PYTEST_EVIDENCE"
-    XFAIL_EVIDENCE = "XFAIL_EVIDENCE"
+    NON_RUNNING_EVIDENCE = "NON_RUNNING_EVIDENCE"
     UNCOVERED_JOURNEY = "UNCOVERED_JOURNEY"
     LIVE_JOURNEY_MISSING = "LIVE_JOURNEY_MISSING"
     GATE_EVIDENCE_MISSING = "GATE_EVIDENCE_MISSING"
@@ -218,6 +229,8 @@ class Reason(enum.StrEnum):
     SIGNOFF_SENTENCE_DRIFT = "SIGNOFF_SENTENCE_DRIFT"
     VALIDITY_MISSING = "VALIDITY_MISSING"
     EXPIRED = "EXPIRED"
+    EVIDENCE_OUTSIDE_WINDOW = "EVIDENCE_OUTSIDE_WINDOW"
+    SIGNOFF_BEFORE_EVIDENCE = "SIGNOFF_BEFORE_EVIDENCE"
 
 
 INVALID_REASONS: Final = frozenset(list(Reason)[: list(Reason).index(Reason.WITHHELD)])
@@ -248,6 +261,8 @@ class Evidence:
 
 _NO_TIME: Final = timedelta(0)
 _MAX_VALIDITY: Final = timedelta(days=MAX_CERTIFICATE_AGE_DAYS)
+
+_MAX_EVIDENCE_AGE: Final = timedelta(days=MAX_EVIDENCE_AGE_DAYS)
 
 _NO_EVIDENCE: Final = Evidence(node_state=None, jest_file_exists=lambda _ref: False, journeys={})
 
@@ -500,6 +515,38 @@ def _observed_in_past(ctx: _Context) -> list[Reason]:
     return [Reason.OBSERVED_IN_FUTURE] if future else []
 
 
+def _evidence_dates(record: Mapping[str, Any]) -> list[date]:
+    """When the live journeys ran and the serving receipt was sampled."""
+    dates: list[object] = [item["observed_on"] for item in record["live_journey_evidence"]]
+    if record["serving_receipt"] is not None:
+        dates.append(record["serving_receipt"]["observed_on"])
+    return list(filter(None, map(_parse_date, dates)))
+
+
+def _decided_on(record: Mapping[str, Any]) -> date | None:
+    decision = record["release_decision"]
+    return None if decision is None else _parse_date(decision["decided_on"])
+
+
+def _evidence_window(ctx: _Context) -> list[Reason]:
+    """Evidence and signoff fall within :data:`MAX_EVIDENCE_AGE_DAYS` before issue."""
+    issued = _parse_date(ctx.record["issued_on"])
+    if issued is None:
+        return []
+    dates = [*_evidence_dates(ctx.record), *filter(None, [_decided_on(ctx.record)])]
+    inside = all(issued - _MAX_EVIDENCE_AGE <= day <= issued for day in dates)
+    return [] if inside else [Reason.EVIDENCE_OUTSIDE_WINDOW]
+
+
+def _signoff_follows_evidence(ctx: _Context) -> list[Reason]:
+    """The decider signs what was observed, so the signoff is dated after it."""
+    decided = _decided_on(ctx.record)
+    evidence = _evidence_dates(ctx.record)
+    if decided is None or not evidence:
+        return []
+    return [] if decided >= max(evidence) else [Reason.SIGNOFF_BEFORE_EVIDENCE]
+
+
 def _audit_limitations(ctx: _Context) -> list[Reason]:
     """AC13: a claim the audit found partial or misleading is certified with limits."""
     if not ctx.certified or ctx.claim.audit_status not in PARTIAL_AUDIT_STATUSES:
@@ -561,7 +608,7 @@ def _pytest_reference(ref: str, evidence: Evidence) -> list[Reason]:
         return [Reason.UNVERIFIABLE_PYTEST_EVIDENCE]
     state = evidence.node_state(ref)
     if state == _XFAIL:
-        return [Reason.XFAIL_EVIDENCE]
+        return [Reason.NON_RUNNING_EVIDENCE]
     return [] if state == _PRESENT else [Reason.DANGLING_PYTEST_NODE]
 
 
@@ -650,6 +697,8 @@ _CHECKS: Final[tuple[Callable[[_Context], list[Reason]], ...]] = (
     _live_journeys,
     _gates,
     _signoff,
+    _evidence_window,
+    _signoff_follows_evidence,
     _expiry,
 )
 
@@ -847,7 +896,8 @@ class _Judge:
 
     def claim_for(self, record: object) -> LedgerClaim | None:
         """The ledger claim a record names, if the ledger has it."""
-        return self.claims.get(cast("str", _record_id(record)))
+        claim_id = _record_id(record)
+        return self.claims.get(claim_id) if isinstance(claim_id, str) else None
 
     def verdict(self, record: object, claim: LedgerClaim) -> Verdict:
         """The record's verdict against ``claim``."""
@@ -931,18 +981,24 @@ def node_state_from(collected: str, non_running: str) -> Callable[[str], str]:
     return state
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0] if __doc__ else None)
-    parser.add_argument("certifications", type=Path)
-    parser.add_argument("--ledger", type=Path, default=LEDGER_PATH)
-    parser.add_argument("--coverage", type=Path, default=COVERAGE_PATH)
-    parser.add_argument("--journeys", type=Path, default=JOURNEYS_PATH)
-    parser.add_argument("--repo-root", type=Path, default=REPO_ROOT)
-    parser.add_argument("--collected", type=Path, help="saved `pytest --collect-only -q` output")
-    parser.add_argument("--non-running", type=Path, help="the same, for xfail-marked tests")
-    parser.add_argument("--today", type=date.fromisoformat, default=None)
-    parser.add_argument("--gate", action="store_true", help="run the publish gate")
-    return parser
+def parser() -> argparse.ArgumentParser:
+    """The command line, documented in the module docstring."""
+    cli = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0] if __doc__ else None)
+    cli.add_argument("certifications", type=Path)
+    cli.add_argument("--ledger", type=Path, default=LEDGER_PATH)
+    cli.add_argument("--coverage", type=Path, default=COVERAGE_PATH)
+    cli.add_argument("--journeys", type=Path, default=JOURNEYS_PATH)
+    cli.add_argument("--repo-root", type=Path, default=REPO_ROOT)
+    cli.add_argument("--collected", type=Path, help="saved `pytest --collect-only -q` output")
+    cli.add_argument(
+        "--non-running",
+        type=Path,
+        help=f'saved `pytest --collect-only -q -m "{NON_RUNNING_MARKERS}"` output; '
+        "required with --collected",
+    )
+    cli.add_argument("--today", type=date.fromisoformat, default=None)
+    cli.add_argument("--gate", action="store_true", help="run the publish gate")
+    return cli
 
 
 class _UnreadableError(Exception):
@@ -973,15 +1029,22 @@ class _Inputs:
     evidence: Evidence
 
 
+def _resolver(collected: str | None, non_running: str | None) -> Callable[[str], str] | None:
+    """Both collections, or nothing: without the second, skips were never checked."""
+    if collected is None or non_running is None:
+        return None
+    return node_state_from(collected, non_running)
+
+
 def _inputs(args: argparse.Namespace) -> _Inputs:
     coverage = coverage_statuses(_read_json(args.coverage))
     if coverage is None:
         raise _UnreadableError
     collected = _read_text(args.collected)
-    non_running = _read_text(args.non_running) or ""
+    non_running = _read_text(args.non_running)
     root: Path = args.repo_root
     evidence = Evidence(
-        node_state=None if collected is None else node_state_from(collected, non_running),
+        node_state=_resolver(collected, non_running),
         jest_file_exists=lambda ref: (root / ref).is_file(),
         journeys=journey_statuses(_read_json(args.journeys)),
     )
@@ -1011,10 +1074,13 @@ def _run_records(inputs: _Inputs, today: date) -> int:
     if records is None:
         _say("the certifications file is malformed")
         return EXIT_INVALID
+    if not records:
+        _say("the certifications file has no records")
+        return EXIT_INVALID
     judge = _Judge(
         _by_id(_ledger_claims(inputs.ledger)[0]), inputs.coverage, today, inputs.evidence
     )
-    return max((_report(judge, index, record) for index, record in enumerate(records)), default=0)
+    return max(_report(judge, index, record) for index, record in enumerate(records))
 
 
 def _report(judge: _Judge, index: int, record: object) -> int:
@@ -1030,7 +1096,7 @@ def _report(judge: _Judge, index: int, record: object) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Validate certification records, or with ``--gate`` run the publish gate."""
-    args = _parser().parse_args(argv)
+    args = parser().parse_args(argv)
     today: date = args.today or datetime.now(UTC).date()
     try:
         inputs = _inputs(args)

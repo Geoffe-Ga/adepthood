@@ -41,6 +41,8 @@ COVERED_JOURNEY: Final = "journal.write"
 UNCOVERED_JOURNEY: Final = "journal.gap"
 TODAY: Final = date(2026, 10, 6)
 ISSUED: Final = date(2026, 10, 1)
+#: Evidence is gathered before the certificate is issued, and the signoff follows it.
+EVIDENCE_DAY: Final = "2026-09-28"
 SENTINEL: Final = "zzsentinelzz"
 
 Record = dict[str, Any]
@@ -74,7 +76,7 @@ def _certified() -> Record:
             "receipt_schema": 1,
             "backend_release": SHA_A,
             "frontend_release": SHA_A,
-            "observed_on": "2026-10-02",
+            "observed_on": EVIDENCE_DAY,
             "artifact_sha256": DIGEST,
         },
         "automated_evidence": [
@@ -82,7 +84,7 @@ def _certified() -> Record:
             {"kind": "jest", "ref": JEST},
             {"kind": "journey", "ref": COVERED_JOURNEY},
         ],
-        "live_journey_evidence": [{"observed_on": "2026-10-02", "artifact_sha256": DIGEST}],
+        "live_journey_evidence": [{"observed_on": EVIDENCE_DAY, "artifact_sha256": DIGEST}],
         "required_gates": [
             [_passed("B01")],
             [_passed("B03")],
@@ -248,7 +250,7 @@ def test_uncovered_journey_cannot_support_certification() -> None:
 def test_xfail_node_cannot_support_certification() -> None:
     record = _certified()
     record["automated_evidence"][0]["ref"] = XFAIL_NODE
-    assert _validate(record) == _incomplete(Reason.XFAIL_EVIDENCE)
+    assert _validate(record) == _incomplete(Reason.NON_RUNNING_EVIDENCE)
 
 
 def test_certified_record_needs_automated_evidence() -> None:
@@ -446,10 +448,12 @@ def test_record_for_another_claim_is_invalid() -> None:
 # ── Limitations and exclusions (AC13) ─────────────────────────────────────────
 
 
-def test_partial_claim_requires_limitations() -> None:
+@pytest.mark.parametrize("audit_status", ["partially_true", "misleading"])
+def test_partial_claim_requires_limitations(audit_status: str) -> None:
     record = _certified()
     record["limitations"] = []
-    assert _validate(record, coverage=None) == _invalid(Reason.LIMITATIONS_REQUIRED)
+    entry = _ledger_entry(audit_status=audit_status)
+    assert _validate(record, entry=entry, coverage=None) == _invalid(Reason.LIMITATIONS_REQUIRED)
     record["limitations"] = ["Works on https://x"]
     assert _validate(record) == _invalid(Reason.UNKNOWN_LIMITATION_CODE)
 
@@ -473,10 +477,11 @@ def test_incomplete_forbidden_effect_coverage_must_be_stated(coverage: str, code
     assert _validate(record, entry=entry, coverage=coverage) == (cert.EXIT_CERTIFIED, ())
 
 
-def test_covered_claim_with_true_audit_needs_no_limitation() -> None:
+@pytest.mark.parametrize("audit_status", ["true", "false", "not_verifiable", "not_implemented"])
+def test_covered_claim_with_a_non_partial_audit_needs_no_limitation(audit_status: str) -> None:
     record = _certified()
     record["limitations"] = []
-    entry = _ledger_entry(audit_status="false")
+    entry = _ledger_entry(audit_status=audit_status)
     assert _validate(record, entry=entry, coverage="covered") == (cert.EXIT_CERTIFIED, ())
 
 
@@ -538,6 +543,8 @@ def _cli_world(tmp_path: Path, record: Record) -> list[str]:
     (tests_dir / "x.test.ts").write_text("", encoding="utf-8")
     collected = tmp_path / "collected.txt"
     collected.write_text("tests/security/test_x.py::test_y\n\n3 tests collected\n", "utf-8")
+    non_running = tmp_path / "non-running.txt"
+    non_running.write_text("no tests collected (3 deselected)\n", "utf-8")
     return [
         str(_write(tmp_path / "certs.json", {"schema_version": 1, "records": records})),
         "--ledger",
@@ -550,6 +557,8 @@ def _cli_world(tmp_path: Path, record: Record) -> list[str]:
         str(tmp_path),
         "--collected",
         str(collected),
+        "--non-running",
+        str(non_running),
         "--today",
         TODAY.isoformat(),
     ]
@@ -709,3 +718,114 @@ def test_cli_gate_in_process(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     ledger.write_text(json.dumps(document), "utf-8")
     assert cert.main([*argv, "--gate"]) == cert.EXIT_INCOMPLETE
     assert "C01 published without a current certificate: WITHHELD" in capsys.readouterr().out
+
+
+# ── Review round (#3076 phase C) ──────────────────────────────────────────────
+
+
+def test_cli_empty_records_is_not_certified(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Zero records is not "every record is certified"."""
+    argv = _cli_world(tmp_path, _certified())
+    Path(argv[0]).write_text(json.dumps({"schema_version": 1, "records": []}), "utf-8")
+    assert cert.main(argv) == cert.EXIT_INVALID
+    assert "the certifications file has no records" in capsys.readouterr().out
+
+
+def test_cli_collected_without_non_running_is_unverifiable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without the non-running collection, xfail and skip status was never checked."""
+    argv = _only_c07(_cli_world(tmp_path, _certified()))
+    index = argv.index("--non-running")
+    del argv[index : index + 2]
+    assert cert.main(argv) == cert.EXIT_INCOMPLETE
+    assert "C07 INCOMPLETE UNVERIFIABLE_PYTEST_EVIDENCE" in capsys.readouterr().out
+
+
+def test_documented_non_running_collection_includes_skips() -> None:
+    marker = cert.NON_RUNNING_MARKERS
+    assert marker == "xfail or skip or skipif"
+    assert f'-m "{marker}"' in (cert.__doc__ or "")
+    doc = (cert.REPO_ROOT / "docs" / "qa" / "claim-certification.md").read_text("utf-8")
+    assert f'-m "{marker}"' in doc
+    assert "-m xfail >" not in doc
+    assert marker in " ".join(cert.parser().format_help().split())
+
+
+def _with_dates(record: Record, *, observed: str, decided: str) -> Record:
+    record["serving_receipt"]["observed_on"] = observed
+    record["live_journey_evidence"][0]["observed_on"] = observed
+    record["release_decision"]["decided_on"] = decided
+    return record
+
+
+def test_backdated_evidence_does_not_certify() -> None:
+    record = _with_dates(_certified(), observed="2019-01-01", decided="2019-01-01")
+    assert _validate(record) == _incomplete(Reason.EVIDENCE_OUTSIDE_WINDOW)
+
+
+def test_evidence_window_boundary() -> None:
+    oldest = ISSUED - timedelta(days=cert.MAX_EVIDENCE_AGE_DAYS)
+    record = _with_dates(_certified(), observed=oldest.isoformat(), decided=ISSUED.isoformat())
+    assert _validate(record) == (cert.EXIT_CERTIFIED, ())
+    too_old = (oldest - timedelta(days=1)).isoformat()
+    record = _with_dates(_certified(), observed=too_old, decided=ISSUED.isoformat())
+    assert _validate(record) == _incomplete(Reason.EVIDENCE_OUTSIDE_WINDOW)
+
+
+@pytest.mark.parametrize("field", ["receipt", "live", "decision"])
+def test_evidence_dated_after_issue_does_not_certify(field: str) -> None:
+    record = _certified()
+    target = {
+        "receipt": record["serving_receipt"],
+        "live": record["live_journey_evidence"][0],
+        "decision": record["release_decision"],
+    }[field]
+    target["decided_on" if field == "decision" else "observed_on"] = "2026-10-02"
+    code, reasons = _validate(record)
+    assert code == cert.EXIT_INCOMPLETE
+    assert reasons[0] == Reason.EVIDENCE_OUTSIDE_WINDOW
+
+
+def test_signoff_before_the_evidence_does_not_certify() -> None:
+    record = _with_dates(_certified(), observed=EVIDENCE_DAY, decided="2026-09-27")
+    assert _validate(record) == _incomplete(Reason.SIGNOFF_BEFORE_EVIDENCE)
+
+
+def test_all_dates_today_certifies() -> None:
+    record = _with_dates(_certified(), observed=TODAY.isoformat(), decided=TODAY.isoformat())
+    record["issued_on"] = TODAY.isoformat()
+    record["expires_on"] = (TODAY + timedelta(days=30)).isoformat()
+    assert _validate(record) == (cert.EXIT_CERTIFIED, ())
+
+
+def test_serving_receipt_observed_in_future_is_invalid() -> None:
+    record = _certified()
+    record["serving_receipt"]["observed_on"] = (TODAY + timedelta(days=1)).isoformat()
+    assert _validate(record) == _invalid(Reason.OBSERVED_IN_FUTURE)
+
+
+@pytest.mark.parametrize("claim_id", [["C07"], {"id": "C07"}])
+def test_unhashable_claim_id_is_malformed(claim_id: object) -> None:
+    record = _certified()
+    record["claim_id"] = claim_id
+    assert _validate(record) == _invalid(Reason.MALFORMED)
+
+
+def test_cli_unhashable_claim_id_is_invalid_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    argv = _cli_world(tmp_path, _certified())
+    certs = Path(argv[0])
+    payload = json.loads(certs.read_text("utf-8"))
+    payload["records"][0]["claim_id"] = [SENTINEL]
+    certs.write_text(json.dumps(payload), "utf-8")
+    assert cert.main(argv) == cert.EXIT_INVALID
+    out = capsys.readouterr().out
+    assert "record[0] INVALID MALFORMED" in out
+    assert cert.main([*argv, "--gate"]) == cert.EXIT_INCOMPLETE
+    out += capsys.readouterr().out
+    assert "an unknown claim id in the certifications" in out
+    assert SENTINEL not in out

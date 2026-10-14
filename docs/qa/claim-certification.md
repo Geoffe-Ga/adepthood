@@ -94,7 +94,11 @@ The validator (`backend/scripts/claim_certification.py`) returns
 7. **Validity.** `issued_on` and every observation date are on or before
    today. `expires_on` falls at most `MAX_CERTIFICATE_AGE_DAYS` (90) after
    `issued_on`. Today is on or before `expires_on`.
-8. **Limitations.** A claim the audit found `partially_true` or `misleading`
+8. **Fresh evidence.** The serving receipt, every live journey and the
+   signoff are dated within `MAX_EVIDENCE_AGE_DAYS` (30) before `issued_on`,
+   and no later than it. The signoff is dated on or after every piece of
+   evidence it approves. An old run cannot back a new certificate.
+9. **Limitations.** A claim the audit found `partially_true` or `misleading`
    carries at least one limitation. A claim with `partial` or `uncovered`
    forbidden-effect coverage carries the matching coverage limitation.
 
@@ -124,15 +128,21 @@ The reviewer must not have authored any of the claim's gates. The reviewer:
    ```bash
    cd backend
    python -m pytest --collect-only -q > /tmp/collected.txt
-   python -m pytest --collect-only -q -m xfail > /tmp/non-running.txt
+   python -m pytest --collect-only -q -m "xfail or skip or skipif" > /tmp/non-running.txt
    ```
 
+   Both files are required. With `--collected` alone, xfail and skip status
+   was never checked, so pytest evidence is unverifiable, not present. A test
+   in the second file never supports a certificate (`NON_RUNNING_EVIDENCE`).
    Marker-based collection cannot see imperative `pytest.xfail()` or
    `pytest.skip()` calls inside a test body. The reviewer confirms that no
    cited test takes one of those paths. The in-repo gate resolves node ids by
-   AST (`backend/tests/support/pytest_node_ids.py`), which sees
-   `@pytest.mark.xfail` but not skips. Jest references are checked for file
-   existence only; the reviewer confirms that the cited cases ran.
+   AST (`backend/tests/support/non_running_nodes.py`, which wraps
+   `pytest_node_ids.py`). It treats `xfail`, `skip` and `skipif` marks on the
+   test, on any enclosing class and in the module's `pytestmark` as
+   non-running, conservatively (a `skipif` with a false condition still
+   counts). Jest references are checked for file existence only; the reviewer
+   confirms that the cited cases ran.
 3. Runs the live synthetic journeys on the serving production build: a fresh
    account, $0 signup, journal write/reload/edit/export/delete, Intimate
    canaries, withdrawal, backup restore, and the model stopped while the API
@@ -155,7 +165,7 @@ The decider (the owner) then approves the exact sentence and date and fills
 
 | Mode | 0 | 1 | 2 |
 |---|---|---|---|
-| records (default) | every record is certified | every record is well formed, and at least one is withheld, incomplete, drifted or expired | a record or input file is malformed or unsafe |
+| records (default) | the file holds records, and every one is certified | every record is well formed, and at least one is withheld, incomplete, drifted or expired | a record or input file is malformed or unsafe, or the file holds no records |
 | `--gate` | both files are total and well formed, and every `published` claim has a current certificate | at least one gate problem (each is printed) | an input file is not JSON |
 
 ## Expiry and withdrawal

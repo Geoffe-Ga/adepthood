@@ -27,9 +27,9 @@ from typing import Any, Final, cast
 
 import pytest
 
-from privacy.claim_coverage import load_manifest
+from privacy.claim_coverage import NodeState, load_manifest
 from scripts import claim_certification as cert
-from tests.support.pytest_node_ids import node_state
+from tests.support.non_running_nodes import run_state
 
 _BACKEND_DIR: Final = Path(__file__).resolve().parents[2]
 _LEDGER: Final = cert.LEDGER_PATH
@@ -49,7 +49,7 @@ def _coverage() -> Mapping[str, str]:
 
 def _evidence() -> cert.Evidence:
     return cert.Evidence(
-        node_state=node_state,
+        node_state=run_state,
         jest_file_exists=lambda ref: (cert.REPO_ROOT / ref).is_file(),
         journeys=cert.journey_statuses(json.loads(cert.JOURNEYS_PATH.read_text(encoding="utf-8"))),
     )
@@ -153,11 +153,11 @@ def _certified_c19(ledger: Mapping[str, Any]) -> dict[str, Any]:
             "receipt_schema": 1,
             "backend_release": _SHA,
             "frontend_release": _SHA,
-            "observed_on": "2026-10-02",
+            "observed_on": "2026-09-28",
             "artifact_sha256": _DIGEST,
         },
         "automated_evidence": [{"kind": "journey", "ref": "auth.signup-login-authenticated-read"}],
-        "live_journey_evidence": [{"observed_on": "2026-10-02", "artifact_sha256": _DIGEST}],
+        "live_journey_evidence": [{"observed_on": "2026-09-28", "artifact_sha256": _DIGEST}],
         "required_gates": [
             [
                 {
@@ -257,3 +257,121 @@ def test_gate_cli_exits_nonzero_on_violating_fixture(tmp_path: Path) -> None:
 
     clean = _gate(_CERTS, _LEDGER)
     assert clean.returncode == cert.EXIT_CERTIFIED, clean.stdout + clean.stderr
+
+
+def test_unknown_and_non_object_records_fail_the_gate_without_echo() -> None:
+    records = _load(_CERTS)
+    records["records"] += [{"claim_id": "C99", "note": "zzsentinelzz"}, "junk"]
+    problems = _problems(_load(_LEDGER), records)
+    assert problems.count("an unknown claim id in the certifications") == 2
+    assert "zzsentinelzz" not in " ".join(problems)
+
+
+# ── Non-running nodes (AC5): xfail and skip markers at every level ────────────
+
+_NODE_MODULE: Final = """
+import pytest
+
+pytestmark = {module_mark}
+
+
+def test_plain():
+    pass
+
+
+@pytest.mark.skip(reason="off")
+def test_skipped():
+    pass
+
+
+@pytest.mark.skipif(True, reason="off")
+def test_skipif():
+    pass
+
+
+@pytest.mark.xfail(strict=True)
+def test_xfailed():
+    pass
+
+
+@pytest.mark.xfail
+class TestGap:
+    def test_inside(self):
+        pass
+
+
+class TestPlain:
+    @pytest.mark.skip
+    def test_method_skipped(self):
+        pass
+
+    def test_method(self):
+        pass
+"""
+_NON_RUNNING_PROBLEM: Final = ("C19 published without a current certificate: NON_RUNNING_EVIDENCE",)
+
+
+def _tree(tmp_path: Path, module_mark: str = "[]") -> str:
+    tests = tmp_path / "backend" / "tests"
+    tests.mkdir(parents=True, exist_ok=True)
+    (tests / "test_nodes.py").write_text(_NODE_MODULE.format(module_mark=module_mark), "utf-8")
+    return "backend/tests/test_nodes.py::"
+
+
+@pytest.mark.parametrize(
+    ("node", "state"),
+    [
+        ("test_plain", NodeState.PRESENT),
+        ("TestPlain::test_method", NodeState.PRESENT),
+        ("test_skipped", NodeState.XFAIL),
+        ("test_skipif", NodeState.XFAIL),
+        ("test_xfailed", NodeState.XFAIL),
+        ("TestGap::test_inside", NodeState.XFAIL),
+        ("TestPlain::test_method_skipped", NodeState.XFAIL),
+        ("test_absent", NodeState.MISSING),
+    ],
+)
+def test_run_state_sees_markers_at_every_level(tmp_path: Path, node: str, state: NodeState) -> None:
+    prefix = _tree(tmp_path)
+    assert run_state(prefix + node, tmp_path) == state
+
+
+@pytest.mark.parametrize(
+    "module_mark",
+    ["pytest.mark.xfail", "[pytest.mark.skip]", "(pytest.mark.skipif(True, reason='x'),)"],
+)
+def test_module_pytestmark_makes_every_node_non_running(tmp_path: Path, module_mark: str) -> None:
+    prefix = _tree(tmp_path, module_mark)
+    assert run_state(prefix + "test_plain", tmp_path) == NodeState.XFAIL
+    assert run_state(prefix + "TestPlain::test_method", tmp_path) == NodeState.XFAIL
+
+
+@pytest.mark.parametrize(
+    ("node", "expected"),
+    [
+        ("test_plain", ()),
+        ("test_skipif", _NON_RUNNING_PROBLEM),
+        ("test_skipped", _NON_RUNNING_PROBLEM),
+        ("TestGap::test_inside", _NON_RUNNING_PROBLEM),
+    ],
+)
+def test_a_non_running_node_never_supports_certification(
+    tmp_path: Path, node: str, expected: tuple[str, ...]
+) -> None:
+    prefix = _tree(tmp_path)
+    ledger = _publish(_load(_LEDGER), "C19")
+    record = _certified_c19(ledger)
+    record["automated_evidence"] = [{"kind": "pytest", "ref": prefix + node}]
+    evidence = cert.Evidence(
+        node_state=lambda ref: run_state(ref, tmp_path),
+        jest_file_exists=lambda _ref: False,
+        journeys={},
+    )
+    problems = cert.publish_gate_problems(
+        ledger,
+        _with_record(_load(_CERTS), record),
+        coverage=_coverage(),
+        today=_TODAY,
+        evidence_factory=lambda: evidence,
+    )
+    assert problems == expected
