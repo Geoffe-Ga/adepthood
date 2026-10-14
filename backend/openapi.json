@@ -10717,7 +10717,7 @@
     },
     "/admin/maintenance/journal-entries": {
       "post": {
-        "description": "Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.\n\nRemoves their margin notes, promoted passages, completion suggestions and\ncorpus fragments, and clears the metering link, as ``domain.retention``\nderives from the schema. Entries still owing a remote withdrawal are kept\nand counted as ``blocked``. The window is at least the age of the oldest\nlive backup copy (retention plus one backup interval), so -- provided\nbackups are expired as DEPLOYMENT.md says -- no live backup holds a purged\nentry undeleted. The default window is the lifetime the owner ratified for\na soft-deleted page (#3063 AC15, 2026-10-13), which is that floor; nothing\nschedules this route (AC18).",
+        "description": "Hard-delete journal entries soft-deleted more than ``older_than_days`` ago.\n\nRemoves their margin notes, promoted passages, completion suggestions and\ncorpus fragments, and clears the metering link, as ``domain.retention``\nderives from the schema. Entries still owing a remote withdrawal are kept\nand counted as ``blocked``. The window is at least the age of the oldest\nlive backup copy (retention plus one backup interval), so -- provided\nbackups are expired as DEPLOYMENT.md says -- no live backup holds a purged\nentry undeleted. The default window is the lifetime the owner ratified for\na soft-deleted page (#3063 AC15, 2026-10-13), which is that floor. The\nnightly retention sweep runs the same purge on that window (#3266); this\nroute stays for an operator's ad hoc run.",
         "operationId": "purge_journal_entries_admin_maintenance_journal_entries_post",
         "parameters": [
           {
