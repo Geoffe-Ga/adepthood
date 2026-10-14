@@ -30,6 +30,12 @@ beforeEach(() => {
 });
 
 describe('useBootstrapHabits lifecycle', () => {
+  it('requests auth-owned recovery on a provisional load without replaying the queue', () => {
+    const recover = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+    renderHook(() => useBootstrapHabits('UTC', false, recover));
+    expect(recover).toHaveBeenCalledTimes(1);
+    expect(habitManager.loadHabits).toHaveBeenLastCalledWith('UTC', { replayCheckIns: false });
+  });
   it('defers replay until the account timezone is authoritative, including actual UTC', () => {
     const { rerender } = renderHook<void, { ready: boolean }>(
       ({ ready }) => useBootstrapHabits('UTC', ready),

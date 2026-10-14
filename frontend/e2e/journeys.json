@@ -65,15 +65,15 @@
   },
   {
     "id": "welcome.first-run-walkthrough-to-journal",
-    "description": "A new account meets the intro walkthrough, pages through it, and Begin -- or Skip -- hands them to the Journal shelf, which loads the entries they do not have yet. Uncovered because this lane runs on the node environment with node_modules untransformed and cannot mount a screen at all, the same constraint recorded on errors.boundary-recovers-and-reports. The walkthrough's dismissal is a local flag rather than a request, so the only seam a spec here could watch is the shelf's own fetch, which cannot tell that the arrival came from Begin. Covering it needs a second, rendering lane, not another spec here.",
+    "description": "A fresh account reads all four Welcome panels naming the journal floor, independently chosen depths, user-named habits with check-ins, and grounding or timed practices (#3103). At 390x844 and 1280x720, every body, privacy note and pager control stays in view. On a 320x568 phone and with 200% text, each panel scrolls vertically while Skip and Next/Begin remain available. Begin and Skip each hand the reader to the Journal shelf through its real GET /journal/ request. The spec awaits PATCH /ui-flags has_seen_welcome=true before reload and verifies the subsequent GET /ui-flags returns true, proving account-owned persistence. It saves panel screenshots for visual inspection.",
     "crosses": {
       "screen": "frontend/src/features/Welcome/WelcomeScreen.tsx",
-      "client": ["journal"],
-      "routes": ["GET /journal/"],
-      "tables": ["journalentry"]
+      "client": ["journal", "uiFlags"],
+      "routes": ["GET /journal/", "GET /ui-flags", "PATCH /ui-flags"],
+      "tables": ["journalentry", "useruiflags"]
     },
-    "status": "uncovered",
-    "issue": 2399
+    "status": "covered",
+    "coveredBy": "frontend/e2e/welcome.browser.e2e.test.ts"
   },
   {
     "id": "habits.create-check-in-streak",
@@ -1546,12 +1546,21 @@
   },
   {
     "id": "journal.idle-writing-timer-clears-the-entry-body",
-    "description": "At the browser lane's fixed 1280x720 desktop viewport, a writer opens a fresh page and writes while the timer is idle. With the page's own scroller held at the top, the body portion visible through that viewport and the idle pill share no area: the expanded choice sits in flow below the page rather than at a fixed viewport offset over the flex-grown field (#2787). Starting it preserves the existing compact desktop treatment, measured as a rail no wider than the 44dp minimum touch target. The component layout suite separately pins that the compact/running shape stays absolute at its existing bottom offset while the expanded idle shape is in flow.",
+    "description": "At 1280x720 the floating glass timer leaves the visible writing field unobscured. Its idle choice and running rail never shrink the sheet; expanded options remain inside the paper around the desktop rail breakpoint. Finish and Get Resonance remain hit-testable while a session runs and beneath its bounded finished-session note. A 390x640 phone with sixteen server-created habits can scroll to the first and last choices, cancel, and close without covering either page action, then links its final minute-counting habit over the real API and reads the persisted choice back. Finishing still reaches the server-backed reading view (#3131).",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["auth"],
-      "routes": ["POST /auth/signup"],
-      "tables": ["user"]
+      "client": ["auth", "journal", "habits", "uiFlags"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /habits/",
+        "GET /habits/",
+        "PATCH /ui-flags",
+        "GET /ui-flags"
+      ],
+      "tables": ["user", "journalentry", "habit", "goal", "useruiflags"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-writing-timer.browser.e2e.test.ts"
@@ -2201,5 +2210,22 @@
     },
     "status": "uncovered",
     "issue": 3157
+  },
+  {
+    "id": "habits.offline-calendar-and-legacy-recovery",
+    "description": "A resumed account whose first authoritative timezone refresh fails offline recovers on a later Habits load after the auth cooldown, including actual UTC, and exactly one legacy completion reaches the real server on its account-local day. A real deleted-goal rejection followed by an injected device cleanup read failure retains a durable local replay identity and one visible dropped check-in across retry; local replay identity never enters the API payload. Unit interleavings additionally cover repeated retries, distinct identical legacy taps, failed identity persistence, concurrent drains and account switches.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits", "goalCompletions"],
+      "routes": [
+        "POST /auth/refresh",
+        "GET /habits/",
+        "POST /goal_completions/",
+        "DELETE /habits/{habit_id}"
+      ],
+      "tables": ["user", "habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habits-recovery.browser.e2e.test.ts"
   }
 ]

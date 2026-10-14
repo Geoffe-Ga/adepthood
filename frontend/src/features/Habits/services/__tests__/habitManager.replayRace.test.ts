@@ -74,6 +74,108 @@ afterEach(() => {
 });
 
 describe('offline queue replay with concurrent writers (#3086)', () => {
+  it('keeps an identical later legacy append when the identified original finishes', async () => {
+    const legacy = { goal_id: 1, did_complete: true, timestamp: '2026-10-12T12:00:00Z' };
+    await savePendingCheckIn(legacy);
+    const started = deferred<void>();
+    const response = deferred<Awaited<ReturnType<typeof goalCompletions.create>>>();
+    jest.mocked(goalCompletions.create).mockImplementationOnce(() => {
+      started.resolve();
+      return response.promise;
+    });
+    const replay = habitManager.loadHabits('UTC');
+    await started.promise;
+    expect((await loadPendingCheckIns())[0]?.replay_id).toEqual(expect.any(String));
+    await savePendingCheckIn(legacy);
+    response.resolve(mockCheckInResult);
+    await replay;
+    expect(await loadPendingCheckIns()).toEqual([legacy]);
+    expect(goalCompletions.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not stamp identities after a queued storage lane changes owners', async () => {
+    const legacy = { goal_id: 1, did_complete: true, timestamp: '2026-10-12T12:00:00Z' };
+    await savePendingCheckIn(legacy);
+    const blocked = deferred<void>();
+    const holding = serialize('@adepthood/pending_checkins#u1', () => blocked.promise);
+    const preparing = loadPendingCheckIns(capturePendingCheckInScope(), true);
+    setActiveUser(2);
+    const incoming = queued('new-owner');
+    await savePendingCheckIn(incoming);
+    blocked.resolve();
+    await holding;
+    expect(await preparing).toEqual([]);
+    expect(await loadPendingCheckIns()).toEqual([incoming]);
+    setActiveUser(1);
+    expect(await loadPendingCheckIns()).toEqual([legacy]);
+  });
+
+  it('retains two identical legacy taps as separate losses', async () => {
+    const legacy = { goal_id: 1, did_complete: true, timestamp: '2026-10-12T12:00:00Z' };
+    await Promise.all([savePendingCheckIn(legacy), savePendingCheckIn(legacy)]);
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.mocked(goalCompletions.create).mockRejectedValue(new ApiError(404, 'goal_not_found'));
+    await Promise.all([habitManager.loadHabits('UTC'), habitManager.loadHabits('UTC')]);
+    const dropped = await loadDroppedCheckIns();
+    expect(dropped).toHaveLength(2);
+    expect(dropped[0]?.replay_id).toEqual(expect.any(String));
+    expect(dropped[0]?.replay_id).not.toBe(dropped[1]?.replay_id);
+    expect(goalCompletions.create).toHaveBeenCalledTimes(2);
+    expect(await loadPendingCheckIns()).toEqual([]);
+  });
+
+  it('defers legacy replay when its identity cannot be persisted', async () => {
+    const legacy = { goal_id: 1, did_complete: true, timestamp: '2026-10-12T12:00:00Z' };
+    await savePendingCheckIn(legacy);
+    const write = jest.spyOn(AsyncStorage, 'setItem');
+    const original = write.getMockImplementation()!;
+    write.mockImplementation((key, value) =>
+      key === '@adepthood/pending_checkins#u1'
+        ? Promise.reject(new Error('temporary identity write failure'))
+        : original(key, value),
+    );
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    await habitManager.loadHabits('UTC');
+    expect(goalCompletions.create).not.toHaveBeenCalled();
+    expect(await loadPendingCheckIns()).toEqual([legacy]);
+    write.mockImplementation(original);
+    await habitManager.loadHabits('UTC');
+    expect(goalCompletions.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('quarantines a legacy rejection once across cleanup failure and repeated loads (#3184)', async () => {
+    const legacy = { goal_id: 1, did_complete: true, timestamp: '2026-10-12T12:00:00Z' };
+    await savePendingCheckIn(legacy);
+    await recordDroppedCheckIn({
+      ...queued('unrelated'),
+      status: 404,
+      dropped_at: '2026-10-12T13:00:00Z',
+    });
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const read = jest.spyOn(AsyncStorage, 'getItem');
+    jest.mocked(goalCompletions.create).mockImplementation(async () => {
+      // The quarantine read succeeds; pending cleanup fails afterward.
+      let rejected = false;
+      read.mockImplementation((key) => {
+        if (key === '@adepthood/pending_checkins#u1' && !rejected) {
+          rejected = true;
+          return Promise.reject(new Error('temporary cleanup failure'));
+        }
+        return mockStorageRead(key);
+      });
+      throw new ApiError(404, 'goal_not_found');
+    });
+    for (let attempt = 0; attempt < 25; attempt += 1) await habitManager.loadHabits('UTC');
+    const dropped = await loadDroppedCheckIns();
+    expect(dropped).toHaveLength(2);
+    expect(dropped[0]?.operation_id).toBe('unrelated');
+    expect(useDroppedCheckInStore.getState().entries).toHaveLength(2);
+    expect(await loadPendingCheckIns()).toHaveLength(1);
+    expect(
+      jest.mocked(goalCompletions.create).mock.calls.every(([, options]) => options === undefined),
+    ).toBe(true);
+  });
+
   it('still hydrates the saved quarantine notice while replay waits for a confirmed calendar', async () => {
     const entry = {
       ...queued('previously-rejected'),
@@ -119,7 +221,10 @@ describe('offline queue replay with concurrent writers (#3086)', () => {
       });
 
       await expect(habitManager.loadHabits('UTC')).resolves.toBeUndefined();
-      expect(await loadPendingCheckIns()).toEqual([entry]);
+      expect(await loadPendingCheckIns()).toEqual([expect.objectContaining({ ...entry })]);
+      if (kind === 'legacy amount-less') {
+        expect((await loadPendingCheckIns())[0]?.replay_id).toEqual(expect.any(String));
+      }
       await habitManager.loadHabits('UTC');
       expect(await loadPendingCheckIns()).toEqual([]);
       const calls = jest.mocked(goalCompletions.create).mock.calls;

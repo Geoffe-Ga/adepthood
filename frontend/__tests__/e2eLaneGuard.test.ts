@@ -71,6 +71,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   DEMO_TILE_JOURNEY,
   'habits-day-rollover.browser.e2e.test.ts',
   'habits-offline-replay.browser.e2e.test.ts',
+  'habits-recovery.browser.e2e.test.ts',
   'habits-resumed-session.browser.e2e.test.ts',
   'journal-care-support.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
@@ -121,6 +122,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'return-recover-habit.browser.e2e.test.ts',
   'screen-title-heading.browser.e2e.test.ts',
   'text-order.browser.e2e.test.ts',
+  'welcome.browser.e2e.test.ts',
   'writing-timer-habit-link.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';

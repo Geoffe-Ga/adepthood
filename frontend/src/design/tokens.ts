@@ -917,3 +917,17 @@ export const showcaseShadow = {
   shadowRadius: 22,
   elevation: 8,
 } as const;
+
+/** Blurred translucent web chrome, with opaque paper when native blur is absent. */
+export const glass = {
+  pill: {
+    backgroundColor: Platform.OS === 'web' ? colors.mystical.glowLight : colors.paper.background,
+    borderColor: surface.hairline,
+    borderWidth: 1,
+    ...surfaceShadow.card,
+  },
+  web:
+    Platform.OS === 'web'
+      ? ({ backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' } as unknown as ViewStyle)
+      : null,
+};

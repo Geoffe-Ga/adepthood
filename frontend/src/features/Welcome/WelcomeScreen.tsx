@@ -20,7 +20,12 @@ interface PanelProps {
 
 /** A single editorial panel rendered as a ShowcaseCard hero. */
 const WelcomePanelView = ({ panel, index, width }: PanelProps): React.JSX.Element => (
-  <View style={[s.panel, { width }]} testID={`welcome-panel-${index}`}>
+  <ScrollView
+    style={[s.panel, { width }]}
+    contentContainerStyle={s.panelContent}
+    nestedScrollEnabled
+    testID={`welcome-panel-${index}`}
+  >
     <ShowcaseCard>
       <View style={s.hero}>
         <Text style={s.eyebrow}>{panel.eyebrow}</Text>
@@ -45,7 +50,7 @@ const WelcomePanelView = ({ panel, index, width }: PanelProps): React.JSX.Elemen
         ) : null}
       </View>
     </ShowcaseCard>
-  </View>
+  </ScrollView>
 );
 
 interface DotsProps {
