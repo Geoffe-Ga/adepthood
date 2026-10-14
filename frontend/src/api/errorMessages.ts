@@ -57,6 +57,13 @@ export const INSUFFICIENT_OFFERINGS_COPY =
 // no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
 export const LLM_KEY_REQUIRED_COPY =
   "BotMason's cloud AI needs an API key of your own — credits don't pay for it — so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.";
+// DRAFT for owner review (#1938, B21 E1): a revoked entitlement -- a refund,
+// a dispute, a membership that ended, or an operator's revocation -- restricts
+// AI features only. Plain and non-pressuring under "you choose your depth": it
+// says what stopped and what did not, and offers no price, purchase or refill,
+// since credits are not what is missing.
+export const AI_ACCESS_REVOKED_COPY =
+  "BotMason can't do this on the app's allowance any more, because this account's APTITUDE membership is no longer active. Nothing was charged. Your journal, the course, your habits and your practice are all still here, and you can export or delete your data whenever you like.";
 
 const MONTHLY_FREE_MESSAGES_USED =
   "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";
@@ -213,6 +220,8 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // Only an older build that still asks for a letter the moment a note opens
   // can meet this: the server will not charge for a letter whose price the
   // writer was never shown. Nothing was spent.
+  // A revoked entitlement (403): AI features only, never the journal (#1938).
+  ai_access_revoked: AI_ACCESS_REVOKED_COPY,
   essay_price_unacknowledged:
     "Letters now show their price before they're written, and nothing was spent. Close this note and open it again to see the price and ask.",
   generation_in_progress: GENERATION_IN_PROGRESS_COPY,
