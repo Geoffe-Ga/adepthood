@@ -32,18 +32,20 @@ and the answer a success or a closed-vocabulary refusal. An ``APP_PROVIDER``
 writer carrying a key is the positive control: the same recorder records
 their provider dials, so a recorder that saw nothing is evidence.
 
-Declared gaps, so none hides behind a green row:
+Essay expansion and page transcription have no vault capability, so under
+``VAULT_BOUND`` they fail closed (#3156): every one of their rows must be the
+refunded ``reflection_source_unavailable`` refusal, whatever the condition.
 
-* **#3156 at the socket.** Essay expansion still builds the app-provider
-  adapter under ``VAULT_BOUND``, so a key-carrying vault-bound essay dials
-  the provider. Those rows are strict xfails naming #3156.
-* **#3156 at the seam.** Corpus classification and page transcription never
-  forward a key, and under ADR 0009 phase (a) a keyless request reaches no
-  cloud provider, so neither dials off-box today and their socket rows pass.
-  They still reach ``generate_response`` under ``VAULT_BOUND`` -- answered by
-  the armed stub here, by a refusal in production -- which is the leak #3156
-  closes. :func:`test_a_vault_bound_writer_never_reaches_the_app_provider_seam`
-  pins that, strict-xfail, beside a live control for the same spy.
+The seam, as well as the socket. Corpus classification and page transcription
+never forward a key, and under ADR 0009 phase (a) a keyless request reaches no
+cloud provider, so a leak there would never reach a socket: it would be a call
+to ``generate_response`` answered by the armed stub here, by a refusal in
+production. :func:`test_a_vault_bound_writer_never_reaches_the_app_provider_seam`
+pins that those three operations never reach the app-provider dial under
+``VAULT_BOUND`` (the leak #3156 closed), beside a live control for the same spy.
+
+Declared limits, so none hides behind a green row:
+
 * **A condition an operation never meets is vacuous for it.** Standalone
   detection under ``VAULT_BOUND`` never dials the vault, so "replaced
   mid-request" cannot fire there; the row still asserts the dial set.
@@ -528,6 +530,8 @@ class Operation:
     its capabilities -- the only operations a mid-call reconnect can land
     inside, and the ones a healthy row must show reaching the vault at all.
     ``vault_answer`` is text only the healthy vault's answer carries.
+    ``fails_closed`` says the operation has no vault capability, so a
+    vault-bound writer is always refused with the closed code (#3156).
     """
 
     name: str
@@ -536,6 +540,7 @@ class Operation:
     relays_key: bool
     asks_vault: bool = False
     vault_answer: str | None = None
+    fails_closed: bool = False
 
 
 _OPERATIONS: Final = (
@@ -556,7 +561,7 @@ _OPERATIONS: Final = (
         vault_answer=_VAULT_NOTE,
     ),
     Operation("standalone_detect", _arrange_entry_with_candidate, _detect, relays_key=True),
-    Operation("essay", _arrange_note, _essay, relays_key=True),
+    Operation("essay", _arrange_note, _essay, relays_key=True, fails_closed=True),
     Operation(
         "corpus_classification",
         _arrange_corpus_consent,
@@ -564,7 +569,7 @@ _OPERATIONS: Final = (
         relays_key=False,
         asks_vault=True,
     ),
-    Operation("transcription", _nothing, _transcribe, relays_key=False),
+    Operation("transcription", _nothing, _transcribe, relays_key=False, fails_closed=True),
 )
 _BY_NAME: Final = {operation.name: operation for operation in _OPERATIONS}
 
@@ -585,22 +590,10 @@ def _assert_result_or_closed_refusal(resp: httpx.Response) -> None:
 
 # ── The matrix ────────────────────────────────────────────────────────────────
 
-_ISSUE_3156_SOCKET: Final = (
-    "#3156: essay expansion builds the app-provider adapter under VAULT_BOUND, "
-    "so a key-carrying vault-bound essay dials the provider"
-)
-
 
 def _vault_bound_case(operation: Operation, condition: Condition, *, byok: bool) -> object:
-    marks = (
-        [pytest.mark.xfail(strict=True, raises=AssertionError, reason=_ISSUE_3156_SOCKET)]
-        if operation.name == "essay" and byok
-        else []
-    )
     key = "byok" if byok else "keyless"
-    return pytest.param(
-        operation.name, condition, byok, marks=marks, id=f"{operation.name}-{condition}-{key}"
-    )
+    return pytest.param(operation.name, condition, byok, id=f"{operation.name}-{condition}-{key}")
 
 
 _VAULT_BOUND_MATRIX: Final = [
@@ -665,10 +658,13 @@ def _assert_the_row_is_not_vacuous(
     asked and its answer served, or a recorder that saw nothing would pass it.
     A replaced row of the same operations must show the writer's reconnect
     really landed mid-call, or the row would prove nothing about #3078. With
-    the vault itself healthy their writer gets a result. (The operations that
-    never ask the vault may answer a healthy row with the closed refusal: that
-    is exactly what #3156 makes them do.)
+    the vault itself healthy their writer gets a result. An operation with no
+    vault capability is refused in every row, before anything is dialed.
     """
+    if op.fails_closed:
+        assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+        assert resp.json()["detail"] == REFLECTION_SOURCE_UNAVAILABLE
+        assert edge.names() == set(), edge.dials
     if not op.asks_vault:
         return
     if condition in {Condition.HEALTHY, Condition.PROVIDER_UNREACHABLE}:
@@ -713,10 +709,6 @@ async def test_app_provider_writer_dials_are_recorded(
 
 #: Every module whose binding of the app-provider dial an operation here calls.
 _SEAM_MODULES: Final = (marginalia_service, frequency_classification_service, transcription_router)
-_ISSUE_3156_SEAM: Final = (
-    "#3156: essay, corpus classification and transcription reach generate_response "
-    "under VAULT_BOUND"
-)
 _SEAM_OPERATIONS: Final = ("essay", "corpus_classification", "transcription")
 
 
@@ -750,16 +742,7 @@ def _spy_on_the_seam(monkeypatch: pytest.MonkeyPatch) -> _SeamSpy:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("byok", [False, True], ids=["keyless", "byok"])
-@pytest.mark.parametrize(
-    "operation",
-    [
-        pytest.param(
-            name,
-            marks=pytest.mark.xfail(strict=True, raises=AssertionError, reason=_ISSUE_3156_SEAM),
-        )
-        for name in _SEAM_OPERATIONS
-    ],
-)
+@pytest.mark.parametrize("operation", _SEAM_OPERATIONS)
 async def test_a_vault_bound_writer_never_reaches_the_app_provider_seam(
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -768,9 +751,9 @@ async def test_a_vault_bound_writer_never_reaches_the_app_provider_seam(
 ) -> None:
     """The leak the socket cannot always see: an app-provider call under ``VAULT_BOUND``.
 
-    With or without a key, each of these operations reaches the app-provider
-    dial for a vault-bound writer today. Strict xfails until #3156 binds them
-    to the boundary; they flip the day it lands.
+    With or without a key, none of these operations may reach the app-provider
+    dial for a vault-bound writer. Before #3156 every one of them did, and the
+    corpus and transcription calls never showed at the socket.
     """
     op = _BY_NAME[operation]
     writer = await _vault_bound_writer(harness, f"seam_{operation}_{int(byok)}")
