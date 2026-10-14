@@ -1,3 +1,6 @@
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 
 import { backendUrl, bearer, frontendUrl, sessionFor, signUp } from './journalHabitsBrowserSupport';
@@ -216,3 +219,105 @@ test('a writer who declines every depth keeps a whole journal and is offered no 
   expect(await invitations.json()).toEqual([]);
   expect(await egressSnapshot(page.request)).toEqual(before);
 });
+
+const SETTINGS_LAYOUTS = [
+  { width: 390, height: 844, scale: 1 },
+  { width: 390, height: 844, scale: 2 },
+  { width: 1280, height: 720, scale: 1 },
+  { width: 1280, height: 720, scale: 2 },
+];
+
+/** Enlarge actual text while keeping the browser's viewport and hit targets physical. */
+async function enlargeSettingsText(page: Page): Promise<void> {
+  await page.getByTestId('settings-group-depths').evaluate((root) => {
+    for (const element of root.querySelectorAll<HTMLElement>('*')) {
+      if (element.childElementCount || !element.textContent?.trim()) continue;
+      const style = getComputedStyle(element);
+      element.style.fontSize = `${parseFloat(style.fontSize) * 2}px`;
+      element.style.lineHeight = `${parseFloat(style.lineHeight) * 2}px`;
+    }
+  });
+}
+
+for (const layout of SETTINGS_LAYOUTS) {
+  test(`a late depth read preserves a confirmed decline at ${layout.width} and ${layout.scale}x text`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(layout);
+    const email = await signUp(page, 'depth-race');
+    const { token } = await sessionFor(page.request, email);
+    let release!: () => void;
+    let captured!: () => void;
+    const held = new Promise<void>((done) => {
+      release = done;
+    });
+    const ready = new Promise<void>((done) => {
+      captured = done;
+    });
+    let intercepted = false;
+    await page.route('**/depth-preferences', async (route) => {
+      if (route.request().method() !== 'GET' || intercepted) return route.continue();
+      intercepted = true;
+      // Fetch the genuine old server answer, delaying only its browser delivery.
+      const response = await route.fetch();
+      expect((await response.json()).enable_habits).toBe(true);
+      captured();
+      await held;
+      await route.fulfill({ response });
+    });
+    await page.goto(`${frontendUrl()}/settings`);
+    await ready;
+    if (layout.scale === 2) await enlargeSettingsText(page);
+    for (const ring of SWITCHED_IN_SETTINGS) {
+      await expect(page.getByTestId(`depth-row-${ring}`).getByRole('switch')).toHaveCount(1);
+    }
+    const toggle = page.getByTestId('depth-toggle-habits').getByRole('switch');
+    await expect(toggle).toBeChecked();
+    await toggle.scrollIntoViewIfNeeded();
+    await toggle.focus();
+    await expect(toggle).toBeFocused();
+    const patched = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'PATCH' &&
+        new URL(response.url()).pathname === '/depth-preferences',
+    );
+    await page.keyboard.press('Space');
+    expect((await patched).status()).toBe(HTTP_OK);
+    await expect(toggle).not.toBeChecked();
+    const delivered = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/depth-preferences',
+    );
+    release();
+    await delivered;
+    await page.waitForLoadState('networkidle');
+    await expect(toggle).not.toBeChecked();
+    const saved = await page.request.get(`${backendUrl()}/depth-preferences`, {
+      headers: bearer(token),
+    });
+    expect((await saved.json()).enable_habits).toBe(false);
+    const artifacts = join(__dirname, 'artifacts', 'decline-races');
+    mkdirSync(artifacts, { recursive: true });
+    await page.screenshot({
+      path: join(artifacts, `settings-${layout.width}-${layout.scale}x.png`),
+      animations: 'disabled',
+    });
+    for (const ring of ['practices', 'course']) {
+      await page.keyboard.press('Tab');
+      const nextToggle = page.getByTestId(`depth-toggle-${ring}`).getByRole('switch');
+      await expect(nextToggle).toBeFocused();
+      await expect(nextToggle).toBeInViewport();
+    }
+    await page.screenshot({
+      path: join(artifacts, `settings-${layout.width}-${layout.scale}x-end.png`),
+      animations: 'disabled',
+    });
+    await page.reload();
+    await expect(toggle).not.toBeChecked();
+    const restored = page.request.get(`${backendUrl()}/depth-preferences`, {
+      headers: bearer(token),
+    });
+    expect((await (await restored).json()).enable_habits).toBe(false);
+  });
+}

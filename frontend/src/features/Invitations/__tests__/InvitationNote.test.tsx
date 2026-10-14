@@ -1,6 +1,6 @@
 /* eslint-env jest */
 import { jest, describe, it, expect } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 const mockPressIn = jest.fn();
@@ -107,4 +107,16 @@ describe('InvitationNote', () => {
     expect(mockPressIn).toHaveBeenCalledTimes(1);
     expect(mockPressOut).toHaveBeenCalledTimes(1);
   });
+});
+
+it('contains a rejected asynchronous decline inside its press handler', async () => {
+  const onDismiss = jest.fn(() => Promise.reject(new Error('offline decline')));
+  const { getByTestId } = render(
+    <InvitationNote invitation={invitation({ id: 7 })} onDismiss={onDismiss} />,
+  );
+  await act(async () => {
+    fireEvent.press(getByTestId('invitation-7-dismiss'));
+    await Promise.resolve();
+  });
+  expect(onDismiss).toHaveBeenCalledWith(7);
 });
