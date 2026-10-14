@@ -21,13 +21,27 @@ from pydantic import BaseModel, Field
 # 422 before the handler runs (and before any wallet or LLM work).
 TranscribeMediaType = Literal["image/jpeg", "image/png", "image/webp"]
 
+# Typed as a plain string, not a ``Literal`` of the tiers, on purpose: the
+# router judges it with :func:`domain.privacy_tier.admits_egress`, the one
+# allowlist, so ``intimate``, an unknown tier, the empty string and a
+# wrong-case spelling all get the same typed 403 ``tier_refused`` rather than
+# some of them a schema 422. Required, so a client that declares nothing is
+# refused by the schema before the handler runs (#3059 AC15).
+_CLASSIFICATION_DESCRIPTION = (
+    "The declared privacy tier of the entry the page belongs to. Only `personal` "
+    "and `public` may be read; any other value, `intimate` included, is refused "
+    "403 `tier_refused` before anything is charged or sent to a model."
+)
+
 
 class TranscribePageRequest(BaseModel):
     """One captured image of text (a page, screenshot, or screen) to transcribe.
 
     ``image_base64`` is the base64-encoded image bytes and ``media_type`` its
-    declared MIME type. Neither field is stored: the request is stateless, so
-    the bytes live only for the duration of the single vision call.
+    declared MIME type. ``classification`` is the tier of the entry the page
+    belongs to, judged before anything else. No field is stored: the request
+    is stateless, so the bytes live only for the duration of the single vision
+    call.
     """
 
     image_base64: str = Field(
@@ -38,6 +52,18 @@ class TranscribePageRequest(BaseModel):
         repr=False,
     )
     media_type: TranscribeMediaType = Field(description="Declared image MIME type.")
+    classification: str = Field(description=_CLASSIFICATION_DESCRIPTION)
+
+
+class DirectAdmissionRequest(BaseModel):
+    """What a device declares before reading a page with its own vendor (ADR 0009).
+
+    Only the page's tier: never the page, never the key. The server admits a
+    read only for a tier that may leave the primary boundary, so it never
+    admits an Intimate page to a vendor it cannot see.
+    """
+
+    classification: str = Field(description=_CLASSIFICATION_DESCRIPTION)
 
 
 class TranscribePageResponse(BaseModel):

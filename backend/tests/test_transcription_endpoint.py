@@ -176,7 +176,11 @@ async def test_a_keyless_page_is_refused_before_its_body_is_decoded(
 
     resp = await async_client.post(
         _ENDPOINT,
-        json={"image_base64": "not!!base64!!", "media_type": "image/jpeg"},
+        json={
+            "image_base64": "not!!base64!!",
+            "media_type": "image/jpeg",
+            "classification": "personal",
+        },
         headers=headers,
     )
 
@@ -288,7 +292,11 @@ async def test_invalid_base64_is_422(async_client: AsyncClient) -> None:
 
     resp = await async_client.post(
         _ENDPOINT,
-        json={"image_base64": "not!!base64!!", "media_type": "image/jpeg"},
+        json={
+            "image_base64": "not!!base64!!",
+            "media_type": "image/jpeg",
+            "classification": "personal",
+        },
         headers=headers,
     )
 
@@ -371,7 +379,14 @@ async def test_unknown_media_type_is_422(async_client: AsyncClient) -> None:
 @pytest.mark.parametrize(
     ("body", "username"),
     [
-        ({"image_base64": "not!!base64!!", "media_type": "image/jpeg"}, "nocharge_badb64"),
+        (
+            {
+                "image_base64": "not!!base64!!",
+                "media_type": "image/jpeg",
+                "classification": "personal",
+            },
+            "nocharge_badb64",
+        ),
         (_payload(_OVERSIZED_JPEG_BYTES), "nocharge_oversized"),
     ],
     ids=["invalid-base64", "oversized"],
