@@ -1129,6 +1129,39 @@ async def test_reapply_restamps_an_intimate_page_and_withdraws_it_locally(
 
 
 @pytest.mark.asyncio
+async def test_the_marker_row_keeps_the_obligation_and_intimate_counts(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """The durable receipt records every count the reapply reports, not only accounts and entries.
+
+    After the backup a page is made Intimate, and the vault cannot confirm the
+    withdrawal, so an obligation is owed too. The restore loses both. After the
+    reapply, the ``restoremarker`` row read back from the database says one of
+    each was re-applied (#3237).
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    ivy = await _signup(client, "ivy")
+    entry_id = await _seed_offered_page(factory, ivy)
+    snapshot = await _snapshot(factory, tmp_path)
+    await _withdraw_locally_as_the_route_does(
+        factory, entry_id, classification=JournalClassification.INTIMATE.value
+    )
+    await _owe(factory, ivy, entry_id, JournalWithdrawalState.PENDING_DELETE)
+    tombstones = await _export(factory)
+    await _restore(factory, snapshot)
+
+    receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    assert (receipt.intimate_reapplied, receipt.obligations_reapplied) == (1, 1)
+    marker = await _marker(factory, _RESTORE_ID)
+    assert marker is not None
+    assert marker.state == RestoreState.COMPLETE.value
+    assert (marker.intimate_reapplied, marker.obligations_reapplied) == (1, 1)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("state", "erased_here"),
     [(JournalWithdrawalState.PENDING_DELETE, False), (JournalWithdrawalState.UNCONFIRMED, True)],
