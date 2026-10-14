@@ -115,18 +115,20 @@ claim path. It is never stamped, so its clock never starts.
 | `manual_vaults` | A vault the user runs | no fixed period | same | Not ours to set. The user operates the vault and decides. | As ratified. |
 | `model_vendor_copies` | Prompts and completions held by the provider | no fixed period | same | This is the vendor's period, not ours. Vendor fields are deferred to B11 (#3065). | Vendor retention, unestablished. |
 
-## Not ratified: keeping an obligation after account deletion
+## Ratified 2026-10-14: keeping a detached note after account deletion
 
-An `unconfirmed` withdrawal record (`journalwithdrawalobligation`, and
-`voicedraftretraction` while unsettled) must outlive the vault copy it tracks.
-Today account deletion erases it, so afterwards nothing records that a copy may
-remain. One option is to keep a detached, content-free form of the row after
-erasure, until the vault confirms the copy is gone.
+An open withdrawal record (`journalwithdrawalobligation` in `pending_delete` or
+`unconfirmed`) must outlive the vault copy it tracks, but it named the account
+and died with it. The owner decided on 2026-10-14 (#3267): "Keep a detached
+note (opaque vault fingerprint and entry ID only) until the vault confirms, for
+at most 97 days." **This keeps data longer than before, on purpose.**
 
-**That would keep data longer than today.** The registry would flag any such
-proposal as `longer`. It was not a proposal, so the 2026-10-13 decision did not
-ratify it, and it is not wired into the registry. It stays open for the owner
-(#3063 AC21-22, #3094). See
+| Store | Data kind | Ratified period | Compared with before | Rationale | In force today |
+| --- | --- | --- | --- | --- | --- |
+| `journalwithdrawalnote` | Content-free: an opaque vault fingerprint, an entry id, the detachment instant. No account link | 97 days after the account is deleted, or sooner when that vault confirms the copy gone | longer | Without it, nothing records that a vault may still hold a copy of an erased account's page. It names nobody. | Account deletion writes it. The background sweep clears it when the deployment-wide vault confirms; a connected or managed vault's credential is erased with the account, so for those the 97-day purge is the end. The purge waits for the nightly sweep (#3266). |
+
+`voicedraftretraction` rows still pending at account deletion are not covered
+by this decision and are still erased with the account (#3063 AC21-22). See
 [gdpr-erasure-unreachable-vaults.md](gdpr-erasure-unreachable-vaults.md).
 
 ## Still open

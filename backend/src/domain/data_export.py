@@ -309,6 +309,11 @@ MANIFEST: Mapping[str, ExportRule] = {
         # transport bookkeeping, withheld exactly as ``feedbackreport``'s is.
         drop_columns=("vault_ref", "vault_tags", "idem_key"),
     ),
+    "journalwithdrawalnote": Omitted(
+        "A detached note left after an account is deleted: an opaque vault "
+        "fingerprint and an entry id with no account reference. It belongs to "
+        "no live account, so no export can reach it.",
+    ),
     "journalwithdrawalobligation": Omitted(
         "Content-free bookkeeping of which deleted pages still owe their vault "
         "copy a withdrawal, and whether that vault confirmed it. The pages "

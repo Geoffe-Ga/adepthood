@@ -73,7 +73,7 @@ from domain.data_export import MANIFEST, Included, Omitted
 from domain.feedback_triage import DRAFT_METADATA_FIELDS, FORBIDDEN_DRAFT_FIELDS, DraftSource
 from domain.frequencies import Frequency
 from domain.resonance import PRIOR_DRAFT_LIMIT
-from domain.retention import REDACT_INSTEAD_OF_DELETE
+from domain.retention import DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS, REDACT_INSTEAD_OF_DELETE
 from main import validate_journal_encryption_config
 from models.corpus_fragment import CorpusSource
 from models.feedback import FEEDBACK_RETENTION_DAYS
@@ -1147,6 +1147,23 @@ def test_the_policy_describes_deleting_one_page_without_overstating_it() -> None
     overstated = sorted(claim for claim in _OVERSTATED_ERASURE if claim in section)
     assert not overstated, f"the single-page section promises {overstated}: {section!r}"
     assert "corpus" in section, "the section does not say the corpus copy goes with the page"
+
+
+def test_the_policy_discloses_the_detached_withdrawal_note() -> None:
+    """Account deletion keeps a note for an unconfirmed vault copy; the policy says so (#3267).
+
+    The note outlives the account on purpose, so the account section must say
+    what it holds, that it names nobody, and the bound the purge enforces --
+    read from the constant, so changing the bound reopens this sentence.
+    """
+    section = _section(_PRIVACY_POLICY, "## deleting your account")
+
+    assert "an opaque vault identifier and an entry number, not linked to you" in section
+    assert (
+        f"until the vault confirms the copy is gone or for "
+        f"{DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS} days at most"
+    ) in section
+    assert POLICY["journalwithdrawalnote"].disposition is Disposition.RETAIN
 
 
 @pytest.mark.asyncio

@@ -226,13 +226,24 @@ POLICY: Mapping[str, TablePolicy] = {
         "The writing. Encrypted at rest and erased outright — this is the "
         "single most important row in the sweep.",
     ),
+    "journalwithdrawalnote": _retain(
+        "A detached, content-free note that a deleted account's journal page "
+        "still has an unconfirmed copy in a vault: the vault's opaque "
+        "fingerprint, the entry id and the instant it was detached, and no "
+        "column that names or reaches any account. Kept until that vault "
+        "confirms the copy gone, for at most 97 days (owner decision "
+        "2026-10-14, #3267).",
+    ),
     "journalwithdrawalobligation": _erase(
         "user_id",
         "Content-free record that a journal page's vault copy is still owed a "
         "withdrawal, or was confirmed absent: ids, a closed state, an opaque "
-        "destination fingerprint, timestamps. Erased with the account for now, as "
-        "``voicedraftretraction`` is; whether an unconfirmed copy's record should "
-        "outlive erasure is an owner decision (#3094, #3063).",
+        "destination fingerprint, timestamps. Erased with the account. An open "
+        "one (``pending_delete`` / ``unconfirmed``) is first copied into a "
+        "detached ``journalwithdrawalnote`` with no account link, so the record "
+        "that a copy may remain outlives the account until the vault confirms, "
+        "for at most 97 days (owner decision 2026-10-14, #3267). A confirmed one "
+        "leaves nothing.",
     ),
     "licensebinding": _erase(
         "user_id",

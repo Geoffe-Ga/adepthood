@@ -507,6 +507,12 @@ address, because that address is the only way it can still be claimed; and a
 note that a deletion happened — date, counts, and an internal id that now
 names nobody.
 
+One more thing can survive, and only if a page of yours had a copy in a Creek
+Vault that had not yet confirmed that copy deleted: for each such copy we keep
+a note holding only an opaque vault identifier and an entry number, not linked
+to you, until the vault confirms the copy is gone or for 97 days at most. Then
+the note is deleted.
+
 **Backups age out; they are not edited.** The database is backed up, and a
 backup taken before you deleted still holds what your account held then, with
 your writing encrypted in it as it is in the database. No backup is altered to

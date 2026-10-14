@@ -106,6 +106,13 @@ RESTORE_MARKER_RETENTION_DAYS = 365
 REVOKED_TOKEN_GRACE_DAYS = 1
 #: A confirmed teardown receipt spans a few vendor billing cycles.
 TEARDOWN_RECEIPT_RETENTION_DAYS = 90
+#: A detached withdrawal note outlives its erased account until the vault
+#: confirms the copy gone, and never longer than this. Owner decision
+#: 2026-10-14 (#3267): "Keep a detached note (opaque vault fingerprint and entry
+#: ID only) until the vault confirms, for at most 97 days." A literal on
+#: purpose: it was ratified as a number, not as the backup bound, so lowering
+#: that bound does not shorten it.
+DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS = 97
 
 _ACCOUNT_DELETION = "account deletion"
 _SWEEP_ROUTE = re.compile(r"^(GET|POST|PUT|PATCH|DELETE) /\S+$")
@@ -422,6 +429,18 @@ RETENTION: Mapping[str, RetentionRule] = {
             "until account deletion." + _RATIFIED,
         ),
     ),
+    "journalwithdrawalnote": fixed_days(
+        DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS,
+        trigger="detachment at account deletion (deleted sooner when its vault confirms)",
+        rationale="Detached, content-free note that a deleted account's journal page still "
+        "has an unconfirmed vault copy: the vault's opaque fingerprint, the entry id and the "
+        "detachment instant; no account link and no content. Kept until that vault confirms "
+        "the copy gone, for at most 97 days, confirmed or not. Longer than before on purpose: "
+        "the obligation it replaces died with the account. Ratified 2026-10-14 (#3267). "
+        "services.journal_withdrawal_note.purge_expired_withdrawal_notes applies it; nothing "
+        "schedules it until the nightly sweep (#3266) calls it.",
+        ratified=True,
+    ),
     "journalwithdrawalobligation": conditional(
         fixed_days(
             CONFIRMED_OBLIGATION_RETENTION_DAYS,
@@ -433,8 +452,8 @@ RETENTION: Mapping[str, RetentionRule] = {
             "confirmed absence. Not a foreign key into the entry, so a purge of the "
             "soft-deleted page never erases the record that a copy may remain. An open row "
             "is never eligible: it must outlive the copy it tracks. A confirmed row is only "
-            "a receipt, kept 30 days. Every row is still erased with the account; whether an "
-            "unconfirmed one should outlive erasure is open (#3063 AC21-22, #3094). Plan: "
+            "a receipt, kept 30 days. Every row is still erased with the account; an open one "
+            "is first copied into a detached ``journalwithdrawalnote`` (#3267). Plan: "
             "docs/privacy/gdpr-erasure-unreachable-vaults.md." + _RATIFIED + _NOT_YET_SWEPT,
             ratified=True,
         ),

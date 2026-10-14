@@ -28,7 +28,11 @@ from client_ip import (
 from database import async_session_factory, get_session
 from database import engine as database_engine
 from database_schema import require_database_schema_current
-from dependencies.creek_vault import resolve_creek_vault_client, resolved_vault_destination
+from dependencies.creek_vault import (
+    detached_vaults,
+    resolve_creek_vault_client,
+    resolved_vault_destination,
+)
 from error_responses import refusal_responses
 from errors import install_exception_handlers
 from middleware import (
@@ -114,6 +118,7 @@ from services.creek_vault_pipeline import (
     resume_vault_pipeline_runs,
 )
 from services.creek_vault_voice_drafts import resume_voice_draft_retractions
+from services.journal_withdrawal_note import resume_detached_withdrawal_notes
 from services.managed_vault_rollout import (
     ManagedVaultRolloutState,
     load_managed_vault_rollout,
@@ -161,6 +166,10 @@ async def _recover_provisioning_until_shutdown() -> None:
             )
         except (OSError, RuntimeError, SQLAlchemyError):
             logger.warning("voice draft withdrawal recovery could not read its durable state")
+        try:
+            await resume_detached_withdrawal_notes(async_session_factory, detached_vaults())
+        except (OSError, RuntimeError, SQLAlchemyError):
+            logger.warning("detached withdrawal note recovery could not read its durable state")
         await asyncio.sleep(_PROVISIONING_RECOVERY_INTERVAL_SECONDS)
 
 
