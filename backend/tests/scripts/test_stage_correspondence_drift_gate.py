@@ -22,8 +22,9 @@ and a gate that is red for the wrong reason teaches people to ignore it.
 
 A gate can also be disarmed without touching its exit code: a condition on
 the step or the job (``if: ${{ false }}``, or any never-true expression) skips
-it while the job reports green. The job carries no condition, so any live
-``if:`` key in it fails here.
+it while the job reports green. Only the exact affected-content selector is
+allowed at job level; every script and data input must select the job. Step
+conditions and other job conditions still fail here.
 
 Parsed as plain text through ``tests.workflow_text``, like the other guards in
 this directory: PyYAML is deliberately in no requirements file. Every check is
@@ -36,6 +37,7 @@ from __future__ import annotations
 
 import ast
 import re
+import runpy
 import sys
 from pathlib import Path
 
@@ -144,9 +146,8 @@ def _disarming_fragments(workflow_text: str) -> list[str]:
 
 
 # A live ``if:`` key -- a job's own, or a step's, with or without the sequence
-# dash. The job carries no condition today, so any one is a way to skip the gate
-# while the job reports green: ``${{ false }}``, a never-true expression, or a
-# job-level condition all leave every other predicate here satisfied.
+# dash. The real job permits only the affected-content condition; all other
+# expressions can silently skip the gate while leaving its steps intact.
 _IF_KEY = re.compile(r"^\s*(?:- )?(?P<key>if:.*?)\s*$")
 
 
@@ -215,9 +216,24 @@ def test_every_gate_runs_after_the_vendored_content_check(step: str) -> None:
 
 
 def test_the_job_is_not_disarmed() -> None:
-    """Nothing in the job lets the gate's exit code be swallowed, or the gate be skipped."""
+    """Only the tested content selector may skip the job; no step may swallow failure."""
     assert _disarming_fragments(_real_workflow()) == []
-    assert _job_conditions(_real_workflow()) == []
+    assert _job_conditions(_real_workflow()) == ["if: needs.changes.outputs.content == 'true'"]
+    job = _content_drift_job(_real_workflow())
+    assert "    needs: changes\n" in job
+    assert "    if: needs.changes.outputs.content == 'true'\n" in job
+    assert "uses: ./.github/workflows/_affected.yml" in jobs(_real_workflow())["changes"]
+
+
+def test_every_content_input_selects_the_drift_job() -> None:
+    """Change-aware CI must run this guard for every script, input, and generated output."""
+    selector = runpy.run_path(str(_REPO_ROOT / "scripts/ci/affected.py"))["affected"]
+    inputs = [*_DRIFT_SCRIPTS, _BACKEND / "scripts/__init__.py"]
+    inputs.extend(path for path in (_BACKEND / "content").rglob("*") if path.is_file())
+    inputs.extend(path for path in (_BACKEND / "src/curriculum").rglob("*") if path.is_file())
+    for path in inputs:
+        relative = path.relative_to(_REPO_ROOT).as_posix()
+        assert selector([relative])["content"], f"{relative} must run content-drift"
 
 
 def test_the_install_step_covers_every_drift_script_import() -> None:

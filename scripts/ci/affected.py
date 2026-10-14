@@ -46,6 +46,7 @@ def affected(paths: list[str]) -> dict[str, bool]:
                 "backend/scripts/sync_content.py",
                 "backend/scripts/build_stage_correspondence.py",
                 "backend/scripts/content_completeness.py",
+                "backend/scripts/check_wavelength_terms.py",
                 "backend/scripts/__init__.py",
             }
             for path in paths
