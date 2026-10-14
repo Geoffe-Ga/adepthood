@@ -169,8 +169,23 @@ describe('JournalEntryScreen — a pass that yields no notes', () => {
 describe('JournalEntryScreen — the pass names its source (#3062)', () => {
   function provenance(source: 'creek_vault' | 'app_provider' | 'demo') {
     return {
-      notes: { source, provider: null, model: null, receipt_version: 1 },
-      detection: { source: 'none' as const, provider: null, model: null, receipt_version: 1 },
+      notes: {
+        source,
+        provider:
+          source === 'demo'
+            ? ('stub' as const)
+            : source === 'creek_vault'
+              ? ('creek' as const)
+              : null,
+        model: null,
+        receipt_version: 1 as const,
+      },
+      detection: {
+        source: 'none' as const,
+        provider: null,
+        model: null,
+        receipt_version: 1 as const,
+      },
       detection_checked: false,
       paid_by: 'free' as const,
     };
@@ -204,3 +219,48 @@ describe('JournalEntryScreen — the pass names its source (#3062)', () => {
     expect(queryByTestId('resonance-pass-source')).toBeNull();
   });
 });
+
+describe('live pass receipts (#3206)', () => {
+  it('discloses separate notes and attempted completion identities plus the reported payer', async () => {
+    const { findByText, queryByText } = await runPass(
+      payload({
+        provenance: {
+          notes: {
+            source: 'app_provider',
+            provider: 'openai',
+            model: 'notes-model',
+            receipt_version: 1,
+          },
+          detection: {
+            source: 'app_provider',
+            provider: 'anthropic',
+            model: 'completion-model',
+            receipt_version: 1,
+          },
+          detection_checked: false,
+          paid_by: 'own_key',
+        },
+      }),
+    );
+    expect(await findByText('Your provider key')).toBeTruthy();
+    expect(await findByText('Reported model: notes-model')).toBeTruthy();
+    expect(await findByText('Reported model: completion-model')).toBeTruthy();
+    expect(await findByText('A check was attempted; completion was not confirmed.')).toBeTruthy();
+    expect(queryByText('No AI completion check was sent.')).toBeNull();
+  });
+
+  it('uses a none receipt to distinguish an unsent check from a failed attempt', async () => {
+    const { findByText } = await runPass(payload({ provenance: provenanceForUnrun() }));
+    expect(await findByText('No AI completion check was sent.')).toBeTruthy();
+    expect(await findByText('No Adepthood wallet charge')).toBeTruthy();
+  });
+});
+
+function provenanceForUnrun(): NonNullable<ResonanceResponse['provenance']> {
+  return {
+    notes: { source: 'demo', provider: 'stub', model: 'stub', receipt_version: 1 },
+    detection: { source: 'none', provider: null, model: null, receipt_version: 1 },
+    detection_checked: false,
+    paid_by: 'free',
+  };
+}

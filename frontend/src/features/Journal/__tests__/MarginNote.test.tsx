@@ -97,3 +97,32 @@ describe('MarginNote source label (#3062)', () => {
     expect(getByTestId('margin-note-source-9').props.children).toBe('From your Creek vault');
   });
 });
+
+describe('persisted note receipts (#3206)', () => {
+  it('shows the recorded provider and model rather than the current connection', () => {
+    const { getByText } = render(
+      <MarginNote
+        note={note({
+          source: 'app_provider',
+          source_provider: 'openai',
+          source_model: 'reported-model',
+          receipt_version: 1,
+        })}
+        onOpen={jest.fn()}
+      />,
+    );
+    expect(getByText('Reported provider: OpenAI')).toBeTruthy();
+    expect(getByText('Reported model: reported-model')).toBeTruthy();
+  });
+
+  it.each([
+    { source: 'creek_vault', source_provider: 'openai', source_model: null, receipt_version: 1 },
+    { source: 'app_provider', source_provider: 'openai', source_model: null, receipt_version: 2 },
+  ] as const)('preserves prose but refuses an invalid persisted tuple: %p', (metadata) => {
+    const { getByTestId, getByText } = render(
+      <MarginNote note={note(metadata)} onOpen={jest.fn()} />,
+    );
+    expect(getByTestId('margin-note-source-3').props.children).toBe('Source not recorded');
+    expect(getByText('The willow bends without breaking.')).toBeTruthy();
+  });
+});

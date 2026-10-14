@@ -875,13 +875,15 @@
   },
   {
     "id": "journal.margin-note-source-survives-reload",
-    "description": "A writer asks for resonance and each margin note says which side answered it, as the server recorded it on the row in the same commit as the note (#3062); after a cold reload the label is read back from the persisted source, never re-derived from the pass or from whether a vault is connected. This lane serves the stub provider, so the note is labelled as a demo, the pass carries a one-line demo notice, and the wallet is unchanged. A note older than receipts, an unknown value and a missing field all read \"Source not recorded\" (pinned by the Jest specs for sourceLabel, MarginNote and the provenance schemas). The label wording is a draft pending owner review (#3062 E3).",
+    "description": "A writer requests resonance through the real screen, reads independently validated notes and completion receipts plus the live reported payment route, and reopens the page after reload (#3206, Refs #3062). The real stub route persists demo source/provider/model/version and leaves the wallet unchanged; the real bound-owner route talks to the isolated Creek contract process and persists Creek source/provider with no model identity. The demo letter is explicitly requested over the real essay endpoint and appears on the real Voice Drafts shelf. Live payer data vanishes on reload while each stored note keeps its own recorded tuple. Separately labelled controlled-response cases prove client rendering for app-provider, legacy/missing, future-version, contradictory provider/demo-payer, and malformed mixed-operation metadata without losing prose; letters use only essay_source. Notes and completion can name different reported providers, and checked=false with a non-none receipt denotes an unconfirmed attempted check rather than an unsent check. All three supported payment-route labels are driven by response metadata, never inferred from a stored key or connection. Long reported model identities wrap at phone/desktop widths with 200% receipt text. Controlled cases do not prove third-party inference, real billing, backend persistence of their overrides, local models, attestation or custody; source identity is reported disclosure. Unsupported device-direct receipt contracts remain unrecorded pending their separate owner decision.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["journal", "resonance"],
+      "client": ["journal", "resonance", "voiceDrafts", "botmasonUsage"],
       "routes": [
         "POST /journal/{entry_id}/resonance",
         "GET /journal/{entry_id}/marginalia",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /journal/voice-drafts",
         "GET /user/usage"
       ],
       "tables": ["journalentry", "marginalia", "walletaudit"]
@@ -891,7 +893,7 @@
   },
   {
     "id": "journal.vault-sourced-note-label",
-    "description": "A writer whose AI operations are bound to their connected Creek vault asks for resonance; the vault's note is recorded and labelled as answered by their Creek vault, with no model claimed (the vault's reflect response reports none), and a vault with nothing to say still names itself as the source of the empty pass (#3062). Uncovered across the wire: the lane's fake Creek vault advertises no reflect capability, so no spec can make the vault answer a pass. The backend suite pins the receipt (backend/tests/test_inference_provenance.py) and the Jest specs pin the label.",
+    "description": "The happy bound-Creek receipt and reload label are covered by journal.margin-note-source-survives-reload using the isolated Creek contract process (#3206). Remaining uncovered across the wire: a vault that answers with no usable notes still names its source beside the real refunded empty-pass reason, and unavailable/fail-closed source paths render their error without inventing model identity or billing. Controlled UI response cases are client validation evidence, not proof of these backend outcomes. Backend inference_provenance and vault-boundary tests pin those semantics; no physical local-model or custody proof is claimed. Refs #3062 and journal.vault-bound-reflection-fails-closed.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["resonance"],

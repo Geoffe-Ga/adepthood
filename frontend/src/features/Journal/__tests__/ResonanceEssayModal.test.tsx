@@ -575,6 +575,24 @@ describe('ResonanceEssayModal letter source (#3062)', () => {
     expect((await findByTestId('essay-source')).props.children).toMatch(/^Demo/);
   });
 
+  it('uses the letter source even when the original note has a different provider and model', async () => {
+    const { findByTestId, queryByText } = render(
+      <ResonanceEssayModal
+        note={note({
+          source: 'app_provider',
+          source_provider: 'openai',
+          source_model: 'note-only-model',
+          receipt_version: 1,
+          essay: 'The letter.',
+          essay_source: 'creek_vault',
+        })}
+        onClose={jest.fn()}
+      />,
+    );
+    expect((await findByTestId('essay-source')).props.children).toBe('From your Creek vault');
+    expect(queryByText('Reported model: note-only-model')).toBeNull();
+  });
+
   it('says the source was not recorded for a letter written before receipts', async () => {
     const { findByTestId } = render(
       <ResonanceEssayModal note={note({ essay: 'Older letter.' })} onClose={jest.fn()} />,

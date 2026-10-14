@@ -956,6 +956,71 @@ export const inferenceProviderSchema = z.enum(['anthropic', 'openai', 'stub', 'c
  */
 export const operationSourceSchema = z.enum(['creek_vault', 'app_provider', 'demo', 'none']);
 
+/** Sources and providers are separate facts, but their supported v1 pairings are closed. */
+const providersForSource: Record<
+  z.infer<typeof operationSourceSchema>,
+  readonly (z.infer<typeof inferenceProviderSchema> | null)[]
+> = {
+  app_provider: ['anthropic', 'openai', null],
+  creek_vault: ['creek'],
+  demo: ['stub'],
+  none: [null],
+};
+
+interface ReceiptIdentity {
+  source: z.infer<typeof operationSourceSchema>;
+  provider?: z.infer<typeof inferenceProviderSchema> | null;
+  model?: string | null;
+}
+
+function supportsReportedModel(receipt: ReceiptIdentity): boolean {
+  return receipt.source === 'app_provider' || receipt.source === 'demo' || receipt.model == null;
+}
+
+function consistentReceipt(receipt: ReceiptIdentity): boolean {
+  return (
+    providersForSource[receipt.source].includes(receipt.provider ?? null) &&
+    supportsReportedModel(receipt)
+  );
+}
+
+const receiptVersionSchema = z
+  .number()
+  .int()
+  .refine((version) => version === 1);
+
+// Python's SOURCE_MODEL_MAX counts Unicode code points, not UTF-16 code units.
+const receiptModelSchema = z.string().refine((value) => Array.from(value).length <= 64);
+
+/** A persisted note's tuple. Null version permits older, coherent source-only rows. */
+const noteReceiptMetadataSchema = z
+  .object({
+    source: marginaliaSourceSchema,
+    source_provider: inferenceProviderSchema.nullish(),
+    source_model: receiptModelSchema.nullish(),
+    receipt_version: receiptVersionSchema.nullish(),
+  })
+  .refine((row) => {
+    const identity = { source: row.source, provider: row.source_provider, model: row.source_model };
+    if (row.receipt_version == null && row.source_provider == null)
+      return supportsReportedModel(identity);
+    return consistentReceipt(identity);
+  });
+
+/** Validate the note-only display projection, including raw legacy LIST rows. */
+export function readNoteReceiptMetadata(input: unknown) {
+  return noteReceiptMetadataSchema.safeParse(input);
+}
+
+/** Validate the original tuple before field-level fallback can conceal a contradiction. */
+function normalizeNoteReceipt(input: unknown): unknown {
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) return input;
+  const row = input as Record<string, unknown>;
+  const parsed = noteReceiptMetadataSchema.safeParse(row);
+  if (parsed.success) return { ...row, ...parsed.data };
+  return { ...row, source: null, source_provider: null, source_model: null, receipt_version: null };
+}
+
 // Provenance fields fail safe: a missing field (an older server), an unknown
 // value (a newer one) or a malformed one all parse to ``null``, which every
 // label reads as "Source not recorded". Never a parse failure that would cost
@@ -964,7 +1029,7 @@ const recordedSource = marginaliaSourceSchema.nullish().catch(null);
 const recordedProvider = inferenceProviderSchema.nullish().catch(null);
 
 /** One margin note (mirrors the backend ``MarginaliaResponse``). */
-export const marginaliaSchema = z.object({
+const marginaliaFieldsSchema = z.object({
   id: z.number().int(),
   journal_entry_id: z.number().int(),
   kind: marginaliaKindSchema,
@@ -986,16 +1051,21 @@ export const marginaliaSchema = z.object({
   receipt_version: z.number().int().nullish().catch(null),
 });
 
+export const marginaliaSchema = z.preprocess(normalizeNoteReceipt, marginaliaFieldsSchema);
+
 /**
  * A margin note after an essay request (mirrors the backend ``EssayResponse``):
  * the note plus the wallet balances it left behind, the same three fields a
  * resonance pass reports, because both spend from the same wallet (#623).
  */
-export const essayResponseSchema = marginaliaSchema.extend({
-  remaining_messages: z.number().int(),
-  remaining_balance: z.number().int(),
-  monthly_reset_date: z.string(),
-});
+export const essayResponseSchema = z.preprocess(
+  normalizeNoteReceipt,
+  marginaliaFieldsSchema.extend({
+    remaining_messages: z.number().int(),
+    remaining_balance: z.number().int(),
+    monthly_reset_date: z.string(),
+  }),
+);
 
 /**
  * One expanded letter on the Voice Drafts shelf (mirrors the backend
@@ -1030,7 +1100,7 @@ export const voiceDraftListSchema = z.object({
 export type VoiceDraftT = z.infer<typeof voiceDraftSchema>;
 export type MarginaliaSourceT = z.infer<typeof marginaliaSourceSchema>;
 export type OperationSourceT = z.infer<typeof operationSourceSchema>;
-export type PassProvenanceT = z.infer<typeof passProvenanceSchema>;
+export type PassProvenanceT = z.infer<typeof recordedPassProvenanceSchema>;
 export type VoiceDraftListT = z.infer<typeof voiceDraftListSchema>;
 
 /**
@@ -1186,20 +1256,48 @@ export const relatedEddySchema = z.object({
 });
 
 /** Which side answered one operation of a pass (mirrors ``ProvenanceReceipt``). */
-export const provenanceReceiptSchema = z.object({
-  source: operationSourceSchema,
-  provider: recordedProvider,
-  model: z.string().nullish(),
-  receipt_version: z.number().int(),
-});
+export const provenanceReceiptSchema = z
+  .object({
+    source: operationSourceSchema,
+    provider: inferenceProviderSchema.nullish(),
+    model: receiptModelSchema.nullish(),
+    receipt_version: receiptVersionSchema,
+  })
+  .refine(consistentReceipt);
 
-/** Who answered each operation of a pass, and who paid (mirrors ``PassProvenance``). */
+/** The server's complete wire contract; recovered display fields are a separate local type. */
 export const passProvenanceSchema = z.object({
   notes: provenanceReceiptSchema,
   detection: provenanceReceiptSchema,
   detection_checked: z.boolean(),
   paid_by: z.enum(['own_key', 'wallet', 'free']),
 });
+
+/** The v1 server refunds demo notes; conflicting live payer data is unrecorded. */
+function normalizePassPayer(input: unknown): unknown {
+  if (input == null || typeof input !== 'object' || Array.isArray(input)) return input;
+  const receipt = input as Record<string, unknown>;
+  const notes = provenanceReceiptSchema.safeParse(receipt.notes);
+  return notes.success && notes.data.source === 'demo' && receipt.paid_by !== 'free'
+    ? { ...receipt, paid_by: null }
+    : input;
+}
+
+/** A bad operation cannot erase a valid sibling or the independently reported payer. */
+const recordedPassProvenanceSchema = z.preprocess(
+  normalizePassPayer,
+  z.object({
+    notes: provenanceReceiptSchema.nullable().catch(null),
+    detection: provenanceReceiptSchema.nullable().catch(null),
+    detection_checked: z.boolean().nullable().catch(null),
+    paid_by: z.enum(['own_key', 'wallet', 'free']).nullable().catch(null),
+  }),
+);
+
+/** Recover independently reported fields when malformed/legacy metadata misses the wire contract. */
+export function readPassProvenance(input: unknown) {
+  return recordedPassProvenanceSchema.safeParse(input);
+}
 
 /**
  * Result of a resonance pass (mirrors the backend ``ResonanceResponse``).
@@ -1237,7 +1335,7 @@ export const resonanceResponseSchema = z.object({
   related_eddies: z.array(relatedEddySchema).optional(),
   // Which side answered each operation and who paid (#3062). A missing or
   // malformed object parses to null, read as "Source not recorded".
-  provenance: passProvenanceSchema.nullish().catch(null),
+  provenance: recordedPassProvenanceSchema.nullish().catch(null),
 });
 
 /** Current BotMason wallet policy and balances, as served for this deployment. */

@@ -53,6 +53,7 @@ import LinkHabitNudge from './LinkHabitNudge';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import { buildMarginItems, drawnNoteIds, type MarginItem } from './marginLayout';
 import MarginNote from './MarginNote';
+import PassReceiptNotice from './PassReceiptNotice';
 import PrivacyTierControl, { DEFAULT_TIER, tierLabel } from './PrivacyTierControl';
 import { PROMOTED_NOTICE_COPY } from './promoteExplainerCopy';
 import PromoteExplainerDialog from './PromoteExplainerDialog';
@@ -69,7 +70,6 @@ import { isStoredAs, replayReconcilePatch, type SentPage } from './replayReconci
 import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
-import { isDemoSource, sourceLabel } from './sourceLabel';
 import { describeCardFacts } from './suggestionFacts';
 import { useAspectOptions } from './useAspectOptions';
 import { useEntryLoad } from './useEntryLoad';
@@ -2736,29 +2736,6 @@ function NoNotesNotice({ message }: { message: string | null }) {
   );
 }
 
-/**
- * Which side answered the latest pass, said once for the pass as a whole (#3062).
- *
- * Shown when it adds something the notes themselves cannot say: on a demo pass,
- * so the canned notes are unmistakable before any one is read, and on a pass
- * that kept no notes, so the writer knows which source had nothing to say.
- * ``source`` is exactly what the server reported for this pass -- never read
- * off the vault connection -- and nothing is shown when it reported none.
- */
-function PassSourceNotice({ source, empty }: { source: string | null; empty: boolean }) {
-  if (source == null || !(empty || isDemoSource(source))) return null;
-  return (
-    <Text
-      style={styles.marginNotice}
-      accessibilityRole="text"
-      accessibilityLiveRegion="polite"
-      testID="resonance-pass-source"
-    >
-      {sourceLabel(source)}
-    </Text>
-  );
-}
-
 /** The read-mode quote surface: the promoted-quote list plus its UI gestures. */
 interface QuotePromotion {
   quotes: PromotedQuote[];
@@ -3740,8 +3717,8 @@ function JournalMargin({
       testID="journal-margin-column"
     >
       <View onLayout={bumpHeadTick} testID="journal-margin-head">
-        <PassSourceNotice
-          source={ctl.resonance.notesSource}
+        <PassReceiptNotice
+          provenance={ctl.resonance.passProvenance}
           empty={ctl.resonance.noNotesMessage != null}
         />
         <NoNotesNotice message={ctl.resonance.noNotesMessage} />
