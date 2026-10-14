@@ -134,6 +134,7 @@ import { classifyTranscription } from './transcriptionContract';
 
 import { API_BASE_URL, KEYLESS_PAGE_READ_REACHES_SERVER } from '@/config';
 import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
+import { aiAccessRevoked } from '@/features/Journal/aiAccessRevoked';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 import {
   diagnosticRoute,
@@ -280,6 +281,7 @@ export interface TranscribePageInput {
  * a small closed set instead of raw HTTP status + detail strings.
  */
 export type TranscriptionErrorKind =
+  | 'ai_access_revoked'
   | 'invalid_image'
   | 'image_too_large'
   // The server read the image but got nothing usable back: no text in it, or
@@ -1907,6 +1909,7 @@ const TRANSCRIBE_STATUS_KINDS: Record<number, TranscriptionErrorKind> = {
 
 /** Classify an `ApiError` from the transcription endpoint into a stable kind. */
 function classifyTranscribeApiError(err: ApiError): TranscriptionErrorKind {
+  if (aiAccessRevoked(err)) return 'ai_access_revoked';
   const rule = TRANSCRIBE_DETAIL_RULES[err.status];
   if (rule) {
     return rule.kinds[err.detail] ?? rule.fallback;

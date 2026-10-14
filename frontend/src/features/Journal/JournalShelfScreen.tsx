@@ -13,7 +13,7 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { ChevronRight } from 'lucide-react-native';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
@@ -707,6 +707,7 @@ function StagePromptSection({
 }
 
 interface TopMatterProps {
+  notices: React.ReactNode;
   stagePrompts: StagePromptsBand;
   onPrompt: (_prompt: StagePromptDetail) => void;
   onPastPrompts: () => void;
@@ -724,6 +725,7 @@ interface TopMatterProps {
  * "Journal" was a second display-scale moment stacked under the greeting.
  */
 function ShelfTopMatter({
+  notices,
   stagePrompts,
   onPrompt,
   onPastPrompts,
@@ -735,6 +737,7 @@ function ShelfTopMatter({
 }: TopMatterProps): React.JSX.Element {
   return (
     <View>
+      {notices}
       <JournalHero />
       <StatTileRow />
       {/* Return is a way back into habits, so a declined habits ring quiets it
@@ -898,7 +901,17 @@ function makeRenderItem(
   );
 }
 
+/** A new failed deletion must be seen even when its row was far down the shelf. */
+function useDeletionNoticeScroll(error: string | null) {
+  const listRef = useRef<SectionList<JournalMessage, ShelfSection>>(null);
+  useEffect(() => {
+    if (error !== null) listRef.current?.getScrollResponder()?.scrollTo({ y: 0, animated: false });
+  }, [error]);
+  return listRef;
+}
+
 interface ShelfBodyProps {
+  notices: React.ReactNode;
   shelf: ShelfState;
   nav: ShelfNav;
   stagePrompts: StagePromptsBand;
@@ -909,6 +922,7 @@ interface ShelfBodyProps {
 /** The shelf's scrolling list surface (top matter, recency sections, paging) —
  *  split out so the screen component stays under the line cap. */
 function ShelfBody({
+  notices,
   shelf,
   nav,
   stagePrompts,
@@ -916,21 +930,23 @@ function ShelfBody({
   onPastPrompts,
 }: ShelfBodyProps): React.JSX.Element {
   const { items, total, loading, error, query, hasMore, onSearch, loadMore } = shelf;
-  const sections = groupByRecency(items, now);
+  const listRef = useDeletionNoticeScroll(shelf.deletion.error);
   const searching = query.length >= SEARCH_MIN_LENGTH;
   const resultCount = searching ? total : undefined;
 
   return (
     <SectionList
+      ref={listRef}
       style={styles.list}
       testID="journal-shelf-list"
-      sections={sections}
+      sections={groupByRecency(items, now)}
       keyExtractor={(item) => String(item.id)}
       renderItem={makeRenderItem(nav, shelf, now)}
       renderSectionHeader={renderSectionHeader}
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={
         <ShelfTopMatter
+          notices={notices}
           stagePrompts={stagePrompts}
           onPrompt={nav.openPrompt}
           onPastPrompts={onPastPrompts}
@@ -1004,7 +1020,7 @@ function DeletionNotices({
     <>
       <DeleteFailureNotice message={deletion.error} />
       <UnreachableVaultChoice
-        visible={deletion.unreachable !== null}
+        location={deletion.unreachable?.location ?? null}
         onReconnect={reconnectVault}
         onEraseHere={deletion.eraseHere}
       />
@@ -1036,8 +1052,8 @@ function JournalShelfScreen(): React.JSX.Element {
 
   return (
     <ScreenScaffold testID="journal-shelf">
-      <DeletionNotices deletion={deletion} navigation={navigation} />
       <ShelfBody
+        notices={<DeletionNotices deletion={deletion} navigation={navigation} />}
         shelf={shelf}
         nav={nav}
         stagePrompts={stagePrompts}

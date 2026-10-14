@@ -24,6 +24,7 @@ export type SaveState =
   | 'weekTaken'
   | 'vaultWithdrawalPending'
   | 'vaultWithdrawalReconnect'
+  | 'vaultWithdrawalUnrecorded'
   | 'deletionPending';
 
 /**
@@ -86,6 +87,7 @@ const TRANSIENT_STATES: ReadonlySet<PublishedSaveState> = new Set<PublishedSaveS
   'weekTaken',
   'vaultWithdrawalPending',
   'vaultWithdrawalReconnect',
+  'vaultWithdrawalUnrecorded',
   'deletionPending',
 ]);
 

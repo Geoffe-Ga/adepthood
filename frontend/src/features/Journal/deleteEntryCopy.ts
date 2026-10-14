@@ -18,9 +18,14 @@ export const DELETE_ENTRY_TITLE = 'Delete this page?';
  * quietly — deleting a page stops that writing being retrieved as context.
  */
 export const DELETE_ENTRY_BODY =
-  'It leaves your journal, and the copy your reflections draw on goes with it. Its copy in a connected Creek vault is removed too. ' +
-  'If that vault is offline, the page stays on your shelf so you can try again. ' +
+  'Deletion is requested here and for the copy your reflections draw on. Removal of earlier Creek vault copies is requested too; they may remain until the vault confirms. ' +
+  'While that removal is pending, the page stays on your shelf and cannot be edited. Adepthood automatically retries when the recorded vault is reachable. ' +
   'There is no way back to it from inside the app.';
+
+/** Only a DELETE refusal establishes a recorded deletion and its editing lock. */
+export function deleteEntryPendingNotice(detail: string): string {
+  return `This page is set to be deleted and cannot be edited. ${detail}`;
+}
 
 export const DELETE_ENTRY_CONFIRM = 'Delete';
 export const DELETE_ENTRY_CANCEL = 'Cancel';

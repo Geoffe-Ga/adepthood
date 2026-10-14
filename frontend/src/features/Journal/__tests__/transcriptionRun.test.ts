@@ -507,6 +507,7 @@ describe('TERMINAL_ERROR_KINDS', () => {
     // tier_refused: the server will not read the declared tier (#3059 AC15), and
     // every page of the run declares the same one.
     expect([...TERMINAL_ERROR_KINDS].sort()).toEqual([
+      'ai_access_revoked',
       'credit_exhausted',
       'key_required',
       'tier_refused',
@@ -553,14 +554,16 @@ describe('selectStartable — a terminal failure stops the run, not just the but
     return transcriptionRunReducer(state, { type: 'reject', id: 'p1', attempt: 1, error });
   }
 
-  it.each<TranscriptionErrorKind>(['credit_exhausted', 'key_required', 'tier_refused'])(
-    'dispatches nothing more once a page has failed with %s',
-    (error) => {
-      const state = failFirstPageWith(error);
-      expect(hasTerminalError(state)).toBe(true);
-      expect(selectStartable(state)).toEqual([]);
-    },
-  );
+  it.each<TranscriptionErrorKind>([
+    'credit_exhausted',
+    'key_required',
+    'tier_refused',
+    'ai_access_revoked',
+  ])('dispatches nothing more once a page has failed with %s', (error) => {
+    const state = failFirstPageWith(error);
+    expect(hasTerminalError(state)).toBe(true);
+    expect(selectStartable(state)).toEqual([]);
+  });
 
   it('keeps dispatching after an ordinary transient failure', () => {
     // The guard must be keyed on the kind, not on "something failed" — a

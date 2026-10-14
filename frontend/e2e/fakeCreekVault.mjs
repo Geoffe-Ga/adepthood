@@ -100,6 +100,8 @@ const fragments = new Map();
 
 /** One deterministic transport fault, armed only by the withdrawal journey. */
 let voiceDraftDeleteFailuresRemaining = 0;
+/** Held until a journey releases it, so retained copies can be observed directly. */
+let journalWithdrawalsHeld = false;
 
 function requiredFile(name) {
   const path = process.env[name];
@@ -258,6 +260,16 @@ async function journalUpsert(request, response, externalId) {
 function journalWithdraw(request, response, externalId) {
   if (!hasContract(request, response)) return;
   request.resume();
+  if (journalWithdrawalsHeld) {
+    received.push({
+      method: 'DELETE',
+      path: `/v1/journal-entries/${externalId}`,
+      externalId,
+      action: 'unconfirmed',
+    });
+    refuse(response, HTTP_SERVICE_UNAVAILABLE, 'temporarily_unavailable');
+    return;
+  }
   fragments.delete(`journal:${externalId}`);
   received.push({
     method: 'DELETE',
@@ -436,6 +448,18 @@ const server = createServer((request, response) => {
     if (request.method === 'POST' && pathname === '/__lane/fail-next-voice-draft-delete') {
       request.resume();
       voiceDraftDeleteFailuresRemaining = ADEPTHOOD_DELETE_ATTEMPTS;
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/hold-journal-withdrawals') {
+      request.resume();
+      journalWithdrawalsHeld = true;
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/release-journal-withdrawals') {
+      request.resume();
+      journalWithdrawalsHeld = false;
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }

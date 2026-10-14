@@ -8,6 +8,7 @@ import TranscriptionPreview from '../TranscriptionPreview';
 import { TERMINAL_ERROR_KINDS, type TranscriptionBlock } from '../transcriptionRun';
 
 import type { TranscriptionErrorKind } from '@/api';
+import { AI_ACCESS_REVOKED_COPY } from '@/api/errorMessages';
 
 /**
  * A page read with no personal key and nothing to pay with is refused before
@@ -49,6 +50,17 @@ function renderFailed(error: TranscriptionErrorKind) {
 }
 
 describe('TranscriptionPreview — a page nobody can pay for says how to proceed', () => {
+  it('a revoked entitlement shows its plain copy with no misleading retry', () => {
+    const { getByTestId, queryByTestId } = renderFailed('ai_access_revoked');
+    expect(getByTestId('photograph-block-1-error').props.children).toBe(AI_ACCESS_REVOKED_COPY);
+    expect(queryByTestId('photograph-block-1-retry')).toBeNull();
+    expect(getByTestId('photograph-block-1-remove')).toBeTruthy();
+  });
+
+  it('an unknown refusal keeps its recoverable retry', () => {
+    const { getByTestId } = renderFailed('unknown');
+    expect(getByTestId('photograph-block-1-retry')).toBeTruthy();
+  });
   it('a keyless refusal points at Settings for a key and offers no retry', () => {
     const { getByTestId, queryByTestId } = renderFailed('key_required');
 
