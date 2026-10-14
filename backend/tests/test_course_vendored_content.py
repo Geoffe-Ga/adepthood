@@ -215,3 +215,19 @@ async def test_stage_one_rows_carry_content_refs_not_urls(db_session: AsyncSessi
 
     assert len(rows) == _STAGE_ONE_CHAPTER_COUNT
     assert all(row.url.startswith(f"{CONTENT_REF_SCHEME}://") for row in rows)
+
+
+#: The vendored Start Here reading order (aptitude-course#76): "Who Benefits?"
+#: first, then the intro, then the Energy Scaffolding essay that left Beige.
+_START_HERE_LEAD = ("liminal-creep", "about", "energy-scaffolding")
+
+
+def test_vendored_start_here_is_served_in_order() -> None:
+    """The real pin numbers its resources 1..N and the reader honours it (#3148).
+
+    Pins the contract the Start Here list leans on: a gap or a duplicate in
+    the upstream numbering, or a reshuffled lead, fails here on re-pin.
+    """
+    resources = ContentRepository(_VENDORED_CONTENT_DIR).list_resources()
+    assert [r.order for r in resources] == list(range(1, len(resources) + 1))
+    assert tuple(r.slug for r in resources[: len(_START_HERE_LEAD)]) == _START_HERE_LEAD

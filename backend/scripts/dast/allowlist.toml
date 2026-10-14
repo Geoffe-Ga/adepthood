@@ -25,6 +25,12 @@ category = "not_object_scoped"
 reason   = "slug names a published site document, not a per-user row"
 
 [[route]]
+method   = "POST"
+path     = "/course/site-resources/{slug}/mark-read"
+category = "not_object_scoped"
+reason   = "slug names a published site document, not a per-user row; the read mark is recorded against the caller"
+
+[[route]]
 method   = "GET"
 path     = "/course/stages/{stage_number}/content"
 category = "not_object_scoped"

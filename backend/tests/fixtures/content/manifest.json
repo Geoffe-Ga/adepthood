@@ -62,7 +62,8 @@
       "slug": "getting-started",
       "title": "Getting Started",
       "description": "Orientation for new adepts.",
-      "path": "markdown/site/getting-started.md"
+      "path": "markdown/site/getting-started.md",
+      "order": 1
     }
   ],
   "stage_intros": [

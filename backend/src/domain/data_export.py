@@ -63,6 +63,7 @@ from models.practice_tag import PracticeTag
 from models.promoted_quote import PromotedQuote
 from models.prompt_dismissal import PromptDismissal
 from models.prompt_response import PromptResponse
+from models.resource_completion import ResourceCompletion
 from models.stage_progress import StageProgress
 from models.user import User
 from models.user_depth_preferences import UserDepthPreferences
@@ -413,6 +414,11 @@ MANIFEST: Mapping[str, ExportRule] = {
         # The retry token's digest, not something the account wrote (see
         # ``journalentry`` above).
         drop_columns=("idem_key",),
+    ),
+    "resourcecompletion": _include(
+        "resources_read",
+        ResourceCompletion,
+        "Which Start Here resources of the course the account marked read.",
     ),
     "restoremarker": Omitted(
         "Operator bookkeeping for a database restore: a restore id, a state and "

@@ -58,6 +58,7 @@ _VALID_MANIFEST: dict[str, Any] = {
             "title": "Getting Started",
             "description": "Orientation guide.",
             "path": "markdown/site/getting-started.md",
+            "order": 1,
         }
     ],
     "stage_intros": [
@@ -240,12 +241,52 @@ def test_missing_markdown_for_known_id_raises_repository_error(content_dir: Path
         repo.read_body("beige-1")
 
 
-def test_list_resources_in_manifest_order(content_dir: Path) -> None:
+def test_list_resources_exposes_manifest_metadata(content_dir: Path) -> None:
     repo = ContentRepository(content_dir)
     resources = repo.list_resources()
     assert [r.slug for r in resources] == ["getting-started"]
     assert resources[0].title == "Getting Started"
     assert resources[0].description == "Orientation guide."
+    assert resources[0].order == 1
+
+
+def _resource(slug: str, order: int) -> dict[str, Any]:
+    return {
+        "slug": slug,
+        "title": slug.title(),
+        "description": "",
+        "path": f"markdown/resources/{slug}.md",
+        "order": order,
+    }
+
+
+def test_list_resources_sorts_by_order_not_manifest_position(tmp_path: Path) -> None:
+    """Start Here is served by ``order`` (#3148), whatever sequence the list is in.
+
+    Upstream lists resources alphabetically by slug; the reading order lives
+    only in ``order``, so a slug-sorted manifest must still come back 1, 2, 3.
+    """
+    manifest = copy.deepcopy(_VALID_MANIFEST)
+    manifest["site_resources"] = [
+        _resource("about", 2),
+        _resource("energy-scaffolding", 3),
+        _resource("liminal-creep", 1),
+    ]
+    root = _write_content_dir(tmp_path / "content", manifest)
+    resources = ContentRepository(root).list_resources()
+    assert [(r.order, r.slug) for r in resources] == [
+        (1, "liminal-creep"),
+        (2, "about"),
+        (3, "energy-scaffolding"),
+    ]
+
+
+def test_list_resources_breaks_an_order_tie_by_slug(tmp_path: Path) -> None:
+    """Two resources sharing a position still list deterministically."""
+    manifest = copy.deepcopy(_VALID_MANIFEST)
+    manifest["site_resources"] = [_resource("zeta", 1), _resource("alpha", 1)]
+    root = _write_content_dir(tmp_path / "content", manifest)
+    assert [r.slug for r in ContentRepository(root).list_resources()] == ["alpha", "zeta"]
 
 
 def test_list_resources_empty_manifest(tmp_path: Path) -> None:
