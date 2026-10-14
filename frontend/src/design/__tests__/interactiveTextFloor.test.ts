@@ -153,6 +153,11 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // tap target is the whole row (touchTarget.minimum), as with MarginNote.
   'features/Journal/StaleQuoteNotes.tsx::staleCaption',
   'features/Journal/MorningPagesTip.tsx::label',
+  // Audited (#3206): the current pass's operation headings and recorded
+  // identity/payment lines are read-only metadata, with no press handlers.
+  // The separate Get Resonance button retains its action-sized label.
+  'features/Journal/PassReceiptNotice.tsx::caption',
+  'features/Journal/PassReceiptNotice.tsx::title',
   // A promoted quote's source line (and, once used, its review), beneath the
   // quote inside the row's own tap target: metadata, as cardDate is below. The
   // row's accessible name carries the quote and its source; this is not itself
