@@ -2383,5 +2383,41 @@
     },
     "status": "uncovered",
     "issue": 3076
+  },
+  {
+    "id": "journal.device-account-decline-choices",
+    "description": "The same browser signs up account A, declines all three device-local Journal offers through real Settings switches, reloads, logs out and signs up B. B starts with fresh choices. A returns with its declines intact, explicitly restores each offer, and reloads with the restore retained. Phone and desktop controls are then driven by keyboard at 200% actual text and frames are saved. This is device/account isolation and Settings persistence, not reinstall, cross-device synchronization or opaque Return episode identity. Legacy attribution and interrupted persistence are independently controlled in declineOwnership.test.ts and AuthContext.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
+      "client": ["auth"],
+      "routes": ["POST /auth/signup", "POST /auth/login"],
+      "tables": ["user"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/account-decline-choices.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.invitation-decline-persistence",
+    "description": "Real pending InvitationSignal rows are arranged in the isolated database, without pretending to prove eligibility or generation. The real browser loads GET /invitations, declines two different cards while one request is held, completes the other real POST, then injects a 503 only for the held request. Only the failed card returns in server order; the confirmed card stays absent. The browser retries the failed decline through the real POST and reloads; the real GET retains only the untouched card. Phone and desktop retry controls are keyboard driven at 200% text with frames saved. This covers the invitation persistence seam missing from the fresh-account journal-only proof (#3296).",
+    "crosses": {
+      "screen": "frontend/src/features/Invitations/InvitationStack.tsx",
+      "client": ["invitations"],
+      "routes": ["GET /invitations", "POST /invitations/{invitation_id}/dismiss"],
+      "tables": ["invitationsignal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/invitation-decline.browser.e2e.test.ts"
+  },
+  {
+    "id": "return.account-and-episode-owned-decline",
+    "description": "Remaining #3073 acceptance: a Return decline and any retry must belong to both the account and the opaque server offer episode; an old answer cannot suppress a later eligible episode or be replayed to it after account replacement. The current device boolean cannot establish episode identity. This slice scopes other local Journal declines but deliberately leaves Return storage unchanged until GET /metta-return exposes an opaque episode and the dismiss POST validates the expected episode. Existing begin-a-return browser coverage proves the current decline route, not this missing contract.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["mettaReturn"],
+      "routes": ["GET /metta-return", "POST /metta-return/offer/dismiss"],
+      "tables": ["mettareturnofferdismissal"]
+    },
+    "status": "uncovered",
+    "issue": 3073
   }
 ]

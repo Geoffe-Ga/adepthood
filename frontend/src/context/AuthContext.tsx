@@ -27,6 +27,7 @@ import {
   saveUserTimezone,
 } from '@/storage/authStorage';
 import { clearCheckInReplayState } from '@/storage/checkInReplayState';
+import { preserveLegacyDeclineOwner } from '@/storage/declineOwnership';
 import { clearFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
@@ -353,13 +354,15 @@ async function wipeUserState(): Promise<void> {
  * Recording the stamp is deliberately NOT part of this function — see
  * {@link commitDeviceOwner} for why the two writes must not be adjacent.
  */
-async function adoptDeviceOwner(userId: number): Promise<void> {
+async function adoptDeviceOwner(userId: number): Promise<boolean> {
   const previousOwner = await loadDeviceOwner();
+  const provenanceSaved = await preserveLegacyDeclineOwner(previousOwner);
   if (previousOwner !== userId) {
     setActiveUser(previousOwner);
     await wipeUserState();
   }
   setActiveUser(userId);
+  return provenanceSaved;
 }
 
 /**
@@ -557,7 +560,9 @@ async function scopeResumedSession(token: string): Promise<void> {
   const owner = parseUserId(decodeJwtPayload(token)?.sub);
   setActiveUser(owner);
   if (owner === null) return;
-  if ((await loadDeviceOwner()) === owner) return;
+  const previousOwner = await loadDeviceOwner();
+  if (!(await preserveLegacyDeclineOwner(previousOwner))) return;
+  if (previousOwner === owner) return;
   await commitDeviceOwner(owner);
 }
 
@@ -652,10 +657,10 @@ async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators)
   // BUG-FE-STATE-001: before anything else, and before any state the navigator
   // renders from — a device whose owner just changed must not carry the
   // previous owner's rows into this session.
-  await adoptDeviceOwner(response.user_id);
+  const provenanceSaved = await adoptDeviceOwner(response.user_id);
   await saveToken(response.token);
   // Only now: the stamp must never name an account whose token failed to land.
-  await commitDeviceOwner(response.user_id);
+  if (provenanceSaved) await commitDeviceOwner(response.user_id);
   // BUG-FE-STATE-001: a fresh auth supersedes any stale pending-logout marker;
   // a clear failure here must not break login / signup / password-reset.
   try {

@@ -11,6 +11,7 @@ import type {
   JournalMessage,
   PromptDetail,
 } from '@/api';
+import { setActiveUser } from '@/storage/userScope';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -21,6 +22,11 @@ const mockEraseLocally = jest.fn() as jest.MockedFunction<
 >;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockNavigate = jest.fn();
+
+// The shelf is authenticated: its namespace and decoded credential agree.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y', userTimezone: 'UTC' }),
+}));
 
 jest.mock('@/api', () => ({
   // The shelf's primary invitation asks what review is due; answer "none" so
@@ -106,6 +112,7 @@ function page(items: JournalMessage[]): JournalListResponse {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   mockList.mockReset();
   mockDelete.mockReset();
   mockEraseLocally.mockReset();
