@@ -11,9 +11,9 @@
     {
       "id": "GHSA-86w9-cpqp-85rv",
       "package": "node-forge",
-      "expires": "2026-10-16",
+      "expires": "2026-10-30",
       "issue": 3023,
-      "reason": "No patched release exists (1.4.0 is latest). patch-package backports the exact nested DigestAlgorithm element-count guard from digitalbazaar/forge#1152 at ceba34402e329f0365134f23fe19898756527d65 (#3022); installed-library signature regressions cover it. npm still reports the affected package version. Build-time Expo CLI exposure only. Preserve the owner-approved hard expiry 2026-10-16; re-check per #3023 and remove this entry and the patch when a fixed upstream release ships."
+      "reason": "No patched release exists (1.4.0 is latest, still affected). patch-package backports the exact nested DigestAlgorithm element-count guard from digitalbazaar/forge#1152 at ceba34402e329f0365134f23fe19898756527d65 (#3246); installed-library signature regressions cover it. npm still reports the affected package version. Build-time Expo CLI exposure only. No upstream bump removes it: @expo/cli 57.0.30 (latest) still requires node-forge ^1.3.3 and @expo/code-signing-certificates 0.0.7 (latest) requires ^1.4.0, so it cannot be cut out without dropping Expo. Owner renewed the hard expiry 2026-10-16 -> 2026-10-30 on 2026-10-14; re-check npm then per #3023 and remove this entry and the patch when a fixed upstream release ships."
     },
     {
       "id": "GHSA-vfj7-8cjw-p6xm",

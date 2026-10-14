@@ -213,7 +213,7 @@ const styles = StyleSheet.create({
   // The title claims the row's free space, so the pencil rides the trailing
   // edge rather than butting against the last glyph of the name, and a long
   // name wraps inside the row instead of pushing the pencil off the screen.
-  title: { ...editorialType.display, color: onShowcase.primary, flex: 1 },
+  title: { ...editorialType.display, color: onShowcase.primary, flex: 1, minWidth: 0 },
   pencilButton: {
     alignItems: 'center',
     justifyContent: 'center',

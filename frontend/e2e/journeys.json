@@ -2239,7 +2239,7 @@
   },
   {
     "id": "practice.every-mode-family-launches-from-the-catalog",
-    "description": "A practitioner picks any seeded practice from the catalog -- each of the eleven engine modes, every stage's canonical preset and the course's own alternatives (Yellow's and Ultraviolet's forty-five-minute alternatives among them) -- and can start it, pause and resume it where the view offers that, finish it and save it. Uncovered in the browser: presetLaunchMatrix.test.tsx launches every seeded preset end to end in jest from a fixture the backend gates equal to PRESET_PRACTICES, and modeParity.test.tsx holds every backend PracticeMode to a picker entry, a configurator form, valid defaults and a session view, but no browser spec yet walks one preset per mode family from the catalog through a real save (#3072 AC19). Stage 10 Clear Light has no alternatives chapter in the course, so it offers only its canonical sit.",
+    "description": "A practitioner picks any seeded practice from the catalog -- each of the eleven engine modes, every stage's canonical preset and the course's own alternatives (Yellow's and Ultraviolet's forty-five-minute alternatives among them) -- and can start it, pause and resume it where the view offers that, finish it and save it. Uncovered in the browser: presetLaunchMatrix.test.tsx launches every seeded preset end to end in jest from a fixture the backend gates equal to PRESET_PRACTICES, and modeParity.test.tsx holds every backend PracticeMode to a picker entry, a configurator form, valid defaults and a session view, but the browser does not yet walk every seeded canonical and alternative preset through a real save (#3072 AC19). Stage 10 Clear Light has no alternatives chapter in the course, so it offers only its canonical sit.",
     "crosses": {
       "screen": "frontend/src/features/Practice/screens/PracticeCatalogScreen.tsx",
       "client": ["practices", "userPractices", "practiceSessions"],
@@ -2248,6 +2248,24 @@
     },
     "status": "uncovered",
     "issue": 3072
+  },
+  {
+    "id": "practice.supported-engine-families-persist-browser-sessions",
+    "description": "A practitioner takes every supported engine family through real browser UI and a persisted sitting (#3212, bounded #3072 proof): seven real catalog presets (5-4-3-2-1 grounding, Body Scan, Find Colors, Mindful Eating, Tarot meditation, Shadow work and Shadow Drawing) are chosen and adopted through the embedded catalog; four other families (interval bell, random interval bell, rep counter and card meditation) are authored from scratch with the wizard's valid defaults and a stage assignment. Each reloads its saved selection, reaches its actual player, starts, pauses/resumes where offered, completes and saves once. The server accepts the caller-owned adoption, expected mode metadata and a window equal to active practice time; a fresh session-list read after reload proves persistence. Playwright's page clock accelerates the sitting while all HTTP stays real. Phone and desktop frames at normal and 200% text plus viewport/hit tests verify reachable controls. The shell reserves real action width so its one-line title never overlaps Feedback, menu or Settings (#3248), preserving full accessible names. The card name retains its full glyph height while its contained artwork yields space; symbolism remains readable through actual nested scrolling, and long custom names wrap within the identity row, and bell schedule times stay on one line beside human-readable cue labels (#3256). The presetLaunchMatrix component suite still covers every seeded canonical and alternative preset; this browser matrix represents all eleven engine families, not every Course category or physical-device audio/haptic/background behavior. Journaling's separate quick-launch path remains in its existing browser journey.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practices", "userPractices", "practiceSessions"],
+      "routes": [
+        "GET /practices/",
+        "POST /practices/",
+        "POST /user-practices/",
+        "GET /user-practices/",
+        "POST /practice-sessions/"
+      ],
+      "tables": ["practice", "userpractice", "practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-repertoire.browser.e2e.test.ts"
   },
   {
     "id": "practice.session-returns-from-the-background-calmly",

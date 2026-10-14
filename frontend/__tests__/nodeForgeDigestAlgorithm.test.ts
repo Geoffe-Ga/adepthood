@@ -86,7 +86,7 @@ describe('installed node-forge nested DigestAlgorithm validation', () => {
     },
   );
 
-  it('keeps the backport on the normal install path without extending its expiry', () => {
+  it('keeps the backport on the normal install path under the owner-approved expiry', () => {
     const pkg = JSON.parse(readFileSync(resolve(FRONTEND_ROOT, 'package.json'), 'utf8')) as {
       scripts: { postinstall: string };
     };
@@ -97,7 +97,7 @@ describe('installed node-forge nested DigestAlgorithm validation', () => {
     expect(installed.version).toBe('1.4.0');
     expect(allowlist.allow.find((entry) => entry.id === 'GHSA-86w9-cpqp-85rv')).toMatchObject({
       package: 'node-forge',
-      expires: '2026-10-16',
+      expires: '2026-10-30',
       issue: 3023,
     });
   });
