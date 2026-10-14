@@ -1,5 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
+import { useTimezoneRecovery } from './useTimezoneRecovery';
+
 import {
   ApiError,
   auth as authApi,
@@ -123,11 +125,13 @@ interface AuthContextValue {
    * `'authenticated'`, so an authenticated render never computes "today" in
    * UTC for a user who is not in it (#2847).  The one exception is a session
    * stored before that cache existed, which holds the default until
-   * `backfillResumedTimezone` returns.
+   * the authoritative refresh returns.
    */
   userTimezone: string;
   /** False only while the calendar is a provisional bootstrap fallback. */
   userTimezoneReady: boolean;
+  /** Retry a provisional calendar after connectivity returns, within the refresh cooldown. */
+  recoverUserTimezone: () => Promise<void>;
   /**
    * Push a server-confirmed IANA zone into ``userTimezone`` (issue #261).
    * Call this ONLY with the zone echoed back by ``PUT /users/me/timezone``
@@ -558,48 +562,6 @@ async function scopeResumedSession(token: string): Promise<void> {
 }
 
 /**
- * Ask the server for a zone this device has never been told (#2847).
- *
- * Only for a session stored before the zone was cached at all — an install
- * upgraded mid-session, which is precisely the population the bug was reported
- * from. ``/auth/refresh`` is the one endpoint that reports the stored zone
- * (``routers/auth.py``: "re-asserts the stored ``timezone``"), so it is the
- * one asked; it is *not* asked on an ordinary resume, because it is rate
- * limited to one call a minute and rotates the token, which makes it the wrong
- * thing to spend on every cold start.
- *
- * Deliberately fire-and-forget rather than awaited: an offline resume must
- * still reach the user's data, and a 30-second fetch timeout is not a splash
- * screen. Until it lands the session holds the pre-#2847 ``'UTC'`` default —
- * never the device's own zone, which is the one source #261 forbids.
- *
- * The result goes through ``saveTokenThenApply``, so the
- * BUG-FRONTEND-INFRA-012 identity guard applies unchanged: a backfill that
- * resolves after a logout, or after a login that won the race, is dropped
- * rather than allowed to resurrect the session it was issued for.
- */
-function backfillResumedTimezone(
-  stored: string,
-  mutators: AuthMutators,
-  tokenRef: React.MutableRefObject<string | null>,
-): void {
-  // Already due: ``useProactiveRefresh`` fires its own refresh for this token
-  // the moment it lands in state, and that response carries the zone too. A
-  // second call would only spend the one-a-minute budget on a 429.
-  if (shouldRefreshToken(stored)) return;
-  silentRefresh(stored, (newToken, timezone, expectedPriorToken) => {
-    void saveTokenThenApply(
-      newToken,
-      timezone,
-      mutators,
-      tokenRef,
-      'bootstrap timezone backfill',
-      expectedPriorToken,
-    );
-  });
-}
-
-/**
  * Cold-start bootstrap: honor a pending logout before hydrating, then load the
  * stored token and discard it if expired. Terminates in ``'authenticated'`` or
  * ``'anonymous'`` — ``'loading'`` is one-shot, so later effects must not rewind
@@ -636,7 +598,6 @@ async function bootstrapStoredToken(
     tokenRef.current = stored;
     mutators.setToken(stored);
     mutators.setAuthStatus('authenticated');
-    if (cachedZone === null) backfillResumedTimezone(stored, mutators, tokenRef);
     return;
   }
   if (stored) {
@@ -948,6 +909,49 @@ function useUserCalendar() {
   return { userTimezone, setUserTimezone, userTimezoneReady, setUserTimezoneReady };
 }
 
+function useSessionRefresh(
+  mutators: AuthMutators,
+  tokenRef: React.MutableRefObject<string | null>,
+) {
+  // ``applyNewToken`` accepts the server's stored timezone from the
+  // refresh response so the cold-start → proactive-refresh path keeps
+  // ``userTimezone`` aligned with the authenticated user's IANA zone.
+  // ``undefined`` falls back to UTC so a legacy API build that omits
+  // the field still works.
+  //
+  // ``expectedPriorToken`` is the token the proactive refresh was issued
+  // for; ``saveTokenThenApply`` applies the result only while
+  // ``tokenRef.current`` still equals it, so a logout OR a logout->re-login
+  // that wins the race against the refresh does NOT resurrect a prior
+  // session by re-applying its stale token.
+  return useCallback(
+    async (newToken: string, newTimezone: string | undefined, expectedPriorToken: string) => {
+      await saveTokenThenApply(
+        newToken,
+        newTimezone,
+        mutators,
+        tokenRef,
+        'applyNewToken',
+        expectedPriorToken,
+      );
+    },
+    [mutators, tokenRef],
+  );
+}
+
+function useCorrectedTimezone(mutators: AuthMutators) {
+  // #2847: a zone the user corrects in Settings is a zone the server now has
+  // on record, so it is cached like every other server-confirmed one. Without
+  // this the correction would survive only until the next cold start read back
+  // the zone it replaced.
+  return useCallback(
+    (timezone: string) => {
+      adoptUserTimezone(mutators, timezone);
+    },
+    [mutators],
+  );
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
@@ -963,46 +967,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [setUserTimezone, setUserTimezoneReady],
   );
 
-  // ``applyNewToken`` accepts the server's stored timezone from the
-  // refresh response so the cold-start → proactive-refresh path keeps
-  // ``userTimezone`` aligned with the authenticated user's IANA zone.
-  // ``undefined`` falls back to UTC so a legacy API build that omits
-  // the field still works.
-  //
-  // ``expectedPriorToken`` is the token the proactive refresh was issued
-  // for; ``saveTokenThenApply`` applies the result only while
-  // ``tokenRef.current`` still equals it, so a logout OR a logout->re-login
-  // that wins the race against the refresh does NOT resurrect a prior
-  // session by re-applying its stale token.
-  const applyNewToken = useCallback(
-    async (newToken: string, newTimezone: string | undefined, expectedPriorToken: string) => {
-      await saveTokenThenApply(
-        newToken,
-        newTimezone,
-        mutators,
-        tokenRef,
-        'applyNewToken',
-        expectedPriorToken,
-      );
-    },
-    [mutators],
-  );
+  const applyNewToken = useSessionRefresh(mutators, tokenRef);
 
-  // #2847: a zone the user corrects in Settings is a zone the server now has
-  // on record, so it is cached like every other server-confirmed one. Without
-  // this the correction would survive only until the next cold start read back
-  // the zone it replaced.
-  const adoptCorrectedTimezone = useCallback(
-    (timezone: string) => {
-      adoptUserTimezone(mutators, timezone);
-    },
-    [mutators],
-  );
+  const adoptCorrectedTimezone = useCorrectedTimezone(mutators);
 
   useApiCallbacks(tokenRef, mutators);
   useProactiveRefresh(token, tokenRef, applyNewToken);
   useLoadStoredToken(mutators, tokenRef);
 
+  const recoverUserTimezone = useTimezoneRecovery({
+    token,
+    authStatus,
+    ready: userTimezoneReady,
+    tokenRef,
+    applyNewToken,
+  });
   const actions = useAuthActions(mutators);
 
   const value = useMemo(
@@ -1011,10 +990,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       authStatus,
       userTimezone,
       userTimezoneReady,
+      recoverUserTimezone,
       setUserTimezone: adoptCorrectedTimezone,
       ...actions,
     }),
-    [token, authStatus, userTimezone, userTimezoneReady, adoptCorrectedTimezone, actions],
+    [
+      token,
+      authStatus,
+      userTimezone,
+      userTimezoneReady,
+      recoverUserTimezone,
+      adoptCorrectedTimezone,
+      actions,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

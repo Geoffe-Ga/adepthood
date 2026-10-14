@@ -71,6 +71,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   DEMO_TILE_JOURNEY,
   'habits-day-rollover.browser.e2e.test.ts',
   'habits-offline-replay.browser.e2e.test.ts',
+  'habits-recovery.browser.e2e.test.ts',
   'habits-resumed-session.browser.e2e.test.ts',
   'journal-care-support.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',

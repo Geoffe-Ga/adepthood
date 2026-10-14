@@ -11,13 +11,20 @@ import { useHabitActions } from './useHabitActions';
 import { registerForPushNotificationsAsync, reconcileNotifications } from './useHabitNotifications';
 import { useHabitUI } from './useHabitUI';
 
-export const useBootstrapHabits = (userTimezone: string, userTimezoneReady = true): void => {
+export const useBootstrapHabits = (
+  userTimezone: string,
+  userTimezoneReady = true,
+  recoverUserTimezone?: () => Promise<void>,
+): void => {
   // Cached habits remain readable before auth hydrates the account calendar,
   // but a provisional fallback must not assign durable replay days (#269).
   const reload = useCallback(() => {
     if (userTimezoneReady) void habitManager.loadHabits(userTimezone);
-    else void habitManager.loadHabits(userTimezone, { replayCheckIns: false });
-  }, [userTimezone, userTimezoneReady]);
+    else {
+      void recoverUserTimezone?.();
+      void habitManager.loadHabits(userTimezone, { replayCheckIns: false });
+    }
+  }, [userTimezone, userTimezoneReady, recoverUserTimezone]);
   useEffect(() => {
     reload();
   }, [reload]);
@@ -51,9 +58,9 @@ export const useHabits = (): UseHabitsReturn => {
   const error = useHabitStore((s) => s.error);
   const storeSetHabits = useHabitStore((s) => s.setHabits);
   const { showToast } = useToast();
-  const { userTimezone, userTimezoneReady, token } = useAuth();
+  const { userTimezone, userTimezoneReady, recoverUserTimezone, token } = useAuth();
   const ui = useHabitUI(token);
-  useBootstrapHabits(userTimezone, userTimezoneReady);
+  useBootstrapHabits(userTimezone, userTimezoneReady, recoverUserTimezone);
   const actions = useHabitActions(ui, showToast, userTimezone);
 
   return {
