@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from domain.dates import seconds_until_next_utc_midnight, utc_day_start
+from domain.entitlements import refuse_if_ai_access_revoked
 from errors import bad_request, payment_required, too_many_requests
 from models.user import User
 from models.wallet_audit import (
@@ -584,7 +585,14 @@ async def preflight_deduction(
     the staged ``UPDATE`` and its audit row here, whatever the caller's own
     transaction policy is: no refusal ever charges. ``now`` is a test seam
     for the UTC-day window; production passes nothing.
+
+    Raises ``403 ai_access_revoked`` before anything is staged when the
+    account's entitlement was revoked (#1938, B21 E1). The payer gate refuses
+    the same account at each route's admission; this is the backstop, so a
+    route that reaches the wallet without that gate still cannot charge a
+    revoked member for an operator-funded generation.
     """
+    await refuse_if_ai_access_revoked(session, user_id)
     moment = now or datetime.now(UTC)
     await reset_monthly_usage_if_due(session, user_id, moment)
 
