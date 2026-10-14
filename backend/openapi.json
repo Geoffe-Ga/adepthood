@@ -4873,15 +4873,48 @@
         "type": "object"
       },
       "NextUnreadResponse": {
-        "description": "The earliest unlocked, unread chapter across every open stage (issue #3147).\n\nThe Course screen's \"Read next\" button opens it; the endpoint answers\n``null`` instead when every chapter the drip has opened is already read.",
+        "description": "The reader's next unread page: Start Here first, then chapters (#3147, #3234).\n\nWhile any Start Here resource the current pin ships is unread, the\ntarget is the lowest-``order`` one (``kind=\"resource\"``, keyed by\n``slug``, with ``content_id`` and ``stage_number`` null).  After that\nit is the earliest unlocked, unread chapter across every open stage\n(``kind=\"chapter\"``, with ``slug`` null).  The Course screen's \"Read\nnext\" button opens it; the endpoint answers ``null`` instead when\nevery page the drip has opened is already read.",
         "properties": {
           "content_id": {
-            "title": "Content Id",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Id"
+          },
+          "kind": {
+            "enum": [
+              "resource",
+              "chapter"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
           },
           "stage_number": {
-            "title": "Stage Number",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Number"
           },
           "title": {
             "title": "Title",
@@ -4889,6 +4922,8 @@
           }
         },
         "required": [
+          "kind",
+          "slug",
           "content_id",
           "stage_number",
           "title"
@@ -13847,7 +13882,7 @@
     },
     "/course/next-unread": {
       "get": {
-        "description": "The earliest unlocked, unread chapter across every open stage, or ``null``.\n\nOrdered by stage, then ``release_day``, then ``id`` -- the release order\nthe per-stage listing already uses -- so \"Read next\" always lands on the\nchapter a reader would reach by walking the stages in order. Drip lock\nsemantics come from the same :func:`filter_content_for_user` path as the\nlisting; nothing is re-derived here. ``null`` (not 404) means \"caught\nup\": the resource is the reader's position, and it always exists.\n\nThe request carries no id at all -- the answer is scoped to the JWT\nsubject -- so there is no foreign id to authorize.",
+        "description": "The reader's next unread page -- Start Here first, then chapters -- or ``null``.\n\nWhile any Start Here resource the current pin ships is unread, the\nanswer is the lowest-``order`` one (issue #3234).  Otherwise it is the\nearliest unlocked, unread chapter across every open stage, ordered by\nstage, then ``release_day``, then ``id`` -- the release order the\nper-stage listing already uses -- so \"Read next\" always lands on the\nchapter a reader would reach by walking the stages in order. Drip lock\nsemantics come from the same :func:`filter_content_for_user` path as the\nlisting; nothing is re-derived here. ``null`` (not 404) means \"caught\nup\": the endpoint is the reader's position, and it always exists.\n\nThe request carries no id at all -- the answer is scoped to the JWT\nsubject -- so there is no foreign id to authorize.",
         "operationId": "get_next_unread_course_next_unread_get",
         "parameters": [
           {
