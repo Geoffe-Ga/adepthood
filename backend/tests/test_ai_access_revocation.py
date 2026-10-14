@@ -14,6 +14,13 @@ What *is* restricted is narrow, and this suite pins its edges:
   has never comped -- is not revoked and is not blocked. A revoke followed by a
   re-grant is live again. An operator comp is a live row; an operator's manual
   revocation of it is a revocation like any other.
+* **Only money returned, or the operator, restricts -- for now.** A refund or a
+  dispute restricts; so does an operator's revocation. A cancelled or ended
+  membership does *not*: when AI should stop for a member who cancels (at the
+  click, or at period end) is the owner's pending decision "cancel-timing"
+  (#1938), and until it is made the user-protective default is that it does not
+  stop. A row revoked before the reason was recorded on it is read the same
+  protective way.
 * **Only operator-funded calls.** A writer's own key pays its own provider, so
   a revoked member who brings one is admitted exactly as before. The client-
   direct path (ADR 0009, page reading on the device) never reaches this server
@@ -33,6 +40,7 @@ What *is* restricted is narrow, and this suite pins its edges:
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Final
 
@@ -40,10 +48,11 @@ import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, delete
+from sqlmodel import col, delete, select
 
 from domain.entitlements import (
     AI_ACCESS_REVOKED,
+    PRODUCT_IDS_ENV_VAR,
     REASON_CANCELLATION,
     REASON_REFUND,
     ai_access_revoked,
@@ -80,6 +89,11 @@ _AI_ROUTES: Final = ("resonance", "essay", "detect", "transcribe")
 _FUNDED_BALANCE: Final = 5
 _ADMIN_REASON: Final = "comped for the beta"
 _REVOKED_BODY: Final = {"detail": AI_ACCESS_REVOKED}
+_WEBHOOK_PATH: Final = "/webhooks/gumroad/ping"
+_WEBHOOK_SECRET_ENV: Final = "GUMROAD_WEBHOOK_SECRET"  # pragma: allowlist secret
+_WEBHOOK_SECRET: Final = "revocation-suite-shared-secret"  # pragma: allowlist secret
+_APTITUDE_PRODUCT: Final = "prod_course_revocation"
+_SALE_ID: Final = "S-revocation-1"
 
 
 async def _fund(session: AsyncSession, user_id: int) -> None:
@@ -133,14 +147,67 @@ async def test_a_live_entitlement_is_not_revoked(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("reason", [REASON_REFUND, REASON_CANCELLATION])
-async def test_a_revoked_entitlement_is_revoked(
-    async_client: AsyncClient, db_session: AsyncSession, reason: str
+async def test_a_refunded_entitlement_is_revoked(
+    async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
-    """A refund and a lapse revoke the same way: a revoked row and no live one."""
-    _, user_id, _ = await signup(async_client, f"revoked_predicate_{reason}")
+    """A refund (or a dispute, which shares it) leaves a revoked row and no live one."""
+    _, user_id, _ = await signup(async_client, "revoked_predicate_refund")
 
-    await revoke_course_access(db_session, user_id, reason)
+    await revoke_course_access(db_session, user_id, REASON_REFUND)
+
+    assert await ai_access_revoked(db_session, user_id)
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_membership_does_not_restrict_ai_pending_cancel_timing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A cancellation is not yet a restriction: owner decision "cancel-timing" (#1938) is pending.
+
+    ``cancellation`` and ``subscription_ended`` share one handler and one
+    reason code. Until the owner decides whether AI stops at the click or at
+    period end, the user-protective default is that it does not stop at all.
+    """
+    _, user_id, _ = await signup(async_client, "revoked_predicate_cancellation")
+
+    await revoke_course_access(db_session, user_id, REASON_CANCELLATION)
+
+    assert not await has_course_access(db_session, user_id)
+    assert not await ai_access_revoked(db_session, user_id)
+
+
+@pytest.mark.asyncio
+async def test_a_revocation_with_no_recorded_reason_does_not_restrict(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A row revoked before reasons were recorded cannot be told from a cancellation.
+
+    So it is read the user-protective way: not a restriction.
+    """
+    _, user_id, _ = await signup(async_client, "revoked_predicate_unrecorded")
+    row = (
+        await db_session.execute(select(Entitlement).where(col(Entitlement.user_id) == user_id))
+    ).scalar_one()
+    row.revoked_at = datetime.now(UTC)
+    db_session.add(row)
+    await db_session.commit()
+
+    assert not await ai_access_revoked(db_session, user_id)
+
+
+@pytest.mark.asyncio
+async def test_an_operator_revocation_from_before_reason_codes_still_restricts(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """An admin revocation always recorded who revoked it, so an older one is still recognised."""
+    _, user_id, _ = await signup(async_client, "revoked_predicate_legacy_admin")
+    row = (
+        await db_session.execute(select(Entitlement).where(col(Entitlement.user_id) == user_id))
+    ).scalar_one()
+    row.revoked_at = datetime.now(UTC)
+    row.entitlement_metadata = {"revocation_reason": _ADMIN_REASON, "revoked_by_admin_id": None}
+    db_session.add(row)
+    await db_session.commit()
 
     assert await ai_access_revoked(db_session, user_id)
 
@@ -234,6 +301,63 @@ async def test_live_and_legacy_members_keep_todays_ai_access(
     resp = await _call_route(route, async_client, db_session, headers, user_id)
 
     assert resp.status_code == HTTPStatus.OK, resp.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", _AI_ROUTES)
+async def test_a_cancelled_member_keeps_ai_access_pending_cancel_timing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    route: str,
+) -> None:
+    """A cancelled membership is admitted on every AI route until "cancel-timing" is decided."""
+    headers, user_id, _ = await signup(async_client, f"cancelled_{route}")
+    await revoke_course_access(db_session, user_id, REASON_CANCELLATION)
+
+    resp = await _call_route(route, async_client, db_session, headers, user_id)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("resource", "restricted"),
+    [("refund", True), ("dispute", True), ("cancellation", False), ("subscription_ended", False)],
+)
+async def test_each_gumroad_reversal_ping_restricts_ai_or_not(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    resource: str,
+    *,
+    restricted: bool,
+) -> None:
+    """Through the real webhook: money returned restricts AI; a lapse does not (yet)."""
+    monkeypatch.setenv(_WEBHOOK_SECRET_ENV, _WEBHOOK_SECRET)
+    monkeypatch.setenv(PRODUCT_IDS_ENV_VAR, _APTITUDE_PRODUCT)
+    user_id = await _legacy_user(db_session, "webhook_member")
+    sale = {
+        "sale_id": _SALE_ID,
+        "product_id": _APTITUDE_PRODUCT,
+        "email": "webhook_member@example.com",
+        "resource_name": "sale",
+        "is_recurring_charge": "false",
+        "refunded": "false",
+    }
+    granted = await async_client.post(_WEBHOOK_PATH, params={"secret": _WEBHOOK_SECRET}, data=sale)
+    assert granted.status_code == HTTPStatus.OK, granted.text
+    assert await has_course_access(db_session, user_id)
+
+    reversed_ = await async_client.post(
+        _WEBHOOK_PATH,
+        params={"secret": _WEBHOOK_SECRET},
+        data={**sale, "resource_name": resource},
+    )
+
+    assert reversed_.status_code == HTTPStatus.OK, reversed_.text
+    db_session.expire_all()
+    assert not await has_course_access(db_session, user_id)
+    assert await ai_access_revoked(db_session, user_id) is restricted
 
 
 @pytest.mark.asyncio

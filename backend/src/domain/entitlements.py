@@ -107,6 +107,20 @@ REASON_LICENSE_ALREADY_BOUND = "license_already_bound"
 # key are not what is missing, so the client must not offer a refill.
 AI_ACCESS_REVOKED = "ai_access_revoked"
 
+# The metadata key a revocation records its reason code under, so the row
+# itself says *why* it was revoked (the JSON bag needs no migration). Rows
+# revoked before it existed carry no code.
+REVOCATION_REASON_CODE_KEY = "revocation_reason_code"
+# The revocation reasons that restrict AI (#1938, B21 E1): money returned (a
+# refund or a dispute, which share REASON_REFUND) and an operator's revocation.
+# REASON_CANCELLATION -- the ``cancellation`` and ``subscription_ended`` pings --
+# is deliberately absent while the owner's "cancel-timing" decision is pending:
+# until then a cancelled member keeps AI (the user-protective default).
+_AI_RESTRICTING_REASONS = frozenset({REASON_REFUND, REASON_ADMIN_OVERRIDE})
+# An operator revocation from before reason codes were recorded is still
+# recognisable: revoke_entitlement_by_id always wrote this key.
+_LEGACY_ADMIN_REVOCATION_KEY = "revoked_by_admin_id"
+
 # Comma-separated allowlist of Gumroad product ids that count as "the
 # APTITUDE course". Read at call time so a rotation needs no restart (and so
 # tests can monkeypatch the environment).
@@ -258,7 +272,8 @@ async def revoke_course_access(session: AsyncSession, user_id: int, reason: str)
     """Revoke the user's active ``course_access`` entitlement, if any.
 
     Sets ``revoked_at`` on the active row (freeing the partial-unique slot so
-    a later re-grant creates a fresh row), commits, and logs
+    a later re-grant creates a fresh row), records ``reason`` in the row's
+    metadata under :data:`REVOCATION_REASON_CODE_KEY`, commits, and logs
     ``entitlement_revoked`` with ``reason_code=reason``. A user with no
     active grant is a silent no-op.
     """
@@ -266,6 +281,13 @@ async def revoke_course_access(session: AsyncSession, user_id: int, reason: str)
     if entitlement is None:
         return
     entitlement.revoked_at = datetime.now(UTC)
+    # Recorded on the row as well as logged, so the AI restriction can read
+    # why access went away. Rebound, not mutated: SQLAlchemy does not track
+    # in-place edits to a JSON dict.
+    entitlement.entitlement_metadata = {
+        **entitlement.entitlement_metadata,
+        REVOCATION_REASON_CODE_KEY: reason,
+    }
     session.add(entitlement)
     await session.commit()
     logger.info(
@@ -279,13 +301,21 @@ async def revoke_course_access(session: AsyncSession, user_id: int, reason: str)
 
 
 async def ai_access_revoked(session: AsyncSession, user_id: int) -> bool:
-    """Whether ``user_id``'s course entitlement was revoked and nothing live replaced it.
+    """Whether ``user_id``'s course entitlement was revoked in a way that restricts AI.
 
-    True only for an account holding at least one revoked ``course_access``
-    row and no active one: a refund, a dispute, a lapsed membership or an
-    operator's manual revocation. An account with no row at all -- a legacy
-    account from before the license gate, or one never comped -- has nothing
-    to lose and is *not* revoked; a revoke followed by a re-grant is live.
+    True only for an account holding no active ``course_access`` row and at
+    least one revoked row whose recorded reason restricts: a refund or dispute
+    (``REASON_REFUND``) or an operator's revocation. An account with no row at
+    all -- a legacy account from before the license gate, or one never comped
+    -- has nothing to lose and is *not* revoked; a revoke followed by a
+    re-grant is live.
+
+    A cancelled or ended membership (``REASON_CANCELLATION``) does **not**
+    restrict: when AI should stop for a member who cancels is the owner's
+    pending decision "cancel-timing" (#1938), and the user-protective default
+    holds until it is made. A webhook revocation from before reasons were
+    recorded on the row cannot be told from a cancellation, so it is read the
+    same protective way.
 
     The owner's decision (#1938, B21 E1, 2026-10-07): revocation restricts AI
     features only. The journal, export, deletion, course reading, habits and
@@ -294,15 +324,21 @@ async def ai_access_revoked(session: AsyncSession, user_id: int) -> bool:
     if await has_course_access(session, user_id):
         return False
     result = await session.execute(
-        select(Entitlement.id)
-        .where(
+        select(Entitlement).where(
             Entitlement.user_id == user_id,
             Entitlement.kind == EntitlementKind.COURSE_ACCESS,
             col(Entitlement.revoked_at).is_not(None),
         )
-        .limit(1)
     )
-    return result.first() is not None
+    return any(_revocation_restricts_ai(row) for row in result.scalars())
+
+
+def _revocation_restricts_ai(entitlement: Entitlement) -> bool:
+    """Whether one revoked row's recorded reason restricts AI."""
+    metadata = entitlement.entitlement_metadata
+    if metadata.get(REVOCATION_REASON_CODE_KEY) in _AI_RESTRICTING_REASONS:
+        return True
+    return _LEGACY_ADMIN_REVOCATION_KEY in metadata
 
 
 async def refuse_if_ai_access_revoked(session: AsyncSession, user_id: int) -> None:
@@ -415,6 +451,7 @@ async def revoke_entitlement_by_id(
         **entitlement.entitlement_metadata,
         "revocation_reason": reason,
         "revoked_by_admin_id": actor_admin_id,
+        REVOCATION_REASON_CODE_KEY: REASON_ADMIN_OVERRIDE,
     }
     session.add(entitlement)
     await session.commit()
