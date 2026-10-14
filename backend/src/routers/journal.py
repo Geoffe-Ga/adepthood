@@ -1226,9 +1226,11 @@ async def _apply_intimate_update(
 
 
 async def _stage_local_withdrawal(
-    session: AsyncSession, entry: JournalEntry, *, chose_intimate: bool
+    session: AsyncSession, entry: JournalEntry, payload: JournalEntryUpdate
 ) -> None:
     """Stage an Intimate entry's local withdrawal into the commit of its tier. Does not commit.
+
+    A no-op for an entry that still admits egress.
 
     The corpus copy goes and, when Intimate was chosen, every recorded essay
     offer becomes an owed withdrawal -- in the very transaction that commits
@@ -1237,9 +1239,11 @@ async def _stage_local_withdrawal(
     corpus copy and mirrored essays nothing would ever withdraw: the page
     already read Intimate, so neither the writer nor the sweep retried (#3162).
     """
+    if admits_egress(entry.classification):
+        return
     entry_id = cast("int", entry.id)
     await withdraw_local_journal_entry(session, user_id=entry.user_id, entry_id=entry_id)
-    if chose_intimate:
+    if "classification" in payload.model_fields_set:
         await mark_entry_retractions_pending(session, user_id=entry.user_id, entry_id=entry_id)
 
 
@@ -1270,10 +1274,8 @@ async def _persist_entry_update(
         raise not_found("journal_entry")
     await refuse_if_deletion_pending(session, entry)
     await _apply_entry_update(entry, payload, session)
-    if withdraw_if_denied and not admits_egress(entry.classification):
-        await _stage_local_withdrawal(
-            session, entry, chose_intimate="classification" in payload.model_fields_set
-        )
+    if withdraw_if_denied:
+        await _stage_local_withdrawal(session, entry, payload)
     session.add(entry)
     try:
         await session.commit()
