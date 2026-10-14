@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -21,15 +22,26 @@ class ContentItemResponse(BaseModel):
     is_read: bool
 
 
-class NextUnreadResponse(BaseModel):
-    """The earliest unlocked, unread chapter across every open stage (issue #3147).
+#: What a "Read next" target points at: a Start Here resource or a stage chapter.
+NextUnreadKind = Literal["resource", "chapter"]
 
-    The Course screen's "Read next" button opens it; the endpoint answers
-    ``null`` instead when every chapter the drip has opened is already read.
+
+class NextUnreadResponse(BaseModel):
+    """The reader's next unread page: Start Here first, then chapters (#3147, #3234).
+
+    While any Start Here resource the current pin ships is unread, the
+    target is the lowest-``order`` one (``kind="resource"``, keyed by
+    ``slug``, with ``content_id`` and ``stage_number`` null).  After that
+    it is the earliest unlocked, unread chapter across every open stage
+    (``kind="chapter"``, with ``slug`` null).  The Course screen's "Read
+    next" button opens it; the endpoint answers ``null`` instead when
+    every page the drip has opened is already read.
     """
 
-    content_id: int
-    stage_number: int
+    kind: NextUnreadKind
+    slug: str | None
+    content_id: int | None
+    stage_number: int | None
     title: str
 
 

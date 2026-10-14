@@ -346,7 +346,32 @@ async def _first_unread_in_stage(
     for chapter in listing:
         if not chapter.is_locked and not chapter.is_read:
             return NextUnreadResponse(
-                content_id=chapter.id, stage_number=stage.stage_number, title=chapter.title
+                kind="chapter",
+                slug=None,
+                content_id=chapter.id,
+                stage_number=stage.stage_number,
+                title=chapter.title,
+            )
+    return None
+
+
+async def _first_unread_resource(session: AsyncSession, user_id: int) -> NextUnreadResponse | None:
+    """The lowest-``order`` Start Here resource ``user_id`` has not read, if any.
+
+    Walks the pin's own resources in reading order, so a read mark left on
+    a slug the pin no longer ships can neither be returned nor stand in for
+    a resource that is still unread.
+    """
+    resources = _manifest_resources()
+    read = await _read_resource_slugs(session, user_id, [r.slug for r in resources])
+    for resource in resources:
+        if resource.slug not in read:
+            return NextUnreadResponse(
+                kind="resource",
+                slug=resource.slug,
+                content_id=None,
+                stage_number=None,
+                title=resource.title,
             )
     return None
 
@@ -357,18 +382,24 @@ async def get_next_unread(
     session: Annotated[AsyncSession, Depends(get_session)],
     user_tz: Annotated[str, Depends(current_user_timezone)],
 ) -> NextUnreadResponse | None:
-    """The earliest unlocked, unread chapter across every open stage, or ``null``.
+    """The reader's next unread page -- Start Here first, then chapters -- or ``null``.
 
-    Ordered by stage, then ``release_day``, then ``id`` -- the release order
-    the per-stage listing already uses -- so "Read next" always lands on the
+    While any Start Here resource the current pin ships is unread, the
+    answer is the lowest-``order`` one (issue #3234).  Otherwise it is the
+    earliest unlocked, unread chapter across every open stage, ordered by
+    stage, then ``release_day``, then ``id`` -- the release order the
+    per-stage listing already uses -- so "Read next" always lands on the
     chapter a reader would reach by walking the stages in order. Drip lock
     semantics come from the same :func:`filter_content_for_user` path as the
     listing; nothing is re-derived here. ``null`` (not 404) means "caught
-    up": the resource is the reader's position, and it always exists.
+    up": the endpoint is the reader's position, and it always exists.
 
     The request carries no id at all -- the answer is scoped to the JWT
     subject -- so there is no foreign id to authorize.
     """
+    resource = await _first_unread_resource(session, current_user)
+    if resource is not None:
+        return resource
     result = await session.execute(select(CourseStage).order_by(col(CourseStage.stage_number)))
     for stage in result.scalars().all():
         found = await _first_unread_in_stage(session, current_user, stage, user_tz)
