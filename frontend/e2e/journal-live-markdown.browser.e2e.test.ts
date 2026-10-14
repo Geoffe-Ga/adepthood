@@ -157,7 +157,22 @@ async function expectCaretLandsOn(page: Page, index: number): Promise<void> {
   expect(centreY).toBeGreaterThan(0);
   expect(centreY).toBeLessThan(page.viewportSize()?.height ?? 0);
   expect(glyph.offsetFromLineMiddle).toBeLessThanOrEqual(OVERLAY_ALIGNMENT_TOLERANCE_PX);
-  await page.mouse.click(glyph.left + glyph.width * CARET_PROBE_FRACTION, centreY);
+  const point = { x: glyph.left + glyph.width * CARET_PROBE_FRACTION, y: centreY };
+  const hit = await body(page).evaluate((field, target) => {
+    const element = document.elementFromPoint(target.x, target.y);
+    return {
+      fieldOnTop: element === field,
+      covering: element?.closest('[data-testid]')?.getAttribute('data-testid'),
+    };
+  }, point);
+  expect(
+    hit,
+    `body character ${index} must remain directly editable at its rendered glyph`,
+  ).toEqual({
+    fieldOnTop: true,
+    covering: 'journal-body-input',
+  });
+  await page.mouse.click(point.x, point.y);
   expect(await selection(body(page))).toEqual([index, index]);
 }
 

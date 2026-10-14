@@ -182,6 +182,18 @@ for (const viewport of [
     await page.clock.install();
     const sheet = page.getByTestId('journal-sheet');
     const idleSheet = await boxOf(sheet, 'idle sheet');
+    const idleBand = await boxOf(page.getByTestId('writing-session-band'), 'idle band');
+    const idleContent = await boxOf(
+      page.getByTestId('writing-session-band-content'),
+      'idle content',
+    );
+    expect(idleContent.height, 'short content must keep its natural height').toBeLessThan(
+      idleBand.height,
+    );
+    expect(
+      idleContent.y + idleContent.height,
+      'short content stays anchored to the bottom of the band',
+    ).toBeCloseTo(idleBand.y + idleBand.height, 1);
     await page.clock.fastForward(4_000);
     await expectReachable(page, 'journal-finish-button');
     await expectReachable(page, 'get-resonance-button');

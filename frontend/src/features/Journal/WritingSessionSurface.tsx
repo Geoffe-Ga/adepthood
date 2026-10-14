@@ -203,6 +203,7 @@ function WritingSessionSurface({
 
 const styles = StyleSheet.create({
   content: {
+    flexGrow: 0,
     flexShrink: 1,
     maxHeight: '100%',
   },
