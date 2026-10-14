@@ -2088,6 +2088,24 @@
     "issue": 1938
   },
   {
+    "id": "journal.revoked-entitlement-restricts-ai-only",
+    "description": "A member whose APTITUDE entitlement is revoked (refund, dispute, ended membership or an operator's revocation, with no live re-grant) asks for a resonance pass, a letter, completion detection or a server page read without a key of their own and is refused 403 ai_access_revoked before the minute bucket, the slot, the wallet or any dial, with funded credits left untouched; the client renders the plain ai_access_revoked copy, which says nothing was charged and that the journal, course, habits, practice, export and deletion are unaffected. The page the pass was asked of stays saved, a flagged entry still receives the care surface, a personal key is still admitted, and an account with no entitlement row at all (legacy, never comped) keeps today's access (#1938, B21 E1). Uncovered because the e2e lane cannot revoke an entitlement through the product: revocation arrives only from a Gumroad refund/cancellation ping or the admin route, and the lane's Gumroad stub emits no reversal ping. Pinned meanwhile by backend/tests/test_ai_access_revocation.py, backend/tests/test_free_core_access_invariants.py and frontend/src/api/__tests__/errorMessages.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": [
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "POST /journal/{entry_id}/suggestions/detect",
+        "POST /journal/transcribe-page",
+        "GET /journal/{entry_id}"
+      ],
+      "tables": ["entitlement", "walletaudit", "journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 1938
+  },
+  {
     "id": "habits.reveal-without-course",
     "description": "A person who takes the habits without the Course still moves through the program cadence (#3071). Before the fix the Course router was the only thing that ever gave an account a calendar anchor, so a habits-only account had no stage-progress row, the server read it as standing on stage 1 forever, and the Purple habit and every ring after it never opened. The habits list read now provisions the anchor itself, with the same ensure_user_progress the Course uses, but only when a laddered habit is still waiting on its ring. The covering Playwright spec pins the browser to UTC, signs up through the UI, seeds a locked Beige and a locked Purple habit over POST /habits/, and opens Habits: Beige is open, Purple shows its locked tile, and a read of the lane database finds a stage-1 row the habits read created. It then rewinds that anchor by Beige's 21-day window through tests.e2e.program_anchor, reloads, and Purple's tile is open. A request guard fails the run on any /course/ call, and the database read runs before the rewind because the rewind arrange provisions a row itself and would otherwise mask the bug. Pinned in process by backend/tests/test_habits_api.py (provisioning, the no-row guards for an unladdered or empty list, and a concurrent first read that leaves one row), by backend/tests/integration/test_habit_reveal_stamp_race.py (two reads forced to race the locked re-read on PostgreSQL, counting every write so each invitation is stamped exactly once; SQLite cannot prove this because FOR UPDATE is a no-op there) and by backend/tests/services/test_habit_auto_reveal_cadence.py (every stage boundary in UTC and America/Los_Angeles across DST, with literal expected stages).",
     "crosses": {
