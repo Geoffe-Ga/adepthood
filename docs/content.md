@@ -130,9 +130,17 @@ indexes reject their insert, logging `inserted=0`.
   client renders it natively. Locked, unreleased, or unknown content
   is indistinguishable from missing (`404 content_not_found`).
 * `GET /course/site-resources` lists the manifest's `site_resources[]`
-  (auth required, no stage gating);
+  sorted by `order` (auth required, no stage gating), each with the
+  caller's `is_read` mark;
   `GET /course/site-resources/{slug}/body` serves a resource body the
   same way chapters are served.
+* Start Here read marks live in `ResourceCompletion`, keyed by slug
+  because resources are not database rows.
+  `POST /course/site-resources/{slug}/mark-read` is idempotent and 404s
+  on a slug the pin does not ship; `GET /course/start-here/progress`
+  answers `{total_items, read_items, progress_percent, next_unlock_day:
+  null}` over the slugs the current pin ships, so a mark left on a
+  resource a later re-pin drops stops counting.
 * A manifest-listed file missing from disk is a server bug and returns
   `502 content_unavailable` — there is no auth failure mode because
   local files need no credentials.

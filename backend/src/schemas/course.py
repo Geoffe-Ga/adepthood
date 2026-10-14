@@ -61,12 +61,31 @@ class ContentBodyResponse(BaseModel):
 
 
 class SiteResourceResponse(BaseModel):
-    """One entry in the always-available "Site Resources" list."""
+    """One entry in the always-available Start Here ("Site Resources") list.
+
+    ``order`` is the manifest's 1-based reading position (the list is served
+    sorted by it) and ``is_read`` is the caller's own read mark (#3148).
+    """
 
     slug: str
     title: str
     description: str
     url: str
+    order: int
+    is_read: bool
+
+
+class ResourceCompletionResponse(OwnedResourcePublic):
+    """Response after marking a Start Here site resource as read (#3148).
+
+    Keyed by ``slug`` because resources are manifest entries, not rows.
+    ``user_id`` is excluded for the same reason as on
+    :class:`ContentCompletionResponse`.
+    """
+
+    id: int
+    slug: str
+    completed_at: datetime
 
 
 class StageIntroResponse(BaseModel):
