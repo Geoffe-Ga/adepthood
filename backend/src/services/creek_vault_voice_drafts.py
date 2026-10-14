@@ -26,9 +26,10 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Final
+from enum import StrEnum
+from typing import Final, cast
 
 from fastapi import HTTPException
 from sqlalchemy import ColumnElement, func, or_, update
@@ -41,6 +42,7 @@ from domain.creek_vault import (
     CreekVaultError,
     CreekVaultPipelineClient,
     CreekVaultVoiceDraftClient,
+    VaultSendSuspendedError,
     VaultTierCeiling,
     VaultVoiceDraftRequest,
     tier_ceiling_for,
@@ -67,6 +69,7 @@ from services.creek_vault_withdraw import (
     withdraw_unconfirmed_copy,
 )
 from services.journal_withdrawal_obligation import open_obligation, settle_confirmed
+from services.privacy_lineage import LineageOperation, observe_entry_lineage
 from services.voice_draft_privacy import voice_draft_privacy
 
 _LOGGER = logging.getLogger(__name__)
@@ -83,6 +86,8 @@ RETRACTION_TRANSITION_EVENT = "creek vault voice draft obligation transition"
 RETRACTION_BACKLOG_EVENT = "creek vault voice draft retraction backlog"
 _SWEEP_SKIPPED_EVENT = "creek vault voice draft retraction sweep skipped"
 _MIRROR_WITHHELD_EVENT = "creek vault voice draft mirror withheld"
+_MIRROR_SUSPENDED_EVENT = "creek vault voice draft mirror suspended"
+_MIRROR_INTENT_DROPPED_EVENT = "creek vault voice draft mirror intent dropped"
 
 #: Every ``extra`` key this module may log. Ids are opaque, states and codes are
 #: closed vocabularies, counts and ages are integers: no essay, body, title,
@@ -156,12 +161,21 @@ class EntryRef:
     entry_id: int
 
 
+class MirrorOutcome(StrEnum):
+    """How one mirror attempt ended -- a closed vocabulary that carries no content."""
+
+    NOT_OFFERED = "not_offered"  # intimate, or no vault takes drafts: nothing recorded
+    WITHHELD = "withheld"  # a withdrawal is still owed for this draft: no PUT
+    SUSPENDED = "suspended"  # the operator switch refused the PUT before the wire
+    DIALLED = "dialled"  # the PUT went out: stored, refused, or unacknowledged
+
+
 async def mirror_voice_draft(
     client: CreekVaultVoiceDraftClient,
     draft: VoiceDraftCopy,
     *,
     record_intent: Callable[[], Awaitable[bool]] | None = None,
-) -> None:
+) -> MirrorOutcome:
     """Make one upsert of a non-intimate generated essay, after recording the intent.
 
     The tier guard runs before the handshake so an intimate essay never reaches
@@ -172,21 +186,92 @@ async def mirror_voice_draft(
     while an earlier withdrawal is still owed for this draft, and the PUT is
     then withheld rather than republishing over that obligation. A Creek fault
     or an unreadable success is recorded and dropped, never retried -- its
-    intent row keeps any later withdrawal honest.
+    intent row keeps any later withdrawal honest. A PUT the operator's
+    vault-send suspension refused never left the process, and says so with
+    :attr:`MirrorOutcome.SUSPENDED` so the caller can drop the intent (#3122).
     """
     tier = tier_ceiling_for(draft.classification)
     if not _expressible_on_the_wire(tier) or not await _supports_voice_drafts(client):
-        return
+        return MirrorOutcome.NOT_OFFERED
     external_id = voice_draft_external_id(draft.owner_user_id, draft.marginalia_id)
     if not await _intent_recorded(record_intent, external_id):
-        return
+        return MirrorOutcome.WITHHELD
     request = VaultVoiceDraftRequest(
         external_id=external_id,
         content=draft.essay,
         tier=tier,
         tier_ceiling=tier,
     )
-    await _put_draft(client, request)
+    return await _put_draft(client, request)
+
+
+class _IntentStager:
+    """The ``record_intent`` callback that remembers what it staged, so it can be dropped."""
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        draft: VoiceDraftCopy,
+        *,
+        entry_id: int,
+        destination: str | None,
+    ) -> None:
+        self._session = session
+        self._draft = draft
+        self._entry_id = entry_id
+        self._destination = destination
+        self.staged: StagedMirrorIntent | None = None
+
+    async def __call__(self) -> bool:
+        self.staged = await stage_mirror_intent(
+            self._session,
+            user_id=self._draft.owner_user_id,
+            entry_id=self._entry_id,
+            marginalia_id=self._draft.marginalia_id,
+            destination=self._destination,
+        )
+        return self.staged is not None
+
+
+async def mirror_recorded_voice_draft(
+    session: AsyncSession,
+    client: CreekVaultVoiceDraftClient,
+    draft: VoiceDraftCopy,
+    *,
+    entry: JournalEntry,
+    destination: str | None,
+) -> MirrorOutcome:
+    """Mirror ``draft`` with a durable intent and shadow; drop both if nothing was sent.
+
+    The intent is committed before the PUT, so a crash or a lost acknowledgement
+    still leaves the withdrawal it would owe on record -- a dialled PUT keeps
+    it whatever came back. A PUT the operator's ``PRIVACY_SUSPEND_VAULT_SEND``
+    refused before the wire offered nothing, so the staged intent is dropped
+    (or the row restored to what it was) rather than leaving the background
+    sweep retracting a draft the vault never received (#3122, after #3107).
+
+    The ``VOICE_DRAFT_MIRROR`` lineage shadow (#3059, observation only) is
+    counted for every attempt that staged an intent and was not refused by the
+    switch: one that returned, and one that raised or was cancelled while the
+    PUT may have been on the wire. The exception still propagates; counting it
+    is the safe direction for an egress log.
+    """
+    stager = _IntentStager(session, draft, entry_id=cast("int", entry.id), destination=destination)
+    outcome: MirrorOutcome | None = None
+    try:
+        outcome = await mirror_voice_draft(client, draft, record_intent=stager)
+    finally:
+        if stager.staged is not None and outcome is not MirrorOutcome.SUSPENDED:
+            await _count_mirror_egress(session, entry)
+    if outcome is MirrorOutcome.SUSPENDED and stager.staged is not None:
+        await drop_staged_mirror_intent(session, stager.staged)
+    return outcome
+
+
+async def _count_mirror_egress(session: AsyncSession, entry: JournalEntry) -> None:
+    """Record the mirror's lineage shadow and commit, so no connection is held after it."""
+    await observe_entry_lineage(session, LineageOperation.VOICE_DRAFT_MIRROR, entry)
+    await session.commit()
 
 
 async def _intent_recorded(
@@ -202,27 +287,39 @@ async def _intent_recorded(
     return False
 
 
-async def _put_draft(client: CreekVaultVoiceDraftClient, request: VaultVoiceDraftRequest) -> None:
-    """Attempt the one PUT, logging a content-free outcome; never raises a vault error."""
+async def _put_draft(
+    client: CreekVaultVoiceDraftClient, request: VaultVoiceDraftRequest
+) -> MirrorOutcome:
+    """Attempt the one PUT, logging a content-free outcome; never raises a vault error.
+
+    :class:`VaultSendSuspendedError` is matched first and is not a degrade: the
+    adapter raises it at its single request site before anything is on the
+    wire, and the PUT is one attempt, so its refusal proves this draft never
+    left the server (#3122).
+    """
     external_id = request.external_id
     try:
         result = await client.upsert_voice_draft(request)
+    except VaultSendSuspendedError:
+        _LOGGER.info(_MIRROR_SUSPENDED_EVENT, extra={"external_id": external_id})
+        return MirrorOutcome.SUSPENDED
     except CreekVaultError:
         _LOGGER.warning(
             _MIRROR_DEGRADED_EVENT,
             extra={"external_id": external_id, "reason": "vault_error"},
         )
-        return
+        return MirrorOutcome.DIALLED
     if not result.stored:
         _LOGGER.warning(
             _MIRROR_DEGRADED_EVENT,
             extra={"external_id": external_id, "reason": "not_stored"},
         )
-        return
+        return MirrorOutcome.DIALLED
     _LOGGER.info(
         _MIRROR_STORED_EVENT,
         extra={"external_id": external_id, "action": result.action},
     )
+    return MirrorOutcome.DIALLED
 
 
 async def _absence_answer(client: CreekVaultVoiceDraftClient) -> RetractionFailureCode | None:
@@ -359,6 +456,47 @@ def _may_rearm(row: VoiceDraftRetraction, destination: str | None) -> bool:
     return row.state == _MIRROR_INTENT and row.destination == destination
 
 
+@dataclass(frozen=True)
+class _IntentSnapshot:
+    """Every column a re-arm overwrites, as it stood before: enough to undo it."""
+
+    state: str
+    journal_entry_id: int
+    destination: str | None
+    attempt_count: int
+    safe_failure_code: str | None
+    next_attempt_at: datetime | None
+    confirmed_at: datetime | None
+    updated_at: datetime
+
+    @classmethod
+    def of(cls, row: VoiceDraftRetraction) -> _IntentSnapshot:
+        """Capture ``row``'s re-armable columns."""
+        return cls(
+            state=row.state,
+            journal_entry_id=row.journal_entry_id,
+            destination=row.destination,
+            attempt_count=row.attempt_count,
+            safe_failure_code=row.safe_failure_code,
+            next_attempt_at=row.next_attempt_at,
+            confirmed_at=row.confirmed_at,
+            updated_at=row.updated_at,
+        )
+
+    def restore(self, row: VoiceDraftRetraction) -> None:
+        """Put ``row``'s re-armable columns back as they were captured."""
+        for name, value in asdict(self).items():
+            setattr(row, name, value)
+
+
+@dataclass(frozen=True)
+class StagedMirrorIntent:
+    """The intent row one mirror committed, and what that row was before (``None``: new)."""
+
+    row_id: int
+    previous: _IntentSnapshot | None
+
+
 async def record_mirror_intent(
     session: AsyncSession,
     *,
@@ -375,8 +513,30 @@ async def record_mirror_intent(
     future re-mirror is never untracked. Returns ``False`` -- withhold the PUT
     -- while an earlier withdrawal for this draft is still owed.
     """
+    staged = await stage_mirror_intent(
+        session,
+        user_id=user_id,
+        entry_id=entry_id,
+        marginalia_id=marginalia_id,
+        destination=destination,
+    )
+    return staged is not None
+
+
+async def stage_mirror_intent(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    entry_id: int,
+    marginalia_id: int,
+    destination: str | None,
+) -> StagedMirrorIntent | None:
+    """:func:`record_mirror_intent`, answering what was staged so it can be dropped.
+
+    ``None`` withholds the PUT, exactly as ``False`` does there.
+    """
     row = await _intent_row(session, user_id=user_id, marginalia_id=marginalia_id)
-    previous = None if row is None else row.state
+    snapshot: _IntentSnapshot | None = None
     if row is None:
         row = VoiceDraftRetraction(
             user_id=user_id,
@@ -386,25 +546,53 @@ async def record_mirror_intent(
         )
     elif not _may_rearm(row, destination):
         await session.commit()
-        return False
+        return None
     else:
-        row.state = _MIRROR_INTENT
-        row.journal_entry_id = entry_id
-        row.destination = destination
-        row.attempt_count = 0
-        row.safe_failure_code = None
-        row.next_attempt_at = None
-        row.confirmed_at = None
-        row.updated_at = _utcnow()
+        snapshot = _IntentSnapshot.of(row)
+        _fresh_intent(entry_id, destination).restore(row)
     session.add(row)
     try:
         await session.commit()
     except IntegrityError:
         # A concurrent writer recorded this draft first; its row governs.
         await session.rollback()
-        return False
-    _log_transition(row.id, previous, _MIRROR_INTENT)
-    return True
+        return None
+    _log_transition(row.id, None if snapshot is None else snapshot.state, _MIRROR_INTENT)
+    return StagedMirrorIntent(row_id=cast("int", row.id), previous=snapshot)
+
+
+def _fresh_intent(entry_id: int, destination: str | None) -> _IntentSnapshot:
+    """The re-armable columns of a just-recorded offer to ``destination``."""
+    return _IntentSnapshot(
+        state=_MIRROR_INTENT,
+        journal_entry_id=entry_id,
+        destination=destination,
+        attempt_count=0,
+        safe_failure_code=None,
+        next_attempt_at=None,
+        confirmed_at=None,
+        updated_at=_utcnow(),
+    )
+
+
+async def drop_staged_mirror_intent(session: AsyncSession, staged: StagedMirrorIntent) -> None:
+    """Undo one staged intent whose PUT provably sent nothing, and commit.
+
+    A row this mirror created is deleted: nothing was offered, so nothing is
+    owed. A row it re-armed is put back exactly as it was -- a confirmed
+    withdrawal stays confirmed, and an earlier offer to the same vault, which
+    may hold a copy, keeps owing its withdrawal. A row that is no longer this
+    mirror's intent belongs to whatever moved it, and is left alone.
+    """
+    row = await session.get(VoiceDraftRetraction, staged.row_id, populate_existing=True)
+    if row is not None and row.state == _MIRROR_INTENT:
+        if staged.previous is None:
+            await session.delete(row)
+        else:
+            staged.previous.restore(row)
+            session.add(row)
+        _LOGGER.info(_MIRROR_INTENT_DROPPED_EVENT, extra={"obligation_id": staged.row_id})
+    await session.commit()
 
 
 async def mark_entry_retractions_pending(
