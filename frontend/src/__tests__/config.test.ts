@@ -226,6 +226,45 @@ describe('config', () => {
     });
   });
 
+  describe('BotMason credit pack URL (#3262)', () => {
+    const ORIGINAL_ENV = { ...process.env };
+    const CUSTOM_PACK_URL = 'https://creekmasons.gumroad.com/l/botmason-credits';
+
+    beforeEach(() => {
+      jest.resetModules();
+      process.env = { ...ORIGINAL_ENV };
+      delete process.env.EXPO_PUBLIC_CREDIT_PACK_URL;
+    });
+
+    afterEach(() => {
+      process.env = { ...ORIGINAL_ENV };
+      jest.resetModules();
+    });
+
+    // No default: until the owner sets the page, the app offers no credits.
+    it('resolves to the empty string when no pack page is configured', () => {
+      const config = loadConfig();
+
+      expect(config.CREDIT_PACK_URL).toBe('');
+      expect(config.CONFIG_ERROR).toBeNull();
+    });
+
+    it('uses EXPO_PUBLIC_CREDIT_PACK_URL verbatim when it is set', () => {
+      process.env.EXPO_PUBLIC_CREDIT_PACK_URL = CUSTOM_PACK_URL;
+
+      const config = loadConfig();
+
+      expect(config.CREDIT_PACK_URL).toBe(CUSTOM_PACK_URL);
+      expect(config.CONFIG_ERROR).toBeNull();
+    });
+
+    it('does not borrow the Gumroad product page as a stand-in', () => {
+      const config = loadConfig();
+
+      expect(config.CREDIT_PACK_URL).not.toBe(config.GUMROAD_PRODUCT_URL);
+    });
+  });
+
   // ``resolveEnv`` generalises the double-read workaround the Gumroad URLs
   // already use: babel-preset-expo rewrites a *static* ``process.env.EXPO_
   // PUBLIC_…`` reference to a build-time literal (the only route into a

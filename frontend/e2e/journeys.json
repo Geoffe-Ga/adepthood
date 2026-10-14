@@ -2316,7 +2316,7 @@
   },
   {
     "id": "journal.ai-refused-without-payer",
-    "description": "A writer with no API key of their own asks for a resonance pass, a first essay letter, completion detection or a page transcription. Since ADR 0009 phase (a) (#3067) the server's own key never pays for a writer's content, so on the app-provider path this is refused llm_key_required whatever provider the server is configured with; only a writer whose own vault answers spends credits, and an empty wallet there is refused insufficient_offerings. Each is refused 402 before anything is spent (no wallet change, no slot, no usage row, no dial): insufficient_offerings when the wallet is empty, llm_key_required when only a personal key could answer. The resonance and letter surfaces open the add-credits-or-key refill dialog; a page read shows a terminal 'add your key in Settings' card. No canned stub text ever reaches the writer; with credits or a key, generation proceeds as before (#3096). Uncovered because the e2e lane arms BOTMASON_STUB_SEAM and its provider environment lane-wide, so a spec cannot disarm the seam or empty the monthly allocation for one journey. Pinned meanwhile by backend/tests/security/test_byok_only_cloud.py (zero cloud calls without the writer's key, by provider factory, transport and socket spies; a credit debit stands only beside a vault receipt), backend/tests/test_generation_payer.py, backend/tests/test_generation_payer_invariants.py and the Jest suites TranscriptionPayerRefusal, ResonanceRefillDialogPayer and errorMessages. Since #3067 a production build does not send a keyless page at all: it shows the same 'add your key in Settings' card from key_required on the device, and the server's page route, asked anyway, runs the payer gate before decoding the body.",
+    "description": "A writer with no API key of their own asks for a resonance pass, a first essay letter, completion detection or a page transcription. Since ADR 0009 phase (a) (#3067) the server's own key never pays for a writer's content, so on the app-provider path this is refused llm_key_required whatever provider the server is configured with; only a writer whose own vault answers spends credits, and an empty wallet there is refused insufficient_offerings. Each is refused 402 before anything is spent (no wallet change, no slot, no usage row, no dial): insufficient_offerings when the wallet is empty, llm_key_required when only a personal key could answer. The resonance and letter surfaces open the refill dialog, which offers a key and offers BotMason credits only when a credit pack page is configured (EXPO_PUBLIC_CREDIT_PACK_URL, #3262; that path is journal.keyless-price-needs-own-key-and-credit-pack); a page read shows a terminal 'add your key in Settings' card. No canned stub text ever reaches the writer; with credits or a key, generation proceeds as before (#3096). Uncovered because the e2e lane arms BOTMASON_STUB_SEAM and its provider environment lane-wide, so a spec cannot disarm the seam or empty the monthly allocation for one journey. Pinned meanwhile by backend/tests/security/test_byok_only_cloud.py (zero cloud calls without the writer's key, by provider factory, transport and socket spies; a credit debit stands only beside a vault receipt), backend/tests/test_generation_payer.py, backend/tests/test_generation_payer_invariants.py and the Jest suites TranscriptionPayerRefusal, ResonanceRefillDialogPayer and errorMessages. Since #3067 a production build does not send a keyless page at all: it shows the same 'add your key in Settings' card from key_required on the device, and the server's page route, asked anyway, runs the payer gate before decoding the body.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["resonance", "journal"],
@@ -2371,5 +2371,22 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habits-recovery.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.keyless-price-needs-own-key-and-credit-pack",
+    "description": "A writer with no API key of their own asks for a resonance reading or a note's first letter in a production build (#3262). Since ADR 0009 phase (a) (#3067) BotMason credits pay only for a reading the writer's own vault answers, so the app reads GET /vault/connection before pricing a reading: when the server says nothing is attached, the disclosure leads with 'This needs your own API key', names no BotMason price, drops the 'don't show this again' box, and its Continue arm becomes Open Settings, which opens API-key settings -- even for a writer who dismissed the cost note, so no request is sent that the server can only refuse llm_key_required. A letter never goes to a vault, so its offer says the same without reading the vault or the wallet, and its ask becomes Open Settings. A reading a connected or managed vault may answer (or whose connection could not be read) keeps its shipped BotMason price line from GET /user/usage, and a saved key keeps 'Your own API key pays for this ...'. When that vault-answered reading meets an empty wallet, the refill dialog offers a key and, only when EXPO_PUBLIC_CREDIT_PACK_URL is set to an https page, 'or add more BotMason credits' with a link to the pack page and a note to buy with the same email address as the Adepthood account; unset, it says nothing about buying credits. Uncovered because the browser lane drives the Expo development server, where KEYLESS_GENERATION_REACHES_SERVER is true (its stub seam answers keyless requests, so the shipped price lines stay), and the lane arms BOTMASON_STUB_SEAM lane-wide, the same constraint journal.ai-refused-without-payer records. Pinned meanwhile by the Jest suites resonanceCost, JournalEntryScreenResonanceExplainer (the production-build describe), ResonanceRefillDialogPayer, creditPack and config.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["vault", "botmasonUsage", "resonance"],
+      "routes": [
+        "GET /vault/connection",
+        "GET /user/usage",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["uservaultconfig", "walletaudit"]
+    },
+    "status": "uncovered",
+    "issue": 3062
   }
 ]

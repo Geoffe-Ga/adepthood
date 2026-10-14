@@ -1,11 +1,28 @@
-/** A non-chargeable resonance pass needs a remedy, not a disabled spend choice. */
-import React from 'react';
+/**
+ * A non-chargeable resonance pass needs a remedy, not a disabled spend choice.
+ *
+ * The empty-wallet branch is the one place the app offers credits, because a
+ * reading the writer's own vault answers is the one thing credits pay for
+ * (ADR 0009 phase (a), #3067). It offers them only when the credit pack page is
+ * configured (#3262): a link to it, and a note to buy with the same email
+ * address as the Adepthood account. Without that page it offers only a key, and
+ * says nothing about buying credits.
+ */
+import React, { useCallback } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import {
+  CREDIT_PACK_LINK,
+  CREDIT_PACK_LINK_A11Y,
+  CREDIT_PACK_SAME_EMAIL,
+  creditPackUrl,
+} from './creditPack';
 import JournalModalShell from './JournalModalShell';
 import type { ResonanceRefillReason } from './useResonanceExplainer';
 
+import { CREDIT_PACK_URL } from '@/config';
 import { colors, editorialType, journalLayout, spacing, touchTarget } from '@/design/tokens';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 
 const TITLE = 'Nothing to pay for the reading with';
 const ADD_KEY = 'Add your API key';
@@ -42,12 +59,35 @@ function resetAvailabilityCopy(monthlyCap: number | null, reset: string | null):
     : `Your next monthly reset is ${reset}.`;
 }
 
+/** The pack page and the one thing a buyer must get right. */
+function CreditPackOffer({ url }: { url: string }): React.JSX.Element {
+  const open = useCallback(() => {
+    void openExternalUrl(url);
+  }, [url]);
+  return (
+    <View testID="journal-resonance-refill-credit-pack">
+      <TouchableOpacity
+        style={styles.packLink}
+        onPress={open}
+        accessibilityRole="link"
+        accessibilityLabel={CREDIT_PACK_LINK_A11Y}
+        testID="journal-resonance-refill-credit-pack-link"
+      >
+        <Text style={styles.packLinkLabel}>{CREDIT_PACK_LINK}</Text>
+      </TouchableOpacity>
+      <Text style={styles.packNote}>{CREDIT_PACK_SAME_EMAIL}</Text>
+    </View>
+  );
+}
+
 function RefillMessage({
   reason,
   resetCopy,
+  packUrl,
 }: {
   reason: ResonanceRefillReason;
   resetCopy: string;
+  packUrl: string | null;
 }): React.JSX.Element {
   if (reason === 'key_required') {
     return (
@@ -57,11 +97,15 @@ function RefillMessage({
       </Text>
     );
   }
+  const credits = packUrl === null ? '' : ', or add more BotMason credits';
   return (
-    <Text style={styles.body}>
-      Your BotMason balance has run out, so nothing was charged. Add your own API key and it pays
-      for the reading instead, or add more BotMason credits. {resetCopy}
-    </Text>
+    <>
+      <Text style={styles.body}>
+        Your BotMason balance has run out, so nothing was charged. Add your own API key and it pays
+        for the reading instead{credits}. {resetCopy}
+      </Text>
+      {packUrl === null ? null : <CreditPackOffer url={packUrl} />}
+    </>
   );
 }
 
@@ -76,6 +120,8 @@ export default function ResonanceRefillDialog({
   const reset = formatResonanceResetDate(monthlyResetDate);
   const resetCopy = resetAvailabilityCopy(monthlyCap, reset);
   const keyRequired = reason === 'key_required';
+  // Read at render, not at import: the page is meant to be replaceable.
+  const packUrl = creditPackUrl(CREDIT_PACK_URL);
   return (
     <JournalModalShell
       visible={visible}
@@ -89,7 +135,7 @@ export default function ResonanceRefillDialog({
       <Text style={styles.title} accessibilityRole="header">
         {keyRequired ? 'API key needed for Resonance' : TITLE}
       </Text>
-      <RefillMessage reason={reason} resetCopy={resetCopy} />
+      <RefillMessage reason={reason} resetCopy={resetCopy} packUrl={packUrl} />
       <View style={styles.actions}>
         <TouchableOpacity
           style={styles.action}
@@ -128,6 +174,20 @@ const styles = StyleSheet.create({
     ...editorialType.note,
     color: colors.paper.inkSoft,
     paddingTop: spacing(1),
+  },
+  packLink: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+    marginTop: spacing(1),
+  },
+  packLinkLabel: {
+    ...editorialType.action,
+    color: colors.paper.ink,
+    textDecorationLine: 'underline',
+  },
+  packNote: {
+    ...editorialType.note,
+    color: colors.paper.inkSoft,
   },
   actions: {
     flexDirection: 'row',

@@ -104,6 +104,21 @@ export const SANGHA_INVITE_URL = resolveEnv(
 );
 
 /**
+ * The BotMason credit pack's page, where credits are bought (#3262).
+ *
+ * No default, like the Sangha invite: the page is the owner's, and a
+ * placeholder would ship a dead link inside a binary that cannot be patched.
+ * Empty means the app neither links to it nor says credits can be bought --
+ * the vault-reading empty-wallet remedy offers only a key -- so, unlike
+ * ``API_BASE_URL``, it never contributes to ``CONFIG_ERROR``.
+ */
+export const CREDIT_PACK_URL = resolveEnv(
+  process.env.EXPO_PUBLIC_CREDIT_PACK_URL,
+  'EXPO_PUBLIC_CREDIT_PACK_URL',
+  '',
+);
+
+/**
  * Whether a page read with no key of the writer's own may still go to the server.
  *
  * Only in a development build. Since ADR 0009 phase (a) (#3067) the server's
@@ -113,3 +128,15 @@ export const SANGHA_INVITE_URL = resolveEnv(
  * page nowhere, rather than uploading it only to be refused.
  */
 export const KEYLESS_PAGE_READ_REACHES_SERVER: boolean = __DEV__;
+
+/**
+ * Whether a resonance reading or a letter with no key of the writer's own may
+ * still be priced in BotMason credits without a vault to answer it (#3262).
+ *
+ * Only in a development build, for the reason above: its local server's stub
+ * seam can answer a keyless request. In a production build credits pay only for
+ * a reading the writer's own vault answers (ADR 0009 phase (a), #3067), so a
+ * letter, and a reading with no vault attached, lead with "This needs your own
+ * API key" instead of a price.
+ */
+export const KEYLESS_GENERATION_REACHES_SERVER: boolean = __DEV__;
