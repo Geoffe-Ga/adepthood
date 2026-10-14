@@ -427,20 +427,21 @@ async def _resolve_unlocked_content(
     user_id: int,
     content_id: int,
     tz: str,
-) -> StageContent:
-    """Fetch ``content_id`` and gate on the parent stage being unlocked.
+) -> tuple[StageContent, CourseStage]:
+    """Fetch ``content_id`` and its stage, gating on the stage being unlocked.
 
     Locked stages mask as 404 (BUG-COURSE-004) — content_id is an
     enumeration oracle, so a 403 would let an attacker tell "exists but
     locked" apart from "does not exist".  Mirrors :func:`get_content_item`.
     Split out of :func:`mark_content_read` so the route stays at xenon
     rank A and the resolution / authorisation steps are independently
-    testable.
+    testable.  Returns the already-loaded stage alongside the item so the
+    caller need not fetch it again (issue #3195).
     """
     item, stage = await _load_content_with_stage(session, content_id)
     if not await _is_stage_unlocked_for_user(session, user_id, stage.stage_number, tz):
         raise not_found("content")
-    return item
+    return item, stage
 
 
 async def _insert_or_resolve_completion(
@@ -490,10 +491,7 @@ async def mark_content_read(
     loser via ``IntegrityError`` and the existing row is returned —
     closes the BUG-COURSE-002 TOCTOU.
     """
-    item = await _resolve_unlocked_content(session, current_user, content_id, user_tz)
-    stage = await session.get(CourseStage, item.course_stage_id)
-    if stage is None:
-        raise not_found("stage")
+    _, stage = await _resolve_unlocked_content(session, current_user, content_id, user_tz)
     existing = await _existing_content_completion(session, current_user, content_id)
     if existing is not None:
         await advance_course_reading_stage(session, current_user, stage.stage_number)
