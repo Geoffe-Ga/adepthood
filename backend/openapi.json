@@ -7984,7 +7984,7 @@
         "type": "object"
       },
       "StagePromptDetail": {
-        "description": "One of a stage's prompts: what to write, and how often to write it.\n\n``cadence`` is opaque display prose the course author writes (\"Daily\",\n\"At least 4x per week\", \"Whenever they arise\") and is passed through\nverbatim — it is deliberately not a schedule, an enum, or a recurrence\nrule, because the curriculum states it as prose and varies it per prompt.\n``None`` where the chapter states no cadence at all.",
+        "description": "One of a stage's prompts: what to write, and how often to write it.\n\n``cadence`` is opaque display prose the course author writes (\"Daily\",\n\"At least 2x per week\", \"Whenever they arise\") and is passed through\nverbatim — it is deliberately not a schedule, an enum, or a recurrence\nrule, because the curriculum states it as prose and varies it per prompt.\n``None`` where the chapter states no cadence at all.",
         "properties": {
           "body": {
             "title": "Body",

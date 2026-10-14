@@ -16,7 +16,7 @@ Green's journaling is different. It's not strategic (like Orange) or reflective 
 
 As always: pen, not pencil. Timer set. Hand moving. No crossing out. Let the unconscious speak.
 
-**Prompt 1: Write About a Memory Associated With Each Shadow Element (At least 4x per week)**
+**Prompt 1: Write About a Memory Associated With Each Shadow Element**
 
 Start by making your Shadow List (see Prompt 2 below). Then, for each element on that list—each behavior, characteristic, or identity you've disowned—write about a specific memory where you first learned that this part of you was unacceptable.
 
@@ -30,7 +30,7 @@ For example: If your Shadow element is "anger," write about the first time you w
 
 This is shadow work. Not eliminating the dark, but *illuminating* it. Seeing it clearly enough to integrate it.
 
-**Prompt 2: Make a List of Behaviors, Characteristics, and Identities That Comprise Your Shadow (At least 4x per week)**
+**Prompt 2: Make a List of Behaviors, Characteristics, and Identities That Comprise Your Shadow**
 
 Your Shadow is everything you've disowned. Every quality you've been told is "bad" or "wrong" or "too much" or "not enough." Every part of yourself you've hidden because it didn't fit the image of who you're supposed to be.
 
@@ -52,7 +52,7 @@ These aren't "bad" things. They're *human* things. But somewhere along the way, 
 
 The first step to reclaiming them is naming them. Write them all down. Don't judge. Just witness.
 
-**Prompt 3: Identify the Shadow Characteristics That Project Systemic Problems (At least 4x per week)**
+**Prompt 3: Identify the Shadow Characteristics That Project Systemic Problems**
 
 This is where personal shadow work meets collective responsibility. Return to your list of Problems from Orange. Then ask: Which of my Shadow elements *contribute* to these problems?
 

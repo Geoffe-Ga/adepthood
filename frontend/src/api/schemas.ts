@@ -301,7 +301,7 @@ export const promptDetailSchema = z.object({
 
 /** One of a stage's prompts (mirrors backend ``StagePromptDetail``).
  *
- * ``cadence`` is display prose the course author writes ("Daily", "At least 4x
+ * ``cadence`` is display prose the course author writes ("Daily", "At least 2x
  * per week", "Whenever they arise") and is carried verbatim — deliberately not
  * an enum or a recurrence rule, because the curriculum states it as prose and
  * varies it per prompt. ``null`` where the chapter states no cadence at all.

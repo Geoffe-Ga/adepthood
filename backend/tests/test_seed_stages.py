@@ -368,7 +368,7 @@ _CONTENT_DIR = Path(__file__).resolve().parents[1] / "content"
 _ARTIFACT_PATH = (
     Path(__file__).resolve().parents[1] / "src" / "curriculum" / "stage_correspondence.json"
 )
-_PINNED_SHA = "b06a58eec8944d9ef750a48da59a1c6e87b261b7"  # pragma: allowlist secret
+_PINNED_SHA = "59df2a259f042559989086d0ed4b0efd54faca35"  # pragma: allowlist secret
 _SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
 
 

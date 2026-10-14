@@ -41,8 +41,9 @@ _BACKEND_DIR = Path(__file__).resolve().parents[1]
 _RESOURCES_DIR = _BACKEND_DIR / "content" / "markdown" / "resources"
 _DATASET_PATH = _BACKEND_DIR / "src" / "curriculum" / "archetypal_wavelength.json"
 
-_STAGES_FILE = "aptitude-stages.md"
-_ABOUT_FILE = "about.md"
+#: Site resources are named ``NN-slug.md`` since aptitude-course#76.
+_STAGES_FILE = "04-aptitude-stages.md"
+_ABOUT_FILE = "02-about.md"
 
 #: The APTITUDE curriculum has exactly ten stages.  Asserted for both parses so
 #: a parser that quietly matched nothing fails loudly instead of vacuously

@@ -17,7 +17,8 @@ actually trust in your capacity for Free Will.
 Where you choose your own path. APTITUDE is a
 ten-stage, 36-week rite of
 passage, an adventure in self-integration,
-shadow reclamation, blissful union, and radical agency.
+shadow reclamation (Green’s work), blissful union (Ultraviolet’s), and
+radical agency (Red’s).
 
 It’s a silly welcome: one to the path you were already
 walking. Based on nothing but you clicking the link that led you here,
@@ -50,7 +51,7 @@ hierarchy that only by summiting can one be enlightened, whole or Good
 Enough. Although the course comprises both theory and the way to put
 theory into action—praxis—the ingredients of the experience of Adepthood
 are already available to you right
-now.
+now. Which is not to say there’s nothing to do.
 
 It just helps to learn the scales before you forget
 everything, shut off the analyzing mind, and let go. Even though you
@@ -117,7 +118,12 @@ Wholeness into which you
 can plug whatever practices you personally feel called to explore. There
 will be options, opportunities, and examples you can use to inspire
 riffs and substitutes. However, you’ll be able
-to use what uniquely works for you throughout.
+to use what uniquely works for you throughout. You choose your depth,
+too: a journal page a day is a whole way through, and each deeper ring
+is worth coming back for. What holds it together is Energy
+Scaffolding—one new habit every three weeks, one minute climbing to
+forty-five. Twenty-one days of a one-minute habit is how you find out
+you’re someone who keeps habits.
 
 After all, this Course is
 about Free Will. How
@@ -144,6 +150,11 @@ too much and not enough, wondering whether the same strange gifts of
 epiphany you hope can help the world might irrecoverably set you apart
 from it—this is your portal.
 
+And if a voice says this is for people who have their act together:
+it was built for the person who doesn’t. The first Stage asks for one
+minute a day so nobody has to earn their way in. You don’t need to be
+ready; readiness is what the three weeks build.
+
 Step through.
 
 ### A Final Note on the Curriculum of the APTITUDE Course
@@ -169,12 +180,15 @@ anywhere in the 60+ books and countless podcasts I’ve consumed in the
 last two years of dedicated research that went into this Course. Much
 less in the decade plus of more casual practice prior.
 
-But if you’re reading this, I’m betting what you need
-now is not meditation as a form of athleticism—what you need is to
+I’m not promising Awakening on any timeline. But if
+you’re reading this, I’m betting what you need now is not meditation
+as athleticism, and not another model either—you may know the maps
+better than I do. What you need is to
 clear away the
 obstacles to consistent
 practice so that all the techniques you’ve
-learned about can finally be put into action.
+learned about can finally be put into action—the one-minute thing,
+done on a Tuesday, which no model ever gave you.
 
 In general, we in the West are starving for a
 framework for the ethical prerequisites that make diligent practice
@@ -222,7 +236,9 @@ become the book. A
 book to be read through your mere presence. What I’m after, in this
 experiment we’re running together, is to hand you enough structure
 to actually practice all that wonderful woo woo you’ve been studying
-for as long as you can remember.
+for as long as you can remember. In the app that starts with a journal
+that keeps your words and reads you back your own clearest sentence on
+the day you can’t hear yourself.
 
 My sincere hope is that the Wavelength of your
 uplifted frequency lifts all those you encounter. That through finding
@@ -239,7 +255,9 @@ reflects the value of the community that will be there to support you
 along the way.
 
 Because the Creekmason Digital Sangha—a liminal rave of
-a Discord server—is where a lot of that value lives. It’s a standing
+a Discord server—is where a lot of that value lives. You meet the
+people walking this with you so you feel less alone in the room
+you’re actually in. It’s a standing
 invitation, never a requirement, but it’s the springboard, workshop, and
 laboratory where these skills get honed. It’s where we Liminal
 Creeps get launched into re-integration
@@ -248,7 +266,10 @@ felt a little Othered by.
 
 APTITUDE is not
 easy—but neither is being stuck in the
-in-between, always revving up but only spinning your wheels.
+in-between, always revving up but only spinning your wheels. But you
+can’t fail it. Every phase of the Wavelength has a medicine, the trough
+included; you will bottom out, and the course has something for you
+there. A missed week is a phase, not a broken streak.
 
 If you hear the call, step up. Let’s go on this
 journey together.
