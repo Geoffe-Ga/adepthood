@@ -29,7 +29,7 @@ global.fetch = mockFetch;
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
-const REQUEST_ID = 'a1b2c3d4e5f60718';
+const REQUEST_ID = 'a1b2c3d4e5f6471890abcdef12345678';
 const SERVER_500_COPY =
   'Something went wrong on our end. Give it a moment and try again — if it keeps happening, let us know.';
 
@@ -106,8 +106,11 @@ describe('a 500 that reached the client', () => {
 
     await failureOf(habits.list());
 
-    const logged = warnSpy.mock.calls.map((call: unknown[]) => String(call[0])).join('\n');
-    expect(logged).toContain(REQUEST_ID);
+    expect(warnSpy).toHaveBeenCalledWith('api_server_error', {
+      route: '/habits/',
+      status: 500,
+      requestId: REQUEST_ID,
+    });
   });
 
   test('recovers the request id from the exposed header when the body is not JSON', async () => {

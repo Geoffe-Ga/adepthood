@@ -14,6 +14,7 @@ import {
   type AuthResponse,
   type UnauthorizedReason,
 } from '@/api';
+import { reportDiagnostic } from '@/observability/diagnostics';
 import {
   clearLogoutPending,
   clearToken,
@@ -318,10 +319,9 @@ async function wipeUserState(): Promise<void> {
   // but surface every failure via ``allSettled`` so one dead key doesn't
   // silently strand the others.
   const results = await Promise.allSettled(clears.map(([, promise]) => promise));
-  results.forEach((result, index) => {
+  results.forEach((result) => {
     if (result.status === 'rejected') {
-      const label = clears[index]?.[0] ?? 'unknown';
-      console.warn(`[auth] failed to clear ${label} on logout`, result.reason);
+      reportDiagnostic('auth_storage_failed');
     }
   });
 }
@@ -382,8 +382,8 @@ async function adoptDeviceOwner(userId: number): Promise<void> {
 async function commitDeviceOwner(userId: number): Promise<void> {
   try {
     await saveDeviceOwner(userId);
-  } catch (err: unknown) {
-    console.warn('[auth] failed to record the device owner', err);
+  } catch {
+    reportDiagnostic('auth_storage_failed');
   }
 }
 
@@ -393,12 +393,12 @@ async function commitDeviceOwner(userId: number): Promise<void> {
  * the caller can decide whether to arm the BUG-FE-STATE-001 logout-pending
  * marker.
  */
-async function clearTokenSafely(label: string): Promise<boolean> {
+async function clearTokenSafely(_label: string): Promise<boolean> {
   try {
     await clearToken();
     return true;
-  } catch (err: unknown) {
-    console.warn(`clearToken failed in ${label}`, err);
+  } catch {
+    reportDiagnostic('auth_storage_failed');
     return false;
   }
 }
@@ -408,11 +408,11 @@ async function clearTokenSafely(label: string): Promise<boolean> {
  * resurrect on cold start. Arm the logout-pending marker (best-effort) so the
  * next bootstrap retries the delete before hydrating.
  */
-async function armLogoutPending(label: string): Promise<void> {
+async function armLogoutPending(_label: string): Promise<void> {
   try {
     await markLogoutPending();
-  } catch (err: unknown) {
-    console.warn(`markLogoutPending failed in ${label}`, err);
+  } catch {
+    reportDiagnostic('auth_storage_failed');
   }
 }
 
@@ -465,7 +465,7 @@ async function saveTokenThenApply(
   newTimezone: string | undefined,
   mutators: AuthMutators,
   tokenRef: React.MutableRefObject<string | null>,
-  warnLabel: string,
+  _warnLabel: string,
   expectedPriorToken: string,
 ): Promise<boolean> {
   if (tokenRef.current !== expectedPriorToken) {
@@ -474,8 +474,8 @@ async function saveTokenThenApply(
   }
   try {
     await saveToken(newToken);
-  } catch (err: unknown) {
-    console.warn(`saveToken failed in ${warnLabel}`, err);
+  } catch {
+    reportDiagnostic('auth_storage_failed');
     return false;
   }
   if (tokenRef.current !== expectedPriorToken) return false;
@@ -526,8 +526,8 @@ async function drainPendingLogout(mutators: AuthMutators): Promise<void> {
   if (await clearTokenSafely('bootstrap')) {
     try {
       await clearLogoutPending();
-    } catch (err: unknown) {
-      console.warn('clearLogoutPending failed on bootstrap', err);
+    } catch {
+      reportDiagnostic('auth_storage_failed');
     }
   }
   mutators.setAuthStatus('anonymous');
@@ -613,8 +613,8 @@ function useLoadStoredToken(
   tokenRef: React.MutableRefObject<string | null>,
 ): void {
   useEffect(() => {
-    bootstrapStoredToken(mutators, tokenRef).catch((err: unknown) => {
-      console.warn('loadToken failed on bootstrap', err);
+    bootstrapStoredToken(mutators, tokenRef).catch(() => {
+      reportDiagnostic('auth_storage_failed');
       mutators.setAuthStatus('anonymous');
     });
   }, [mutators, tokenRef]);
@@ -660,8 +660,8 @@ async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators)
   // a clear failure here must not break login / signup / password-reset.
   try {
     await clearLogoutPending();
-  } catch (err: unknown) {
-    console.warn('clearLogoutPending failed in applyAuthResponse', err);
+  } catch {
+    reportDiagnostic('auth_storage_failed');
   }
   mutators.setToken(response.token);
   adoptUserTimezone(mutators, response.timezone);

@@ -1,16 +1,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 /**
  * Clears a poisoned AsyncStorage key on bad JSON so the next launch self-heals
  * (BUG-FRONTEND-INFRA-011). Shared by the storage modules that read JSON —
  * each previously carried a byte-identical copy of this helper.
  */
-export async function resetCorruptKey(key: string, err: unknown): Promise<void> {
-  console.warn(`[storage] corrupt JSON in ${key}, clearing to self-heal`, err);
+export async function resetCorruptKey(key: string, _err: unknown): Promise<void> {
+  reportDiagnostic('storage_corrupt');
   try {
     await AsyncStorage.removeItem(key);
-  } catch (removeErr) {
-    console.warn(`[storage] failed to clear corrupt key ${key}`, removeErr);
+  } catch {
+    reportDiagnostic('storage_clear_failed');
   }
 }
 
@@ -50,8 +52,8 @@ export async function getJsonArray<T>(key: string): Promise<T[] | null> {
   let raw: string | null;
   try {
     raw = await AsyncStorage.getItem(key);
-  } catch (err: unknown) {
-    console.warn(`[storage] transient read error for ${key}, keeping stored data`, err);
+  } catch {
+    reportDiagnostic('storage_read_failed');
     return null;
   }
   return parseJsonArrayOrHeal<T>(key, raw);

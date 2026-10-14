@@ -5,6 +5,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { scopedKey } from './userScope';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 /**
  * Namespaced per account, following the ``userScope`` convention for new
  * per-user flags.
@@ -33,8 +35,8 @@ export async function savePromoteExplainerDismissed(value: boolean): Promise<voi
   // here rather than escaping as an unhandled rejection — the note simply shows again next session.
   try {
     await AsyncStorage.setItem(dismissedKey(), String(value));
-  } catch (err) {
-    console.warn('[promoteExplainerStorage] failed to save the dismissal flag', err);
+  } catch {
+    reportDiagnostic('storage_write_failed', { storage: 'promote_explainer' });
   }
 }
 
@@ -48,8 +50,8 @@ export async function loadPromoteExplainerDismissed(): Promise<boolean> {
   try {
     const raw = await AsyncStorage.getItem(dismissedKey());
     return raw === FLAG_TRUE;
-  } catch (err) {
-    console.warn('[promoteExplainerStorage] failed to load the dismissal flag', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'promote_explainer' });
     return false;
   }
 }

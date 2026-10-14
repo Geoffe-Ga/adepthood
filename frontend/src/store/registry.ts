@@ -1,3 +1,4 @@
+import { reportDiagnostic } from '@/observability/diagnostics';
 /**
  * BUG-FE-STATE-001: logout must wipe every in-memory store so the next user
  * on the device does not inherit the old user's habits, stage progress,
@@ -29,8 +30,8 @@ export function resetAllStores(): void {
   for (const reset of registered) {
     try {
       reset();
-    } catch (err: unknown) {
-      console.warn('[store/registry] reset callback threw', err);
+    } catch {
+      reportDiagnostic('store_reset_failed');
     }
   }
 }

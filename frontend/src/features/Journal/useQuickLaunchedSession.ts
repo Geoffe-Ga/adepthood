@@ -46,6 +46,7 @@ import type { WritingSessionResult } from './writingSession';
 import { practiceSessions } from '@/api';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 import { manualSessionPayload } from '@/features/Practice/utils/sessionWindow';
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 /** The launch a route carries into the journal page. */
 export interface WritingSessionLaunch {
@@ -90,8 +91,8 @@ async function recordSession(userPracticeId: number, result: WritingSessionResul
         durationMinutes: result.elapsedMs / MS_PER_MINUTE,
       }),
     );
-  } catch (err) {
-    console.warn('[quickLaunch] the finished writing session was not recorded', err);
+  } catch {
+    reportDiagnostic('quick_session_record_failed');
   }
 }
 

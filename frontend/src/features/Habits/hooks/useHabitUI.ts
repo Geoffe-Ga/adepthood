@@ -8,6 +8,7 @@ import { selectHabitById, useHabitStore } from '../../../store/useHabitStore';
 import type { Habit, HabitScreenMode } from '../Habits.types';
 
 import { uiFlags } from '@/api';
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 /** Toast dismissal delay for the archive-CTA acknowledgement message. */
 const ARCHIVE_MESSAGE_DURATION_MS = 3000;
@@ -38,6 +39,10 @@ export interface HabitUIState {
   archiveEnergyCTA: () => void;
 }
 
+function reportHabitUiFailure(): void {
+  reportDiagnostic('habit_ui_failed');
+}
+
 /**
  * Transient UI state for the Habits screen — the selected-habit ID, current
  * mode, emoji picker target, and the energy-scaffolding CTA lifecycle.
@@ -64,10 +69,10 @@ export const useHabitUI = (token?: string | null): HabitUIState => {
         if (cancelled) return;
         setShowEnergyCTA(!archived);
         // Re-seed the offline cache so it matches the server-resolved value.
-        saveEnergyScaffoldingArchived(archived).catch(console.warn);
+        saveEnergyScaffoldingArchived(archived).catch(reportHabitUiFailure);
       })
-      .catch((err: unknown) => {
-        console.warn('[useHabitUI] failed to load energy-CTA archived state', err);
+      .catch(() => {
+        reportDiagnostic('habit_ui_failed');
       });
     return () => {
       cancelled = true;
@@ -82,11 +87,11 @@ export const useHabitUI = (token?: string | null): HabitUIState => {
     setShowEnergyCTA(false);
     setShowArchiveMessage(true);
     setTimeout(() => setShowArchiveMessage(false), ARCHIVE_MESSAGE_DURATION_MS);
-    saveEnergyScaffoldingArchived(true).catch((err: unknown) => {
-      console.warn('[useHabitUI] failed to persist energy-CTA archived state', err);
+    saveEnergyScaffoldingArchived(true).catch(() => {
+      reportDiagnostic('habit_ui_failed');
     });
-    uiFlags.update({ energy_scaffolding_archived: true }, normalizedToken).catch((err: unknown) => {
-      console.warn('[useHabitUI] failed to sync energy-CTA archived state', err);
+    uiFlags.update({ energy_scaffolding_archived: true }, normalizedToken).catch(() => {
+      reportDiagnostic('habit_ui_failed');
     });
   }, [normalizedToken]);
 

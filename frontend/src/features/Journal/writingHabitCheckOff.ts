@@ -54,6 +54,7 @@ import {
   isServerIssuedId,
 } from '@/features/Habits/services/serverIds';
 import { computeStarFillPlan } from '@/features/Habits/starFill';
+import { reportDiagnostic } from '@/observability/diagnostics';
 import { useHabitStore } from '@/store/useHabitStore';
 
 /** A session shorter than this wrote nothing, and checks nothing off. */
@@ -135,9 +136,9 @@ async function commitCheckOff(
     if (!result) return;
     habitManager.reconcileLogUnitContext(ctx, result);
     showToast({ message: checkedOffToast(ctx.habitName), color: colors.success });
-  } catch (err) {
+  } catch {
     habitManager.rollbackLogUnitContext(ctx);
-    console.warn('[writingHabitCheckOff] failed to check off the linked habit', err);
+    reportDiagnostic('linked_habit_failed');
   }
 }
 
@@ -153,7 +154,7 @@ export async function checkOffLinkedHabit(request: CheckOffRequest): Promise<voi
     const amount = planWritingCheckOff(habit, request.tz);
     if (amount === null) return;
     await commitCheckOff(habit, amount, request);
-  } catch (err) {
-    console.warn('[writingHabitCheckOff] could not reach the linked habit', err);
+  } catch {
+    reportDiagnostic('linked_habit_failed');
   }
 }

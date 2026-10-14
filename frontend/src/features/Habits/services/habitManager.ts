@@ -89,6 +89,8 @@ import {
   isServerIssuedId,
 } from './serverIds';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 export type ShowToast = (_config: ToastConfig) => void;
 
 // The demo seed is shown only in an explicitly configured demo build, when the
@@ -419,7 +421,7 @@ const syncOnboardingHabits = async (fullHabits: readonly Habit[], tz: string): P
     try {
       await habitsApi.create(toApiPayload(habit, tz));
     } catch {
-      console.error(`Failed to save habit "${habit.name}" to server`);
+      reportDiagnostic('habit_save_failed');
     }
   }
 };
@@ -480,7 +482,7 @@ const pushHabitUpdates = async (updates: readonly Habit[], tz: string): Promise<
     try {
       await habitsApi.update(habit.id, toApiPayload(habit, tz));
     } catch {
-      console.error(`Failed to update habit "${habit.name}" on server`);
+      reportDiagnostic('habit_update_failed');
     }
   }
 };
@@ -733,7 +735,7 @@ const handleApiSuccess = async (
 };
 
 const handleApiError = (err: unknown, hasCachedData: boolean): void => {
-  console.error('Failed to load habits:', err);
+  reportDiagnostic('habits_load_failed');
   // A legacy cache or an earlier demo request may still have fixture rows in
   // memory. Outside explicit demo mode they are not data and cannot suppress
   // the real error state.
@@ -773,10 +775,10 @@ const recoverStuckHabits = async (cached: Habit[], tz: string): Promise<void> =>
       // and then replays cached customizations via
       // ``replayCachedGoalTargets`` (#286).
       await habitsApi.create(toApiPayload(habit, tz));
-    } catch (err) {
+    } catch {
       // Best-effort; partial recovery is still better than the stuck state.
       // Surface to console so Sentry / CI can flag chronic recovery failures.
-      console.warn('recoverStuckHabits: failed to re-push', habit.name, err);
+      reportDiagnostic('habit_recovery_failed');
     }
   }
 };
@@ -879,8 +881,8 @@ const replayHabitGoals = async (
     try {
       await replayOneGoal(cachedGoal, freshGoal.id, freshGoal.title, validGroupIds);
       replayedTiers.add(cachedGoal.tier);
-    } catch (err) {
-      console.warn('replayCachedGoalTargets: failed for', cachedHabit.name, cachedGoal.tier, err);
+    } catch {
+      reportDiagnostic('goal_recovery_failed');
     }
   }
   return replayedTiers;
@@ -1011,14 +1013,7 @@ const quarantineCheckIn = async (
   reason: DroppedCheckInReason,
   owner: number | null,
 ): Promise<void> => {
-  console.warn(
-    reason === 'gave_up'
-      ? 'replayPendingCheckIns: giving up on repeatedly rejected check-in for goal'
-      : 'replayPendingCheckIns: dropping permanently rejected check-in for goal',
-    checkIn.goal_id,
-    'status',
-    status,
-  );
+  reportDiagnostic(reason === 'gave_up' ? 'checkin_gave_up' : 'checkin_rejected', { status });
   const quarantined: DroppedCheckIn = {
     goal_id: checkIn.goal_id,
     did_complete: checkIn.did_complete,
@@ -1494,8 +1489,8 @@ export const habitManager = {
   dismissDroppedCheckIns: async (): Promise<void> => {
     try {
       await clearDroppedCheckIns();
-    } catch (err: unknown) {
-      console.warn('[habits] could not erase the dropped check-in quarantine', err);
+    } catch {
+      reportDiagnostic('quarantine_clear_failed');
       return;
     }
     useDroppedCheckInStore.getState().setEntries([]);

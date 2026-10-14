@@ -324,15 +324,16 @@ separate lock.
 
 From the app, if it was built with a Sentry address, a crash that reaches one
 of the app's error screens is reported straight from your device. That report
-names the error's type, the component stack — the chain of screen components
-the crash happened inside — and which error screen caught it, plus the app's
-release and environment. The error's message is withheld here too. Because
-the report is sent from your device, Sentry also sees the network address it
+names the error's type from a fixed list, and which error screen caught it
+using fixed boundary and feature names, plus the app's release and environment.
+The error's message is withheld here too, and component stacks are omitted.
+Because the report is sent from your device, Sentry also sees the network address it
 came from and the ordinary details any connection carries, such as the
 browser's or app's version string.
 
 A deployment that sets no Sentry credentials, and an app built without a
-Sentry address, sends nothing anywhere and logs the same crash locally.
+Sentry address, sends no crash reports to Sentry. The app records a fixed
+crash-caught diagnostic code locally, without the error text or context objects.
 
 **An email relay (Resend, or the deployment's own mail server)**, when the
 deployment is configured to send mail. It carries password-reset messages to
