@@ -517,6 +517,25 @@ describe('ResonanceEssayModal under a generation guardrail', () => {
     expect(onFundingRequired).not.toHaveBeenCalled();
   });
 
+  it('says a revoked entitlement plainly and offers no retry that cannot succeed', async () => {
+    mockEssay.mockRejectedValue(new ApiError(403, 'ai_access_revoked'));
+    const onFundingRequired = jest.fn();
+    const { findByTestId, queryByTestId } = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onFundingRequired={onFundingRequired}
+      />,
+    );
+    await askForTheLetter(findByTestId);
+
+    const message = await findByTestId('essay-error');
+    expect(message.props.children).toMatch(/APTITUDE membership is no longer active/u);
+    expect(message.props.children).toMatch(/Nothing was charged/u);
+    expect(queryByTestId('essay-retry')).toBeNull();
+    expect(onFundingRequired).not.toHaveBeenCalled();
+  });
+
   it('keeps the daily refusal without a retry when the note is reopened', async () => {
     mockEssay.mockRejectedValue(new ApiError(429, 'daily_generation_limit_reached'));
     const { findByTestId, getByTestId, queryByTestId, rerender } = render(

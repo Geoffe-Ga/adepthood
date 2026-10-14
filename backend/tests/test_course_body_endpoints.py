@@ -72,12 +72,14 @@ _MANIFEST: dict[str, Any] = {
             "title": "About Adepthood",
             "description": "What this is.",
             "path": "markdown/site/about.md",
+            "order": 1,
         },
         {
             "slug": "aptitude-stages",
             "title": "APTITUDE Stages",
             "description": "The stage map.",
             "path": "markdown/site/aptitude-stages.md",
+            "order": 2,
         },
     ],
     "stage_intros": [
