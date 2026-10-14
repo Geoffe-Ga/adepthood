@@ -18,6 +18,21 @@ const config: IntervalBellConfig = {
 };
 
 describe('IntervalBellView', () => {
+  it('names opening, interval and closing bells without engine enum strings', () => {
+    const screen = render(
+      <IntervalBellView
+        config={config}
+        state={fakeState({ status: 'idle' })}
+        controls={fakeControls()}
+      />,
+    );
+    expect(screen.getByText('Opening bell')).toBeTruthy();
+    expect(screen.getAllByText('Interval bell')).toHaveLength(3);
+    expect(screen.getByText('Closing bell')).toBeTruthy();
+    for (const internal of ['start_bell', 'interval_bell', 'end_bell'])
+      expect(screen.queryByText(internal)).toBeNull();
+  });
+
   it('renders the time until the next bell from nextCueAtMs - elapsedMs', () => {
     const { getByTestId } = render(
       <IntervalBellView
