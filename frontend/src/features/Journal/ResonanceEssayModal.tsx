@@ -21,6 +21,7 @@ import {
   View,
 } from 'react-native';
 
+import { aiAccessRevoked } from './aiAccessRevoked';
 import { ExplainerActionPair, explainerStyles } from './ExplainerDialogParts';
 import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
@@ -147,7 +148,8 @@ function askForEssay(noteId: number, settlers: EssaySettlers): void {
       }
       settlers.onUnanswered({
         message: formatApiError(err),
-        retryable: generationRefusal(err) !== 'daily_limit',
+        // Neither midnight's ceiling nor a revoked entitlement (#1938) clears on retry.
+        retryable: generationRefusal(err) !== 'daily_limit' && !aiAccessRevoked(err),
       });
     });
 }

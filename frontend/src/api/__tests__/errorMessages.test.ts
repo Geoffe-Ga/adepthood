@@ -2,6 +2,7 @@
 /* global describe, it, expect */
 
 import {
+  AI_ACCESS_REVOKED_COPY,
   CREDIT_EXHAUSTED_COPY,
   DAILY_GENERATION_LIMIT_COPY,
   formatApiError,
@@ -68,6 +69,8 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'payment_required',
       'insufficient_offerings',
       'essay_price_unacknowledged',
+      // a revoked entitlement restricts AI features only (#1938, B21 E1)
+      'ai_access_revoked',
       // generation guardrails (#623)
       'generation_in_progress',
       'daily_generation_limit_reached',
@@ -393,6 +396,30 @@ describe('rate_limit_exceeded copy is surface-neutral', () => {
   it('still tells the user what happened and that waiting resolves it', () => {
     expect(copy).toBeTruthy();
     expect(copy).toMatch(/again|moment|minute|shortly/i);
+  });
+});
+
+describe('revoked entitlement (AI features only, #1938 B21 E1)', () => {
+  // What the reader sees: formatApiError, the call a screen actually makes.
+  const message = formatApiError(new ApiError(403, 'ai_access_revoked'));
+
+  it('gets its own copy, not the generic 403 wall or a wallet refill', () => {
+    expect(message).toBe(AI_ACCESS_REVOKED_COPY);
+    expect(message).not.toBe(formatApiError(new ApiError(403, 'forbidden')));
+    expect(message).not.toBe(INSUFFICIENT_OFFERINGS_COPY);
+  });
+
+  it('says plainly that the journal, export and deletion are unaffected', () => {
+    expect(message).toMatch(/journal/i);
+    expect(message).toMatch(/export/i);
+    expect(message).toMatch(/delete/i);
+    expect(message).toMatch(/nothing was charged/i);
+  });
+
+  it('carries no price, purchase prompt or pressure', () => {
+    expect(message).not.toMatch(
+      /\$|price|buy|purchase|upgrade|renew|subscribe|credits|don't miss|now\b/i,
+    );
   });
 });
 
