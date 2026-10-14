@@ -20,6 +20,6 @@ And Penelope knows. Only the real Odysseus would know that. Only someone who was
 
 This is Yellow's wisdom: integration is not performative. You can't fake it. You either *know* it in your bones, or you don't.
 
-And when you do—when you've integrated all the stages, all the lessons, all the parts of yourself—people who are also integrated will *recognize* you. They'll see it. They'll know.
+And when it's real, it tends to show without announcement—in how you handle the dishes argument, not in what you can say about chakras. The people closest to you notice first, usually before you do.
 
-That's the homecoming Yellow offers: not return to who you were, but arrival at who you've become.
+That's the homecoming Yellow offers: not a return to who you were, and not a finish line either—just the ability to be at home in who you are today, knowing tomorrow's weather will be different.

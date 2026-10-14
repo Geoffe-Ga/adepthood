@@ -20,7 +20,7 @@ Create a dedicated practice space. It doesn't have to be fancy. A corner of a ro
 
 **2. Protect the Time**
 
-Treat your practice time as non-negotiable. Not in a rigid way—in a sacred way. This is your appointment with the deepest truth of what you are. Everything else can wait 90 minutes.
+Protect your practice time the way you'd protect a standing date with someone you love. Not rigid—just real. Most things can wait 90 minutes. When something can't, that's information too.
 
 **3. Build a Practice Community**
 
@@ -36,7 +36,7 @@ Some days you sit in perfect stillness. Some days you practice walking meditatio
 
 **6. Integrate Retreats**
 
-At least once a year, do an extended retreat. 3 days. 7 days. 10 days if you can. Intensive practice accelerates integration in ways daily sits can't. It's like compound interest for your consciousness.
+If you can, do an extended retreat once a year. 3 days. 7 days. 10 if life allows. Intensive practice does something your regular sits can't—and it's hard, and you'll want to leave on day two. If it calls you, go. Then stay.
 
 **7. Teach What You're Learning**
 

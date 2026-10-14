@@ -30,7 +30,7 @@ Here’s the prompts:
 1.  List the systemic, social, and cultural influences
     that contribute to your sense of security.
 
-    Safety is never just personal—it’s contextual. By naming the structures that hold (or undermine) your sense of rootedness, you begin to reclaim discernment. This clarity will help you determine what to protect, what to shift, and what to release.
+    Safety isn’t only something inside you—it’s your rent, your neighborhood, your family, your paycheck, the way the people around you treat your body. Naming the things that actually hold you up (and the ones quietly pulling the rug) lets you see which to guard, which to shift, and which to loosen your grip on.
     
 2.  “What kind of hero did I need to feel secure when I was a kid? What would it take to become that person in the next 9 months?”
 
@@ -38,8 +38,8 @@ Here’s the prompts:
 
 3.  If none of these questions move you, journal about your challenges and successes working with the APTITUDE program.
 
-    Journaling has been shown to dramatically improve quality of life, causing you to recover from traumatic life events like a break-up or a lay-off much quicker than those who do not have the habit of emptying their worries and triumphs onto the page. Journaling also has the effect of reducing rumination, improving recall, and boosting creativity.
+    People who dump their worries and wins onto a page bounce back from a break-up or a layoff faster than people who don’t. Journaling also quiets the 2 AM rumination loop, sharpens your memory, and loosens up your creativity.
 
-As a final step, make sure you share the results and insights derived from your journaling with your Digital Sangha. Share. Listen. React. Engage. The Sangha is meant to be a springboard, so get to bouncing off of it!
+If you’re up for it, bring what came out of your journaling to your Digital Sangha. Share. Listen. React. Engage. The Sangha is a springboard—it only works if somebody bounces on it.
 
 ------------------------------------------------------------------------

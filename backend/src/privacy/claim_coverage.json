@@ -77,7 +77,10 @@
       "backend/tests/test_intimate_privacy_guard.py::test_intimate_entry_under_vault_boundary_reaches_neither_vault_nor_app_provider",
       "backend/tests/test_intimate_privacy_guard.py::test_intimate_resonance_zero_cloud_calls",
       "backend/tests/test_journal_vault_write.py::test_create_intimate_entry_never_touches_vault",
-      "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row"
+      "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
     ],
     "sinks": [
       "net.openai",
@@ -95,8 +98,33 @@
       "telemetry.root_log",
       "telemetry.access_log"
     ],
-    "issue": 3159,
-    "gap": "no matrix over every barriered route and detached entry point by lifecycle step; derivatives and restarts not driven"
+    "by_sink": {
+      "net.openai": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ],
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+      ],
+      "db.corpusfragment.content": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row"
+      ],
+      "telemetry.sentry_envelope": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ],
+      "telemetry.root_log": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ],
+      "telemetry.access_log": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ]
+    },
+    "issue": 3069,
+    "gap": "recorders sit at adepthood's seams, not the socket or filesystem; vault-side stores, Fly and Creek's own model are inferred from the vault client double"
   },
   "C08": {
     "status": "partial",
@@ -105,7 +133,9 @@
       "backend/tests/test_intimate_privacy_guard.py::test_intimate_essay_zero_cloud_calls",
       "backend/tests/test_intimate_privacy_guard.py::test_intimate_distress_surfaces_local_care_zero_cloud",
       "backend/tests/test_completion_detection_endpoint.py::test_independent_completion_check_keeps_intimate_entries_off_the_provider",
-      "backend/tests/test_essay_endpoint.py::test_intimate_essay_is_never_charged_and_never_dialled"
+      "backend/tests/test_essay_endpoint.py::test_intimate_essay_is_never_charged_and_never_dialled",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
     ],
     "sinks": [
       "net.openai",
@@ -114,8 +144,21 @@
       "net.creek_vault_deployment",
       "net.creek_downstream_model"
     ],
-    "issue": 3159,
-    "gap": "OCR, replays, BYOK and race paths are not all asserted at the provider factory and the socket"
+    "by_sink": {
+      "net.openai": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+      ],
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ]
+    },
+    "issue": 3059,
+    "gap": "OCR (transcribe-page, outside BARRIERED) and BYOK keys are not driven by the matrix; dials are recorded at generate_response's bindings, not the socket"
   },
   "C09": {
     "status": "partial",
@@ -124,7 +167,8 @@
       "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row",
       "backend/tests/services/test_corpus_store.py::test_retrieval_never_returns_an_intimate_fragment",
       "backend/tests/services/test_corpus_ingest.py::test_an_intimate_entry_is_never_offered_to_the_classifier",
-      "backend/tests/services/test_corpus_ingest.py::test_re_tiering_an_entry_to_intimate_takes_it_out_of_the_corpus"
+      "backend/tests/services/test_corpus_ingest.py::test_re_tiering_an_entry_to_intimate_takes_it_out_of_the_corpus",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
     ],
     "sinks": [
       "db.corpusfragment.content",
@@ -132,8 +176,14 @@
       "vault.creek_ledger",
       "net.creek_downstream_model"
     ],
-    "issue": 3159,
-    "gap": "vault-side index and embedding closure and backup-restore replay are not asserted for an Intimate entry"
+    "by_sink": {
+      "db.corpusfragment.content": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row"
+      ]
+    },
+    "issue": 3059,
+    "gap": "vault-side embedding and ledger closure is inferred from the vault double; backup-restore replay is not driven (C21)"
   },
   "C10": {
     "status": "partial",
@@ -141,7 +191,8 @@
       "backend/tests/test_intimate_privacy_guard.py::test_intimate_prior_body_excluded_from_resonance_prompt",
       "backend/tests/test_intimate_privacy_guard.py::test_only_eligible_prior_letters_reach_the_cloud_prompt",
       "backend/tests/test_privacy_lineage.py::test_folded_intimate_quote_never_reaches_resonance_prompt",
-      "backend/tests/test_privacy_lineage.py::test_folded_intimate_quote_never_reaches_unrelated_entry_grounding"
+      "backend/tests/test_privacy_lineage.py::test_folded_intimate_quote_never_reaches_unrelated_entry_grounding",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
     ],
     "sinks": [
       "net.openai",
@@ -149,7 +200,15 @@
       "net.creek_vault_connected",
       "net.creek_vault_deployment"
     ],
-    "issue": 3159,
+    "by_sink": {
+      "net.openai": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+      ]
+    },
+    "issue": 3059,
     "gap": "folded quotes still carry Intimate text (strict xfail, owner decision D01 #3059); no lineage taint"
   },
   "C11": {
@@ -159,7 +218,9 @@
       "backend/tests/test_journal_vault_write.py::test_patch_to_intimate_clears_prior_vault_ref_and_tags",
       "backend/tests/test_journal_vault_write.py::test_late_in_flight_upsert_cannot_resurrect_an_intimate_entry",
       "backend/tests/test_creek_vault_tier_ceiling.py::test_an_intimate_ingest_never_reaches_the_wire",
-      "backend/tests/test_voice_draft_mirroring.py::test_intimate_essay_never_attempts_a_mirror"
+      "backend/tests/test_voice_draft_mirroring.py::test_intimate_essay_never_attempts_a_mirror",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
     ],
     "sinks": [
       "net.creek_vault_connected",
@@ -167,8 +228,14 @@
       "vault.creek_volume",
       "vault.fly_snapshots"
     ],
-    "issue": 3159,
-    "gap": "failure after remote commit but before local acknowledgment, then restart, is not driven"
+    "by_sink": {
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+      ]
+    },
+    "issue": 3060,
+    "gap": "a lost acknowledgment is driven for the journal copy, not for a Voice Draft; vault-side snapshots and backups (C21) are not reached"
   },
   "C12": {
     "status": "partial",

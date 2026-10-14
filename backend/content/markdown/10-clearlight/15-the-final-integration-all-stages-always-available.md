@@ -4,13 +4,13 @@ stage: 10
 chapter: 15
 order: 15
 slug: the-final-integration-all-stages-always-available
-title: "The Final Integration: All Stages, Always Available"
+title: "The Whole Instrument: All Stages, Always Available"
 content_type: chapter
 release_day: 14
 media: []
 ---
 
-## The Final Integration: All Stages, Always Available
+## The Whole Instrument: All Stages, Always Available
 
 Here's the gift of Clear Light: you don't graduate past the earlier stages. You integrate them all.
 
@@ -18,7 +18,7 @@ You can still drop into Beige when you need to ground. Into Purple when you need
 
 The spiral isn't a ladder you climb and then kick away. It's a full palette. And you're learning to paint with all the colors.
 
-This is mastery. Not transcendence. Not escape. Just the capacity to meet each moment with whatever it needs. To be fluid. Responsive. Whole.
+This is the whole point: the capacity to meet each moment with whatever it needs—fluid, responsive, whole—and to lose it, and to get it back.
 
 ### Wholeness is a relationship, not a rank
 

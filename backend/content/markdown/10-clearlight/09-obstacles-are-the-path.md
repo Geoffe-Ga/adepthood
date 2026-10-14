@@ -12,7 +12,7 @@ media: []
 
 ## Obstacles Are the Path
 
-This is one of Clear Light's deepest teachings, beautifully captured in the infographics described in `ImageDescriptions.md`.
+This is one of Clear Light's deepest teachings, and the one the Clear Light infographics are built around.
 
 **Obstacles ARE the Path.**
 
@@ -34,7 +34,7 @@ As Pema Chodron teaches in *Don't Bite the Hook*: when you're hooked—by anger,
 
 That pause is the path. That choice is the practice. And the more you practice, the more you see that the hook was never the problem. The problem was your relationship to it.
 
-Clear Light is where you stop biting hooks. Not because you're above them, but because you've learned to see them clearly. And in that seeing, you're free.
+Clear Light is where you bite fewer hooks. Not because you're above them—you'll still bite some—but because you've learned to see them, and every one you see is one you get to choose about.
 
 **Working With Obstacles: A Practical Framework**
 
@@ -186,6 +186,6 @@ Because when you remember you're going to die, you stop sweating the small stuff
 
 Death, the ultimate obstacle, becomes the ultimate path.
 
-And at Clear Light, you're not running from it anymore. You're bowing to it. Thanking it. Letting it teach you how to be fully alive.
+And at Clear Light, you run from it less. Some days you can even bow to it. Thank it. Let it teach you how to be alive.
 
 ---

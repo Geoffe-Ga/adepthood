@@ -14,12 +14,12 @@ media: []
 
 ![](../images/images/image1.png)
 
-Take a look at the spiral above and notice the pattern: warm colors alternate with cool ones as you move upward through the ten stages of APTITUDE. This isn’t just aesthetic—it maps an energetic rhythm. The warm tones represent the Divine Masculine:
+Take a look at the spiral above and notice the pattern: warm colors alternate with cool ones as you move through the ten stages of APTITUDE in course order. This isn’t just aesthetic—it maps an energetic rhythm. The warm tones represent the Divine Masculine:
 assertive, agentic, outward-moving. The cool tones embody the Divine Feminine: receptive, intuitive, inward-facing. Each stage expresses one of these poles as part of a larger dialectic—doing and being, self-expressing and self-sacrificing, the “I” and the “We.”
 
-This alternating pattern continues until the final two stages, where something shifts. Ultraviolet and Clear Light are no longer colored by polarity. Instead, they merge. These are the stages of Union and Emptiness, and they represent the integration of masculine and feminine into a single, transcendent whole—what mystics and esoteric traditions might call Hermaphroditic, or Baphomet energy.
+This alternating pattern continues until the two stages the course introduces last, where something shifts. Ultraviolet and Clear Light are no longer colored by polarity. Instead, they merge. These are the stages of Union and Emptiness, and they represent the integration of masculine and feminine into a single, transcendent whole—what mystics and esoteric traditions might call Hermaphroditic, or Baphomet energy.
 
-In this section, we’ll explore the archetypal meaning of the Masculine, the Feminine, and what it means to walk a path that ultimately includes—and then dissolves—the binary altogether.
+In this section, we’ll explore the archetypal meaning of the Masculine, the Feminine, and what it looks like when a moment asks for both at once—when the binary gets included, and then, for a while, set down.
 
 ### Divine Masculine: I, Individual, Self-Expressing
 
@@ -67,8 +67,8 @@ Each Feminine stage in APTITUDE explores a different mode of this sacred “We�
 - Green turns that love inward and outward
   simultaneously, integrating the shadow, listening to the Other, and honoring every perspective.
 
-- Teal dissolves personal identity in favor of
-  alignment with Source, trusting intuition, channeling wisdom, and acting as a vessel for collective healing.
+- Teal connects you to your True Self—the part of
+  you that chose to be here—so that intuition, wisdom, and service to others come from that deeper “I” rather than the small one.
 
 These are the self-sacrificing stages—the ones that allow ego to soften so communion can arise. They are the exhale. The womb. The stillness. The surrender. They teach us how to feel without flinching, to include without collapsing, to receive without grasping.
 
@@ -82,10 +82,10 @@ Originally popularized in its current form by the 19th-century occultist Eliphas
 
 Baphomet is the archetypal embodiment of integration. Every polarity reconciled. Every opposition held in balance. Its message is clear: Wholeness does not come from choosing a side—it comes from becoming the vessel that can hold them all.
 
-In the context of APTITUDE, Baphomet is the symbolic guardian of the final two stages—Ultraviolet and Clear Light—where the dance between Masculine and Feminine finally transcends the binary.
-These aren’t just “balanced” stages. They are nondual. Here, we no longer alternate between Yes and And, Self and Other, Agency and Receptivity. We become the rhythm itself.
+In APTITUDE, Baphomet is the symbolic guardian of the two stages the course introduces last—Ultraviolet and Clear Light—where the Masculine and Feminine stop taking turns. Ultraviolet is Union: being so at one with what’s here that the two poles aren’t separate. Clear Light is Emptiness: seeing that neither pole, nor the self holding them, has a fixed, independent existence.
+These aren’t just “balanced” stages. Here, we no longer alternate between Yes and And, Self and Other, Agency and Receptivity. We become the rhythm itself.
 
-Baphomet is the spiral made flesh. The paradox resolved by embodiment. The character who has walked the full arc of the story—from instinct to intuition, ego to emptiness—and now returns with the ability to be the thing that includes all things.
+Baphomet is the spiral made flesh. The paradox resolved by embodiment. The character who can play every note—instinct, intuition, ego, emptiness—and hears which chord this moment is asking for.
 
 You might meet Baphomet when your masculinity softens into intuition. When your feminine receptivity anchors into decisive action. When your ideas about “good” and “evil” fall apart, and what’s left is something truer than morality: integration.
 

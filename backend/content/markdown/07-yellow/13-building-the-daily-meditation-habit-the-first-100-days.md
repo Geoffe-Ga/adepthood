@@ -30,7 +30,7 @@ By week five, the novelty has worn off. This is when most people quit.
 
 You'll have days where you sit for 10 minutes and your mind is chaos. You'll think, "This isn't working." That thought is part of the process. Notice it. Don't believe it. Keep sitting.
 
-You'll have days where you "don't have time." You do. You have time for what you prioritize. 45 minutes is 3% of your day. You have it.
+You'll have days where you genuinely don't have 45 minutes—a sick kid, a double shift, a crisis. Sit for what you've got. Ten minutes on a brutal day keeps the thread alive; the full sit comes back when the day does.
 
 This is the month where you build *discipline*. Not motivation. Discipline. Motivation is a feeling. Discipline is a structure. When motivation fades (and it will), discipline carries you.
 
@@ -42,4 +42,4 @@ The sits start to vary. Some are blissful. Some are restless. Some are boring. Y
 
 This is when you start to notice the *off-the-cushion* effects. You're less reactive in conflict. More present in conversation. You catch yourself before you spiralinto rumination. The training is working.
 
-By day 100, you're not thinking about whether to sit. You're thinking about how to deepen the practice. What technique to explore. What book to read. You've crossed the threshold from beginner to practitioner.
+By day 100, for a lot of people, the question has shifted from *whether* to *how*—what technique to explore, what book to read. You'll still have weeks where it's *whether* again. That's not regression; that's the Wavelength.

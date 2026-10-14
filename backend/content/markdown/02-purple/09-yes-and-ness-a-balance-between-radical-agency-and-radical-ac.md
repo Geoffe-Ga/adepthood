@@ -62,7 +62,7 @@ Yes-Ness is the quiet, receptive turn of the leaf toward the light. It’s the m
 
 A sprout begins.
 
-So when the wave brings you down—into stillness, into softness, into depression even—don’t resist. Don’t reach. Just receive. This is not wasted time. It’s sacred accumulation. Like a field resting between crops, you are becoming fertile with prana. Life force.
+So when the wave brings you down—into stillness, into softness, even into a stretch that looks a lot like depression—see if you can stop fighting the drop. You don’t have to reach for anything. Keep taking your water and your vitamins—and your prescription, if you have one; keep the people who love you within arm’s reach. Then receive what’s there. This is not wasted time. It’s sacred accumulation. Like a field resting between crops, you are becoming fertile with prana. Life force.
 Meaning.
 
 This is the power of Purple.

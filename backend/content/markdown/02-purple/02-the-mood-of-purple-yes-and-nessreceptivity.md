@@ -23,4 +23,4 @@ But like all the Moods of APTITUDE, this one also has shadows. When Receptivity 
 
 We’ll explore all of that in greater depth later, tracing how each phase of the Archetypal Wavelength expresses itself through Purple’s receptive tone. You’ll learn to distinguish between spiritual openness and porous boundaries, between mythic awareness and magical thinking, between intuitive attunement and empathic overwhelm.
 
-For now, simply know this: Yes-And-Ness at the Purple level means learning to soften. To listen. To receive. And in doing so, to recognize that you are not the sole author of your experience. You are also its reader. And the Story is already rich with meaning—if you are open enough to read between the lines.
+For now, simply know this: Yes-And-Ness, played in Purple’s key, means learning to soften. To listen. To receive. And in doing so, to recognize that you are not the sole author of your experience. You are also its reader. And the Story is already rich with meaning—if you are open enough to read between the lines.

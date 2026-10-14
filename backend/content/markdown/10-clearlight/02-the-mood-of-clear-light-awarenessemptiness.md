@@ -20,9 +20,9 @@ In the Heart Sutra, the teaching is condensed to its essence: "Form is emptiness
 
 In Madhyamaka philosophy, Nagarjuna teaches the "two truths": conventional truth (phenomena appear to exist) and ultimate truth (they're empty of inherent existence). Both are true. And the wisdom is holding both without collapsing into either extreme.
 
-At Clear Light, you've stopped seeking. Not because you've found something, but because you've seen that what you were looking for—a solid, permanent self—never existed. The searcher was the mirage. The search was the obscuration.
+At Clear Light, the seeking loosens its grip. Not because you've found something, but because you went looking for the thing you wanted—a solid, permanent self—and couldn't find one. The searcher was the mirage. The search was the obscuration. The grip will close again tomorrow, probably before lunch. Then you look again.
 
-When Emptiness is **Integrated**, you are an **Adept**—someone who moves through life knowing that all phenomena are empty, yet still showing up fully. You're not nihilistic ("nothing matters because it's all empty"). You're liberated. You engage with the world precisely *because* it's empty—and therefore workable, fluid, free.
+When Emptiness is **Integrated**, the **Adept** is what's playing in you—emptiness known in the bones, and you still show up fully. You're not nihilistic ("nothing matters because it's all empty"). You're liberated. You engage with the world precisely *because* it's empty—and therefore workable, fluid, free.
 
 When it is **Repressed**, you become **Nihilistic and Cynical**. You've heard "everything is empty" and concluded "nothing matters." You've mistaken emptiness for meaninglessness. You're using the teaching to justify disengagement, depression, apathy. This is a gross misunderstanding. Emptiness is not nothingness—it's the ground of infinite possibility.
 
