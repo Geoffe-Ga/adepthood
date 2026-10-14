@@ -1,6 +1,6 @@
 /* eslint-env jest */
 /* global describe, test, expect, beforeEach, jest */
-import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
 import DeleteAccountScreen from '../DeleteAccountScreen';
@@ -79,6 +79,24 @@ describe('DeleteAccountScreen', () => {
 
     expect(getByTestId('delete-account-erased')).toBeTruthy();
     expect(getByTestId('delete-account-retained')).toBeTruthy();
+  });
+
+  test('says a linked purchase receipt stays without the email address on it', () => {
+    setAuthState();
+
+    const { getByTestId } = render(<DeleteAccountScreen />);
+
+    // Deletion blanks the email on every sale linked to the account and keeps
+    // the receipt; only a sale never linked to an account keeps its address
+    // (backend services/account_deletion.py, _anonymise_linked_sales).
+    const retained = within(getByTestId('delete-account-retained'))
+      .getAllByText(/^• /)
+      .map((node) => node.props.children as string);
+    const receipt = retained.find((line) => line.includes('Purchase receipts stay'));
+    expect(receipt).toBeDefined();
+    expect(receipt).toContain('the email address is removed from every purchase linked to');
+    expect(receipt).toContain('never linked to any account keeps its address');
+    expect(receipt).not.toContain('including the address on them');
   });
 
   test('refuses to call the API until a confirmation is typed', async () => {

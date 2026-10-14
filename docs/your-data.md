@@ -196,12 +196,14 @@ Three things, each for a stated reason:
 1. **Practices you contributed to the shared catalogue.** Other people may
    already have them assigned, so the entry stays and stops naming you. The
    same applies to share links you minted: recipients may already hold the URL.
-2. **Purchase receipts.** The row stays, and so does the email address on it.
-   This is the one identifier that deliberately outlives a deletion. It has to:
-   the address is how a token pack you paid for is matched back to you, so
-   erasing it would quietly confiscate something you bought if you ever came
-   back. Retaining a payment record is also the ordinary GDPR Art. 17(3)
-   exemption. Nothing in the row points at an account any more. A course
+2. **Purchase receipts.** The row stays: retaining a payment record is the
+   ordinary GDPR Art. 17(3) exemption. On a purchase linked to your account —
+   a licence bound to it, or a token pack credited to it — the email address
+   is blanked, and so is the sale record as Gumroad sent it. A purchase never
+   linked to any account keeps its email address, because that address is the
+   only way it can still be claimed: a token pack bought under your address
+   and never credited is matched to you by it if you sign up again with that
+   address. Nothing in the row points at an account any more. A course
    licence works differently: the record binding it to your account is erased
    with the account, and the same key can then be redeemed by exactly one new
    account — yours again, or someone you give it to. Access is all that
@@ -279,6 +281,6 @@ at all rather than erase part of an account and report success.
 The end-to-end test seeds a row into every table the schema allows, deletes one
 of two accounts, and then asserts an invariant stated without reference to the
 policy: afterwards no column pointing at `user` holds the erased id, and the
-address appears nowhere but the purchase receipt. The second account's rows are
-counted before and after, so a sweep that took the whole table fails as loudly
-as one that took nothing.
+address appears nowhere but a purchase receipt never linked to the account.
+The second account's rows are counted before and after, so a sweep that took
+the whole table fails as loudly as one that took nothing.

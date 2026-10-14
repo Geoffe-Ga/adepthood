@@ -490,11 +490,14 @@ the account row itself.
 
 Three things survive, each for a stated reason: a practice you contributed
 to the shared catalogue stays and stops naming you, because other people
-may already have it assigned; a **purchase receipt** stays with the email
-address on it, because that address is how something you paid for is
-matched back to you, and because retaining a payment record is the ordinary
-carve-out in data-protection law; and a note that a deletion happened —
-date, counts, and an internal id that now names nobody.
+may already have it assigned; a **purchase receipt** stays, because
+retaining a payment record is the ordinary carve-out in data-protection law,
+but on a purchase linked to your account (a licence bound to it, or a token
+pack credited to it) the email address is blanked, and so is the sale record
+as Gumroad sent it — a purchase never linked to any account keeps its email
+address, because that address is the only way it can still be claimed; and a
+note that a deletion happened — date, counts, and an internal id that now
+names nobody.
 
 **Backups age out; they are not edited.** The database is backed up, and a
 backup taken before you deleted still holds what your account held then, with
