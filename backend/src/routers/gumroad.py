@@ -25,10 +25,13 @@ lands before the recipient can sign up, so binding it to the buyer would
 kill the recipient's key; the sale is left unclaimed for whoever redeems it.
 
 The reversal events unwind that delivery. ``refund`` and ``dispute`` return
-the money; ``cancellation`` and ``subscription_ended`` only stop the
-renewals. All four compete for one exactly-once claim on the stored sale (see
-:mod:`services.gumroad_revocation`), and all four read every fact they act on
-off that stored row rather than off the ping.
+the money, and compete for one exactly-once claim on the stored sale (see
+:mod:`services.gumroad_revocation`). The membership events follow the owner's
+cancel-timing decision (#3259, :mod:`services.gumroad_subscriptions`):
+``cancellation`` changes no access, ``subscription_ended`` revokes it (which
+restricts AI), and ``subscription_restarted`` gives back what that ending
+took. All of them read every fact they act on off the stored sale row and the
+licence binding rather than off the ping.
 
 Secrets discipline: the webhook secret, buyer email, and raw payload never
 appear in log text — only static markers and non-PII metadata do.
@@ -62,7 +65,12 @@ from error_responses import build_router
 from errors import bad_request
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
 from models.user import User
-from services.gumroad_revocation import process_cancellation, process_refund
+from services.gumroad_revocation import process_refund
+from services.gumroad_subscriptions import (
+    process_cancellation,
+    process_subscription_ended,
+    process_subscription_restarted,
+)
 from services.token_packs import credit_token_pack_sale
 
 logger = logging.getLogger(__name__)
@@ -327,16 +335,18 @@ async def _dispatch_sale(session: AsyncSession, payload: dict[str, str]) -> None
 
 
 # Every ping event type this webhook acts on, and the coroutine that owns it.
-# A refund and a dispute are the same reversal (the money went back); a
-# cancellation and a subscription ending are the same lapse. One table means
-# the routing and the "do we recognise this event?" question can never drift
-# apart.
+# A refund and a dispute are the same reversal (the money went back). The
+# three membership events are distinct (#3259): the cancel click, the period
+# ending, and a restart. One table means the routing and the "do we recognise
+# this event?" question can never drift apart. Every name here is a resource
+# DEPLOYMENT.md tells the operator to register.
 _EVENT_HANDLERS: dict[str, Callable[[AsyncSession, dict[str, str]], Awaitable[None]]] = {
     SALE_RESOURCE_NAME: _dispatch_sale,
     "refund": process_refund,
     "dispute": process_refund,
     "cancellation": process_cancellation,
-    "subscription_ended": process_cancellation,
+    "subscription_ended": process_subscription_ended,
+    "subscription_restarted": process_subscription_restarted,
 }
 
 # resource_name values Gumroad documents for ping webhooks — derived from the

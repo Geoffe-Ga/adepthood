@@ -22,13 +22,14 @@ or a key" surface, so this adds no parallel shape:
   unit left.
 
 One refusal is not a payer question and is a 403 instead: ``ai_access_revoked``,
-for an account whose entitlement was revoked (refund, dispute, lapse or an
-operator's revocation) and not re-granted (#1938, B21 E1). It is decided by
-:func:`domain.entitlements.refuse_if_ai_access_revoked` after the key check, so
-a personal key the app provider will use is still admitted, and before the
-wallet is read, so the client is never offered a refill that could not help. A
-key never admits a vault-answered request: the vault does not use it, so that
-request is a credit request whatever header it carries (#3258).
+for an account whose latest revocation was a refund, a dispute, the end of a
+membership's paid period (#3259 -- never the cancel click itself) or an
+operator's revocation, and which was not re-granted (#1938, B21 E1). It is
+decided by :func:`domain.entitlements.refuse_if_ai_access_revoked` after the
+key check, so a personal key the app provider will use is still admitted, and
+before the wallet is read, so the client is never offered a refill that could
+not help. A key never admits a vault-answered request: the vault does not use
+it, so that request is a credit request whatever header it carries (#3258).
 
 ADR 0009 phase (a) (#3067): the server's ``LLM_API_KEY`` never pays for a
 request carrying a person's content, so credits buy nothing on the app-provider
