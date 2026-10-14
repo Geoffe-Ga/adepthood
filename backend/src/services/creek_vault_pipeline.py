@@ -56,7 +56,7 @@ import enum
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -132,6 +132,29 @@ _DETACHED_DIAL: ContextVar[Callable[[], AbstractAsyncContextManager[None]] | Non
 )
 
 
+async def _settle_despite_cancellation(read: Awaitable[bool]) -> bool:
+    """Let one database round trip finish even when the caller's clock expires.
+
+    Cancelling a read mid-flight does not abort it cleanly: when the
+    ``CancelledError`` lands between SQLAlchemy's aiosqlite ``execute`` and its
+    ``fetchall``, the statement is left stepped and never finalized on the
+    pooled connection. That is a SQLite SHARED lock the pool's
+    reset-on-return rollback does not release, and every later commit on the
+    file then waits out its whole busy timeout and fails ``database is locked``
+    (#3216). Shielded, the read runs to its own end -- it is one bounded query --
+    and the cancellation is re-raised only once it has, so the caller's clock
+    still expires exactly as it would have.
+    """
+    task = asyncio.ensure_future(read)
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            with suppress(asyncio.CancelledError):
+                await asyncio.wait([task])
+        raise
+
+
 @asynccontextmanager
 async def _order_one_detached_dial(
     factory: async_sessionmaker[AsyncSession], user_id: int
@@ -154,9 +177,13 @@ async def _order_one_detached_dial(
     either wins the barrier before a dial, and the liveness read below stands the
     climb down before it transmits, or after one, and that dial preceded the
     receipt.
+
+    The liveness read runs under :func:`_settle_despite_cancellation`, because
+    every dial this orders sits inside a clock -- a stage budget or the polling
+    ceiling -- that may expire while the read is still in flight.
     """
     async with factory() as gate_session, hold_account(gate_session, user_id):
-        if not await account_is_live(gate_session, user_id):
+        if not await _settle_despite_cancellation(account_is_live(gate_session, user_id)):
             raise _AccountErasedMidClimbError
         yield
 
