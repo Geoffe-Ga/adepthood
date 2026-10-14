@@ -74,9 +74,9 @@ What the machine found
 * A new account handed an erased account's id (a restore rewinds the
   sequence) had its own deleted pages left out of the tombstone export, so a
   second restore resurrected them. Every soft-deleted page is now exported.
-* A restore still forgets an Intimate reclassification and a deletion in
-  progress, because neither is a tombstone: two strict-xfail reproducers below,
-  owned by #3214.
+* A restore forgot an Intimate reclassification and a deletion in progress,
+  because neither was a tombstone. Both now are (#3214): the reproducers
+  below, and the reapply crash cell, which withdraws a page each way.
 
 Out of reach here, and named in the manifest as gaps: provider-side backup
 erasure, vendor copies (#3065) and manually managed vaults.
@@ -968,6 +968,8 @@ MUST_CRASH_AT: Final[dict[tuple[CrashPath, bool], frozenset[str]]] = {
             f"{_RESTORE}_open_marker",
             _ERASURE,
             f"{_RESTORE}_reapply_entry",
+            f"{_RESTORE}_reapply_obligation",
+            f"{_RESTORE}_reapply_intimate",
             f"{_RESTORE}_close_marker",
         }
     ),
@@ -1003,11 +1005,22 @@ async def _crash_once(m: Machine, path: CrashPath, *, outage: bool, k: int) -> t
 
 
 async def _restore_after_deletions(m: Machine, page: Page, *, crash_at: int | None) -> bool:
-    """Snapshot two live pages, delete one and erase the other's account, then restore."""
+    """Snapshot four live pages, then withdraw each a different way, then restore.
+
+    One is deleted, one's account erased, one made Intimate, and one's deletion
+    left in progress by a vault outage (#3214), so every kind of tombstone --
+    and every commit its reapply makes -- is in the file the restore reapplies.
+    """
     erased = await m.write()
+    intimate = await m.write()
+    pending = await m.write()
     snapshot = await m.snapshot()
     await m.delete(page)
     await m.erase_account(erased)
+    await m.reclassify(intimate)
+    await m.outage(on=True)
+    await m.delete(pending)
+    await m.outage(on=False)
     return await m.restore(snapshot, crash_at=crash_at)
 
 
@@ -1155,30 +1168,37 @@ async def test_a_pre_binding_copy_stays_truthfully_unconfirmed_through_every_rec
     assert destination is None, "bound to no vault, so no vault can ever clear it"
 
 
-# ── Known gaps: restores that forget a request the tombstones do not carry ───
-
-_RESTORE_GAP: Final = (
-    "#3214: tombstones carry soft deletes and erasures only, so a restore "
-    "forgets an Intimate reclassification and a deletion still in progress"
-)
+# ── Restores that remember a request made after the backup (#3214) ───────
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_RESTORE_GAP)
 @pytest.mark.asyncio
 async def test_a_restore_does_not_forget_an_intimate_reclassification(machine: Machine) -> None:
-    """Reproducer: a pre-reclassification backup brings the page back Personal, corpus and all."""
+    """A pre-reclassification backup brings the page back Personal; reapply makes it Intimate.
+
+    Without the Intimate tombstone the page came back Personal with its corpus
+    fragment, and the next edit, resonance or corpus pass could send it again.
+    """
     page = await machine.write()
     snapshot = await machine.snapshot()
     await machine.reclassify(page)
     assert page.claim is Claim.CONFIRMED
 
     await machine.restore(snapshot)
+    await machine.restart()
+
+    read = await machine.client.get(f"/journal/{page.entry_id}", headers=page.headers)
+    assert read.json()["classification"] == JournalClassification.INTIMATE.value
+    await _assert_clean(machine, page)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_RESTORE_GAP)
 @pytest.mark.asyncio
 async def test_a_restore_does_not_forget_a_deletion_in_progress(machine: Machine) -> None:
-    """Reproducer: a backup from before a 503'd DELETE loses the ``pending_delete`` record."""
+    """A backup from before a 503'd DELETE keeps the ``pending_delete`` record it owes.
+
+    Without the obligation tombstone the page came back live and no record
+    owed its vault copy, so the sweep could never finish what the writer was
+    told was pending. Once the vault returns, the sweep does finish it.
+    """
     page = await machine.write()
     snapshot = await machine.snapshot()
     await machine.outage(on=True)
@@ -1186,6 +1206,13 @@ async def test_a_restore_does_not_forget_a_deletion_in_progress(machine: Machine
     assert page.claim is Claim.PENDING
 
     await machine.restore(snapshot)
+    assert (await _stored(machine.factory, page)).deleting
+    await machine.outage(on=False)
+    await machine.restart()
+
+    gone = await machine.client.get(f"/journal/{page.entry_id}", headers=page.headers)
+    assert gone.status_code == HTTPStatus.NOT_FOUND
+    await _assert_clean(machine, page)
 
 
 # ── Positive controls: the invariant sees what it must ───────────────────────

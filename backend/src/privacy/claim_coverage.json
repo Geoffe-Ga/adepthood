@@ -422,6 +422,10 @@
       "backend/tests/test_restore_suppression.py::test_reapply_reowes_resurrected_withdrawals_and_clears_the_vault_handle",
       "backend/tests/test_restore_suppression.py::test_reapply_withdraws_the_resurrected_corpus_copy",
       "backend/tests/test_restore_suppression.py::test_a_deleted_page_whose_owner_reuses_an_erased_id_is_still_suppressed",
+      "backend/tests/test_restore_suppression.py::test_reapply_restamps_an_intimate_page_and_withdraws_it_locally",
+      "backend/tests/test_restore_suppression.py::test_reapply_rerecords_an_owed_withdrawal",
+      "backend/tests/test_restore_suppression.py::test_intimate_and_obligation_tombstones_never_touch_another_page",
+      "backend/tests/test_restore_suppression.py::test_an_interrupted_obligation_reapply_leaves_nothing_half_done",
       "backend/tests/test_journal_vault_write.py::test_delete_withdraws_remote_before_soft_delete_and_retries_on_failure",
       "backend/tests/test_journal_deletion_in_progress.py::test_delete_503_then_refused_patch_then_sweep_leaves_no_corpus_copy",
       "backend/tests/security/test_deletion_lifecycle_state_machine.py::test_a_crash_after_every_commit_resumes_clean_or_truthfully_pending",
@@ -458,8 +462,8 @@
       "backup.railway_platform",
       "backup.offhost_pg_dump"
     ],
-    "issue": 3214,
-    "gap": "restore forgets Intimate and in-progress deletes; provider backup erasure, vendor copies (#3065), manual vaults unverified"
+    "issue": 3063,
+    "gap": "provider backup erasure (#3063), vendor copies (#3065) and manually managed vaults are unverified"
   },
   "C22": {
     "status": "uncovered",
