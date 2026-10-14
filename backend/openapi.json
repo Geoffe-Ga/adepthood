@@ -8697,6 +8697,17 @@
             ],
             "title": "End Date"
           },
+          "habit_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Habit Id"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -8752,6 +8763,30 @@
           "sessions"
         ],
         "title": "UserPracticeDetail",
+        "type": "object"
+      },
+      "UserPracticeHabitLink": {
+        "additionalProperties": false,
+        "description": "PATCH body for ``/user-practices/{id}/habit`` (#3151).\n\n``habit_id`` is required and nullable: an id links the practice to that\nhabit once the caller is shown to own it, and an explicit ``null`` clears\nthe link. Requiring the field keeps an empty body a 422 rather than a\nsilent unlink. The id is bounded like every other row id, so ``0``, a\nnegative or a value past int32 is a 422 rather than a database lookup.",
+        "properties": {
+          "habit_id": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Habit Id"
+          }
+        },
+        "required": [
+          "habit_id"
+        ],
+        "title": "UserPracticeHabitLink",
         "type": "object"
       },
       "UserPracticeResponse": {
@@ -8851,6 +8886,17 @@
               }
             ],
             "title": "End Date"
+          },
+          "habit_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Habit Id"
           },
           "id": {
             "title": "Id",
@@ -27398,6 +27444,137 @@
           }
         },
         "summary": "Customize User Practice",
+        "tags": [
+          "user-practices"
+        ]
+      }
+    },
+    "/user-practices/{user_practice_id}/habit": {
+      "patch": {
+        "description": "Link this practice to the habit its sessions count toward, or unlink it (#3151).\n\nThe selection is the caller's own via ``require_owned_user_practice``. A\n``habit_id`` is then authorised by :func:`domain.habit_links.link_practice_habit`\n-- 404 missing, audited 403 another user's, then 422 unless its goals count\nminutes or sessions per day or per week -- and ``null`` clears the link. A\nrefusal writes nothing. The link is per practice, so two practices can feed\ntwo habits; the journal's own link stays on ``/ui-flags``.",
+        "operationId": "link_user_practice_habit_user_practices__user_practice_id__habit_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_practice_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "User Practice Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPracticeHabitLink"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPracticeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Link User Practice Habit",
         "tags": [
           "user-practices"
         ]

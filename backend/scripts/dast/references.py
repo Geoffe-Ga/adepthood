@@ -381,6 +381,25 @@ REFERENCE_REGISTRY: ReferenceRegistry = MappingProxyType(
                 ),
             ),
         ),
+        # A practice's own habit link (#3151): the selection in the path is the
+        # caller's own, seeded fresh, and the habit in the body is the one under
+        # test. The answer echoes the linked id, so a cross-tenant link that
+        # landed would name the victim's habit. Same timer-goal seed as the
+        # writing link, for the same reason: no other habit may be linked.
+        ("PATCH", "/user-practices/{user_practice_id}/habit"): ReferenceProbe(
+            method="PATCH",
+            path="/user-practices/{user_practice_id}/habit",
+            body={},
+            path_seeds=("user_practice_id",),
+            references=(
+                ObjectReference(
+                    field="habit_id",
+                    location=ReferenceLocation.BODY,
+                    seed_key="timer_habit_id",
+                    evidence=EvidenceStrategy.ECHO,
+                ),
+            ),
+        ),
     },
 )
 

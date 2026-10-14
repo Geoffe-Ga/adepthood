@@ -148,8 +148,9 @@ SEED_REGISTRY: Mapping[str, SeedSpec] = MappingProxyType(
             id_pointer=("id",),
         ),
         # A habit a timer may log to (#3150): created with minutes goals,
-        # because ``PATCH /ui-flags`` refuses to link a habit on any unit a
-        # timer cannot measure. Only that reference asks for it.
+        # because ``PATCH /ui-flags`` and ``PATCH /user-practices/{id}/habit``
+        # (#3151) refuse to link a habit on any unit a timer cannot measure.
+        # Only those two references ask for it.
         "timer_habit_id": SeedSpec(
             create_method="POST",
             create_path="/habits/",
@@ -341,6 +342,9 @@ REPLAY_BODIES: Mapping[tuple[str, str], Mapping[str, object]] = MappingProxyType
         },
         ("PATCH", "/practice-tags/{tag_id}"): {"label": _REPLAY_NAME},
         ("PATCH", "/promotions/{promotion_id}"): {"included_in_entry_id": None},
+        # ``habit_id`` is required, so ``{}`` would be a 422; ``null`` (unlink)
+        # names no other row, leaving the path's selection as the only object.
+        ("PATCH", "/user-practices/{user_practice_id}/habit"): {"habit_id": None},
     },
 )
 
