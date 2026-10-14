@@ -123,6 +123,74 @@ describe('WritingSessionSurface', () => {
     expect(onClearanceChange).toHaveBeenLastCalledWith(WRITING_TIMER_CLEARANCE);
   });
 
+  it('uses natural content height to scroll an intermediate surface and reserves its visible height', () => {
+    const onClearanceChange = jest.fn();
+    const { getByTestId } = render(<WritingSessionSurface onClearanceChange={onClearanceChange} />);
+    fireEvent(getByTestId('writing-session-band-content'), 'layout', {
+      nativeEvent: { layout: { height: 54 } },
+    });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(WRITING_TIMER_CLEARANCE);
+    fireEvent(getByTestId('writing-session-band-content'), 'contentSizeChange', 1280, 260);
+    fireEvent(getByTestId('writing-session-band'), 'layout', {
+      nativeEvent: { layout: { height: 172 } },
+    });
+    expect(getByTestId('writing-session-band-content').props.scrollEnabled).toBe(true);
+    expect(onClearanceChange).toHaveBeenLastCalledWith(
+      54 + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
+    );
+    fireEvent(getByTestId('writing-session-band-content'), 'layout', {
+      nativeEvent: { layout: { height: 87 } },
+    });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(
+      87 + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
+    );
+  });
+
+  it('hands offer scrolling to the outer surface only while measured content overflows', () => {
+    const { getByTestId } = renderSurface();
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+    fireEvent(getByTestId('writing-session-band-content'), 'contentSizeChange', 1280, 260);
+    for (const [height, outerScrolls] of [
+      [400, false],
+      [172, true],
+      [400, false],
+    ] as const) {
+      fireEvent(getByTestId('writing-session-band'), 'layout', {
+        nativeEvent: { layout: { height } },
+      });
+      expect(getByTestId('writing-session-band-content').props.scrollEnabled).toBe(outerScrolls);
+      expect(getByTestId('writing-session-offer-scroll').props.scrollEnabled).toBe(!outerScrolls);
+      expect(StyleSheet.flatten(getByTestId('writing-session-banner').props.style).flexShrink).toBe(
+        outerScrolls ? 0 : 1,
+      );
+      expect(
+        StyleSheet.flatten(getByTestId('writing-session-offer-scroll').props.style).flexShrink,
+      ).toBe(outerScrolls ? 0 : 1);
+    }
+  });
+
+  it('keeps a running timer alive when resizing into and out of a short band', () => {
+    const { getByTestId, queryByTestId } = renderSurface();
+    fireEvent.press(getByTestId('writing-timer-start'));
+    tickTo(T0 + 5 * MS_PER_MINUTE);
+    expect(getByTestId('writing-timer-readout').props.children).toBe('14:59');
+    for (const height of [87, 212]) {
+      fireEvent(getByTestId('writing-session-band'), 'layout', {
+        nativeEvent: { layout: { height } },
+      });
+      expect(getByTestId('writing-timer-readout').props.children).toBe('14:59');
+      expect(queryByTestId('writing-timer-stop')).not.toBeNull();
+    }
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+    expect(getByTestId('writing-session-banner')).toBeTruthy();
+    fireEvent(getByTestId('writing-session-band'), 'layout', {
+      nativeEvent: { layout: { height: 87 } },
+    });
+    fireEvent.press(getByTestId('writing-session-banner-dismiss'));
+    expect(queryByTestId('writing-session-banner')).toBeNull();
+  });
+
   it('replaces an earlier note rather than stacking a second one', () => {
     const { getAllByTestId, getByTestId } = renderSurface();
 

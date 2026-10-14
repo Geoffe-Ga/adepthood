@@ -67,20 +67,28 @@ export interface WritingSessionBannerProps {
   result: WritingSessionResult;
   onDismiss: () => void;
   children?: React.ReactNode;
+  /** The parent scrolls the full note when its fixed chrome cannot fit. */
+  scrollWholeSurface?: boolean;
 }
 
 function WritingSessionBanner({
   result,
   onDismiss,
   children,
+  scrollWholeSurface = false,
 }: WritingSessionBannerProps): React.JSX.Element {
   const closeRef = useRef<View>(null);
   const focusClose = useCallback(() => moveAccessibilityFocus(closeRef.current), []);
   return (
-    <View style={styles.banner} accessibilityLiveRegion="polite" testID="writing-session-banner">
+    <View
+      style={[styles.banner, scrollWholeSurface && styles.unboundedBanner]}
+      accessibilityLiveRegion="polite"
+      testID="writing-session-banner"
+    >
       <Text style={styles.summary}>{writingSessionSummary(result.elapsedMinutes)}</Text>
       <ScrollView
-        style={styles.offerScroll}
+        style={[styles.offerScroll, scrollWholeSurface && styles.unboundedOffers]}
+        scrollEnabled={!scrollWholeSurface}
         keyboardShouldPersistTaps="handled"
         testID="writing-session-offer-scroll"
       >
@@ -117,6 +125,12 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.sheetEdge,
+  },
+  unboundedBanner: {
+    flexShrink: 0,
+  },
+  unboundedOffers: {
+    flexShrink: 0,
   },
   offerScroll: {
     flexGrow: 0,

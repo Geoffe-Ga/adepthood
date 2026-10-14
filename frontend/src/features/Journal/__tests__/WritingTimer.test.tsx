@@ -315,6 +315,51 @@ describe('WritingTimer — compact desk-side state', () => {
     }
   });
 
+  it('allows the live docked clock to wrap without widening its rail', () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 1280, height: 390, scale: 1, fontScale: 2 });
+    let view: ReturnType<typeof renderTimer> | undefined;
+    try {
+      view = renderTimer(jest.fn());
+      fireEvent.press(view.getByTestId('writing-timer-start'));
+      const readout = view.getByTestId('writing-timer-readout');
+      expect(readout.props.numberOfLines).toBeUndefined();
+      expect(readout.props.children).toBe('20:00');
+      expect(StyleSheet.flatten(readout.props.style).width).toBe(touchTarget.minimum);
+      expect(StyleSheet.flatten(view.getByTestId('writing-timer-pill').props.style).width).toBe(
+        touchTarget.minimum,
+      );
+    } finally {
+      view?.unmount();
+      spy.mockRestore();
+    }
+  });
+
+  it('lets the completed docked readout grow with enlarged text', () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 1280, height: 390, scale: 1, fontScale: 2 });
+    let view: ReturnType<typeof renderTimer> | undefined;
+    try {
+      view = renderTimer(jest.fn());
+      fireEvent.press(view.getByTestId('writing-timer-start'));
+      tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+      expect(view.getByTestId('writing-timer-compact')).toBeTruthy();
+      for (const id of ['writing-timer-pill', 'writing-timer-readout']) {
+        expect(StyleSheet.flatten(view.getByTestId(id).props.style).width).toBe('auto');
+        expect(
+          StyleSheet.flatten(view.getByTestId(id).props.style).minWidth,
+        ).toBeGreaterThanOrEqual(touchTarget.minimum);
+      }
+    } finally {
+      view?.unmount();
+      spy.mockRestore();
+    }
+  });
+
   it('keeps the horizontal compact pill on a phone', () => {
     const rn = require('react-native');
     const spy = jest
