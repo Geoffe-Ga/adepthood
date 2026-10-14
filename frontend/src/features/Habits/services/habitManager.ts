@@ -33,16 +33,18 @@ import {
   loadHabits as loadCachedHabits,
   loadPendingCheckIns,
   clearDroppedCheckIns,
-  clearPendingCheckIns,
+  capturePendingCheckInScope,
   loadDroppedCheckIns,
   recordDroppedCheckIn,
-  replacePendingCheckIns,
+  removePendingCheckIns,
 } from '../../../storage/habitStorage';
 import type {
   DroppedCheckIn,
   DroppedCheckInReason,
   PendingCheckIn,
 } from '../../../storage/habitStorage';
+import { isUserTimezonePending } from '../../../storage/userCalendar';
+import { getActiveUser } from '../../../storage/userScope';
 import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
@@ -966,6 +968,7 @@ const postPendingCheckIn = async (
   checkIn: PendingCheckIn,
   zone: string,
   today: string,
+  owner: number | null,
 ): Promise<void> => {
   const dayKey = dayKeyInTZ(checkIn.timestamp, zone);
   const payload = {
@@ -981,6 +984,7 @@ const postPendingCheckIn = async (
         idempotencyKey: logUnitIdempotencyKey(checkIn.operation_id),
       })
     : await goalCompletionsApi.create(payload);
+  if (getActiveUser() !== owner) return;
   const habit = getHabits().find((candidate) =>
     candidate.goals.some((goal) => goal.id === checkIn.goal_id),
   );
@@ -1005,6 +1009,7 @@ const quarantineCheckIn = async (
   checkIn: PendingCheckIn,
   status: number,
   reason: DroppedCheckInReason,
+  owner: number | null,
 ): Promise<void> => {
   console.warn(
     reason === 'gave_up'
@@ -1025,47 +1030,63 @@ const quarantineCheckIn = async (
     dropped_at: new Date().toISOString(),
     reason,
   };
-  await recordDroppedCheckIn(quarantined);
+  if (getActiveUser() === owner) await recordDroppedCheckIn(quarantined);
 };
 
 /** Whether the drain moves on to the next entry or stops for this pass. */
 type DrainStep = 'continue' | 'stop';
 
 /**
- * Settle the failure of ``pending[i]``, the current head. A permanent
+ * Settle the failure of the current head. A permanent
  * rejection, or a counted one that has now exhausted its retries, is
  * quarantined and the drain continues. Anything else keeps the unprocessed
- * suffix — byte-identical, every index below ``i`` being terminal — and stops,
+ * suffix byte-identical and stops,
  * so the next replay does not repost the prefix (the BUG-FE-HABIT-205
  * partial-success regression). Only a counted rejection touches the retry
  * record; an offline or availability failure leaves it exactly as it was.
  */
 const handleReplayFailure = async (
-  pending: PendingCheckIn[],
-  i: number,
+  checkIn: PendingCheckIn,
   err: unknown,
   headState: ReplayHeadState | null,
   nowMs: number,
+  owner: number | null,
 ): Promise<DrainStep> => {
-  const checkIn = pending[i]!;
   const failure = classifyReplayFailure(err);
   if (failure.kind === 'permanent') {
     // Awaited, not fired and forgotten: a floating quarantine write can
     // outlive the drain and lose the record it exists to keep.
-    await quarantineCheckIn(checkIn, failure.status, 'rejected');
+    await quarantineCheckIn(checkIn, failure.status, 'rejected', owner);
     return 'continue';
   }
   if (failure.kind === 'counted') {
     const next = nextHeadState(headState, checkIn, failure.status, nowMs);
     if (hasExhaustedRetries(next, nowMs)) {
-      await quarantineCheckIn(checkIn, failure.status, 'gave_up');
-      await clearCheckInReplayState();
+      await quarantineCheckIn(checkIn, failure.status, 'gave_up', owner);
+      await clearCheckInReplayState(owner);
       return 'continue';
     }
-    await saveCheckInReplayState(next);
+    await saveCheckInReplayState(next, owner);
   }
-  await replacePendingCheckIns(pending.slice(i));
   return 'stop';
+};
+
+/** Settle one POST without letting a switched account inherit its failure. */
+const replayCheckIn = async (
+  checkIn: PendingCheckIn,
+  zone: string,
+  today: string,
+  headState: ReplayHeadState | null,
+  nowMs: number,
+  owner: number | null,
+): Promise<DrainStep> => {
+  try {
+    await postPendingCheckIn(checkIn, zone, today, owner);
+    return 'continue';
+  } catch (err) {
+    if (getActiveUser() !== owner) return 'stop';
+    return handleReplayFailure(checkIn, err, headState, nowMs, owner);
+  }
 };
 
 /**
@@ -1074,9 +1095,9 @@ const handleReplayFailure = async (
  * quarantined in a previous session must still surface at launch, and an empty
  * list is what retracts a notice the user has since dismissed.
  */
-const hydrateDroppedCheckIns = async (): Promise<void> => {
+const hydrateDroppedCheckIns = async (owner: number | null): Promise<void> => {
   const entries = await loadDroppedCheckIns();
-  useDroppedCheckInStore.getState().setEntries(entries);
+  if (getActiveUser() === owner) useDroppedCheckInStore.getState().setEntries(entries);
 };
 
 /**
@@ -1096,26 +1117,37 @@ const hydrateDroppedCheckIns = async (): Promise<void> => {
  * BUG-FE-HABIT-205). Same-day replays omit the field so the server
  * stamps real wall-clock time — the online path's genuine-backfill rule.
  */
-const drainPendingCheckIns = async (tz?: string): Promise<void> => {
-  const pending = await loadPendingCheckIns();
-  if (pending.length === 0) return;
-  // Device zone is the stand-in until auth hydrates the stored zone.
-  const zone = tz ?? detectDeviceTimezone();
-  const today = todayInUserTZ(zone);
+interface ReplayCalendar {
+  zone: string;
+}
+
+const drainPendingCheckIns = async (
+  owner: number | null,
+  calendar: ReplayCalendar,
+): Promise<void> => {
+  const scope = capturePendingCheckInScope();
+  const pending = await loadPendingCheckIns(scope);
+  if (pending.length === 0 || getActiveUser() !== owner) return;
   // One clock read and one record read per pass: the policy is pure, and
   // only the head can carry a retry record, so a stale read cannot matter.
   const nowMs = Date.now();
   const headState = await loadCheckInReplayState();
+  const completed: PendingCheckIn[] = [];
   for (let i = 0; i < pending.length; i += 1) {
-    try {
-      await postPendingCheckIn(pending[i]!, zone, today);
-    } catch (err) {
-      const step = await handleReplayFailure(pending, i, err, headState, nowMs);
-      if (step === 'stop') return;
+    if (getActiveUser() !== owner || isUserTimezonePending(owner)) return;
+    // A newer authoritative calendar can arrive during storage reads or the
+    // preceding POST. Read it immediately before sending each unsent entry.
+    const zone = calendar.zone;
+    const today = todayInUserTZ(zone);
+    const step = await replayCheckIn(pending[i]!, zone, today, headState, nowMs, owner);
+    if (step === 'stop') {
+      await removePendingCheckIns(completed, scope);
+      return;
     }
+    completed.push(pending[i]!);
   }
-  await clearPendingCheckIns();
-  await clearCheckInReplayState();
+  await removePendingCheckIns(completed, scope);
+  await clearCheckInReplayState(owner);
 };
 
 /**
@@ -1124,9 +1156,22 @@ const drainPendingCheckIns = async (tz?: string): Promise<void> => {
  * queued, a transient abort, or a full pass — because a check-in dropped in an
  * earlier session is only real to the user once the notice can read it.
  */
-const replayPendingCheckIns = async (tz?: string): Promise<void> => {
-  await drainPendingCheckIns(tz);
-  await hydrateDroppedCheckIns();
+const activeReplays = new Map<number | null, Promise<void>>();
+const replayCalendars = new Map<number | null, ReplayCalendar>();
+
+const replayPendingCheckIns = (owner: number | null, calendar: ReplayCalendar): Promise<void> => {
+  const active = activeReplays.get(owner);
+  if (active) return active;
+  const replay = (async () => {
+    try {
+      await drainPendingCheckIns(owner, calendar);
+      if (getActiveUser() === owner) await hydrateDroppedCheckIns(owner);
+    } finally {
+      activeReplays.delete(owner);
+    }
+  })();
+  activeReplays.set(owner, replay);
+  return replay;
 };
 
 /**
@@ -1169,9 +1214,38 @@ let lastKnownTz: string | undefined;
  * cannot say whether what it holds is fresh. A caller about to act on today's
  * server total (the writing-timer check-off, #2861) needs exactly that answer.
  */
-const refreshHabits = async (tz?: string): Promise<boolean> => {
+interface HabitRefreshOptions {
+  /** Read cached/server habits while waiting for the account's calendar. */
+  replayCheckIns?: boolean;
+}
+
+const prepareRefreshCalendar = (tz: string | undefined, options: HabitRefreshOptions) => {
   if (tz !== undefined) lastKnownTz = tz;
   const zone = tz ?? lastKnownTz ?? detectDeviceTimezone();
+  const owner = getActiveUser();
+  const calendar = replayCalendars.get(owner) ?? { zone };
+  const replayReady = options.replayCheckIns !== false && !isUserTimezonePending(owner);
+  // Register at request entry, so an older fetch finishing later cannot
+  // overwrite the calendar carried by a newer authenticated refresh.
+  if (replayReady) {
+    calendar.zone = zone;
+    replayCalendars.set(owner, calendar);
+  }
+  return { owner, calendar, zone, replayReady };
+};
+
+const refreshReplayState = async (
+  owner: number | null,
+  calendar: ReplayCalendar,
+  replayReady: boolean,
+): Promise<void> => {
+  if (getActiveUser() !== owner) return;
+  if (replayReady) await replayPendingCheckIns(owner, calendar);
+  else await hydrateDroppedCheckIns(owner);
+};
+
+const refreshHabits = async (tz?: string, options: HabitRefreshOptions = {}): Promise<boolean> => {
+  const { owner, calendar, zone, replayReady } = prepareRefreshCalendar(tz, options);
   setLoading(true);
   setError(null);
   const cached = await loadCachedHabits();
@@ -1206,12 +1280,12 @@ const refreshHabits = async (tz?: string): Promise<boolean> => {
   // ``return``-ed from the first failure with the successful prefix still
   // in the queue, so on the next load every check-in that had already
   // posted would post AGAIN — silent duplication of the user's streak.
-  await replayPendingCheckIns(zone);
+  await refreshReplayState(owner, calendar, replayReady);
   return fresh;
 };
 
-const loadHabits = async (tz?: string): Promise<void> => {
-  await refreshHabits(tz);
+const loadHabits = async (tz?: string, options?: HabitRefreshOptions): Promise<void> => {
+  await refreshHabits(tz, options);
 };
 
 /**

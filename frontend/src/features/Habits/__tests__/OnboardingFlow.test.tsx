@@ -7,6 +7,7 @@
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { renderHook, act } from '@testing-library/react-native';
 
+import type * as HabitStorageModule from '../../../storage/habitStorage';
 import type { Habit, Goal } from '../Habits.types';
 import { getGoalTier, getProgressPercentage } from '../HabitUtils';
 import { useHabits } from '../hooks/useHabits';
@@ -36,6 +37,10 @@ jest.mock('../../../api', () => ({
 }));
 
 jest.mock('../../../storage/habitStorage', () => ({
+  capturePendingCheckInScope: jest.requireActual<typeof HabitStorageModule>(
+    '../../../storage/habitStorage',
+  ).capturePendingCheckInScope,
+  removePendingCheckIns: jest.fn(() => Promise.resolve(undefined)),
   saveHabits: jest.fn(() => Promise.resolve(undefined)),
   loadHabits: jest.fn(() => Promise.resolve(null)),
   savePendingCheckIn: jest.fn(() => Promise.resolve(undefined)),
