@@ -40,7 +40,7 @@ The Yellow practice: *go meta*. Step out of the content and talk about the *proc
 
 You're leading a team. Different people need different approaches.
 
-The Yellow practice: *match your leadership style to the developmental stage of the person*. Someone at Red needs clear boundaries. Someone at Orange needs autonomy and metrics. Someone at Green needs to be heard. You don't have one style—you flex.
+The Yellow practice: *match your leadership to the note that's loudest in that person right now*. Someone running hot on Red needs a clear boundary. Someone in an Orange stretch needs autonomy and a number to hit. Someone whose Green is up needs to be heard before anything else. You don't have one style—you flex, and you expect the same person to need a different note next month.
 
 **In Crisis: Staying Present**
 

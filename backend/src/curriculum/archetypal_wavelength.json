@@ -1,8 +1,9 @@
 {
-  "dataset_version": "2.2.1",
+  "dataset_version": "2.3.0",
   "provenance": {
     "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal', aspect 'True Self Connection', free-will archetype 'True Self Embodier'",
     "manifestations_source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet (the six-phase Rx/OD manifestation copy and the Stage titles; the subtitles are sourced separately, see subtitles_source)",
+    "manifestation_names_source": "Stages 1-9: every integrated (Rx) and shadow (OD) name equals the aptitude-course 'The Archetypal Wavelength - Modes of the Wavelength.csv' Medicine/Toxic cell, vendored by scripts/sync_content.py to backend/content/curriculum/modes_of_the_wavelength.csv and gated by scripts/check_wavelength_terms.py (issue #3135); descriptions are app-authored summaries of the vendored full-6-phase-wavelength-breakdown chapters. Stage 10 (Clear Light) has no CSV row, so its six pairs are app-authored and each carries \"source\": \"app-authored\".",
     "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/aptitude-stages.md headings and the markdown/resources/about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
     "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
     "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' follows the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype carried over from backup/2.PURPLE.md (issue #2915). Its free_will_description is the vendored APTITUDE Complete Map.csv sentence carried by src/curriculum/stage_correspondence.json (#2664), replacing the earlier chapter paraphrase; tests/test_stage_correspondence.py holds it equal to the artifact (#2667) until #2666 retires this copy of the correspondence fields",
@@ -296,33 +297,33 @@
       "manifestations": [
         {
           "phase": "Rising",
-          "integrated": {"name": "Focus", "description": "Bringing awareness to what matters and sustaining it."},
-          "shadow": {"name": "Hyperfocus", "description": "Locking on so hard you lose peripheral awareness."}
+          "integrated": {"name": "Rebellion", "description": "A precise refusal to keep running a structure that no longer serves."},
+          "shadow": {"name": "Mischief", "description": "Breaking things for the thrill of it, the working parts included."}
         },
         {
           "phase": "Peaking",
-          "integrated": {"name": "Concentration", "description": "Effortless unified absorption where the mind rests."},
-          "shadow": {"name": "Obsession", "description": "Addiction to peak states you chase and grasp at."}
+          "integrated": {"name": "Anarchy", "description": "The open moment when the old rules are down and anything can emerge."},
+          "shadow": {"name": "Chaos", "description": "The same open field with no witness, pushed around by every impulse."}
         },
         {
           "phase": "Withdrawal",
-          "integrated": {"name": "Adjustment", "description": "Noticing you have drifted and gently course-correcting."},
-          "shadow": {"name": "Stagnation", "description": "Awareness of being off course without any action."}
+          "integrated": {"name": "Organize", "description": "Sorting what the opening threw up into something you can act on."},
+          "shadow": {"name": "Discord", "description": "Every good idea taking priority at once, each fighting the others."}
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Reorienting", "description": "Stepping back to reassess the approach and recalibrate."},
-          "shadow": {"name": "Dithering", "description": "Endlessly changing course without ever committing."}
+          "integrated": {"name": "Establish", "description": "Committing the chosen arrangement to real life and not re-deciding it."},
+          "shadow": {"name": "Confusion", "description": "Re-opening every decision until nothing ever gets established."}
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Settling", "description": "Deep rest that comes from releasing all striving."},
-          "shadow": {"name": "Depression", "description": "The hopeless belief that the low point is permanent."}
+          "integrated": {"name": "Order", "description": "A maintained structure that carries you so you can rest inside it."},
+          "shadow": {"name": "Bureaucracy", "description": "Structure kept for its own sake after the why has gone."}
         },
         {
           "phase": "Restoration",
-          "integrated": {"name": "Reset", "description": "Beginning again fresh without the last cycle's baggage."},
-          "shadow": {"name": "Addiction", "description": "Reaching for a compulsive fix instead of a clean start."}
+          "integrated": {"name": "Disintegrate", "description": "Taking the scaffolding down on purpose once its work is done."},
+          "shadow": {"name": "The Aftermath", "description": "Living in the rubble of a structure you never chose to end."}
         }
       ]
     },
@@ -340,33 +341,33 @@
       "manifestations": [
         {
           "phase": "Rising",
-          "integrated": {"name": "Focus", "description": "Attention that gathers on its own, allowed not forced."},
-          "shadow": {"name": "Hyperfocus", "description": "A tight, straining grip that constricts the body."}
+          "integrated": {"name": "Epiphany", "description": "Knowing that arrives whole, received rather than reasoned out."},
+          "shadow": {"name": "Delusion", "description": "Mistaking every passing thought for a message from the True Self."}
         },
         {
           "phase": "Peaking",
-          "integrated": {"name": "Concentration", "description": "Unified awareness recognized rather than achieved."},
-          "shadow": {"name": "Obsession", "description": "The subtle grasp of preferring the state to continue."}
+          "integrated": {"name": "Gnosis", "description": "Recognizing what you know the way you know your own name."},
+          "shadow": {"name": "Psychosis", "description": "The inner voice becoming the only voice, unmoored from shared reality."}
         },
         {
           "phase": "Withdrawal",
-          "integrated": {"name": "Adjustment", "description": "Spontaneous return, since noticing itself is presence."},
-          "shadow": {"name": "Stagnation", "description": "The false refuge of drifting under the guise of acceptance."}
+          "integrated": {"name": "Receptivity", "description": "Staying open and listening while the knowing goes quiet."},
+          "shadow": {"name": "Paranoia", "description": "Reading the silence as threat, abandonment, or hidden meaning."}
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Reorienting", "description": "Effortlessly letting awareness recalibrate the path."},
-          "shadow": {"name": "Dithering", "description": "Restlessly second-guessing without resting in any choice."}
+          "integrated": {"name": "Absorption", "description": "Going under, letting what you learned soak into the body."},
+          "shadow": {"name": "Horror", "description": "Recoiling from the depths as if what rises there were the enemy."}
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Settling", "description": "Resting as awareness itself with nothing to make happen."},
-          "shadow": {"name": "Depression", "description": "Settling that has lost trust the wave will turn upward."}
+          "integrated": {"name": "Metabolism", "description": "Letting the body digest what was taken in, out of sight."},
+          "shadow": {"name": "Despair", "description": "Digestion tipping into the belief that nothing ever mattered."}
         },
         {
           "phase": "Restoration",
-          "integrated": {"name": "Reset", "description": "Renewing presence spontaneously as energy returns."},
-          "shadow": {"name": "Addiction", "description": "Clinging to an old comfort instead of fresh re-engagement."}
+          "integrated": {"name": "Pattern-Seeking", "description": "Noticing the shape of the cycle you just lived through."},
+          "shadow": {"name": "Belief Salience", "description": "Hardening the pattern into doctrine and folding everything into it."}
         }
       ]
     },
@@ -384,33 +385,33 @@
       "manifestations": [
         {
           "phase": "Rising",
-          "integrated": {"name": "Deepening", "description": "The natural deepening that comes from sustained practice."},
-          "shadow": {"name": "Transcending", "description": "Spiritual bypass that escapes rather than includes life."}
+          "integrated": {"name": "Unification of Mind", "description": "Scattered attention gathering toward one point on its own."},
+          "shadow": {"name": "Worldly Desire", "description": "The gathering mind pulled off course by what it wants."}
         },
         {
           "phase": "Peaking",
-          "integrated": {"name": "Clarity", "description": "Seeing reality as it is, as lived truth not concept."},
-          "shadow": {"name": "Superiority", "description": "Using realization as proof you are better than others."}
+          "integrated": {"name": "Jhana", "description": "Stable, bright absorption you can rest in and see by."},
+          "shadow": {"name": "Bliss Addiction", "description": "Sitting for the state instead of in it, chasing the high."}
         },
         {
           "phase": "Withdrawal",
-          "integrated": {"name": "Discernment", "description": "Precise seeing of distinctions held with compassion."},
-          "shadow": {"name": "Judgment", "description": "Using clarity to condemn, dismiss, and reject others."}
+          "integrated": {"name": "Metta and Meditative Joy", "description": "Warmth and quiet gladness that stay as absorption loosens."},
+          "shadow": {"name": "Agitation Due to Worry or Remorse", "description": "The restless rerun after the high, auditing your whole life."}
         },
         {
           "phase": "Diminishing",
-          "integrated": {"name": "Humility", "description": "Recognizing you are always the student before the mystery."},
-          "shadow": {"name": "Humiliation", "description": "Collapsing into shame that you are not enough."}
+          "integrated": {"name": "Sustained Attention", "description": "Staying with the object, sit after sit, because you said you would."},
+          "shadow": {"name": "Doubt", "description": "The reasonable-sounding voice that asks whether any of this is real."}
         },
         {
           "phase": "Bottoming Out",
-          "integrated": {"name": "Devotion", "description": "Practicing because the practice itself is sacred."},
-          "shadow": {"name": "Dogma", "description": "Mistaking your tradition for the one true path."}
+          "integrated": {"name": "Pleasure", "description": "Resting in one small pleasant thing when practice feels dry."},
+          "shadow": {"name": "Aversion", "description": "Pushing against what is here and hardening the bottom."}
         },
         {
           "phase": "Restoration",
-          "integrated": {"name": "Recommitment", "description": "Choosing the path again out of love, not obligation."},
-          "shadow": {"name": "Righteousness", "description": "Wielding devotion as a badge to judge others."}
+          "integrated": {"name": "Directed Attention", "description": "Deliberately aiming the mind at the object to begin again."},
+          "shadow": {"name": "Laziness or Lethargy", "description": "Sitting without pointing, sinking into a fog that is not rest."}
         }
       ]
     },
@@ -424,35 +425,41 @@
       "growing_up_stage": "Pure Awareness",
       "divine_gender_polarity": "Divine Hermaphrodite",
       "relationship_to_free_will": "Whole Adept",
-      "free_will_description": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through. There is no \"you\" to have free will. And yet, choice is obviously happening. Actions arise. Intentions form. Life unfolds.",
+      "free_will_description": "At Clear Light, the question of Free Will dissolves. Not because it's been answered, but because it's been seen through.",
       "manifestations": [
         {
           "phase": "Rising",
+          "source": "app-authored",
           "integrated": {"name": "Riding", "description": "Letting momentum carry you while staying rooted."},
           "shadow": {"name": "Grasping", "description": "Clutching at the returning energy and believing the hype."}
         },
         {
           "phase": "Peaking",
+          "source": "app-authored",
           "integrated": {"name": "Gratitude", "description": "Enjoying the flow fully and letting it pass in time."},
           "shadow": {"name": "Attachment", "description": "Clinging to the peak instead of releasing it."}
         },
         {
           "phase": "Withdrawal",
+          "source": "app-authored",
           "integrated": {"name": "Trust", "description": "Letting go as the descent unfolds its natural rhythm."},
           "shadow": {"name": "Collapse", "description": "Reading the natural ebb as failure and falling apart."}
         },
         {
           "phase": "Diminishing",
+          "source": "app-authored",
           "integrated": {"name": "Patience", "description": "Knowing this too shall pass, having been here before."},
           "shadow": {"name": "Despair", "description": "Believing the trough is permanent and hopeless."}
         },
         {
           "phase": "Bottoming Out",
+          "source": "app-authored",
           "integrated": {"name": "Rest", "description": "Ceasing to fix it and letting the ground hold you."},
           "shadow": {"name": "Fixing", "description": "Straining to repair the bottom instead of resting."}
         },
         {
           "phase": "Restoration",
+          "source": "app-authored",
           "integrated": {"name": "Recommitment", "description": "Returning to the same practice, path, and truth again."},
           "shadow": {"name": "Novelty-Seeking", "description": "Chasing something new instead of the proven path."}
         }

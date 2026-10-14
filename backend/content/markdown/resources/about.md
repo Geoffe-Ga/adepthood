@@ -9,9 +9,9 @@ media: []
 Welcome to the APTITUDE Course
 
 Adepthood is what comes after adulthood, but only for those who choose
-to wake up. It’s a state expressed by those who have jettisoned
-conditioning and now express Free
-Will. It’s knowing you can choose differently—that you're no longer trapped by cycles, habits, patterns, or seemingly inescapable self-sabotage.
+to wake up. It’s what you’re living when you’ve stopped taking your
+conditioning at face value and started expressing Free
+Will. It’s knowing you can choose differently—the cycles, habits, patterns, and self-sabotage still come around, because they always do, but they no longer get to run you without a vote.
 
 You found your way here—you might already have done
 some research, some self-work, some intermittent practice.
@@ -59,9 +59,9 @@ is coming
 next. After the excruciating contractions of labor, comes the miracle of
 birth.
 
-APTITUDE provides a structured yet
-flexible framework that yields everything someone needs to cope
-with and positively contribute to those many, many crises—sometimes
+APTITUDE gives you a structure that
+bends: enough scaffolding to stay upright in, and maybe do some good
+inside, those many, many crises—sometimes
 called the polycrisis. Each Stage of APTITUDE introduces key habits and
 practices, scaffolding energy so that growth is
 sustainable, not
@@ -153,9 +153,9 @@ finally training you to do.
 ### What Makes APTITUDE Different?
 
 - NO GURU: I am nothing special. Your journey is
-  yours. APTITUDE gives you the blueprints for a staircase, but you
-  choose what materials—what uniquely resonant habits
-  and practices—you use to construct it.
+  yours. APTITUDE hands you the sheet music, but you build the
+  instrument—you choose what materials, what uniquely resonant habits
+  and practices, go into it.
 - INTEGRATIVE, NOT ESCAPIST: Many spiritual
   paths prioritize transcendence over embodiment. They preach
   “integrating and transcending,” but go on only
@@ -217,9 +217,9 @@ If you want to read more first, that’s ok too. Here’s
 our Philosophy and an extended introduction.
 
 Take note, though. What are you feeling in your body?
-What is sparked by this invitation to step beyond stagnation, beyond
-self-sabotage, beyond cycles of temporary enlightenment followed by
-collapse?
+What is sparked by this invitation to step out of stagnation and
+self-sabotage—and to stop getting wrecked every time a temporary
+enlightenment gives way to the collapse that always follows it?
 
 The world is waiting for Whole Adepts. For those who have reclaimed
 their Free Will, who have integrated their insights

@@ -34,4 +34,4 @@ Solution: Good. Boredom is a stage of practice. It means you've stabilized enoug
 
 **Obstacle: "I feel worse after meditating."**
 
-Solution: You're probably surfacing repressed material. Meditation doesn't create problems—it reveals them. This is actually progress. Consider pairing meditation with therapy or shadow work to process what's coming up. And if it's overwhelming, scale back and get support.
+Solution: Often you're surfacing material that had been sitting below the waterline. Meditation doesn't create problems—it reveals them. That isn't a sign you're doing it wrong, but it isn't automatically progress either; it's just what's there. Consider pairing meditation with therapy or shadow work to process what's coming up. And if it's overwhelming, scale back and get support.

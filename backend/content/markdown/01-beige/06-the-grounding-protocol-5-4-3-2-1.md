@@ -14,9 +14,9 @@ media: []
 
 And when you do feel yourself slipping into that Overdose energy—when your crown chakra swells and you start chasing too many dreams at once—that’s where the first Practice of the path comes in.
 
-Practices are meant to be a focal point for the duration of the Stage during which they are introduced and they are designed to progressively build meditation skills up—from next to nothing if necessary.
+Each Practice is the thing you lean on for the three weeks of its Stage, and each one builds your meditation muscles a little further than the last—starting from next to nothing if that’s where you are.
 
-Here your Practice will only take a few minutes or less, but by the end of the program, you’ll be comfortably meditating for 45 minutes at a time.
+Here your Practice takes a few minutes at most. By the end of the program you’ll be sitting for 45 minutes at a stretch—not always comfortably, but steadily.
 
 What is it?
 

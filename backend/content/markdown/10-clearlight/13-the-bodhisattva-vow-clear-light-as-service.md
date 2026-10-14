@@ -20,7 +20,7 @@ But it's not literal. It's a statement of orientation: *I'm not doing this for m
 
 At Clear Light, you've touched the truth: there is no separation. Your liberation and others' liberation are not two things. When you wake up, the whole field wakes up a little. When you stabilize in presence, you create a resonance that others can attune to.
 
-This is not spiritual ego. It's physics. You're a node in the network. When you change, the network changes.
+This is not spiritual ego. It's just how people work. You're one person in a web of people. When you change, the people around you feel it.
 
 The Bodhisattva Vow is your declaration: *I will use my practice, my presence, my capacity not to escape the world, but to serve it.*
 

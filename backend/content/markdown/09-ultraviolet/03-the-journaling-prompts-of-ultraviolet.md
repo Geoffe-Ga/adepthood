@@ -16,32 +16,32 @@ Ultraviolet's journaling is contemplative, precise, and devoted. You're not expl
 
 **Prompt 1: Reflect on Your Understanding of Developmental Stages (At least 4x per week)**
 
-Write about the spiral. Not academically—*personally*. Which stages have you inhabited? Which do you still resist? Which do you romanticize?
+Write about the scale—all ten notes. Not academically—*personally*. Which capacities come easily to you? Which do you still resist? Which do you romanticize?
 
-Be honest. Notice where you judge. Notice where you avoid. Notice where you cling to a particular stage's identity.
+Be honest. Notice where you judge. Notice where you avoid. Notice where you cling to one note as if it were your whole identity.
 
-Then ask: What would it mean to honor *all* the stages? To see them not as a ladder to escape, but as a spectrum of capacities to integrate?
+Then ask: What would it mean to honor *all* ten notes? To see them not as a ladder to escape, but as a spectrum of capacities to integrate?
 
 This is the work of transcend and include made personal.
 
 **Deepening the Developmental Inquiry:**
 
-Don't just list the stages you've been through. Tell the story of each transition. When did you move from Red to Blue? What triggered it? What did you lose? What did you gain?
+Don't just list the capacities you've built. Tell the story of how each one arrived. When did Blue's belonging first start sounding alongside Red's fire? What triggered it? What did you lose? What did you gain?
 
 Example entry structure:
-- **Stage inhabited:** Red (ages 15-18)
+- **Capacity that ran the show:** Red (ages 15-18)
 - **How it showed up:** Rebellion against authority, testing boundaries through conflict, using anger as power
 - **The transition:** A mentor saw through my rage to the hurt underneath. First time I felt truly witnessed without judgment.
 - **What I lost:** The simplicity of black-and-white thinking. The energy of righteous anger.
 - **What I gained:** The capacity to belong. To be part of something larger than my own will.
-- **How I still judge this stage:** I look down on people who can't control their temper, forgetting that I was there and it served a purpose.
+- **How I still judge this note:** I look down on people who can't control their temper, forgetting that I was there and it served a purpose.
 - **The transcend-and-include work:** Can I access Red's healthy assertion without the violence? Can I honor the part of me that still needs to say "no" fiercely when boundaries are violated?
 
-Do this for each stage. Over weeks and months, you'll have a complete developmental autobiography. And in writing it, you'll see the patterns, the recurring themes, the places where growth is asking to happen.
+Do this for each note on the scale. Over weeks and months, you'll have a complete developmental autobiography. And in writing it, you'll see the patterns, the recurring themes, the places where growth is asking to happen.
 
-**Prompt 2: Identify Where You Are on the Spiral in Different Domains (At least 4x per week)**
+**Prompt 2: Identify Which Notes You Lean On in Different Domains (At least 4x per week)**
 
-You're not at one stage in all areas of your life. You might be at Yellow intellectually, Green relationally, and Red in conflict.
+You don't play one note in every area of your life. You might reach for Yellow when you think, Green when you relate, and Red when you fight.
 
 Map it. Be specific. Which notes do you play most fluently? Which are shakiest? What situations knock your newer notes out of reach?
 
@@ -51,16 +51,16 @@ This is not about shame. It's about *seeing clearly*. Because only when you see 
 
 Use a table to map yourself across life domains:
 
-| Domain | Current Stage | Medicine Practices | Shadow Patterns | Next Growth Edge |
-|--------|---------------|-------------------|-----------------|------------------|
-| Intellectual | Yellow | Systems thinking, reading widely, synthesizing | Overwhelm, analysis paralysis | Move to Teal: trust intuition more |
-| Relational | Green | Shadow work, vulnerability | Over-processing, emotional enmeshment | Move to Yellow: discernment without judgment |
-| Professional | Orange | Goal-setting, optimization | Workaholism, status-seeking | Integrate Green: value process over product |
-| Spiritual | Teal | Meditation, witnessing | Spiritual bypassing | Move to Ultraviolet: practice as devotion |
-| Sexuality | Red | Assertion, desire | Shame, power dynamics | Integrate Blue: sacred intimacy |
-| Money | Purple | Divination, intuition | Magical thinking, scarcity | Integrate Orange: strategic planning |
+| Domain | Note I lean on | Medicine Practices | Shadow Patterns | Note missing from the chord |
+|--------|----------------|-------------------|-----------------|-----------------------------|
+| Intellectual | Yellow | Systems thinking, reading widely, synthesizing | Overwhelm, analysis paralysis | Teal: trust intuition more |
+| Relational | Green | Shadow work, vulnerability | Over-processing, emotional enmeshment | Yellow: discernment without judgment |
+| Professional | Orange | Goal-setting, optimization | Workaholism, status-seeking | Green: value process over product |
+| Spiritual | Teal | Meditation, listening for the True Self | Spiritual bypassing | Ultraviolet: practice as devotion |
+| Sexuality | Red | Assertion, desire | Shame, power dynamics | Blue: sacred intimacy |
+| Money | Purple | Divination, intuition | Magical thinking, scarcity | Orange: strategic planning |
 
-Update this monthly. Notice: Where are you most fragmented? Where do you "level down" under stress? This map becomes a diagnostic tool—when you're struggling in any domain, check: what stage am I operating from? What would the next stage offer?
+Update this monthly. Notice: Where are you most fragmented? Which notes drop out under stress? When you're struggling in any domain, ask: which capacity is running the show right now, and which one is this moment actually asking for?
 
 **Prompt 3: Explore Moments of Non-Dual Awareness (At least 4x per week)**
 
@@ -68,7 +68,7 @@ When have you touched the recognition that subject and object are not separate? 
 
 Maybe it was in meditation. Maybe it was in nature. Maybe it was in intimacy, or creativity, or grief.
 
-Write about it. Not to grasp it, but to *honor* it. These glimpses are what Ultraviolet is preparing you for. They're previews of Clear Light.
+Write about it. Not to grasp it, but to *honor* it. These glimpses are Ultraviolet's own territory—Unity, the line between you and the world going quiet. Clear Light asks a different question later: whether anything, including that unity, exists on its own at all.
 
 **Mapping the Territory of Non-Dual Glimpses:**
 

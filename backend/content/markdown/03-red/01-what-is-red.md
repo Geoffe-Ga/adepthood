@@ -16,7 +16,7 @@ Welcome to Red, the third stage in your conscious traversal of the spiral. It’
 
 Red is the domain of Power, and in most metatheories—Spiral Dynamics, Integral Theory, the chakra system—it’s associated with force, ego, will, and instinctual assertion. But APTITUDE takes a different angle.
 We don’t just map these stages—we reframe them.
-While Spiral Dynamics might name Red as the impulsive, power-hungry vMeme of the warlord or gang leader, and Integral Theory might see it as the stage of egocentrism and dominance, APTITUDE invites a new interpretation. In this framework, Red doesn’t culminate in control. It matures into Self-Love.
+While Spiral Dynamics might name Red as the impulsive, power-hungry value system of the warlord or gang leader, and Integral Theory might see it as the stage of egocentrism and dominance, APTITUDE invites a new interpretation. In this framework, Red doesn’t culminate in control. It matures into Self-Love.
 
 This is no small shift.
 

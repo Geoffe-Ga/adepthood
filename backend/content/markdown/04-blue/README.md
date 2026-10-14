@@ -12,7 +12,7 @@ This folder contains the modular sections for the BLUE stage of the APTITUDE cou
 - [The Mode of the Wavelength of Blue: Express (Feel)](./05-the-vibe-wavelength-of-blue-express-feel.md)
 - [The Practice of Blue: Metta Meditation](./06-the-practice-of-blue-metta-meditation.md)
 - [Alternatives for Blue Practice](./07-alternatives-for-blue-practice.md)
-- [The Default Habit of Blue: Looking at Alcohol/Intoxicants](./08-the-default-habit-of-blue-looking-at-alcoholintoxicants.md)
+- [The Default Habit of Blue: Looking at Scrolling](./08-the-default-habit-of-blue-looking-at-alcoholintoxicants.md)
 - [Blue's Divine Gender: Divine Feminine—We, Self-Sacrificing](./09-blues-divine-gender-divine-femininewe-self-sacrificing.md)
 - [Yes-And-Ness, Love, Understanding, Wisdom: The Broader "Aspect Categories" of APTITUDE](./10-yes-and-ness-love-understanding-and-wisdom-the-broader-aspec.md)
 - [Blue's Gift: From Conformity to Community](./11-blues-gift-from-conformity-to-community.md)

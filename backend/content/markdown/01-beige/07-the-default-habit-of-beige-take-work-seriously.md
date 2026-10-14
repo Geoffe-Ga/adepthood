@@ -16,7 +16,7 @@ To begin correcting these root-level imbalances, we have the recommendation slas
 
 This doesn't mean becoming a grindset-having, productivity-maxing, biohacking capitalist robot. Not unless you’re doing those things consciously, with a respect for your Wavelength and a willingness to honor the rhythms of your biology.
 
-What it really means is restoring reverence for focused, effortful engagement with money-generating obligations. In the philosophy of Don Miguel Ruiz, author of the acclaimed Four Agreements, this is the Agreement we make with ourselves to “always do our best.”
+What it really means is bringing real care and real effort back to the work that pays your bills. In the philosophy of Don Miguel Ruiz, author of the acclaimed Four Agreements, this is the Agreement we make with ourselves to “always do our best.”
 
 Think on it. If you are receiving an hourly wage for your work, you are getting paid to trade away hours of your life. This is a finite resource. If you are a salaried employee that’s not too different: you are being paid to trade away your intention and attention with an agreed upon level of effort, week after week, month after month.
 
@@ -34,7 +34,7 @@ Maybe you have a little free time to listen to audiobooks or self-improvement po
 
 But maybe the way you improve yourself is more directly grounded in the work you are doing. Can you practice intentionally directing your focus while working? Can you use your time earning money to shift your habitual focus from a fixed mindset—a belief that you are born with fixed abilities and can’t change them—to the sort of growth mindset that is oriented toward constant betterment and elevation?
 
-If you’re a Householder Mystic and not a secluded monastic, you’re going to spend a lot of time working (about a third of our lives, right?). That means it has to be harnessed as an opportunity to advance our project of becoming Whole. By bringing our whole self to work and “doing our best” to become better every day, we bake a pattern into our personality that views an orientation toward growth as a fundamental given.
+If you’re a Householder Mystic and not a secluded monastic, you’re going to spend a lot of time working (about a third of our lives, right?). That’s a lot of hours to leave on the table. Work can be one more place to practice being Whole. By bringing our whole self to work and “doing our best” to become better every day, we bake a pattern into our personality that views an orientation toward growth as a fundamental given.
 
 Any activity, no matter how menial, can be an opportunity to deploy the mindfulness and care to make it an artisanal craft.
 

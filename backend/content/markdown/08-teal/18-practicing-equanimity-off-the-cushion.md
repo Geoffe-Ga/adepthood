@@ -12,15 +12,15 @@ media: []
 
 ## Practicing Equanimity Off the Cushion
 
-Teal is not about having profound experiences in meditation. It's about bringing the Witness into every moment of your life. Here's how.
+Teal is not about having profound experiences on a walk. It's about keeping the line to your True Self open on an ordinary Tuesday. Here's how.
 
-**In Conflict: Being the Sky, Not the Weather**
+**In Conflict: Feeling the Weather, Asking the Elder**
 
 You're in an argument. Emotions are high. The old pattern would be to get swept into the storm—defending, attacking, collapsing.
 
-The Teal practice: *Be the sky*. Let the emotions move through you like weather. Notice the anger, the hurt, the defensiveness. But don't *become* them. You're the space in which they're happening.
+The Teal practice: *Feel the weather, then ask*. Let the anger, the hurt, the defensiveness move through you like a squall—feel them in the jaw, the chest. Then ask the part of you that's older than this argument what it would do here.
 
-From that space, you can respond instead of react.
+From that older place, you can respond instead of react.
 
 **In Transition: Trusting the Void**
 
@@ -38,15 +38,15 @@ The Teal practice: *Let it pass through*. Enjoy it. Fully. But don't hold onto i
 
 You failed. Publicly. Painfully.
 
-The Teal practice: *Meet it with equanimity*. Not by pretending it doesn't hurt. But by recognizing that the hurt is weather. It will pass. You are still the sky.
+The Teal practice: *Meet it with equanimity*. Not by pretending it doesn't hurt, but by remembering that hurt is weather. It will pass. Whoever chose this life is still in the room, and isn't ashamed of you.
 
 **In Daily Life: Baby Waterfalls**
 
-Use your conventions. Pause before meals. Feel your feet before meetings. Take three breaths before scrolling. These tiny moments train you to return to presence, again and again, until presence becomes your baseline.
+Use your conventions. Pause before meals. Feel your feet before meetings. Take three breaths before scrolling. These tiny moments train you to return, again and again. Presence doesn't become permanent—but the return gets quicker.
 
 **The Core Principle:**
 
-Equanimity off the cushion is about remembering: *You are not the content of your experience. You are the awareness in which experience arises.*
+Equanimity off the cushion is about remembering: *the personality having this experience is not all of you. There's an older, wiser you who chose it—and who can be asked.*
 
 Every time you remember this—even for a second—you're free.
 

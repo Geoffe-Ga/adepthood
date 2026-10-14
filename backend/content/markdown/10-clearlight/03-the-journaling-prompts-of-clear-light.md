@@ -24,12 +24,12 @@ Write about it. Not to analyze it, but to document the direct seeing. To let the
 
 These glimpses are what Clear Light is. The more you recognize emptiness directly, the more stable the realization becomes.
 
-**Deepening the Non-Dual Documentation:**
+**Writing Down a Glimpse of Emptiness:**
 
-When you write about non-dual experiences, use this structure to capture the subtlety:
+When you write about one of these glimpses, use this structure to capture the subtlety:
 
 **The Before:**
-What was your state before the glimpse? Were you stressed? Calm? Seeking? Surrendered? The conditions matter. You're learning to recognize what supports the arising of non-dual awareness.
+What was your state before the glimpse? Were you stressed? Calm? Seeking? Surrendered? The conditions matter. You're learning to recognize what makes room for a glimpse of emptiness.
 
 Example: *"I had been meditating for 50 minutes. Concentration was good—second jhana stable. I was just resting there, not doing anything. No agenda."*
 
@@ -39,7 +39,7 @@ What was the exact moment the boundary dissolved? Was there a trigger? Or did it
 Example: *"I opened my eyes. I was looking at the wall. And suddenly there was no 'me looking at wall.' Just seeing. The distance between eyes and wall collapsed. I wasn't in here watching out there. It was all one field."*
 
 **The Recognition:**
-What did you directly perceive in the non-dual state? Not what you thought about it afterward—what was the lived experience?
+What did you directly perceive while the glimpse was happening? Not what you thought about it afterward—what was the lived experience?
 
 Example: *"No subject. No object. Just... thisness. I can't describe it better than that. Everything was exactly as it was, but the interpretation layer was gone. No story. No time. No problem. Just presence being present to itself."*
 
@@ -51,7 +51,7 @@ Example: *"A thought arose: 'This is it!' And immediately, the spell broke. Ther
 **The Integration:**
 What does this glimpse teach you? How does it inform your practice and your life?
 
-Example: *"I'm not trying to get to non-duality. I'm removing the obstacles to what's always here. The work is letting go of the grasping that creates the illusion of separation. The more I see this, the more the glimpses become my baseline."*
+Example: *"I'm not trying to get anywhere. I'm removing the obstacles to what's always here. The work is letting go of the grasping that builds a solid self. The more I see this, the sooner I catch the grasping when it starts up again."*
 
 Over time, these entries create a phenomenological map of awakening. You're documenting your own path to liberation. And in that documentation, liberation deepens.
 
@@ -125,11 +125,11 @@ This daily check-in does three things:
 
 3. **Offers choice.** Once you know the phase, you can choose the skillful response rather than reacting unconsciously.
 
-This is mastery of the Wavelength. Not transcendence—*navigation*.
+This is how you ride the Wavelength. Not above it—in it, with your eyes open.
 
 **Prompt 4: Write as the Adept (Aspirational Identity)**
 
-Imagine you are the Adept—the version of you who is fully awake, fully embodied, fully free. Not some distant future self, but the *essence* of who you already are beneath the conditioning.
+Imagine the Adept—not a person you'll turn into, but the capacity in you that already knows how to stay present when things get hard. Not fully awake, fully embodied, fully free; nobody is, for long. Just the part of you that's awake enough, right now, to notice what's here beneath the conditioning.
 
 Write from that place. What does the Adept see? How do they move through the world? What do they know?
 

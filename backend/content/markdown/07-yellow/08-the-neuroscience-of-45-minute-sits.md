@@ -44,6 +44,6 @@ Theta brainwaves (associated with deep relaxation and access to the unconscious)
 
 If you've made it this far with sustained attention, you're touching what the contemplative traditions call *access concentration*—the doorway to jhāna (deep meditative absorption).
 
-The sense of "self" starts to dissolve. Not in a scary way—in a liberating way. You're still here, still aware, but the narrative voice in your head has quieted. You're no longer thinking *about* the breath—you *are* the breath. Subject and object begin to merge.
+The sense of "self" starts to thin out. For most people that's a relief; for some it's unnerving, and if it tips into panic, that's a signal to come back to the body—feet, seat, breath—not to push through. You're still here, still aware, but the narrative voice in your head has quieted. You're no longer thinking *about* the breath—you *are* the breath. Subject and object begin to merge.
 
 This is where the real transformation happens. Because once you've experienced this even once, you know: the self you think you are is not fixed. It's a process. And it can be radically different than you thought.

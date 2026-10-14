@@ -61,7 +61,7 @@ _BODY = " ".join(["word"] * MIN_CHAPTER_WORDS)
 #: The real tree's thin chapters and numbering gaps on the pinned commit.
 _REAL_THIN = {"teal-7", "orange-7"}
 _REAL_NUMBERING = {"1:12"}
-_REAL_PRACTICE_COUNT = 38
+_REAL_PRACTICE_COUNT = 37
 
 
 # --- fixture trees ------------------------------------------------------------

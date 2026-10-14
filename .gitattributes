@@ -12,3 +12,5 @@
 backend/content/markdown/** linguist-vendored -text
 backend/content/manifest.json linguist-vendored -text
 backend/content/CONTENT_VERSION linguist-vendored -text
+# The Modes of the Wavelength CSV (#3135) ships with CRLF line endings upstream.
+backend/content/curriculum/** linguist-vendored -text

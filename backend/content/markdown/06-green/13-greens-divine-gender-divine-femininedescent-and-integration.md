@@ -16,7 +16,7 @@ Green swings back to the **Divine Feminine**—the archetypal force of receptivi
 
 The Divine Feminine at Green is not the nurturing mother (that's Blue). It's the *dark mother*. Kali. Persephone. The Crone. The part of the Feminine that doesn't comfort—it confronts. It says, "If you want to be whole, you have to go down into the underworld and reclaim what you left there."
 
-This is the archetype of the descent. The heroine's journey. The dark night of the soul. And it's not optional. You can't skip this part and call yourself whole.
+This is the archetype of the descent. The heroine's journey. The dark night of the soul. Nobody can make you go, and most people who try to skip it find the underworld comes to them instead.
 
 Green's Divine Feminine expresses through three core qualities:
 
@@ -38,6 +38,6 @@ When it's imbalanced, Green becomes self-absorbed. Drowning in feelings. Stuck i
 
 The medicine is remembering that descent is not the destination. You go down *so you can come back up*. You meet the shadow *so you can integrate it*. The underworld is not a place to live—it's a place to visit, learn from, and return.
 
-That's the wisdom of Green's Feminine. And it's what makes the ascent to Yellow possible.
+That's the wisdom of Green's Feminine. And it's the ground Yellow builds on when the course turns there next.
 
 ---
