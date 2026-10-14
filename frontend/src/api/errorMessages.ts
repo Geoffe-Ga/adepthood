@@ -217,11 +217,11 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // The wallet is one pool, so the copy names what shares it rather than any
   // one of them.
   insufficient_offerings: INSUFFICIENT_OFFERINGS_COPY,
+  // A revoked entitlement (403): AI features only, never the journal (#1938).
+  ai_access_revoked: AI_ACCESS_REVOKED_COPY,
   // Only an older build that still asks for a letter the moment a note opens
   // can meet this: the server will not charge for a letter whose price the
   // writer was never shown. Nothing was spent.
-  // A revoked entitlement (403): AI features only, never the journal (#1938).
-  ai_access_revoked: AI_ACCESS_REVOKED_COPY,
   essay_price_unacknowledged:
     "Letters now show their price before they're written, and nothing was spent. Close this note and open it again to see the price and ask.",
   generation_in_progress: GENERATION_IN_PROGRESS_COPY,
