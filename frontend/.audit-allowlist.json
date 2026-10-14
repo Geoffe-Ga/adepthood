@@ -20,7 +20,7 @@
       "package": "braces",
       "expires": "2026-10-19",
       "issue": 3054,
-      "reason": "No patched braces release exists (affected <=3.0.3; latest 3.0.3). Reached through Expo/Metro build tooling and Jest; the web deployment serves the static export through nginx. This limits observed exposure but does not fix the stack-exhaustion vulnerability. Owner-approved time box ending 2026-10-19; re-check and remediate per #3054."
+      "reason": "No recognized patched braces release exists (affected <=3.0.3; latest 3.0.3). The existing patch-package postinstall backports the mandatory parser and compile/expand/stringify recursion-depth guard from upstream PR78; installed regressions cover excessive nesting and ordinary behavior (#3280). This does not resolve all expansion/CPU risks or change advisory status. Reached through Expo/Metro and Jest tooling; the web deployment serves the static export through nginx. Owner-approved time box ending 2026-10-19 remains enforced; re-check patched dependency and remove the exception per #3054."
     }
   ]
 }
