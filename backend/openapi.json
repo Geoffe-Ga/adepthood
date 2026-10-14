@@ -4872,6 +4872,30 @@
         "title": "ModelUsageBreakdown",
         "type": "object"
       },
+      "NextUnreadResponse": {
+        "description": "The earliest unlocked, unread chapter across every open stage (issue #3147).\n\nThe Course screen's \"Read next\" button opens it; the endpoint answers\n``null`` instead when every chapter the drip has opened is already read.",
+        "properties": {
+          "content_id": {
+            "title": "Content Id",
+            "type": "integer"
+          },
+          "stage_number": {
+            "title": "Stage Number",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_id",
+          "stage_number",
+          "title"
+        ],
+        "title": "NextUnreadResponse",
+        "type": "object"
+      },
       "OperationSource": {
         "description": "Which side answered one operation of a pass, as a response reports it (#3062).\n\nThe persisted :class:`~models.marginalia.MarginaliaSource` values, plus\n``none``: the operation was not run at all (detection with no candidates,\nor under a vault-bound boundary). ``none`` is a fact about this pass and is\nnever stored, so it can never be mistaken for a row whose source was not\nrecorded.",
         "enum": [
@@ -13718,6 +13742,124 @@
           }
         },
         "summary": "Mark Content Read",
+        "tags": [
+          "course"
+        ]
+      }
+    },
+    "/course/next-unread": {
+      "get": {
+        "description": "The earliest unlocked, unread chapter across every open stage, or ``null``.\n\nOrdered by stage, then ``release_day``, then ``id`` -- the release order\nthe per-stage listing already uses -- so \"Read next\" always lands on the\nchapter a reader would reach by walking the stages in order. Drip lock\nsemantics come from the same :func:`filter_content_for_user` path as the\nlisting; nothing is re-derived here. ``null`` (not 404) means \"caught\nup\": the resource is the reader's position, and it always exists.\n\nThe request carries no id at all -- the answer is scoped to the JWT\nsubject -- so there is no foreign id to authorize.",
+        "operationId": "get_next_unread_course_next_unread_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/NextUnreadResponse"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Next Unread Course Next Unread Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          }
+        },
+        "summary": "Get Next Unread",
         "tags": [
           "course"
         ]
