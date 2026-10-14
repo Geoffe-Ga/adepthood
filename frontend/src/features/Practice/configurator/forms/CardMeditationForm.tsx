@@ -27,6 +27,7 @@ import {
 } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, editorialType, ink, surface } from '@/design/tokens';
+import { reportDiagnostic } from '@/observability/diagnostics';
 
 interface Props {
   value: CardMeditationConfig;
@@ -231,9 +232,9 @@ const CardPhotoField = ({ index, card, onUpdate }: CardPhotoFieldProps): React.J
     try {
       const photo = await pickCardPhoto();
       if (photo) onUpdate(index, { image_uri: photo.uri, image_asset_key: null });
-    } catch (error) {
+    } catch {
       // Surface a recoverable notice instead of swallowing picker failures.
-      if (__DEV__) console.warn('Card photo picker failed:', error);
+      if (__DEV__) reportDiagnostic('photo_picker_failed');
       setPickError('Could not open your photos. Please try again.');
     }
   };

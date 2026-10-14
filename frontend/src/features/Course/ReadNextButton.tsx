@@ -6,6 +6,8 @@ import { Button } from '../../components/Button';
 
 import styles from './Course.styles';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 export const READ_NEXT_LABEL = 'Read next';
 export const CAUGHT_UP_LABEL = 'All caught up';
 
@@ -35,8 +37,8 @@ export function useNextUnread(): { state: NextUnreadState; refresh: () => void }
     try {
       const target = await courseApi.nextUnread();
       if (requestId === requestSeq.current) setState({ status: 'ready', target });
-    } catch (err) {
-      console.error('Failed to find the next unread chapter:', err);
+    } catch {
+      reportDiagnostic('course_load_failed');
       if (requestId === requestSeq.current) setState({ status: 'error' });
     }
   }, []);

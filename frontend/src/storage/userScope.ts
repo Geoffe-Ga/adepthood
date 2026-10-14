@@ -1,3 +1,6 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 /**
  * Which account the device-local caches belong to.
  *
@@ -24,8 +27,6 @@
  * hooks alike, and threading a user id through every one of them would put
  * the burden of remembering on exactly the call sites that already forgot.
  */
-
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * The device-owner stamp. Deliberately NOT itself scoped — it is the thing
@@ -107,8 +108,8 @@ export async function loadDeviceOwner(): Promise<number | null> {
   let raw: string | null;
   try {
     raw = await AsyncStorage.getItem(DEVICE_OWNER_KEY);
-  } catch (err: unknown) {
-    console.warn('[userScope] could not read the device-owner stamp', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'user_scope' });
     return null;
   }
   return parseUserId(raw);

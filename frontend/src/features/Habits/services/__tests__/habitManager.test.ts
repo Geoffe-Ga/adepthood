@@ -3852,7 +3852,8 @@ describe('habitManager', () => {
 
       await habitManager.onboardingSave(newHabits, jest.fn());
 
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Meditate'));
+      expect(errorSpy).toHaveBeenCalledWith('habit_save_failed');
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('Meditate');
       expect(useHabitStore.getState().habits).toHaveLength(1);
       errorSpy.mockRestore();
     });
@@ -5028,7 +5029,7 @@ describe('habitManager', () => {
       expect(replacePendingCheckIns).not.toHaveBeenCalled();
     });
 
-    it('announces the dropped check-in with its goal id and status', async () => {
+    it('announces the dropped check-in with its fixed code and status without a goal id', async () => {
       (goalCompletionsApi.create as jest.Mock).mockRejectedValueOnce(
         new ApiError(422, 'unprocessable') as never,
       );
@@ -5037,9 +5038,8 @@ describe('habitManager', () => {
 
       const warnMock = console.warn as unknown as jest.Mock;
       expect(warnMock).toHaveBeenCalledTimes(1);
-      const logged = (warnMock.mock.calls[0] as unknown[]).map((arg) => String(arg)).join(' ');
-      expect(logged).toContain('4242');
-      expect(logged).toContain('422');
+      expect(warnMock).toHaveBeenCalledWith('checkin_rejected', { status: 422 });
+      expect(JSON.stringify(warnMock.mock.calls)).not.toContain('4242');
     });
 
     it('clears an all-permanent queue instead of wedging it forever', async () => {
@@ -5129,8 +5129,8 @@ describe('habitManager', () => {
 
       const warnMock = console.warn as unknown as jest.Mock;
       expect(warnMock).toHaveBeenCalledTimes(1);
-      const logged = (warnMock.mock.calls[0] as unknown[]).map((arg) => String(arg)).join(' ');
-      expect(logged).toContain('4242');
+      expect(warnMock).toHaveBeenCalledWith('checkin_rejected', { status: 422 });
+      expect(JSON.stringify(warnMock.mock.calls)).not.toContain('4242');
       expect(recordDroppedCheckIn).toHaveBeenCalledTimes(1);
       expect(recordDroppedCheckIn).toHaveBeenCalledWith(
         expect.objectContaining({ goal_id: 4242, status: 422 }),
@@ -5297,11 +5297,8 @@ describe('habitManager', () => {
           }),
         );
         const warnMock = console.warn as unknown as jest.Mock;
-        const logged = warnMock.mock.calls
-          .map((call) => (call as unknown[]).map((arg) => String(arg)).join(' '))
-          .join('\n');
-        expect(logged).toContain('121');
-        expect(logged).toContain('500');
+        expect(warnMock).toHaveBeenCalledWith('checkin_gave_up', { status: 500 });
+        expect(JSON.stringify(warnMock.mock.calls)).not.toContain('121');
         expect(clearPendingCheckIns).toHaveBeenCalled();
         expect(replacePendingCheckIns).not.toHaveBeenCalled();
         expect(mockReplayState).toBeNull();

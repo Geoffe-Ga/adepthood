@@ -49,7 +49,7 @@ describe('localModelStorage', () => {
     mockAsyncStorage.getItem.mockRejectedValueOnce(error);
 
     await expect(loadLocalModelPreferred()).resolves.toBeNull();
-    expect(warn).toHaveBeenCalledWith('[localModelStorage] failed to load the choice', error);
+    expect(warn).toHaveBeenCalledWith('storage_read_failed', { storage: 'local_model' });
   });
 
   test('a failed write resolves false and says so rather than rejecting', async () => {
@@ -58,6 +58,6 @@ describe('localModelStorage', () => {
     mockAsyncStorage.setItem.mockRejectedValueOnce(error);
 
     await expect(saveLocalModelPreferred(true)).resolves.toBe(false);
-    expect(warn).toHaveBeenCalledWith('[localModelStorage] failed to save the choice', error);
+    expect(warn).toHaveBeenCalledWith('storage_write_failed', { storage: 'local_model' });
   });
 });

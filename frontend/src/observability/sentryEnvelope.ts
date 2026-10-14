@@ -12,9 +12,9 @@
  * The exception message is not one of those fields. It is authored at the
  * throw site, so it can interpolate whatever the user was writing, and no cap
  * makes a short message safe: every report carries {@link MESSAGE_WITHHELD}
- * in its place (#3064). What remains is the exception's type (checked to be
- * class-shaped, since `error.name` is assignable) and the React component stack
- * (component names only, by React's own construction).
+ * in its place (#3064). Error types, boundary identifiers and feature names
+ * are closed runtime enums. Component stacks are dropped: component names
+ * and display names can contain private text too (#3210).
  *
  * Why hand-built rather than `@sentry/react-native`: that SDK is a native
  * module, and this is an Expo-managed app whose test suite could only ever
@@ -36,15 +36,36 @@ export const MESSAGE_WITHHELD = 'message_withheld';
 /** Reported as the type of a thrown value that is not an `Error`. */
 export const UNKNOWN_ERROR_TYPE = 'UnknownError';
 
-/** Reported as the type of an `Error` whose `name` is not an identifier. */
+/** Reported as the type of an `Error` whose `name` is not an approved fixed type. */
 const FALLBACK_ERROR_TYPE = 'Error';
 
-// An exception type is a PascalCase class name ending in `Error` or
-// `Exception` -- every built-in and every app error class (`ApiError`,
-// `TranscriptionError`, ...) has that shape. `error.name` is an ordinary
-// writable property, so anything else -- prose, or a single identifier-shaped
-// word -- is treated as text that could be content.
-const ERROR_TYPE_PATTERN = /^(?:[A-Z][A-Za-z0-9]{0,55})?(?:Error|Exception)$/;
+// Assignable names are safe only when they match an explicitly approved
+// identifier, never merely because they look like a class name.
+const ERROR_TYPES = new Set([
+  'Error',
+  'EvalError',
+  'RangeError',
+  'ReferenceError',
+  'SyntaxError',
+  'TypeError',
+  'URIError',
+  'AggregateError',
+  'AbortError',
+  'DOMException',
+  'ApiError',
+  'ApiValidationError',
+  'ApiTimeoutError',
+  'TranscriptionError',
+  'DocumentUploadError',
+  'DirectVendorError',
+  'EmptyApiKeyError',
+  'EmptyAuthTokenError',
+  'ClientMintedIdError',
+  'SilentRenderError',
+  'MarginSlotInputError',
+]);
+const BOUNDARIES = new Set(['ErrorBoundary', 'FeatureErrorBoundary']);
+const FEATURES = new Set(['Auth', 'App', 'Habits', 'Practice', 'Course', 'Journal', 'Map']);
 
 /** Sentry protocol version this payload is written to. */
 const SENTRY_PROTOCOL_VERSION = 7;
@@ -53,8 +74,8 @@ const SENTRY_PROTOCOL_VERSION = 7;
 const SENTRY_CLIENT = 'adepthood-frontend/1.0';
 
 /**
- * Structured context attached to a report — a **closed** union of exactly the
- * fields the error boundaries pass.
+ * Input shape retained for the existing error boundaries. Runtime filtering
+ * sends only fixed boundary/feature identifiers and discards `react` entirely.
  *
  * Adding a field here is an explicit, reviewed decision: extend the interface
  * (with a sensitivity check) before a call site can pass it. A permissive
@@ -136,6 +157,20 @@ export function redactCredentials(text: string): string {
   return CREDENTIAL_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, REDACTED), text);
 }
 
+/** Read only data properties. Never invoke a getter on a crash or context. */
+function ownData(value: unknown, key: string): unknown {
+  if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+    return undefined;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  } catch {
+    // A Proxy may reject reflection. Treat it as absent metadata.
+    return undefined;
+  }
+}
+
 /**
  * The type of a thrown value, without reading its message or stringifying it.
  *
@@ -143,28 +178,27 @@ export function redactCredentials(text: string): string {
  * a thrown string *is* its text.
  */
 function errorType(error: unknown): string {
-  if (!(error instanceof Error)) {
+  try {
+    if (!(error instanceof Error)) return UNKNOWN_ERROR_TYPE;
+    const ownName = Object.getOwnPropertyDescriptor(error, 'name');
+    // A present accessor is not the same as an absent own property: never
+    // fall through from a hostile accessor to a seemingly valid prototype.
+    const name = ownName ? ownData(error, 'name') : ownData(Object.getPrototypeOf(error), 'name');
+    return typeof name === 'string' && ERROR_TYPES.has(name) ? name : FALLBACK_ERROR_TYPE;
+  } catch {
     return UNKNOWN_ERROR_TYPE;
   }
-  // `typeof` first: `RegExp.test` coerces its argument, so a non-string name
-  // whose string form is class-shaped would pass and then ship as itself.
-  const name: unknown = error.name;
-  return typeof name === 'string' && ERROR_TYPE_PATTERN.test(name) ? name : FALLBACK_ERROR_TYPE;
 }
 
-/** Copy across only the contexts the interface declares. */
+/** Copy fixed identifiers only; do not traverse or serialise input objects. */
 function allowlistedContexts(contexts?: ReportContexts): Record<string, unknown> {
-  const allowed: Record<string, unknown> = {};
-  if (contexts?.react) {
-    allowed.react = { componentStack: contexts.react.componentStack };
-  }
-  if (contexts?.errorBoundary) {
-    allowed.errorBoundary = {
-      boundary: contexts.errorBoundary.boundary,
-      name: contexts.errorBoundary.name,
-    };
-  }
-  return allowed;
+  const boundaryContext = ownData(contexts, 'errorBoundary');
+  const boundary = ownData(boundaryContext, 'boundary');
+  if (typeof boundary !== 'string' || !BOUNDARIES.has(boundary)) return {};
+  const allowed: { boundary: string; name?: string } = { boundary };
+  const name = ownData(boundaryContext, 'name');
+  if (typeof name === 'string' && FEATURES.has(name)) allowed.name = name;
+  return { errorBoundary: allowed };
 }
 
 /**

@@ -7,6 +7,8 @@ import { getJsonArray, getJsonArrayForUpdate } from './jsonStore';
 import { serialize } from './serializedWrite';
 import { getActiveUser, scopedKey } from './userScope';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 /**
  * The three caches below are per-account, so every one of them is resolved
  * through ``scopedKey`` at call time rather than frozen into a module
@@ -143,13 +145,10 @@ export async function savePendingCheckIn(checkIn: PendingCheckIn): Promise<void>
     let result: PendingCheckIn[] | null;
     try {
       result = await getJsonArrayForUpdate<PendingCheckIn>(key);
-    } catch (err: unknown) {
+    } catch {
       // A transient read must abort the write; falling back to [] here would
       // overwrite an intact on-disk queue with a single-item array.
-      console.warn(
-        '[storage] transient read during pending check-in append, aborting write to preserve queue',
-        err,
-      );
+      reportDiagnostic('storage_read_failed', { storage: 'pending_checkins' });
       return;
     }
     const existing = result ?? [];
@@ -231,11 +230,8 @@ export async function removePendingCheckIns(
     let current: PendingCheckIn[] | null;
     try {
       current = await getJsonArrayForUpdate<PendingCheckIn>(key);
-    } catch (err: unknown) {
-      console.warn(
-        '[storage] transient read during pending check-in cleanup, retaining queue for replay',
-        err,
-      );
+    } catch {
+      reportDiagnostic('storage_read_failed', { storage: 'pending_checkins' });
       return;
     }
     const remaining = [...(current ?? [])];
@@ -274,14 +270,11 @@ async function appendDroppedCheckIn(
   let result: DroppedCheckIn[] | null;
   try {
     result = await getJsonArrayForUpdate<DroppedCheckIn>(key);
-  } catch (err: unknown) {
+  } catch {
     // Same rule as the pending queue: a transient read aborts the write.
     // Falling back to [] would replace an intact quarantine with one record,
     // erasing the very losses the quarantine exists to report.
-    console.warn(
-      '[storage] transient read during dropped check-in append, aborting write to preserve quarantine',
-      err,
-    );
+    reportDiagnostic('storage_read_failed', { storage: 'quarantine' });
     return;
   }
   const existing = result ?? [];
@@ -319,8 +312,8 @@ export async function recordDroppedCheckIn(
     await serialize(key, async () => {
       if (getActiveUser() === owner) await appendDroppedCheckIn(key, entry, owner);
     });
-  } catch (err: unknown) {
-    console.warn('[storage] could not quarantine a dropped check-in', err);
+  } catch {
+    reportDiagnostic('storage_write_failed', { storage: 'quarantine' });
   }
 }
 

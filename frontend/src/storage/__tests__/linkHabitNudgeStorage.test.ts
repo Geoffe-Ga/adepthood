@@ -68,7 +68,7 @@ describe('linkHabitNudgeStorage', () => {
     mockAsyncStorage.getItem.mockRejectedValueOnce(error);
 
     await expect(loadLinkHabitNudgeDeclined()).resolves.toBe(false);
-    expect(warn).toHaveBeenCalledWith('[linkHabitNudgeStorage] failed to load the decline', error);
+    expect(warn).toHaveBeenCalledWith('storage_read_failed', { storage: 'link_habit_nudge' });
   });
 
   test('a failed decline write resolves false and says so rather than rejecting', async () => {
@@ -77,7 +77,7 @@ describe('linkHabitNudgeStorage', () => {
     mockAsyncStorage.setItem.mockRejectedValueOnce(error);
 
     await expect(saveLinkHabitNudgeDeclined()).resolves.toBe(false);
-    expect(warn).toHaveBeenCalledWith('[linkHabitNudgeStorage] failed to save the decline', error);
+    expect(warn).toHaveBeenCalledWith('storage_write_failed', { storage: 'link_habit_nudge' });
   });
 
   test('restore clears the decline and resolves true', async () => {
@@ -99,6 +99,6 @@ describe('linkHabitNudgeStorage', () => {
     mockAsyncStorage.setItem.mockRejectedValueOnce(error);
 
     await expect(restoreLinkHabitNudge()).resolves.toBe(false);
-    expect(warn).toHaveBeenCalledWith('[linkHabitNudgeStorage] failed to restore the note', error);
+    expect(warn).toHaveBeenCalledWith('storage_clear_failed', { storage: 'link_habit_nudge' });
   });
 });

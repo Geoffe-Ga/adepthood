@@ -220,3 +220,60 @@ describe('with an unusable DSN', () => {
     expect(consoleError).toHaveBeenCalled();
   });
 });
+
+describe('crash console and final delivery privacy (#3210)', () => {
+  const canaries = [
+    'SYNTHETIC_SHORT_PRIVATE',
+    `SYNTHETIC_LONG_PRIVATE_${'x'.repeat(600)}`,
+    'SYNTHETIC_UNICODE_PRIVATE_u\u0308_日本語',
+    'SYNTHETIC_MULTILINE_PRIVATE\nprivate second line',
+    'SYNTHETIC_RTL_PRIVATE שלום مرحبا',
+    'SYNTHETIC_EMOJI_PRIVATE 🕯️🧡',
+  ];
+
+  it.each([false, true])(
+    'uses only a fixed console record with monitoring enabled=%p',
+    async (enabled) => {
+      if (enabled) process.env[DSN_ENV] = DSN;
+      initErrorMonitoring();
+      for (const canary of canaries) {
+        const error = new Error(canary);
+        error.stack = canary;
+        Object.assign(error, { cause: new Error(canary), nested: { private: canary } });
+        reportException(error, {
+          react: { componentStack: canary },
+          errorBoundary: { boundary: canary, name: canary },
+        });
+      }
+      await settle();
+      // Check every argument directly: JSON.stringify(Error) hides message/stack.
+      expect(consoleError).toHaveBeenCalledTimes(canaries.length);
+      for (const args of consoleError.mock.calls) expect(args).toEqual(['crash_caught']);
+      expect(sent).toHaveLength(enabled ? canaries.length : 0);
+      for (const { body } of sent) {
+        for (const canary of canaries) {
+          expect(body).not.toContain(canary.split('\n')[0]);
+          expect(body).not.toContain(JSON.stringify(canary).slice(1, -1));
+        }
+        const payload = JSON.parse(body.split('\n')[2] ?? '{}');
+        expect(payload.contexts).toEqual({});
+      }
+    },
+  );
+
+  it('contains hostile fields without calling their getters or serialization', async () => {
+    process.env[DSN_ENV] = DSN;
+    initErrorMonitoring();
+    const getter = jest.fn(() => {
+      throw new Error('PRIVATE_HOSTILE_GETTER');
+    });
+    const error = new Error('private');
+    Object.defineProperty(error, 'name', { get: getter });
+    const contexts = Object.defineProperty({}, 'errorBoundary', { get: getter });
+    expect(() => reportException(error, contexts)).not.toThrow();
+    await settle();
+    expect(getter).not.toHaveBeenCalled();
+    expect(onlyReport().body).not.toContain('PRIVATE_HOSTILE_GETTER');
+    expect(consoleError.mock.calls).toEqual([['crash_caught']]);
+  });
+});

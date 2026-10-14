@@ -1,5 +1,7 @@
-// Stores the program anchor as YYYY-MM-DD (local calendar day) so TZ shifts can't roll the date.
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
+// Stores the program anchor as YYYY-MM-DD (local calendar day) so TZ shifts can't roll the date.
 
 const PROGRAM_START_DATE_KEY = '@adepthood/program_start_date';
 
@@ -31,8 +33,8 @@ export async function loadProgramStartDate(): Promise<Date | null> {
     const raw = await AsyncStorage.getItem(PROGRAM_START_DATE_KEY);
     if (raw === null) return null;
     return parseISODate(raw);
-  } catch (err) {
-    console.warn('[programStorage] failed to load program start date', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'program' });
     return null;
   }
 }

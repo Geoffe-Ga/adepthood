@@ -1,3 +1,6 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 /**
  * Persists the writer's two ways of declining the morning-pages tip (#3005).
  *
@@ -17,7 +20,6 @@
  * never-offer flag — writing the new flag BEFORE removing the old one, so an
  * interruption between the two can never re-offer a tip someone turned down.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const LEGACY_DISMISSED_KEY = '@adepthood/morning_pages_tip_dismissed';
 const SET_ASIDE_ON_KEY = '@adepthood/morning_pages_tip_set_aside_on';
@@ -53,8 +55,8 @@ export async function loadMorningPagesTipState(): Promise<MorningPagesTipState> 
     const setAsideOn = await AsyncStorage.getItem(SET_ASIDE_ON_KEY);
     const neverOffer = await AsyncStorage.getItem(NEVER_OFFER_KEY);
     return { setAsideOn, neverOffer: neverOffer === FLAG_TRUE };
-  } catch (err) {
-    console.warn('[morningPagesTipStorage] failed to load dismissal state', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'morning_pages' });
     return { ...MORNING_PAGES_TIP_OPEN };
   }
 }
@@ -71,8 +73,8 @@ async function saveDecline(key: string, value: string): Promise<boolean> {
   try {
     await AsyncStorage.setItem(key, value);
     return true;
-  } catch (err) {
-    console.warn('[morningPagesTipStorage] failed to save dismissal state', err);
+  } catch {
+    reportDiagnostic('storage_write_failed', { storage: 'morning_pages' });
     return false;
   }
 }
@@ -105,8 +107,8 @@ export async function restoreMorningPagesTip(): Promise<boolean> {
     await AsyncStorage.setItem(NEVER_OFFER_KEY, FLAG_FALSE);
     await AsyncStorage.removeItem(SET_ASIDE_ON_KEY);
     return true;
-  } catch (err) {
-    console.warn('[morningPagesTipStorage] failed to restore the tip', err);
+  } catch {
+    reportDiagnostic('storage_clear_failed', { storage: 'morning_pages' });
     return false;
   }
 }

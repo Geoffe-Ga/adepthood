@@ -48,6 +48,8 @@ import SiteResourcesPanel from './SiteResourcesPanel';
 import StageIntroCard from './StageIntroCard';
 import StageSelector from './StageSelector';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 const DEFAULT_STAGE_NUMBER = 1;
 
 // Stable empty reference so the FlatList shows ListEmptyComponent while a stage
@@ -98,11 +100,11 @@ function useStagesLoader() {
       }
       if (!isLatest()) return;
       setAllStages(stagesList);
-    } catch (err) {
+    } catch {
       if (!isLatest()) return;
       // Track failure explicitly so the screen can show error+retry instead of
       // an empty course (audit-ux-04).
-      console.error('Failed to load stages:', err);
+      reportDiagnostic('course_load_failed');
       setError(true);
     } finally {
       if (isLatest()) setLoading(false);
@@ -153,10 +155,10 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
       if (!isLatest()) return;
       setContent(contentResult);
       setProgress(progressResult);
-    } catch (err) {
+    } catch {
       // A failed fetch is distinct from a genuinely empty stage: flag it so the
       // screen shows error+retry rather than "No Content Yet" (audit-ux-04).
-      console.error('Failed to load stage content:', err);
+      reportDiagnostic('course_load_failed');
       if (isLatest()) {
         setContent([]);
         setProgress(null);
