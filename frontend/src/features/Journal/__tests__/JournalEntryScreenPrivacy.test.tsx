@@ -316,7 +316,7 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
         true,
       );
       expect(getByTestId('journal-save-hint').props.children).toMatch(
-        /Intimate here.*vault.*choose Intimate again/i,
+        /Intimate here.*vault.*not.*confirmed.*retry/i,
       );
 
       fireEvent.press(page.getByTestId('privacy-tier-intimate'));
@@ -360,6 +360,25 @@ describe('JournalEntryScreen — tier change PATCH failure', () => {
       }
     },
   );
+
+  it('keeps Intimate editable without inventing a reconnect target for an unrecorded vault', async () => {
+    mockGet.mockResolvedValue(entry({ id: 7, classification: 'personal' }));
+    const { getByTestId } = renderScreen({ entryId: 7 }, { autosaveDelayMs: 100 });
+    await waitFor(() => expect(getByTestId('journal-body-input').props.value).toBeTruthy());
+    mockUpdate.mockClear();
+    mockUpdate.mockRejectedValueOnce({ status: 503, detail: 'vault_withdrawal_unrecorded_vault' });
+    fireEvent.press(within(getByTestId('journal-page')).getByTestId('privacy-tier-intimate'));
+    await waitFor(() => {
+      const hint = String(getByTestId('journal-save-hint').props.children);
+      expect(hint).toMatch(/Intimate here.*cannot identify.*vault/i);
+      expect(hint).not.toMatch(/reconnect that vault|set to be deleted|can't be edited/i);
+    });
+    expect(getByTestId('journal-body-input').props.editable).not.toBe(false);
+    expect(
+      within(getByTestId('journal-page')).getByTestId('privacy-tier-intimate').props
+        .accessibilityState.selected,
+    ).toBe(true);
+  });
 
   it('surfaces the save-error hint and reverts to the persisted tier when the PATCH rejects', async () => {
     jest.useFakeTimers();

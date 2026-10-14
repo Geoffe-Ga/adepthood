@@ -197,11 +197,13 @@ const BLANK_HINT = ' ';
  */
 const WEEK_TAKEN_HINT = 'Already answered this week — copy this into a new page to keep it.';
 const VAULT_WITHDRAWAL_PENDING_HINT =
-  'Intimate here. Your vault hasn’t confirmed it dropped its copy yet — once it’s back online, choose Intimate again.';
+  'Intimate here. Removal of the copy in your vault has not been confirmed yet. Adepthood will retry when that vault is reachable.';
 // DRAFT copy (#3094 review), pending owner review. The copy is in a vault this
 // account is no longer connected to, so choosing Intimate again cannot reach it.
 const VAULT_WITHDRAWAL_RECONNECT_HINT =
   'Intimate here. A copy of this page is in a Creek vault you’re no longer connected to — reconnect that vault in Settings so it can remove the copy.';
+const VAULT_WITHDRAWAL_UNRECORDED_HINT =
+  'Intimate here. Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.';
 // DRAFT copy (#3098 review), pending owner review. A deletion is in progress:
 // the server refuses edits until the vault confirms and the deletion finishes.
 const DELETION_PENDING_HINT =
@@ -266,6 +268,7 @@ function savedHintLabel(state: SaveState): string {
   if (state === 'weekTaken') return WEEK_TAKEN_HINT;
   if (state === 'vaultWithdrawalPending') return VAULT_WITHDRAWAL_PENDING_HINT;
   if (state === 'vaultWithdrawalReconnect') return VAULT_WITHDRAWAL_RECONNECT_HINT;
+  if (state === 'vaultWithdrawalUnrecorded') return VAULT_WITHDRAWAL_UNRECORDED_HINT;
   if (state === 'deletionPending') return DELETION_PENDING_HINT;
   if (state === 'error') return "Couldn't save — keep writing, we'll retry";
   return BLANK_HINT;
@@ -311,18 +314,18 @@ function errorDetail(error: unknown): string | null {
 /**
  * The state for a stable failure emitted after local privacy commits first,
  * chosen by where the copy is (#3094): the connected vault has not confirmed
- * (choose Intimate again once it is back), or the copy is in a vault this
- * account is no longer connected to (reconnect it first). Either way the
+ * (retried when reachable), the copy is in a known disconnected vault, or
+ * the destination was never recorded. In every case the
  * stricter tier is already stored. Null for any other failure.
  */
 function withdrawalPendingState(
   error: unknown,
-): 'vaultWithdrawalPending' | 'vaultWithdrawalReconnect' | null {
+): 'vaultWithdrawalPending' | 'vaultWithdrawalReconnect' | 'vaultWithdrawalUnrecorded' | null {
   const detail = errorDetail(error);
   if (detail === null || !Object.hasOwn(WITHDRAWAL_PENDING_LOCATIONS, detail)) return null;
-  return WITHDRAWAL_PENDING_LOCATIONS[detail] === 'connected_vault'
-    ? 'vaultWithdrawalPending'
-    : 'vaultWithdrawalReconnect';
+  const location = WITHDRAWAL_PENDING_LOCATIONS[detail];
+  if (location === 'connected_vault') return 'vaultWithdrawalPending';
+  return location === 'unrecorded_vault' ? 'vaultWithdrawalUnrecorded' : 'vaultWithdrawalReconnect';
 }
 
 /** True for the 409 a page answers while its deletion is in progress (#3098). */
@@ -621,6 +624,7 @@ type PersistState =
   | 'failed'
   | 'vaultWithdrawalPending'
   | 'vaultWithdrawalReconnect'
+  | 'vaultWithdrawalUnrecorded'
   | 'deletionPending'
   | null;
 

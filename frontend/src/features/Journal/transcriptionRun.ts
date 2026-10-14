@@ -55,7 +55,12 @@ const SEAM_SEPARATOR = '\n';
  * words that waiting cannot help.
  */
 export const TERMINAL_ERROR_KINDS: ReadonlySet<TranscriptionErrorKind> =
-  new Set<TranscriptionErrorKind>(['key_required', 'credit_exhausted', 'tier_refused']);
+  new Set<TranscriptionErrorKind>([
+    'key_required',
+    'credit_exhausted',
+    'tier_refused',
+    'ai_access_revoked',
+  ]);
 
 /** One page's lifecycle within a run. */
 export type TranscriptionBlockStatus = 'pending' | 'inFlight' | 'done' | 'failed';

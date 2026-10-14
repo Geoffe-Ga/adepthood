@@ -342,6 +342,20 @@ const CASES: ControlledCase[] = [
     payer: 'Payment route not recorded',
     completion: 'No AI completion check was sent.',
   },
+  ...(['app_provider', 'demo'] as const).map((source) => ({
+    name: `legacy-unversioned-model-${source}`,
+    noteMetadata: {
+      source,
+      source_provider: null,
+      source_model: 'unsupported-legacy-model',
+      receipt_version: null,
+    },
+    provenance: PASS,
+    noteSource: UNRECORDED,
+    passSource: "From the app's AI provider",
+    payer: 'Adepthood wallet',
+    completion: 'No AI completion check was sent.',
+  })),
 ];
 
 /** These overrides are intentionally hermetic client-boundary evidence, never server persistence proof. */
