@@ -261,8 +261,15 @@ async def _account_tombstones(session: AsyncSession) -> tuple[AccountTombstone, 
     return tuple(AccountTombstone(user_id=uid, deleted_at=at) for uid, at in latest.items())
 
 
-async def _entry_tombstones(session: AsyncSession, erased: set[int]) -> tuple[EntryTombstone, ...]:
-    """Every soft-deleted entry whose owner was not erased outright."""
+async def _entry_tombstones(session: AsyncSession) -> tuple[EntryTombstone, ...]:
+    """Every soft-deleted entry the live database holds.
+
+    None of them belongs to an erased account -- erasure removes an account's
+    pages outright -- so none is left to an account tombstone. Filtering by the
+    erased ids would hide the deletions of a *new* account that was later
+    handed an erased account's id (after a restore rewinds the sequence), and
+    the next restore would resurrect them (#3162).
+    """
     rows = await session.execute(
         select(
             col(JournalEntry.id),
@@ -281,7 +288,6 @@ async def _entry_tombstones(session: AsyncSession, erased: set[int]) -> tuple[En
             deleted_at=_aware(deleted_at),
         )
         for entry_id, user_id, created, deleted_at in rows.all()
-        if user_id not in erased
     )
 
 
@@ -297,12 +303,13 @@ def _require_complete_registries() -> None:
 async def export_tombstones(session: AsyncSession) -> TombstoneSet:
     """Read every deletion the live database records, content-free.
 
-    An entry whose owner was erased is not exported separately: reapplying the
-    account sweep removes it with everything else the account owned.
+    An erased account's pages are gone from the live database, so reapplying
+    its account sweep removes their restored copies; every soft-deleted page
+    still present is exported as an entry tombstone of its own.
     """
     _require_complete_registries()
     accounts = await _account_tombstones(session)
-    entries = await _entry_tombstones(session, {t.user_id for t in accounts})
+    entries = await _entry_tombstones(session)
     tombstones = TombstoneSet(accounts=accounts, entries=entries)
     logger.info(
         "restore_tombstones_exported",
