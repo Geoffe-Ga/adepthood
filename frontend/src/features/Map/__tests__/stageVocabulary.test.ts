@@ -65,7 +65,7 @@ describe('stageArrowLabel', () => {
     [3, 'Self-Love', 'Self-Love'],
     [4, 'Community Love', 'Community'],
     [5, 'Intellectual Understanding', 'Intellectual'],
-    [8, 'True Self Connection', 'True Self'],
+    [8, 'True Self Wisdom', 'True Self'],
   ])('stage %i reads aspect %s as %s on its arrow', (n, aspect, expected) => {
     expect(stageArrowLabel(stage(n, { aspect }))).toBe(expected);
   });
@@ -111,7 +111,7 @@ describe('stageWatermark and the title stages', () => {
   });
 
   it('heads a stage with its arrow label, or with its watermark on a title stage', () => {
-    expect(stageHeadline(stage(8, { aspect: 'True Self Connection' }))).toBe('True Self');
+    expect(stageHeadline(stage(8, { aspect: 'True Self Wisdom' }))).toBe('True Self');
     expect(stageHeadline(stage(10, { aspect: 'Emptiness' }))).toBe('EMPTINESS');
     expect(stageHeadline(stage(2, { aspect: '' }))).toBe('');
   });

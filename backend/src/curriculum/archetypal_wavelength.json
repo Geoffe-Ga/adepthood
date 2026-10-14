@@ -1,10 +1,10 @@
 {
-  "dataset_version": "2.3.0",
+  "dataset_version": "2.4.0",
   "provenance": {
-    "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal', aspect 'True Self Connection', free-will archetype 'True Self Embodier'",
+    "stage_attributes_source": "APTITUDE Complete Map.csv (aptitude-course repository, database_of_course_curriculum), with the December 2025 supersessions recorded in that repository's CLAUDE.md: stage 4 aspect 'Community Love'; stage 8 color 'Teal' and free-will archetype 'True Self Embodier'. Stage 8's aspect 'True Self Wisdom' is the CSV's own cell (owner ruling 2026-10-13, #2664)",
     "manifestations_source": "Archetypal Wavelength spreadsheet, 'Expanded List' sheet (the six-phase Rx/OD manifestation copy and the Stage titles; the subtitles are sourced separately, see subtitles_source)",
     "manifestation_names_source": "Stages 1-9: every integrated (Rx) and shadow (OD) name equals the aptitude-course 'The Archetypal Wavelength - Modes of the Wavelength.csv' Medicine/Toxic cell, vendored by scripts/sync_content.py to backend/content/curriculum/modes_of_the_wavelength.csv and gated by scripts/check_wavelength_terms.py (issue #3135); descriptions are app-authored summaries of the vendored full-6-phase-wavelength-breakdown chapters. Stage 10 (Clear Light) has no CSV row, so its six pairs are app-authored and each carries \"source\": \"app-authored\".",
-    "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/aptitude-stages.md headings and the markdown/resources/about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
+    "subtitles_source": "aptitude-course repository (Geoffe-Ga/aptitude-course) resource copy: markdown/resources/04-aptitude-stages.md headings and the markdown/resources/02-about.md item list. Stage 8 follows commit 3bf0df5 (2026-07-31), carried by the vendored pin at backend/content/CONTENT_VERSION since the re-pin to 9d0f896",
     "extracted_from": "in-repo vendored course markdown (backend/content/markdown/backup/ and *full-6-phase-wavelength-breakdown chapters)",
     "stage_2_free_will_source": "Stage 2's relationship_to_free_will 'Pleasure Seeker' follows the vendored course at the CONTENT_VERSION pin 9d0f896: the chapter backend/content/markdown/02-purple/04-the-relationship-to-free-will-at-purple-pleasure-seeker.md and the markdown/resources/aptitude-stages.md heading, superseding the stale archetype carried over from backup/2.PURPLE.md (issue #2915). Its free_will_description is the vendored APTITUDE Complete Map.csv sentence carried by src/curriculum/stage_correspondence.json (#2664), replacing the earlier chapter paraphrase; tests/test_stage_correspondence.py holds it equal to the artifact (#2667) until #2666 retires this copy of the correspondence fields",
     "free_will_descriptions_source": "Stages 1, 3, 4, 6, 7, 8 and 10 carry the free_will_description (and Stage 8 the growing_up_stage) that the generated stage_correspondence.json ships: verbatim spans of the vendored relationship-to-free-will chapters, recorded as supersessions of the Complete Map CSV in stage_correspondence_supersessions.json, since the CSV sentences read as textbook third person and Stage 8's named Teal as nonduality (chapter text wins over the CSV, owner ruling 2026-09-16)",
@@ -12,7 +12,6 @@
     "supersessions": [
       {"stage_number": 4, "field": "aspect", "value": "Community Love"},
       {"stage_number": 8, "field": "spiral_dynamics_color", "value": "Teal"},
-      {"stage_number": 8, "field": "aspect", "value": "True Self Connection"},
       {"stage_number": 8, "field": "relationship_to_free_will", "value": "True Self Embodier"},
       {"stage_number": 8, "field": "growing_up_stage", "value": "True Self Connection"}
     ]
@@ -332,7 +331,7 @@
       "title": "True Self Connection",
       "subtitle": "True Self Wisdom",
       "category": "Wisdom",
-      "aspect": "True Self Connection",
+      "aspect": "True Self Wisdom",
       "spiral_dynamics_color": "Teal",
       "growing_up_stage": "True Self Connection",
       "divine_gender_polarity": "Divine Feminine",

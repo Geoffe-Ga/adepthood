@@ -114,7 +114,7 @@ Yellow = Stage 7 = F7 = YELLOW = 07-yellow = Integrative = Integration
 
 ### Stage 8 -- Teal
 
-- Color `#50c9c3` | Category Wisdom | Gift True Self Connection | Growing-Up True Self Connection | Divine gender Divine Feminine
+- Color `#50c9c3` | Category Wisdom | Gift True Self Wisdom | Growing-Up True Self Connection | Divine gender Divine Feminine
 - Mode Integrate (Feel) | Archetype True Self Embodier | Frequency F8 True Self / Transcendence
 - Shadow: `free_will_description` carries no shadow language (it describes the integrated path only); representative OD, Peaking: "Obsession -- the subtle grasp of preferring the state to continue"
 - Legacy: this Stage was named Turquoise before the Dec-2025 supersession (settled, see Known Conflicts).
@@ -281,7 +281,7 @@ Praxis
 | F5 | Achievism | Orange | 5 | Intellectual Understanding |
 | F6 | Pluralism | Green | 6 | Embodied Understanding |
 | F7 | Integration | Yellow | 7 | Systems Wisdom |
-| F8 | True Self / Transcendence | Teal | 8 | True Self Connection |
+| F8 | True Self / Transcendence | Teal | 8 | True Self Wisdom |
 | F9 | Unity | Ultraviolet | 9 | Unity |
 | F10 | Emptiness | Clear Light | 10 | Emptiness |
 
@@ -316,4 +316,4 @@ The Stage attribute values shipped above come from `APTITUDE Complete Map.csv` (
 
 This document pins the shipped dataset values above as canonical. The owner's #1637 decision (2026-09-05) is that the source materials are authoritative, and #2915 applied it to Stage 2. For the stages still listed as open above (7, 9 and 10), until each is reconciled a semantic-extraction pass should treat both name-sets as aliases of the same Stage entity rather than choosing a side.
 
-By contrast, Stage 4's aspect "Community Love" and Stage 8's color Teal / aspect "True Self Connection" / archetype "True Self Embodier" are SETTLED Dec-2025 supersessions, not open conflicts -- see the `docs/curriculum.md` provenance block and the `aptitude-course` repository's `CLAUDE.md`.
+By contrast, Stage 4's aspect "Community Love" and Stage 8's color Teal / archetype "True Self Embodier" are SETTLED Dec-2025 supersessions, and Stage 8's aspect "True Self Wisdom" is SETTLED by the owner's 2026-10-13 ruling on #2664 (the CSV's own cell), not open conflicts -- see the `docs/curriculum.md` provenance block and the `aptitude-course` repository's `CLAUDE.md`.

@@ -163,7 +163,7 @@ Archetype named in each set of parentheses is what that capacity looks
 like when it’s running the show *unexamined*—the default, not the
 person. Every one of these becomes something you can play deliberately,
 and none of them is anybody’s name. For more on how the ten notes
-become chords, see [Notes and Chords](./notes-and-chords.md).
+become chords, see [Notes and Chords](./07-notes-and-chords.md).
 
 #### Yes-and-Ness: Agency (Beige, Survival, The Biological Machine)
 

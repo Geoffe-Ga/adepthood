@@ -55,7 +55,7 @@ Example: *"I'm not trying to get anywhere. I'm removing the obstacles to what's 
 
 Over time, these entries create a phenomenological map of awakening. You're documenting your own path to liberation. And in that documentation, liberation deepens.
 
-**Prompt 2: Reflect on "Obstacles Are the Path" (At least 4x per week)**
+**Prompt 2: Reflect on "Obstacles Are the Path"**
 
 One of Clear Light's core teachings (which we'll explore in depth later) is that obstacles are not impediments to awakening—they *are* awakening. Every challenge, every difficulty, every moment you'd rather avoid is the path itself.
 

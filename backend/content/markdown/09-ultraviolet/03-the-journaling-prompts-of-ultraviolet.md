@@ -14,7 +14,7 @@ media: []
 
 Ultraviolet's journaling is contemplative, precise, and devoted. You're not exploring (Orange), processing (Green), or mapping (Yellow) anymore. You're *deepening*. You're returning to the same questions again and again, not because you haven't answered them, but because each time you ask, you see more.
 
-**Prompt 1: Reflect on Your Understanding of Developmental Stages (At least 4x per week)**
+**Prompt 1: Reflect on Your Understanding of Developmental Stages**
 
 Write about the scale—all ten notes. Not academically—*personally*. Which capacities come easily to you? Which do you still resist? Which do you romanticize?
 
@@ -39,7 +39,7 @@ Example entry structure:
 
 Do this for each note on the scale. Over weeks and months, you'll have a complete developmental autobiography. And in writing it, you'll see the patterns, the recurring themes, the places where growth is asking to happen.
 
-**Prompt 2: Identify Which Notes You Lean On in Different Domains (At least 4x per week)**
+**Prompt 2: Identify Which Notes You Lean On in Different Domains**
 
 You don't play one note in every area of your life. You might reach for Yellow when you think, Green when you relate, and Red when you fight.
 
@@ -62,7 +62,7 @@ Use a table to map yourself across life domains:
 
 Update this monthly. Notice: Where are you most fragmented? Which notes drop out under stress? When you're struggling in any domain, ask: which capacity is running the show right now, and which one is this moment actually asking for?
 
-**Prompt 3: Explore Moments of Non-Dual Awareness (At least 4x per week)**
+**Prompt 3: Explore Moments of Non-Dual Awareness**
 
 When have you touched the recognition that subject and object are not separate? When have you experienced the dissolving of the boundary between self and world?
 
@@ -103,7 +103,7 @@ Over months, you'll accumulate dozens of these entries. Read back through them. 
 
 This is how glimpses become stabilization.
 
-**Prompt 4: Reflect on the Role of Practice in Your Life (At least 4x per week)**
+**Prompt 4: Reflect on the Role of Practice in Your Life**
 
 What is practice *for* at this stage? You're no longer practicing to "get better." You're no longer fixing yourself or chasing states.
 

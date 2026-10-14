@@ -3,7 +3,7 @@
   "source": {
     "csv_path": "google_docs/database_of_course_curriculum/APTITUDE Complete Map.csv",
     "repo": "Geoffe-Ga/aptitude-course",
-    "sha": "b06a58eec8944d9ef750a48da59a1c6e87b261b7",
+    "sha": "59df2a259f042559989086d0ed4b0efd54faca35",
     "sha256": "b9b102370ac9295b3e5a2820b3c35ede6d1413a2216681026e10879f75c0cfec"
   },
   "stages": [
@@ -92,7 +92,7 @@
       "start_week": 19
     },
     {
-      "aspect": "True Self Connection",
+      "aspect": "True Self Wisdom",
       "category": "Wisdom",
       "divine_gender_polarity": "Divine Feminine",
       "free_will_description": "The part of you that chose to incarnate into these conditions. The part that has a purpose, a mission, a knowing that the personality cannot access through effort alone.",
@@ -135,13 +135,6 @@
       "field": "aspect",
       "stage_id": "blue",
       "value": "Community Love"
-    },
-    {
-      "authority": "markdown/08-teal/02-the-mood-of-teal-wisdomtrue-self-wisdom.md",
-      "csv_value": "True Self Wisdom",
-      "field": "aspect",
-      "stage_id": "teal",
-      "value": "True Self Connection"
     },
     {
       "authority": "markdown/01-beige/04-the-relationship-to-free-will-at-beige.md",

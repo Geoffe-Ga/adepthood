@@ -131,7 +131,7 @@ const BEIGE_PROMPTS: StagePromptDetail[] = [
     ordinal: 2,
     title: 'Track the Body',
     body: 'Where does it live?',
-    cadence: 'At least 4x per week',
+    cadence: 'At least 2x per week',
   },
   {
     ordinal: 3,
