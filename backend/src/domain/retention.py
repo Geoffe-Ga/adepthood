@@ -88,9 +88,9 @@ ERASURE_RECEIPT_RETENTION_DAYS = 365
 ANONYMISED_SALE_RETENTION_DAYS = 180
 #: A soft-deleted page is kept exactly as long as some live backup may still
 #: hold it undeleted -- the journal purge's own floor. That bound includes the
-#: copies still held under a retention since lowered
-#: (``retention_stores.HELD_BACKUP_BOUND_DAYS``), so the ratified 30-day dumps
-#: do not lower it until the 90-day-era copies have aged out.
+#: copies that may still be held from the retired off-host leg
+#: (``retention_stores.HELD_BACKUP_BOUND_DAYS``), so retiring that leg does not
+#: lower it until no such copy is held.
 SOFT_DELETED_ENTRY_RETENTION_DAYS = OLDEST_LIVE_BACKUP_DAYS
 #: A confirmed withdrawal record is a short-lived receipt.
 CONFIRMED_OBLIGATION_RETENTION_DAYS = 30

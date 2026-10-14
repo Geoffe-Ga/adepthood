@@ -1,7 +1,8 @@
 /**
  * How long, on the backup schedule, a backup taken before an account is
  * deleted can still hold a copy of it: the oldest live copy across Adepthood's
- * backup legs (the platform's own backups and the operator's off-host dumps).
+ * backups (the platform's own, and any dump still held from the off-host leg
+ * the owner retired on 2026-10-14, #3260).
  *
  * CROSS-STACK CONTRACT: mirrors ``OLDEST_LIVE_BACKUP_DAYS`` in
  * ``backend/src/domain/retention_stores.py``, which derives it from

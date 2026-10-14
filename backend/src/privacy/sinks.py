@@ -112,7 +112,6 @@ class SinkId(enum.StrEnum):
     FLY = "net.fly"
     # Backups
     RAILWAY_PLATFORM_BACKUP = "backup.railway_platform"
-    OFFHOST_PG_DUMP = "backup.offhost_pg_dump"
     # Vault-side stores
     CREEK_VAULT_VOLUME = "vault.creek_volume"
     FLY_VOLUME_SNAPSHOTS = "vault.fly_snapshots"
@@ -280,13 +279,6 @@ _ROWS: Final[tuple[Sink, ...]] = (
         SinkKind.BACKUP,
         ALL_TIERS,
         _store("railway_platform_backup"),
-    ),
-    _inside(
-        SinkId.OFFHOST_PG_DUMP,
-        SinkKind.BACKUP,
-        ALL_TIERS,
-        _store("offhost_pg_dump"),
-        _recipient(RecipientId.OFFHOST_BACKUP),
     ),
     _outside(SinkId.CREEK_VAULT_VOLUME, _VAULT, EGRESS_TIERS, _store("creek_vault_volume")),
     _outside(SinkId.FLY_VOLUME_SNAPSHOTS, _VAULT, EGRESS_TIERS, _store("fly_volume_snapshots")),

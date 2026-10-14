@@ -184,8 +184,10 @@ there too.
   or per call?
 - **INTIMATE-DEVICE:** may device-side inference ever process INTIMATE? ADR
   0002 Decision 1 is unchanged.
-- **BUDGET:** USD per active account-month and staffing per phase. Unknown.
-- **REVIEWERS:** who the four owed reviewers are.
+- **BUDGET:** answered for now on 2026-10-14: no paid runtime, no paid
+  reviews. Any budget or staffing figure is still unknown.
+- **REVIEWERS:** answered for now on 2026-10-14: adversarial AI reviews plus
+  the owner's own. The independent reviews stay owed and their gates unmet.
 
 ## Dependencies
 
