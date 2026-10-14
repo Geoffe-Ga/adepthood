@@ -1546,12 +1546,21 @@
   },
   {
     "id": "journal.idle-writing-timer-clears-the-entry-body",
-    "description": "At the browser lane's fixed 1280x720 desktop viewport, a writer opens a fresh page and writes while the timer is idle. With the page's own scroller held at the top, the body portion visible through that viewport and the idle pill share no area: the expanded choice sits in flow below the page rather than at a fixed viewport offset over the flex-grown field (#2787). Starting it preserves the existing compact desktop treatment, measured as a rail no wider than the 44dp minimum touch target. The component layout suite separately pins that the compact/running shape stays absolute at its existing bottom offset while the expanded idle shape is in flow.",
+    "description": "At 1280x720 the floating glass timer leaves the visible writing field unobscured. Its idle choice and running rail never shrink the sheet; expanded options remain inside the paper around the desktop rail breakpoint. Finish and Get Resonance remain hit-testable while a session runs and beneath its bounded finished-session note. A 390x640 phone with sixteen server-created habits can scroll to the first and last choices, cancel, and close without covering either page action, then links its final minute-counting habit over the real API and reads the persisted choice back. Finishing still reaches the server-backed reading view (#3131).",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["auth"],
-      "routes": ["POST /auth/signup"],
-      "tables": ["user"]
+      "client": ["auth", "journal", "habits", "uiFlags"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /habits/",
+        "GET /habits/",
+        "PATCH /ui-flags",
+        "GET /ui-flags"
+      ],
+      "tables": ["user", "journalentry", "habit", "goal", "useruiflags"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-writing-timer.browser.e2e.test.ts"

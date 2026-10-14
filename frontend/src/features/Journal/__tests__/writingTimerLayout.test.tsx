@@ -13,9 +13,10 @@ import styles, {
 } from '../JournalEntry.styles';
 import type { WritingSessionResult } from '../writingSession';
 import WritingSessionBanner from '../WritingSessionBanner';
+import WritingSessionSurface from '../WritingSessionSurface';
 import WritingTimer from '../WritingTimer';
 
-import { touchTarget } from '@/design/tokens';
+import { SPACING, colors, journalLayout, touchTarget } from '@/design/tokens';
 
 function flat(style: StyleProp<ViewStyle>): ViewStyle {
   return StyleSheet.flatten(style);
@@ -44,13 +45,20 @@ function dp(value: unknown): number {
  * timer keeps its offset above the page's lower edge and nothing floats beside
  * it to share or fight over that band.
  */
-describe('the writing timer uses flow at rest and floats only after it starts', () => {
-  it('keeps the expanded idle pill in flow while the resonance button stays in flow', () => {
+describe('the writing timer floats in every state', () => {
+  it('uses opaque paper on native where no backdrop blur protects the readout', () => {
+    const timer = render(<WritingTimer onComplete={jest.fn()} />);
+    expect(flat(timer.getByTestId('writing-timer-pill').props.style).backgroundColor).toBe(
+      colors.paper.background,
+    );
+  });
+
+  it('floats the expanded idle pill while resonance stays in flow', () => {
     const timer = render(<WritingTimer onComplete={jest.fn()} />);
     const resonance = render(<GetResonanceButton visible onPress={jest.fn()} />);
 
-    expect(flat(timer.root.props.style).position).toBeUndefined();
-    expect(flat(timer.root.props.style).bottom).toBeUndefined();
+    expect(flat(timer.root.props.style).position).toBe('absolute');
+    expect(flat(timer.root.props.style).bottom).toBe(RESONANCE_BUTTON_CLEARANCE);
     expect(flat(resonance.root.props.style).position).not.toBe('absolute');
   });
 
@@ -79,33 +87,25 @@ describe('the page reserves the band the timer floats in', () => {
 });
 
 /**
- * The pill's height, measured from what it actually renders.
- *
- * Read off the rows the component put on screen and the style values those
- * rows actually carry — never a number remembered from when the layout was
- * designed. That is the whole point: the first version of this reserved one
- * 44dp row for a pill that really occupied two or three, and no assertion
- * noticed, because the assertion had been told the answer instead of asking.
+ * The pill's minimum height from its rendered rows. Wrapped presets can grow
+ * beyond this floor; WritingSessionSurface reports their actual laid-out height.
  */
-function measurePillHeight(view: ReturnType<typeof render>): number {
+function minimumPillHeight(view: ReturnType<typeof render>): number {
   const pill = flat(view.getByTestId('writing-timer-pill').props.style);
   const rows = view.getAllByTestId(/^writing-timer-row-/);
-  const heights = rows.map((row) => flat(row.props.style).height);
-  for (const height of heights) {
-    // A row without a fixed dp height makes the pill's height a function of the
-    // phone's width, which is exactly the state this guards against.
-    expect(typeof height).toBe('number');
-  }
-  const rowTotal = heights.reduce<number>((sum, height) => sum + dp(height), 0);
+  const rowTotal = rows.reduce((sum, row) => {
+    const style = flat(row.props.style);
+    return sum + dp(style.height === 'auto' ? style.minHeight : style.height);
+  }, 0);
   const gaps = (rows.length - 1) * dp(pill.rowGap ?? pill.gap ?? 0);
   return dp(pill.paddingVertical) * 2 + rowTotal + gaps;
 }
 
 describe('the page reserves the space the pill actually occupies', () => {
-  it('reserves at least the idle pill, which is the tallest it ever gets', () => {
+  it('reserves the idle pill minimum before its measured layout arrives', () => {
     const view = render(<WritingTimer onComplete={jest.fn()} />);
 
-    const measured = measurePillHeight(view);
+    const measured = minimumPillHeight(view);
 
     expect(view.getAllByTestId(/^writing-timer-row-/).length).toBeGreaterThan(1);
     expect(WRITING_TIMER_PILL_MAX_HEIGHT).toBeGreaterThanOrEqual(measured);
@@ -116,25 +116,35 @@ describe('the page reserves the space the pill actually occupies', () => {
     const view = render(<WritingTimer onComplete={jest.fn()} />);
     fireEvent.press(view.getByTestId('writing-timer-start'));
 
-    const measured = measurePillHeight(view);
+    const measured = minimumPillHeight(view);
 
     expect(WRITING_TIMER_CLEARANCE).toBeGreaterThanOrEqual(RESONANCE_BUTTON_CLEARANCE + measured);
   });
 
-  /**
-   * Height is a count of rows only while the pill cannot reflow. A wrapping
-   * row of chips is what made the shipped version two or three rows tall on
-   * every phone while the page reserved one.
-   */
-  it('cannot reflow onto rows nobody counted', () => {
+  it('reserves reported wrapped rows beyond the static timer floor', () => {
+    const onClearanceChange = jest.fn();
+    const view = render(<WritingSessionSurface onClearanceChange={onClearanceChange} />);
+    const wrappedHeight = WRITING_TIMER_PILL_MAX_HEIGHT + touchTarget.minimum;
+    fireEvent(view.getByTestId('writing-session-band-content'), 'layout', {
+      nativeEvent: { layout: { height: wrappedHeight } },
+    });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(
+      wrappedHeight + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
+    );
+    expect(onClearanceChange.mock.calls.at(-1)?.[0]).toBeGreaterThan(WRITING_TIMER_CLEARANCE);
+  });
+
+  it('keeps readout and presets in separate rows with full touch targets', () => {
     const view = render(<WritingTimer onComplete={jest.fn()} />);
     const pill = flat(view.getByTestId('writing-timer-pill').props.style);
 
     expect(pill.flexDirection).toBe('column');
     expect(pill.flexWrap).not.toBe('wrap');
-    // Presets share their row's width rather than demanding their own, so four
-    // of them compress on a narrow phone instead of pushing past the screen.
-    expect(flat(view.getByTestId('writing-timer-preset-45').props.style).flex).toBe(1);
+    // Presets can share a line or wrap; each keeps its minimum touch target.
+    const preset = flat(view.getByTestId('writing-timer-preset-45').props.style);
+    expect(preset.flex).toBe(1);
+    expect(preset.minWidth).toBeGreaterThanOrEqual(touchTarget.minimum);
+    expect(preset.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
   });
 });
 
@@ -148,12 +158,9 @@ describe('the finished-session note clears what floats over it', () => {
     };
     const view = render(<WritingSessionBanner result={result} onDismiss={jest.fn()} />);
 
-    // The note is an in-flow box at the bottom of the same column the timer
-    // floats over; without this it is the Close target that ends up underneath
-    // the opaque pill, and the offers a later lane hangs in its children slot
-    // with it.
-    expect(flat(view.root.props.style).marginBottom).toBeGreaterThanOrEqual(
-      RESONANCE_BUTTON_CLEARANCE + WRITING_TIMER_PILL_MAX_HEIGHT,
-    );
+    // The floating band handles vertical stacking; the note only owns its reading measure.
+    expect(flat(view.root.props.style).maxWidth).toBe(journalLayout.pageMaxWidth);
+    expect(flat(view.root.props.style).alignSelf).toBe('center');
+    expect(flat(view.root.props.style).marginBottom).toBeLessThan(WRITING_TIMER_PILL_MAX_HEIGHT);
   });
 });

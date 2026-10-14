@@ -38,19 +38,11 @@ const PREVIEW_STRIPE_WIDTH = 3;
 export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
 /**
- * The floating writing timer's own box, in dp.
- *
- * The pill lays out as a fixed count of fixed-height rows — readout-and-controls,
- * plus the preset row an idle timer adds beneath it — rather than as one row of
- * chips left to wrap. That is what makes its height knowable here instead of a
- * function of how wide the phone is.
- *
- * It was not always. A single wrapping row of readout + four presets + Start
- * measures roughly 452dp in Georgia-Bold at the interactive text size, which is
- * wider than any phone: it reflowed to two rows on a 393-440dp handset and three
- * at 375dp, so a clearance that had reserved one 44dp row left the pill
- * overhanging the page by 40-92dp, painting an opaque, touch-absorbing box over
- * live marginalia.
+ * Minimum row geometry for the floating writing timer. Readout and controls
+ * occupy one row; idle presets have the same minimum height but can wrap for
+ * enlarged text. WritingSessionSurface reports the resulting band's actual
+ * height, and the page reserves whichever is larger: that measurement or the
+ * baseline clearance below.
  */
 export const WRITING_TIMER_ROW_HEIGHT = touchTarget.minimum;
 /** Readout-and-controls, plus the preset row the idle timer adds beneath it. */
@@ -58,7 +50,7 @@ export const WRITING_TIMER_MAX_ROWS = 2;
 export const WRITING_TIMER_PILL_PADDING_V = SPACING.xs;
 export const WRITING_TIMER_ROW_GAP = SPACING.xs;
 
-/** The expanded horizontal pill's two fixed rows at their full height. */
+/** Baseline readout and preset rows before measured text reflow. */
 const WRITING_TIMER_EXPANDED_MAX_HEIGHT =
   WRITING_TIMER_PILL_PADDING_V * 2 +
   WRITING_TIMER_ROW_HEIGHT * WRITING_TIMER_MAX_ROWS +
@@ -66,7 +58,7 @@ const WRITING_TIMER_EXPANDED_MAX_HEIGHT =
 /** The laptop rail stacks its readout, pause/resume, and stop touch targets. */
 const WRITING_TIMER_DOCKED_MAX_HEIGHT = WRITING_TIMER_ROW_HEIGHT * 3;
 
-/** The tallest timer shape the page or a session banner ever has to clear. */
+/** Baseline timer height; measured wrapped rows can reserve more space. */
 export const WRITING_TIMER_PILL_MAX_HEIGHT = Math.max(
   WRITING_TIMER_EXPANDED_MAX_HEIGHT,
   WRITING_TIMER_DOCKED_MAX_HEIGHT,
