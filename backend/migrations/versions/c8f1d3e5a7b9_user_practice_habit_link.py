@@ -1,7 +1,7 @@
 """link a practice to a habit: userpractice.habit_id
 
 Revision ID: c8f1d3e5a7b9
-Revises: b3d5f7a9c1e2
+Revises: b6d8f0a2c4e6
 Create Date: 2026-10-13 12:00:00.000000
 
 Issue #3151. One additive, nullable column on ``userpractice`` naming the habit
@@ -23,7 +23,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c8f1d3e5a7b9"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "b3d5f7a9c1e2"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "b6d8f0a2c4e6"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

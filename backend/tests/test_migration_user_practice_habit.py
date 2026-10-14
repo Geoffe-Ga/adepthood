@@ -24,7 +24,7 @@ from sqlalchemy import Connection, create_engine, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 # The chain head this migration was written against, and the migration itself.
-_BASE_REVISION = "b3d5f7a9c1e2"  # pragma: allowlist secret
+_BASE_REVISION = "b6d8f0a2c4e6"  # pragma: allowlist secret
 _REVISION = "c8f1d3e5a7b9"  # pragma: allowlist secret
 
 _TABLE = "userpractice"
