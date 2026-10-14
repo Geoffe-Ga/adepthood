@@ -58,6 +58,7 @@ _VALID_MANIFEST: dict[str, Any] = {
             "title": "Getting Started",
             "description": "Orientation guide.",
             "path": "markdown/site/getting-started.md",
+            "order": 1,
         }
     ],
     "stage_intros": [

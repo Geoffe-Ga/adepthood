@@ -42,9 +42,10 @@ valid):
   `release_day`, `order`, and `path` (the Markdown file).
 * `site_resources[]` — free evergreen pages (philosophy, about, …),
   each with `slug`, `title`, `description`, `path`, and an optional
-  `media[]` (asset paths, added in `schema_version 1.2.0`) and an
-  optional 1-based `order` (added in `schema_version 1.3.0`). Served
-  authenticated but never stage-gated.
+  `media[]` (asset paths, added in `schema_version 1.2.0`) and a
+  required 1-based `order` (added in `schema_version 1.3.0`), the Start
+  Here reading order the API serves them in. Served authenticated but
+  never stage-gated.
 * `stage_intros[]` — optional per-stage course introductions, each with
   `stage`, `id`, `slug`, `title`, `path`, and optional `summary`. Unlike
   chapters, intros are **ungated and not seeded** into the database — the
