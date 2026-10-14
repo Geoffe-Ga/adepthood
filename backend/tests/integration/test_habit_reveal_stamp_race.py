@@ -147,3 +147,46 @@ async def test_racing_first_reads_provision_one_anchor_and_stamp_each_invitation
 
     assert probe.held == _PARTIES, "both reads must reach the locked re-read together"
     assert Counter(probe.stamped) == Counter({"Purple ring": 1})
+
+
+# A picked start date this many days back opens Beige, Purple and Red (#3097).
+_PICKED_DAYS_AGO = 2 * _BEIGE_WINDOW_DAYS
+_PICKED_LADDER = (*_LADDER, ("Red ring", "Red", 3))
+
+
+@pytest.mark.asyncio
+async def test_racing_reads_after_a_picked_start_date_stamp_each_due_ring_once(
+    pair: SessionPerRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Choosing a past date reveals every ring due by it, once, under a real race."""
+    async with pair.factory() as session:
+        account = await make_account(session, "picked_start_race@example.com")
+    today = datetime.now(UTC).date()
+    for name, stage, slot in _PICKED_LADDER:
+        created = await pair.client.post(
+            "/habits/",
+            json={
+                "name": name,
+                "icon": "*",
+                "start_date": today.isoformat(),
+                "energy_cost": 1,
+                "energy_return": 1,
+                "stage": stage,
+                "sort_order": slot,
+                "revealed": False,
+            },
+            headers=account.headers,
+        )
+        assert created.status_code == HTTPStatus.OK
+    picked = await pair.client.put(
+        "/stages/program-calendar",
+        json={"program_start_date": (today - timedelta(days=_PICKED_DAYS_AGO)).isoformat()},
+        headers=account.headers,
+    )
+    assert picked.status_code == HTTPStatus.OK
+    probe = _RaceProbe(monkeypatch)
+
+    await _gathered_reads(pair, account.headers)
+
+    assert probe.held == _PARTIES, "both reads must reach the locked re-read together"
+    assert Counter(probe.stamped) == Counter({name: 1 for name, _, _ in _PICKED_LADDER})
