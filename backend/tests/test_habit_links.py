@@ -223,6 +223,36 @@ async def test_create_with_session_goals_per_week(
 
 
 @pytest.mark.asyncio
+async def test_create_with_goals_for_a_revealed_carryover_leaves_auto_reveal_unset(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A carryover is never auto-revealed, so creating one unlocked consumes nothing."""
+    headers, _user_id = await _signup(async_client, "create_carryover")
+
+    resp = await async_client.post(
+        "/habits/",
+        json=_habit_payload(revealed=True, is_carryover=True, goals=_JOURNAL_GOALS),
+        headers=headers,
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert body["revealed"] is True
+    assert body["is_carryover"] is True
+    assert {goal["tier"]: goal["target"] for goal in body["goals"]} == {
+        "low": 10.0,
+        "clear": 20.0,
+        "stretch": 45.0,
+    }
+    stored = await db_session.get(Habit, body["id"], populate_existing=True)
+    assert stored is not None
+    assert stored.revealed is True
+    # The auto-reveal invitation is a regular-habit concept; a carryover has
+    # none to consume, even when created unlocked with its goals in hand.
+    assert stored.auto_revealed_at is None
+
+
+@pytest.mark.asyncio
 async def test_create_without_goals_keeps_default_tiers(async_client: AsyncClient) -> None:
     """A plain Add-habit still gets 1/2/3 ``units`` per day, locked."""
     headers, _user_id = await _signup(async_client, "create_plain")
