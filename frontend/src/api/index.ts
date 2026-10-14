@@ -135,6 +135,11 @@ import { classifyTranscription } from './transcriptionContract';
 import { API_BASE_URL, KEYLESS_PAGE_READ_REACHES_SERVER } from '@/config';
 import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
 import type { ModeConfig } from '@/features/Practice/engine/types';
+import {
+  diagnosticRoute,
+  reportDiagnostic,
+  safeDiagnosticRequestId,
+} from '@/observability/diagnostics';
 import { DEFAULT_TIMEZONE, dayKeyToInstant } from '@/utils/dateUtils';
 
 export type { Page } from './schemas';
@@ -797,20 +802,24 @@ export function classifyUnauthorizedDetail(detail: string | null): UnauthorizedR
 
 /** Status at or above which the failure is the server's, not the caller's. */
 const SERVER_ERROR_STATUS = 500;
+const AUTH_REFRESH_ROUTE = '/auth/refresh';
 
 /**
  * Build the ``ApiError`` for a failed response, noting server-side faults.
  *
- * The console line is the client half of the correlation contract: the server
- * logged a full traceback under this id and sent us nothing but the id, so
- * writing it down here is what lets a support conversation ("it broke around
- * 3pm") become a log query. Only 5xx is logged — a 404 or a 422 is answered by
- * the UI, needs no cross-referencing, and would drown the signal.
+ * Record a fixed route template and status for 5xx failures. Correlation IDs
+ * are logged only in the UUID4 forms the backend generates; its wider accepted
+ * inbound header alphabet can carry prose and is excluded. Error details and
+ * raw paths remain available to the caller, never to diagnostics.
  */
 async function apiErrorFromResponse(res: Response, path: string): Promise<ApiError> {
   const { detail, requestId } = await readErrorEnvelope(res);
-  if (res.status >= SERVER_ERROR_STATUS && requestId !== null) {
-    console.warn(`API ${res.status} on ${path} — server request id ${requestId}`);
+  if (res.status >= SERVER_ERROR_STATUS) {
+    reportDiagnostic('api_server_error', {
+      route: diagnosticRoute(path),
+      status: res.status,
+      requestId: safeDiagnosticRequestId(requestId),
+    });
   }
   return new ApiError(res.status, detail, requestId);
 }
@@ -822,8 +831,8 @@ async function handleErrorResponse(res: Response, path: string): Promise<never> 
 /**
  * Validate a response body with a Zod schema and raise
  * {@link ApiValidationError} if it does not conform. We intentionally log the
- * raw data at ``console.warn`` level so operators can diff the wire against
- * the frontend expectation when a deploy goes sideways.
+ * only a fixed route template, status and issue count; response bodies and
+ * validation issue text can contain private prose and never enter diagnostics.
  */
 function validateWithSchema<T>(
   path: string,
@@ -833,14 +842,10 @@ function validateWithSchema<T>(
 ): T {
   const parsed = schema.safeParse(data);
   if (parsed.success) return parsed.data;
-  console.warn('[api] response validation failed', {
-    path,
+  reportDiagnostic('api_response_invalid', {
+    route: diagnosticRoute(path),
     status,
-    issues: parsed.error.issues,
-    // Don't leak full bodies in prod logs; the issue list already points at
-    // the offending path + reason. ``DEV`` flag lets engineers see the full
-    // body locally to triage quickly.
-    data: __DEV__ ? data : undefined,
+    issueCount: parsed.error.issues.length,
   });
   throw new ApiValidationError(path, status, parsed.error.issues);
 }
@@ -874,7 +879,7 @@ async function performTokenRefresh(currentToken: string): Promise<AuthResponse |
       { method: 'POST', headers: { Authorization: `Bearer ${currentToken}` } },
       FETCH_TIMEOUT_MS,
       undefined,
-      '/auth/refresh',
+      AUTH_REFRESH_ROUTE,
     );
     if (!refreshRes.ok) return null;
     const raw: unknown = await refreshRes.json();
@@ -890,8 +895,9 @@ async function performTokenRefresh(currentToken: string): Promise<AuthResponse |
     // surface ``not_authenticated`` rather than crashing.
     const parsed = loginAuthResponseSchema.safeParse(raw);
     if (!parsed.success) {
-      console.warn('[api] /auth/refresh response failed validation', {
-        issues: parsed.error.issues,
+      reportDiagnostic('auth_refresh_invalid', {
+        route: AUTH_REFRESH_ROUTE,
+        issueCount: parsed.error.issues.length,
       });
       return null;
     }

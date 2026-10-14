@@ -191,16 +191,15 @@ describe('Journal editor crash envelope (C12)', () => {
     // Positive control: the operator still learns what failed, and where.
     expect(event.level).toBe('error');
     expect(event.exception).toEqual({ values: [{ type: 'Error', value: MESSAGE_WITHHELD }] });
-    const contexts = event.contexts as {
-      react: { componentStack: string };
-      errorBoundary: { boundary: string; name: string };
-    };
-    expect(contexts.errorBoundary).toEqual({
-      boundary: 'FeatureErrorBoundary',
-      name: JOURNAL_BOUNDARY,
+    // A real editor crash identifies its fixed boundary without exporting
+    // component/display names, which can themselves contain private text.
+    expect(event.contexts).toEqual({
+      errorBoundary: {
+        boundary: 'FeatureErrorBoundary',
+        name: JOURNAL_BOUNDARY,
+      },
     });
-    // The editor's own fields, by component name: where the crash happened.
-    expect(contexts.react.componentStack).toContain('WritingFields');
+    expect(event.contexts).not.toHaveProperty('react');
   });
 
   it('posts nothing while the editor holds the same words without crashing (control)', async () => {

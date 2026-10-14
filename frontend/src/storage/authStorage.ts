@@ -11,6 +11,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { createSecureStringStore } from './secureStringStore';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 // expo-secure-store only allows alphanumerics plus `.`, `-`, `_` in keys,
 // so we cannot use the `@adepthood/...` namespace prefix here.
 const TOKEN_KEY = 'adepthood_auth_token';
@@ -56,8 +58,8 @@ export async function isLogoutPending(): Promise<boolean> {
   try {
     const raw = await AsyncStorage.getItem(LOGOUT_PENDING_KEY);
     return raw === FLAG_TRUE;
-  } catch (err) {
-    console.warn('[authStorage] failed to read logout-pending marker', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'auth' });
     return false;
   }
 }
@@ -96,8 +98,8 @@ const USER_TIMEZONE_KEY = '@adepthood/user_timezone';
 export async function saveUserTimezone(timezone: string): Promise<void> {
   try {
     await AsyncStorage.setItem(USER_TIMEZONE_KEY, timezone);
-  } catch (err) {
-    console.warn('[authStorage] failed to cache the user timezone', err);
+  } catch {
+    reportDiagnostic('storage_write_failed', { storage: 'auth' });
   }
 }
 
@@ -113,8 +115,8 @@ export async function loadUserTimezone(): Promise<string | null> {
     const raw = await AsyncStorage.getItem(USER_TIMEZONE_KEY);
     const trimmed = raw?.trim();
     return trimmed ? trimmed : null;
-  } catch (err) {
-    console.warn('[authStorage] failed to read the cached user timezone', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'auth' });
     return null;
   }
 }

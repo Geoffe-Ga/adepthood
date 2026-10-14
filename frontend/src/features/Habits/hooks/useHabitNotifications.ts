@@ -11,6 +11,8 @@ import {
 import { DAYS_OF_WEEK } from '../constants';
 import type { Habit } from '../Habits.types';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 const MAX_REGISTRATION_RETRIES = 3;
 const REGISTRATION_RETRY_DELAY_MS = 30_000;
 
@@ -60,8 +62,8 @@ const attemptPushRegistration = async (
     const token = (await Notifications.getExpoPushTokenAsync()).data;
     await savePushToken(token);
     return token;
-  } catch (error) {
-    console.error(`Push registration attempt ${attempt + 1} failed:`, error);
+  } catch {
+    reportDiagnostic('notification_registration_failed', { attempt: attempt + 1 });
     if (attempt < MAX_REGISTRATION_RETRIES - 1) {
       return retryAfterDelay(attempt, signal);
     }
@@ -172,8 +174,8 @@ export const updateHabitNotifications = async (habit: Habit): Promise<string[]> 
     const notificationIds = await scheduleNotificationsWithRetry(habit);
     await saveNotificationIds(habit.id, notificationIds);
     return notificationIds;
-  } catch (error) {
-    console.error(`Failed to update notifications for habit ${habit.id}:`, error);
+  } catch {
+    reportDiagnostic('notification_update_failed');
     return [];
   }
 };
@@ -181,14 +183,14 @@ export const updateHabitNotifications = async (habit: Habit): Promise<string[]> 
 const scheduleNotificationsWithRetry = async (habit: Habit): Promise<string[]> => {
   try {
     return await scheduleAllTimes(habit);
-  } catch (firstError) {
-    console.warn('Notification scheduling failed, retrying once:', firstError);
+  } catch {
+    reportDiagnostic('notification_schedule_retry');
   }
   // Single retry outside the first catch to avoid nested try/catch
   try {
     return await scheduleAllTimes(habit);
   } catch (retryError) {
-    console.error('Notification scheduling retry failed:', retryError);
+    reportDiagnostic('notification_schedule_failed');
     throw retryError;
   }
 };
@@ -229,8 +231,8 @@ export const reconcileNotifications = async (signal?: AbortSignal): Promise<void
         await saveNotificationIds(habitId, stillScheduled);
       }
     }
-  } catch (error) {
-    console.error('Notification reconciliation failed:', error);
+  } catch {
+    reportDiagnostic('notification_reconcile_failed');
   }
 };
 
@@ -239,7 +241,7 @@ export const cancelForHabit = async (habitId: number): Promise<void> => {
     const ids = await loadNotificationIds(habitId);
     await Promise.all(ids.map((id) => Notifications.cancelScheduledNotificationAsync(id)));
     await clearNotificationIds(habitId);
-  } catch (error) {
-    console.error(`Failed to cancel notifications for habit ${habitId}:`, error);
+  } catch {
+    reportDiagnostic('notification_cancel_failed');
   }
 };

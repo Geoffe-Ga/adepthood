@@ -1440,6 +1440,18 @@
     "coveredBy": "frontend/e2e/account-deletion.e2e.test.ts"
   },
   {
+    "id": "errors.api-recovery-with-content-free-diagnostics",
+    "description": "At phone and desktop sizes, an authenticated Habits read fails with a malformed response or server error containing private canaries. The existing error card and Retry remain reachable; every captured console argument omits private prose, request IDs and validation issue text. Clearing the fault and retrying reads a real persisted habit through the authenticated API and restores the Habits surface. Crash-envelope minimization is separately tested at the production transport boundary; this journey does not claim the renderer crash flow.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["GET /habits/"],
+      "tables": ["habit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/client-diagnostics.browser.e2e.test.ts"
+  },
+  {
     "id": "errors.boundary-recovers-and-reports",
     "description": "A feature screen throws while a journal entry is on screen; the boundary shows the recovery card, \"Try again\" remounts the subtree, and the crash report that leaves the device carries none of what was written. Still uncovered because the e2e lane cannot mount a screen at all: it runs on the node environment with node_modules untransformed, so importing the boundary dies on @react-navigation/native's ESM and react-native's Flow syntax, and the lane's own guard pins the moduleNameMapper to the @/ alias so the React Native preset cannot be added to a spec. Observing the outgoing crash envelope is banned in this lane by the same guard. Covering it needs a second, rendering lane, not another spec here.",
     "crosses": {

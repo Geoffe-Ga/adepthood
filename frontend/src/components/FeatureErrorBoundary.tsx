@@ -36,8 +36,8 @@ interface FeatureErrorBoundaryState {
  * a scoped recovery card with a "Try again" button that remounts the subtree.
  *
  * BUG-FE-UI-101: every catch is forwarded to the error reporter with the
- * boundary name and the React component stack, so an alert in Sentry carries
- * enough context to land in the right tab without a repro — and nothing else,
+ * approved boundary and feature labels, so an alert in Sentry identifies the
+ * affected tab. Component stacks and arbitrary context strings are omitted,
  * because the payload is built by allow-list in
  * ``observability/sentryEnvelope.ts``.
  *

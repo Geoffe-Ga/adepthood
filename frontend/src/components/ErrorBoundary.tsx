@@ -26,8 +26,8 @@ const DEVELOPMENT_GUIDANCE =
  *
  * BUG-FE-UI-101: ``componentDidCatch`` previously logged to the console and
  * dropped the error on the floor — production crashes were invisible to ops.
- * Every catch now also forwards to {@link reportException} with the React
- * component stack attached as a structured context. That reporter posts to
+ * Every catch forwards to {@link reportException}, which keeps only a fixed
+ * boundary label and the approved error class. Component stacks are omitted. That reporter posts to
  * Sentry when a DSN is configured and writes the console record either way;
  * the payload it builds carries no user content — see
  * ``observability/sentryEnvelope.ts``.
@@ -37,7 +37,7 @@ const DEVELOPMENT_GUIDANCE =
  * relaunch the app.  The exception message and stack render in development
  * builds only: a thrown error's text can carry library names and internal
  * detail that a production reader cannot use, so there they get plain guidance
- * instead (the full report still reaches Sentry via ``componentDidCatch``).
+ * instead (a content-free report still reaches Sentry via ``componentDidCatch``).
  */
 export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { error: null };

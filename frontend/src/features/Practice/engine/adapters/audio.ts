@@ -22,6 +22,8 @@ import type { AudioAdapter, CueKind, IntervalBellTone } from '../types';
 
 import { BELL_TIMBRES, renderBellSource, type BellSpecKey } from './bellSynth';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 /** Default interval-bell tone applied when a play omits one; mirrors defaults.ts seeds. */
 const DEFAULT_BELL_TONE: IntervalBellTone = 'bowl';
 
@@ -118,11 +120,8 @@ function configureAudioSessionOnce(): void {
   if (audioSessionConfigured) return;
   audioSessionConfigured = true;
   void setAudioModeAsync({ playsInSilentMode: true, interruptionMode: 'mixWithOthers' }).catch(
-    (err: unknown) => {
-      console.warn(
-        '[ritual-audio] audio session not configured; the ringer switch may mute the bells:',
-        err,
-      );
+    () => {
+      reportDiagnostic('audio_session_failed');
     },
   );
 }
@@ -236,7 +235,7 @@ async function loadCue(
   const entry = entries.get(key);
   if (!entry) return;
   if (timbre === null) {
-    markFailed(entry, key, 'no timbre is synthesized for this cue');
+    markFailed(entry);
     return;
   }
   try {
@@ -250,16 +249,16 @@ async function loadCue(
     // That is the hole #1419 fell through, closed at the only place a playable
     // source is born.
     entry.sound = createAudioPlayer(bellSources()[timbre]) as unknown as PlayableSound;
-  } catch (err) {
-    markFailed(entry, key, err);
+  } catch {
+    markFailed(entry);
     report();
   }
 }
 
-function markFailed(entry: SoundEntry, key: SoundKey, reason: unknown): void {
+function markFailed(entry: SoundEntry): void {
   if (entry.failed) return;
   entry.failed = true;
-  console.warn(`[ritual-audio] cue "${key}" unavailable — falling back to silent:`, reason);
+  reportDiagnostic('audio_cue_unavailable');
 }
 
 async function playCue(
@@ -275,8 +274,8 @@ async function playCue(
     // Not marked failed: a refused autoplay can be allowed on a later play
     // (after a user gesture), so the cue keeps trying.
     if (playbackRefused(entry.sound)) report();
-  } catch (err) {
-    markFailed(entry, key, err);
+  } catch {
+    markFailed(entry);
     report();
   }
 }

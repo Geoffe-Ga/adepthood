@@ -1,3 +1,6 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { reportDiagnostic } from '@/observability/diagnostics';
 /**
  * Persists the writer's "Don't show again" on the link-a-habit note (#3006).
  *
@@ -14,7 +17,6 @@
  * write is reported here rather than rejecting, and the restore resolves
  * whether it saved so Settings only says the note is back when it is.
  */
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export const LINK_HABIT_NUDGE_NEVER_OFFER_KEY = '@adepthood/link_habit_nudge_never_offer';
 const FLAG_TRUE = 'true';
@@ -25,8 +27,8 @@ export async function loadLinkHabitNudgeDeclined(): Promise<boolean> {
   try {
     const raw = await AsyncStorage.getItem(LINK_HABIT_NUDGE_NEVER_OFFER_KEY);
     return raw === FLAG_TRUE;
-  } catch (err) {
-    console.warn('[linkHabitNudgeStorage] failed to load the decline', err);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'link_habit_nudge' });
     return false;
   }
 }
@@ -42,8 +44,8 @@ export async function saveLinkHabitNudgeDeclined(): Promise<boolean> {
   try {
     await AsyncStorage.setItem(LINK_HABIT_NUDGE_NEVER_OFFER_KEY, FLAG_TRUE);
     return true;
-  } catch (err) {
-    console.warn('[linkHabitNudgeStorage] failed to save the decline', err);
+  } catch {
+    reportDiagnostic('storage_write_failed', { storage: 'link_habit_nudge' });
     return false;
   }
 }
@@ -53,8 +55,8 @@ export async function restoreLinkHabitNudge(): Promise<boolean> {
   try {
     await AsyncStorage.setItem(LINK_HABIT_NUDGE_NEVER_OFFER_KEY, FLAG_FALSE);
     return true;
-  } catch (err) {
-    console.warn('[linkHabitNudgeStorage] failed to restore the note', err);
+  } catch {
+    reportDiagnostic('storage_clear_failed', { storage: 'link_habit_nudge' });
     return false;
   }
 }
