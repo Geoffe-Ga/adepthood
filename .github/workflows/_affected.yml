@@ -1,0 +1,36 @@
+name: Affected CI lanes
+
+on:
+  workflow_call:
+    outputs:
+      backend:
+        value: ${{ jobs.changes.outputs.backend }}
+      cross:
+        value: ${{ jobs.changes.outputs.cross }}
+      content:
+        value: ${{ jobs.changes.outputs.content }}
+      e2e:
+        value: ${{ jobs.changes.outputs.e2e }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.detect.outputs.backend }}
+      cross: ${{ steps.detect.outputs.cross }}
+      content: ${{ steps.detect.outputs.content }}
+      e2e: ${{ steps.detect.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test lane selection
+        run: python3 -m unittest discover -s scripts/ci -p 'test_affected.py'
+      - name: Detect affected lanes
+        id: detect
+        run: python3 scripts/ci/affected.py
