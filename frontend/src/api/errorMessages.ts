@@ -48,17 +48,17 @@ const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to contin
  *
  * Since ADR 0009 phase (a) (#3067) credits pay only when the writer's vault
  * answers, which is a resonance reading; letters and page reading always go to
- * the app's provider and need the writer's own key. DRAFT for owner review:
- * no privacy promise (B24, #3076 gates those).
+ * the app's provider and need the writer's own key. Owner-approved wording
+ * (#3262); it makes no privacy promise (B24, #3076 gates those).
  */
 export const INSUFFICIENT_OFFERINGS_COPY =
   "You're out of BotMason credits, so nothing was charged. Credits pay only for readings your vault answers; letters and page reading need your own OpenAI or Anthropic API key, which you can add in Settings.";
-// DRAFT for owner review (ADR 0009 phase (a), #3067): says plainly that credits
-// no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
+// Owner-approved wording (ADR 0009 phase (a), #3067; #3262): says plainly that
+// credits no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
 export const LLM_KEY_REQUIRED_COPY =
   "BotMason's cloud AI needs an API key of your own — credits don't pay for it — so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.";
-// DRAFT for owner review (#1938, B21 E1): a revoked entitlement -- a refund,
-// a dispute, a membership that ended, or an operator's revocation -- restricts
+// Owner-approved wording (#1938, B21 E1; #3262): a revoked entitlement -- a
+// refund, a dispute, a membership that ended, or an operator's revocation -- restricts
 // AI features only. Plain and non-pressuring under "you choose your depth": it
 // says what stopped and what did not, and offers no price, purchase or refill,
 // since credits are not what is missing.
