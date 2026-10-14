@@ -115,6 +115,7 @@ from domain.creek_vault import (
 )
 from domain.frequencies import Frequency
 from main import app
+from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
 from models.journal_withdrawal_obligation import (
     OPEN_STATES,
@@ -718,12 +719,36 @@ async def _write_page(machine: Machine) -> Page:
     )
     assert created.status_code == HTTPStatus.CREATED, created.text
     entry_id = int(created.json()["id"])
+    await _seed_fragment(machine, user_id, entry_id, canary)
     note_id = await _seed_note(machine, user_id, entry_id, canary)
     essay = await client.post(
         f"/journal/marginalia/{note_id}/essay", json={"price_acknowledged": True}, headers=headers
     )
     assert essay.status_code == HTTPStatus.OK, essay.text
     return Page(email, headers, user_id, entry_id, note_id, canary)
+
+
+async def _seed_fragment(machine: Machine, user_id: int, entry_id: int, canary: str) -> None:
+    """The page's corpus copy, as ontologized before the vault was connected.
+
+    A vault-bound account is not classified by the app provider (#3183), so a
+    page written after connecting gets no fragment of its own. One made
+    earlier -- under consent, before the connection -- is the copy every
+    deletion path must still withdraw.
+    """
+    async with machine.factory() as session:
+        session.add(
+            CorpusFragment(
+                user_id=user_id,
+                source_entry_id=entry_id,
+                source=CorpusSource.JOURNAL,
+                tier=JournalClassification.PERSONAL,
+                content=f"{canary} I sat with the river.",
+                frequency_weights={Frequency.F5.value: 0.9},
+                overall_confidence=0.9,
+            )
+        )
+        await session.commit()
 
 
 async def _seed_note(machine: Machine, user_id: int, entry_id: int, canary: str) -> int:
@@ -746,9 +771,14 @@ async def _seed_note(machine: Machine, user_id: int, entry_id: int, canary: str)
 
 
 def _assert_recorders_reached(machine: Machine, page: Page) -> None:
-    """Positive control: a live page's canary does reach every recorder the invariant reads."""
+    """Positive control: a live page's canary does reach the recorders the invariant reads.
+
+    The provider (the essay), the vault (the page and its Voice Draft) and the
+    corpus. The classifier recorder stays installed, but a vault-bound page
+    never reaches it (#3183), so no write here can show it live.
+    """
     reached = {e.recorder for e in machine.ledger.carrying(page.canary, since=machine.step_mark)}
-    assert reached >= {Recorder.PROVIDER, Recorder.CLASSIFIER, Recorder.VAULT}, reached
+    assert reached >= {Recorder.PROVIDER, Recorder.VAULT}, reached
     assert set(machine.vault.remote_copies_carrying(page.canary)) == {
         page.journal_key,
         page.draft_key,
