@@ -23,6 +23,7 @@ const ECHOED_HABIT_ID = 13;
 const flags = (habitId: number | null): UiFlags => ({
   has_seen_welcome: true,
   energy_scaffolding_archived: false,
+  course_last_stage: null,
   writing_session_habit_id: habitId,
 });
 

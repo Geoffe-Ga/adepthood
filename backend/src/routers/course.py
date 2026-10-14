@@ -27,6 +27,7 @@ from domain.course import (
 from domain.program_calendar import calendar_day_in_stage, resolve_program_anchor
 from domain.stage_authority import record_stage_entry
 from domain.stage_progress import ensure_user_progress, get_user_progress, is_stage_unlocked
+from domain.ui_flags import advance_course_reading_stage
 from error_responses import build_router
 from errors import bad_gateway, forbidden, not_found
 from models.content_completion import ContentCompletion
@@ -426,13 +427,17 @@ async def mark_content_read(
     loser via ``IntegrityError`` and the existing row is returned —
     closes the BUG-COURSE-002 TOCTOU.
     """
-    await _resolve_unlocked_content(session, current_user, content_id, user_tz)
-
+    item = await _resolve_unlocked_content(session, current_user, content_id, user_tz)
+    stage = await session.get(CourseStage, item.course_stage_id)
+    if stage is None:
+        raise not_found("stage")
     existing = await _existing_content_completion(session, current_user, content_id)
     if existing is not None:
+        await advance_course_reading_stage(session, current_user, stage.stage_number)
         return _completion_response(existing)
 
     completion = await _insert_or_resolve_completion(session, current_user, content_id)
+    await advance_course_reading_stage(session, current_user, stage.stage_number)
     logger.info("content_marked_read", extra={"user_id": current_user, "content_id": content_id})
     return _completion_response(completion)
 

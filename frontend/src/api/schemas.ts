@@ -18,6 +18,8 @@
  */
 import { z } from 'zod';
 
+import { STAGE_DURATIONS_DAYS } from '../constants/program';
+
 // ---------------------------------------------------------------------------
 // Shared primitives
 // ---------------------------------------------------------------------------
@@ -1256,6 +1258,13 @@ export const uiFlagsSchema = z.object({
    * from a server that predates the link still parses, as unlinked.
    */
   writing_session_habit_id: z.number().int().positive().nullable().default(null),
+  course_last_stage: z
+    .number()
+    .int()
+    .min(1)
+    .max(STAGE_DURATIONS_DAYS.length)
+    .nullable()
+    .default(null),
 });
 
 export type UiFlagsT = z.infer<typeof uiFlagsSchema>;

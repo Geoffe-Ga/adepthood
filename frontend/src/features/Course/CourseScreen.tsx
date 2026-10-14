@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   course as courseApi,
   stages as stagesApi,
+  uiFlags,
   type ContentItem,
   type CourseProgress,
   type SiteResource,
@@ -51,6 +52,23 @@ const EMPTY_CONTENT: ContentItem[] = [];
 
 // --- Hook: load stages on mount ---
 
+async function defaultReadingStage(
+  stagesList: Stage[],
+  programAnchor: Date | null,
+): Promise<number> {
+  const { course_last_stage: lastReadStage } = await uiFlags.get();
+  const savedStage = stagesList.find(
+    (stage) => stage.stage_number === lastReadStage && stage.is_unlocked,
+  );
+  // Reading position survives devices. Cycle resets may lock that Frequency
+  // again, so only an available saved stage takes precedence over the calendar.
+  return (
+    savedStage?.stage_number ??
+    programStage(programAnchor) ??
+    (await stagesApi.programCalendar()).current_stage
+  );
+}
+
 function useStagesLoader() {
   const route = useAppRoute<'Course'>();
   const routeStageNumber = route.params?.stageNumber ?? null;
@@ -60,35 +78,39 @@ function useStagesLoader() {
   const [selectedStage, setSelectedStage] = useState(routeStageNumber ?? DEFAULT_STAGE_NUMBER);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const requestSeq = useRef(0);
 
   const init = useCallback(async () => {
+    const requestId = (requestSeq.current += 1);
+    const isLatest = () => requestId === requestSeq.current;
     setLoading(true);
     setError(false);
     try {
       const stagesList = await stagesApi.listAll();
-      setAllStages(stagesList);
       if (routeStageNumber === null) {
-        // Master date wins when the user has picked an anchor; otherwise ask
-        // the server, which holds the one answer — the union of the stage its
-        // calendar has opened and the stage its record says was entered. The
-        // client counts nothing: someone back after two months away has
-        // several stages open and nothing newly complete, and a completion
-        // count would drop them into the stage they last finished.
-        const dateDerived = programStage(programAnchor);
-        setSelectedStage(dateDerived ?? (await stagesApi.programCalendar()).current_stage);
+        const initialStage = await defaultReadingStage(stagesList, programAnchor);
+        if (!isLatest()) return;
+        setSelectedStage(initialStage);
       }
+      if (!isLatest()) return;
+      setAllStages(stagesList);
     } catch (err) {
+      if (!isLatest()) return;
       // Track failure explicitly so the screen can show error+retry instead of
       // an empty course (audit-ux-04).
       console.error('Failed to load stages:', err);
       setError(true);
     } finally {
-      setLoading(false);
+      if (isLatest()) setLoading(false);
     }
   }, [routeStageNumber, programAnchor]);
 
   useEffect(() => {
     void init();
+    return () => {
+      // A route/anchor change or unmount supersedes every older async load.
+      requestSeq.current += 1;
+    };
   }, [init]);
 
   // A warm Course tab stays mounted, so a later Map->Course deep-link changes

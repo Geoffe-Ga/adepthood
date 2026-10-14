@@ -178,6 +178,7 @@ describe('WelcomeGate — server hydration', () => {
       new Promise<{
         has_seen_welcome: boolean;
         energy_scaffolding_archived: boolean;
+        course_last_stage: null;
         writing_session_habit_id: number | null;
       }>(() => undefined),
     );
@@ -192,6 +193,7 @@ describe('WelcomeGate — server hydration', () => {
     mockUiFlagsGet.mockResolvedValueOnce({
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
+      course_last_stage: null,
       writing_session_habit_id: null,
     });
     const { getByTestId, queryByTestId } = render(<RootNavigator />);
@@ -204,6 +206,7 @@ describe('WelcomeGate — server hydration', () => {
     mockUiFlagsGet.mockResolvedValueOnce({
       has_seen_welcome: false,
       energy_scaffolding_archived: false,
+      course_last_stage: null,
       writing_session_habit_id: null,
     });
     const { getByTestId, queryByTestId } = render(<RootNavigator />);
