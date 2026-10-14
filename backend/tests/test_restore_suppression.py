@@ -34,7 +34,11 @@ from sqlmodel import SQLModel, col
 from domain import retention
 from domain.account_deletion import POLICY
 from main import app, lifespan
-from models.journal_entry import JournalEntry
+from models.journal_entry import VAULT_DESTINATION_WIDTH, JournalClassification, JournalEntry
+from models.journal_withdrawal_obligation import (
+    JournalWithdrawalObligation,
+    JournalWithdrawalState,
+)
 from models.restore_marker import RestoreMarker, RestoreState
 from models.user import User
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
@@ -52,6 +56,8 @@ from services.restore_suppression import (
     TOMBSTONE_FORMAT_VERSION,
     AccountTombstone,
     EntryTombstone,
+    IntimateTombstone,
+    ObligationTombstone,
     RestoreAlreadyCompleteError,
     RestoreNotReappliedError,
     RetentionGapError,
@@ -70,9 +76,15 @@ _RESTORE_ID = "drill-1"
 _GATE_RESTORE_ID = "r9"
 # The tombstone file's complete, content-free field set. A new field is added
 # here deliberately, after deciding it carries no email, prose or hash.
-_TOMBSTONE_TOP_KEYS = {"version", "accounts", "entries"}
+_TOMBSTONE_TOP_KEYS = {"version", "accounts", "entries", "intimate", "obligations"}
 _ACCOUNT_KEYS = {"user_id", "deleted_at"}
 _ENTRY_KEYS = {"entry_id", "user_id", "timestamp", "deleted_at"}
+# #3214: an Intimate page and an owed withdrawal. The destination is the opaque
+# vault fingerprint the obligation is bound to -- not a content hash, not a URL.
+_INTIMATE_KEYS = {"entry_id", "user_id", "timestamp"}
+_OBLIGATION_KEYS = {"entry_id", "user_id", "timestamp", "state", "destination"}
+# A vault destination fingerprint, as dependencies.creek_vault records one.
+_DESTINATION = "the-vault-the-copy-went-to"
 
 
 @dataclass(frozen=True)
@@ -164,6 +176,55 @@ async def _marker(
             select(RestoreMarker).where(col(RestoreMarker.restore_id) == restore_id)
         )
         return result.scalar_one_or_none()
+
+
+async def _make_intimate(client: AsyncClient, person: _Person, entry_id: int) -> None:
+    """Reclassify the page Intimate through the API, as its writer would."""
+    resp = await client.patch(
+        f"/journal/{entry_id}", json={"classification": "intimate"}, headers=person.headers
+    )
+    assert resp.status_code == HTTPStatus.OK, resp.text
+
+
+async def _owe(
+    factory: async_sessionmaker[AsyncSession],
+    person: _Person,
+    entry_id: int,
+    state: JournalWithdrawalState,
+) -> None:
+    """Record an open withdrawal obligation, as a DELETE the vault could not confirm leaves."""
+    async with factory() as session:
+        session.add(
+            JournalWithdrawalObligation(
+                user_id=person.user_id,
+                journal_entry_id=entry_id,
+                state=state.value,
+                destination=_DESTINATION,
+            )
+        )
+        await session.commit()
+
+
+async def _obligation(
+    factory: async_sessionmaker[AsyncSession], entry_id: int
+) -> tuple[str, str | None] | None:
+    """The page's obligation as ``(state, destination)``, or ``None`` when it has none."""
+    async with factory() as session:
+        row = (
+            await session.execute(
+                select(JournalWithdrawalObligation).where(
+                    col(JournalWithdrawalObligation.journal_entry_id) == entry_id
+                )
+            )
+        ).scalar_one_or_none()
+        return None if row is None else (row.state, row.destination)
+
+
+async def _classification(factory: async_sessionmaker[AsyncSession], entry_id: int) -> str:
+    async with factory() as session:
+        entry = await session.get(JournalEntry, entry_id)
+        assert entry is not None
+        return str(entry.classification)
 
 
 @pytest.mark.asyncio
@@ -458,8 +519,12 @@ async def test_tombstone_file_and_logs_are_content_free(
     hal = await _signup(client, "hal")
     await _write(client, gina, SHORT_CANARY)
     page = await _write(client, hal, SHORT_CANARY)
+    intimate = await _write(client, hal, SHORT_CANARY)
+    pending = await _write(client, hal, SHORT_CANARY)
     snapshot = await _snapshot(factory, tmp_path)
     await client.delete(f"/journal/{page}", headers=hal.headers)
+    await _make_intimate(client, hal, intimate)
+    await _owe(factory, hal, pending, JournalWithdrawalState.PENDING_DELETE)
     await _delete_account(client, gina)
 
     caplog.set_level(logging.INFO)
@@ -471,14 +536,18 @@ async def test_tombstone_file_and_logs_are_content_free(
     blob = json.dumps(document)
     assert_no_canary(blob, SHORT_CANARY)
     assert gina.email not in blob
+    assert hal.email not in blob
     assert set(document) == _TOMBSTONE_TOP_KEYS
-    accounts, entries = document["accounts"], document["entries"]
-    assert isinstance(accounts, list)
-    assert isinstance(entries, list)
-    assert accounts
-    assert entries
-    assert all(set(item) == _ACCOUNT_KEYS for item in accounts)
-    assert all(set(item) == _ENTRY_KEYS for item in entries)
+    for key, fields in (
+        ("accounts", _ACCOUNT_KEYS),
+        ("entries", _ENTRY_KEYS),
+        ("intimate", _INTIMATE_KEYS),
+        ("obligations", _OBLIGATION_KEYS),
+    ):
+        items = document[key]
+        assert isinstance(items, list)
+        assert items, f"no {key} tombstone -- the field check would be vacuous"
+        assert all(set(item) == fields for item in items)
 
     records = [record for record in caplog.records if record.name.startswith("services.restore")]
     assert records, "reapply logged nothing -- the absence check would be vacuous"
@@ -486,6 +555,34 @@ async def test_tombstone_file_and_logs_are_content_free(
         rendered = f"{record.getMessage()} {record.__dict__!r}"
         assert_no_canary(rendered, SHORT_CANARY)
         assert gina.email not in rendered
+
+
+def _document(**fields: object) -> dict[str, object]:
+    """A current-format tombstone document: empty lists, with ``fields`` overriding."""
+    return {
+        "version": TOMBSTONE_FORMAT_VERSION,
+        "accounts": [],
+        "entries": [],
+        "intimate": [],
+        "obligations": [],
+        **fields,
+    }
+
+
+_GOOD_ENTRY = {
+    "entry_id": 1,
+    "user_id": 1,
+    "timestamp": "2025-12-01T09:30:00.123456+00:00",
+    "deleted_at": "2026-01-01T00:00:00+00:00",
+}
+_GOOD_INTIMATE = {"entry_id": 2, "user_id": 1, "timestamp": "2025-12-02T09:30:00.123456+00:00"}
+_GOOD_OBLIGATION = {
+    "entry_id": 3,
+    "user_id": 1,
+    "timestamp": "2025-12-03T09:30:00.123456+00:00",
+    "state": "pending_delete",
+    "destination": _DESTINATION,
+}
 
 
 def test_tombstone_file_round_trips_and_rejects_junk() -> None:
@@ -500,67 +597,73 @@ def test_tombstone_file_round_trips_and_rejects_junk() -> None:
                 deleted_at=datetime(2026, 1, 3, tzinfo=UTC),
             ),
         ),
+        intimate=(
+            IntimateTombstone(
+                entry_id=10, user_id=4, timestamp=datetime(2025, 12, 2, 8, 0, 0, 1, tzinfo=UTC)
+            ),
+        ),
+        obligations=(
+            ObligationTombstone(
+                entry_id=11,
+                user_id=4,
+                timestamp=datetime(2025, 12, 3, 8, 0, 0, 2, tzinfo=UTC),
+                state=JournalWithdrawalState.PENDING_DELETE,
+                destination=_DESTINATION,
+            ),
+            ObligationTombstone(
+                entry_id=12,
+                user_id=4,
+                timestamp=datetime(2025, 12, 4, 8, 0, 0, 3, tzinfo=UTC),
+                state=JournalWithdrawalState.UNCONFIRMED,
+                destination=None,  # a copy made before destination binding
+            ),
+        ),
     )
     assert TombstoneSet.from_json(json.loads(json.dumps(original.to_json()))) == original
-    current = TOMBSTONE_FORMAT_VERSION
-    good_entry = {
-        "entry_id": 1,
-        "user_id": 1,
-        "timestamp": "2025-12-01T09:30:00.123456+00:00",
-        "deleted_at": "2026-01-01T00:00:00+00:00",
-    }
     junk_documents: tuple[object, ...] = (
         [],
-        {"version": 99, "accounts": [], "entries": []},
+        _document(version=99),
         # The first format carried no creation stamp; it cannot be reapplied safely.
         {
             "version": 1,
             "accounts": [],
             "entries": [{"entry_id": 1, "user_id": 1, "deleted_at": "2026-01-01T00:00:00+00:00"}],
         },
-        {
-            "version": current,
-            "accounts": [{"user_id": "x", "deleted_at": "2026-01-01T00:00:00+00:00"}],
-            "entries": [],
-        },
-        {
-            "version": current,
-            "accounts": [{"user_id": 1, "deleted_at": "not a date"}],
-            "entries": [],
-        },
-        {"version": current, "accounts": [], "entries": [], "email": "x@example.com"},
+        # The second carried no Intimate pages or obligations: reapplying it
+        # would silently forget both (#3214).
+        {"version": 2, "accounts": [], "entries": [_GOOD_ENTRY]},
+        {k: v for k, v in _document().items() if k != "obligations"},
+        _document(accounts=[{"user_id": "x", "deleted_at": "2026-01-01T00:00:00+00:00"}]),
+        _document(accounts=[{"user_id": 1, "deleted_at": "not a date"}]),
+        _document(email="x@example.com"),
         # Entry stamps, field by field, in the current format.
-        {"version": current, "accounts": [], "entries": [{"entry_id": 1, "user_id": 1}]},
-        {
-            "version": current,
-            "accounts": [],
-            "entries": [{k: v for k, v in good_entry.items() if k != "timestamp"}],
-        },
-        {"version": current, "accounts": [], "entries": [{**good_entry, "timestamp": 123}]},
-        {
-            "version": current,
-            "accounts": [],
-            "entries": [{**good_entry, "timestamp": "not a date"}],
-        },
+        _document(entries=[{"entry_id": 1, "user_id": 1}]),
+        _document(entries=[{k: v for k, v in _GOOD_ENTRY.items() if k != "timestamp"}]),
+        _document(entries=[{**_GOOD_ENTRY, "timestamp": 123}]),
+        _document(entries=[{**_GOOD_ENTRY, "timestamp": "not a date"}]),
         # Without an offset an instant names no moment: refused, never assumed UTC.
-        {
-            "version": current,
-            "accounts": [],
-            "entries": [{**good_entry, "timestamp": "2025-12-01T09:30:00.123456"}],
-        },
-        {
-            "version": current,
-            "accounts": [],
-            "entries": [{**good_entry, "timestamp": "2025-12-01"}],
-        },
-        {
-            "version": current,
-            "accounts": [{"user_id": 1, "deleted_at": "2026-01-01T00:00:00"}],
-            "entries": [],
-        },
+        _document(entries=[{**_GOOD_ENTRY, "timestamp": "2025-12-01T09:30:00.123456"}]),
+        _document(entries=[{**_GOOD_ENTRY, "timestamp": "2025-12-01"}]),
+        _document(accounts=[{"user_id": 1, "deleted_at": "2026-01-01T00:00:00"}]),
+        # Intimate pages: exactly the identity fields, nothing written.
+        _document(intimate=[{**_GOOD_INTIMATE, "message": "x"}]),
+        _document(intimate=[{**_GOOD_INTIMATE, "timestamp": "2025-12-02T09:30:00"}]),
+        _document(intimate=[{**_GOOD_INTIMATE, "entry_id": 0}]),
+        # Obligations: only an open state, only a fingerprint-shaped binding.
+        _document(obligations=[{**_GOOD_OBLIGATION, "state": "confirmed"}]),
+        _document(obligations=[{**_GOOD_OBLIGATION, "state": 1}]),
+        _document(obligations=[{**_GOOD_OBLIGATION, "destination": ""}]),
+        _document(obligations=[{**_GOOD_OBLIGATION, "destination": 7}]),
+        _document(
+            obligations=[{**_GOOD_OBLIGATION, "destination": "v" * (VAULT_DESTINATION_WIDTH + 1)}]
+        ),
+        _document(obligations=[{k: v for k, v in _GOOD_OBLIGATION.items() if k != "timestamp"}]),
     )
-    good = {"version": current, "accounts": [], "entries": [good_entry]}
-    assert len(TombstoneSet.from_json(good).entries) == 1  # the junk differs from this only
+    good = _document(
+        entries=[_GOOD_ENTRY], intimate=[_GOOD_INTIMATE], obligations=[_GOOD_OBLIGATION]
+    )
+    parsed = TombstoneSet.from_json(good)  # the junk differs from this only
+    assert (len(parsed.entries), len(parsed.intimate), len(parsed.obligations)) == (1, 1, 1)
     for junk in junk_documents:
         with pytest.raises(restore_suppression.MalformedTombstoneError):
             TombstoneSet.from_json(junk)
@@ -928,3 +1031,231 @@ async def test_a_deleted_page_whose_owner_reuses_an_erased_id_is_still_suppresse
     resp = await client.get(f"/journal/{entry_id}", headers=heir.headers)
     assert resp.status_code == HTTPStatus.NOT_FOUND
     assert await _login_status(client, heir) == HTTPStatus.OK
+
+
+# ── Requests a restore would forget that are not deletions yet (#3214) ───────
+
+
+async def _seed_offered_page(factory: async_sessionmaker[AsyncSession], person: _Person) -> int:
+    """A Personal page offered to a vault, with a corpus copy and a mirrored essay; no obligation.
+
+    The generic seed gives every table a row, the obligation table included;
+    that row is cleared so the only obligation the drill sees is its own.
+    """
+    entry_id = await _seed_deletable_entry(factory, person)
+    async with factory() as session:
+        await session.execute(
+            delete(JournalWithdrawalObligation).where(
+                col(JournalWithdrawalObligation.user_id) == person.user_id
+            )
+        )
+        await session.execute(
+            update(JournalEntry)
+            .where(col(JournalEntry.id) == entry_id)
+            .values(classification=JournalClassification.PERSONAL.value)
+        )
+        await session.commit()
+    return entry_id
+
+
+async def _withdraw_locally_as_the_route_does(
+    factory: async_sessionmaker[AsyncSession], entry_id: int, **entry_values: object
+) -> None:
+    """The local half every withdrawal commits: corpus copy gone, essay offers owed."""
+    fragments = SQLModel.metadata.tables["corpusfragment"]
+    async with factory() as session:
+        await session.execute(delete(fragments).where(fragments.c["source_entry_id"] == entry_id))
+        await session.execute(
+            update(VoiceDraftRetraction)
+            .where(
+                col(VoiceDraftRetraction.journal_entry_id) == entry_id,
+                col(VoiceDraftRetraction.state) == VoiceDraftRetractionState.MIRROR_INTENT.value,
+            )
+            .values(state=VoiceDraftRetractionState.PENDING.value)
+        )
+        if entry_values:
+            await session.execute(
+                update(JournalEntry).where(col(JournalEntry.id) == entry_id).values(**entry_values)
+            )
+        await session.commit()
+
+
+_OWED_ESSAYS = [
+    VoiceDraftRetractionState.PENDING.value,
+    VoiceDraftRetractionState.CONFIRMED.value,
+]
+
+
+@pytest.mark.asyncio
+async def test_reapply_restamps_an_intimate_page_and_withdraws_it_locally(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """A page made Intimate after the backup comes back Personal; reapply makes it Intimate again.
+
+    Its corpus copy goes and its essay offer is owed, as the Intimate PATCH did
+    it. The vault handle stays held, so the sweep still owes the remote copy.
+    A second reapply of the same file finds nothing left to do.
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    ivy = await _signup(client, "ivy")
+    entry_id = await _seed_offered_page(factory, ivy)
+    snapshot = await _snapshot(factory, tmp_path)
+    await _withdraw_locally_as_the_route_does(
+        factory, entry_id, classification=JournalClassification.INTIMATE.value
+    )
+    tombstones = await _export(factory)
+    assert tombstones.intimate == (
+        IntimateTombstone(
+            entry_id=entry_id, user_id=ivy.user_id, timestamp=await _created(factory, entry_id)
+        ),
+    )
+    await _restore(factory, snapshot)
+
+    assert await _classification(factory, entry_id) == JournalClassification.PERSONAL.value
+    assert await _fragments(factory, entry_id) == 1  # resurrection is real
+
+    receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    assert receipt.intimate_reapplied == 1
+    assert await _classification(factory, entry_id) == JournalClassification.INTIMATE.value
+    assert await _fragments(factory, entry_id) == 0
+    assert await _retraction_states(factory, entry_id) == _OWED_ESSAYS
+    assert await _vault_ref(factory, entry_id) == _VAULT_REF
+
+    again = await reapply_tombstones(factory, tombstones, restore_id="drill-2")
+    assert (again.intimate_reapplied, again.intimate_absent) == (0, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "erased_here"),
+    [(JournalWithdrawalState.PENDING_DELETE, False), (JournalWithdrawalState.UNCONFIRMED, True)],
+)
+async def test_reapply_rerecords_an_owed_withdrawal(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    state: JournalWithdrawalState,
+    *,
+    erased_here: bool,
+) -> None:
+    """A withdrawal owed after the backup is owed again, bound to the same vault.
+
+    ``pending_delete``: the deletion is still in progress, and says so.
+    ``unconfirmed``: the page was erased here, and the record of the copy that
+    may remain survives the restore with it. Either way the corpus copy goes
+    and the essay offer is owed. A second reapply finds nothing left to do.
+    """
+    client, factory = concurrent_async_client, concurrent_session_factory
+    noa = await _signup(client, "noa")
+    entry_id = await _seed_offered_page(factory, noa)
+    snapshot = await _snapshot(factory, tmp_path)
+    erased = {"deleted_at": datetime.now(UTC)} if erased_here else {}
+    await _withdraw_locally_as_the_route_does(factory, entry_id, **erased)
+    await _owe(factory, noa, entry_id, state)
+    tombstones = await _export(factory)
+    assert tombstones.obligations == (
+        ObligationTombstone(
+            entry_id=entry_id,
+            user_id=noa.user_id,
+            timestamp=await _created(factory, entry_id),
+            state=state,
+            destination=_DESTINATION,
+        ),
+    )
+    await _restore(factory, snapshot)
+
+    assert await _obligation(factory, entry_id) is None  # the record is lost
+    assert await _fragments(factory, entry_id) == 1
+
+    receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    assert receipt.obligations_reapplied == 1
+    assert await _obligation(factory, entry_id) == (state.value, _DESTINATION)
+    assert await _fragments(factory, entry_id) == 0
+    assert await _retraction_states(factory, entry_id) == _OWED_ESSAYS
+    again = await reapply_tombstones(factory, tombstones, restore_id="drill-2")
+    assert (again.obligations_reapplied, again.obligations_absent) == (0, 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("owner_offset", "stamp_offset"),
+    [(1, timedelta(0)), (0, timedelta(microseconds=1)), (0, timedelta(microseconds=-1))],
+)
+async def test_intimate_and_obligation_tombstones_never_touch_another_page(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    owner_offset: int,
+    stamp_offset: timedelta,
+) -> None:
+    """The entry tombstone's identity check holds for both new kinds: same owner, same stamp."""
+    client, factory = concurrent_async_client, concurrent_session_factory
+    ora = await _signup(client, "ora")
+    entry_id = await _write(client, ora, "ora's page, written after the restore")
+    owner = ora.user_id + owner_offset
+    stamp = await _created(factory, entry_id) + stamp_offset
+    tombstones = TombstoneSet(
+        accounts=(),
+        entries=(),
+        intimate=(IntimateTombstone(entry_id=entry_id, user_id=owner, timestamp=stamp),),
+        obligations=(
+            ObligationTombstone(
+                entry_id=entry_id,
+                user_id=owner,
+                timestamp=stamp,
+                state=JournalWithdrawalState.PENDING_DELETE,
+                destination=_DESTINATION,
+            ),
+        ),
+    )
+
+    receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    assert receipt.identity_mismatches == len(tombstones.intimate) + len(tombstones.obligations)
+    assert (receipt.intimate_reapplied, receipt.obligations_reapplied) == (0, 0)
+    assert await _classification(factory, entry_id) == JournalClassification.PERSONAL.value
+    assert await _obligation(factory, entry_id) is None
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_obligation_reapply_leaves_nothing_half_done(
+    concurrent_async_client: AsyncClient,
+    concurrent_session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The local withdrawal and the obligation share one commit; a rerun converges."""
+    client, factory = concurrent_async_client, concurrent_session_factory
+    pia = await _signup(client, "pia")
+    entry_id = await _seed_offered_page(factory, pia)
+    snapshot = await _snapshot(factory, tmp_path)
+    await _withdraw_locally_as_the_route_does(factory, entry_id)
+    await _owe(factory, pia, entry_id, JournalWithdrawalState.PENDING_DELETE)
+    tombstones = await _export(factory)
+    await _restore(factory, snapshot)
+
+    async def _dies(*_args: object, **_kwargs: object) -> None:
+        msg = "synthetic crash mid-reapply"
+        raise RuntimeError(msg)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(restore_suppression, "record_obligation", _dies)
+        with pytest.raises(RuntimeError, match="synthetic crash"):
+            await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+    marker = await _marker(factory, _RESTORE_ID)
+    assert marker is not None
+    assert marker.state == RestoreState.IN_PROGRESS.value
+    assert await _fragments(factory, entry_id) == 1, "the local half rolled back with it"
+    assert await _obligation(factory, entry_id) is None
+
+    receipt = await reapply_tombstones(factory, tombstones, restore_id=_RESTORE_ID)
+
+    assert receipt.obligations_reapplied == 1
+    assert await _obligation(factory, entry_id) == (
+        JournalWithdrawalState.PENDING_DELETE.value,
+        _DESTINATION,
+    )
+    assert await _fragments(factory, entry_id) == 0

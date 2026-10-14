@@ -12,7 +12,8 @@ Usage, from ``backend/`` with ``DATABASE_URL`` pointing at the database::
     PYTHONPATH=src python -m scripts.restore_suppression reapply \
         --in tombstones.json --restore-id 2026-10-07-staging
 
-The tombstone file is content-free (ids and instants only) but it is still a
+The tombstone file is content-free (ids, instants, a closed obligation state
+and an opaque vault fingerprint -- #3214) but it is still a
 list of who deleted what and when, so ``export`` writes it owner-only and never
 overwrites an existing file. Where it is kept is undecided (#3063 AC17).
 
@@ -88,7 +89,10 @@ async def _export(out: Path) -> int:
     descriptor = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _OWNER_ONLY)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(payload)
-    _say(f"exported accounts={len(tombstones.accounts)} entries={len(tombstones.entries)}")
+    _say(
+        f"exported accounts={len(tombstones.accounts)} entries={len(tombstones.entries)} "
+        f"intimate={len(tombstones.intimate)} obligations={len(tombstones.obligations)}"
+    )
     return EXIT_OK
 
 
@@ -110,6 +114,10 @@ async def _reapply(source: Path, restore_id: str) -> int:
         f"accounts_absent={receipt.accounts_absent} "
         f"entries_reapplied={receipt.entries_reapplied} "
         f"entries_absent={receipt.entries_absent} "
+        f"obligations_reapplied={receipt.obligations_reapplied} "
+        f"obligations_absent={receipt.obligations_absent} "
+        f"intimate_reapplied={receipt.intimate_reapplied} "
+        f"intimate_absent={receipt.intimate_absent} "
         f"identity_mismatches={receipt.identity_mismatches}"
     )
     return EXIT_OK
