@@ -88,10 +88,7 @@ async def require_ai_payer(
     provider will use is admitted whatever the entitlement, since it funds
     nothing of the operator's. Reads only; spends nothing.
     """
-    # The key is validated either way (a malformed one is the usual 400), but it
-    # pays only when the app's own provider answers: a vault answer never uses
-    # it, so it takes a credit whatever header rides along (#3258).
-    if resolve_chat_api_key(supplied_key) is not None and app_provider:
+    if _key_pays(supplied_key, app_provider=app_provider):
         return
     if app_provider and not server_generation_available():
         raise payment_required(KEY_REQUIRED)
@@ -103,6 +100,16 @@ async def require_ai_payer(
     await refuse_if_ai_access_revoked(session, user_id)
     if not await has_generation_capacity(session, user_id):
         raise payment_required(CREDITS_OR_KEY_REQUIRED)
+
+
+def _key_pays(supplied_key: str | None, *, app_provider: bool) -> bool:
+    """Whether the writer's own key pays for this request (#3258).
+
+    The key is validated either way -- a malformed one is the usual 400 -- but
+    it pays only when the app's own provider answers: a vault answer never uses
+    it, so that request takes a credit whatever header rides along.
+    """
+    return resolve_chat_api_key(supplied_key) is not None and app_provider
 
 
 async def payer_refusal(
