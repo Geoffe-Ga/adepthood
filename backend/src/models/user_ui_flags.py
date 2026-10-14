@@ -19,12 +19,15 @@ class UserUiFlags(SQLModel, table=True):
 
     One row per user tracks lightweight interface flags: whether the welcome
     flow has been seen, whether the energy-scaffolding surface has been
-    archived, and which habit (if any) the writing timer checks off. Both flags
+    archived, which habit (if any) the writing timer checks off, and the highest
+    Frequency marked read. Both flags
     default to ``False`` and the link to ``None`` so a new account starts with a
     clean slate; rows are created on first access rather than backfilled.
     """
 
     id: int | None = Field(default=None, primary_key=True)
+    course_last_stage: int | None = Field(default=None, nullable=True)
+    """Highest Frequency whose chapter the reader has marked read."""
     has_seen_welcome: bool = Field(
         default=False,
         sa_column=Column(Boolean(), nullable=False, server_default=_DISABLED_SERVER_DEFAULT),

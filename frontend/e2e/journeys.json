@@ -1049,22 +1049,42 @@
   },
   {
     "id": "course.read-and-mark-progress",
-    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Which stage it opens on is the server's answer, not a count of completed stages the client makes for itself. The cold start's bounded wait is a state of this journey, not a journey of its own: it crosses no screen, client wrapper, route or table this entry does not already name -- it is a client-side timer over the same GET /stages read, and it is reached precisely when that read never answers, which no lane against a live server can arrange. Pinned in-process by src/features/Course/__tests__/CourseScreenColdStart.test.tsx, the way the Map's identical bounded wait is pinned by MapScreenColdStart.test.tsx and declared nowhere in this ledger.",
+    "description": "A reader opens a stage's content, reads a piece, and marks it read so progress moves. Course opens on the last Frequency marked read; the date/server current stage applies only before any reading or when that Frequency is locked after a reset. Explicit route parameters keep precedence. The cold start's bounded wait is pinned in-process by src/features/Course/__tests__/CourseScreenColdStart.test.tsx over the same GET /stages request.",
     "crosses": {
       "screen": "frontend/src/features/Course/CourseScreen.tsx",
-      "client": ["course", "stages"],
+      "client": ["course", "stages", "uiFlags"],
       "routes": [
         "GET /stages",
         "GET /stages/program-calendar",
+        "GET /ui-flags",
         "GET /course/stages/{stage_number}/content",
         "GET /course/content/{content_id}/body",
         "POST /course/content/{content_id}/mark-read",
         "GET /course/stages/{stage_number}/progress"
       ],
-      "tables": ["stagecontent", "contentcompletion"]
+      "tables": ["stagecontent", "contentcompletion", "useruiflags"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/course.e2e.test.ts"
+  },
+  {
+    "id": "course.restores-last-read-frequency",
+    "description": "At desktop and phone widths, a reader marks a Blue chapter read while the program calendar is on Orange, then reloads Course without route parameters and finds Blue selected. The browser uses the real reader scroll and mark-read action, GET /ui-flags, and GET /stages without response stubs.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["course", "stages", "uiFlags"],
+      "routes": [
+        "GET /stages",
+        "GET /ui-flags",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/content/{content_id}/body",
+        "POST /course/content/{content_id}/mark-read",
+        "GET /course/stages/{stage_number}/progress"
+      ],
+      "tables": ["stagecontent", "contentcompletion", "useruiflags"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course-reading-position.browser.e2e.test.ts"
   },
   {
     "id": "course.write-note-on-passage",

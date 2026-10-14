@@ -8307,8 +8307,21 @@
         "type": "object"
       },
       "UiFlagsResponse": {
-        "description": "The caller's UI flags, plus the habit their writing timer checks off.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.\n``writing_session_habit_id`` is ``None`` until the writer links a habit, and\nagain after they clear the link or delete that habit.",
+        "description": "The caller's UI flags, writing habit link and course reading position.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.\n``writing_session_habit_id`` is ``None`` until the writer links a habit, and\nagain after they clear the link or delete that habit.",
         "properties": {
+          "course_last_stage": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Last Stage"
+          },
           "energy_scaffolding_archived": {
             "title": "Energy Scaffolding Archived",
             "type": "boolean"
@@ -8332,14 +8345,28 @@
         "required": [
           "has_seen_welcome",
           "energy_scaffolding_archived",
-          "writing_session_habit_id"
+          "writing_session_habit_id",
+          "course_last_stage"
         ],
         "title": "UiFlagsResponse",
         "type": "object"
       },
       "UiFlagsUpdate": {
-        "description": "Partial update for the UI flags (PATCH).\n\nThe two booleans are plain, non-nullable fields defaulting to their\ncolumn's own default, so an explicit ``null`` is refused by the annotation\nat a ``loc`` naming the flag rather than reaching a NOT NULL column. Only\nthe fields the caller sets are applied -- unspecified flags keep their\nstored value, because the domain dumps with ``exclude_unset=True`` and no\ndefault here is ever written on its own. An empty payload is rejected (422)\nby :class:`~schemas.partial_update.PartialUpdateModel`.\n\n``writing_session_habit_id`` is the one deliberate exception to that\nbase's non-null doctrine. Its column *is* nullable -- \"no habit linked\" is\na real state -- so an explicit ``null`` is a legitimate value meaning\n\"clear the link\", not a defect to refuse. The three states still stay\napart through ``model_fields_set``: omitted leaves the link alone, ``null``\nclears it, and an id sets it once the caller is shown to own that habit.\nThe id is bounded like every other row id, so ``0``, a negative or a value\npast int32 is a 422 rather than a database lookup.",
+        "description": "Partial update for the UI flags (PATCH).\n\nThe two booleans are plain, non-nullable fields defaulting to their\ncolumn's own default, so an explicit ``null`` is refused by the annotation\nat a ``loc`` naming the flag rather than reaching a NOT NULL column. Only\nthe fields the caller sets are applied -- unspecified flags keep their\nstored value, because the domain dumps with ``exclude_unset=True`` and no\ndefault here is ever written on its own. An empty payload is rejected (422)\nby :class:`~schemas.partial_update.PartialUpdateModel`.\n\n``writing_session_habit_id`` and ``course_last_stage`` are exceptions to that\nbase's non-null doctrine. Its column *is* nullable -- \"no habit linked\" is\na real state -- so an explicit ``null`` is a legitimate value meaning\n\"clear the link\", not a defect to refuse. The three states still stay\napart through ``model_fields_set``: omitted leaves the link alone, ``null``\nclears it, and an id sets it once the caller is shown to own that habit.\nThe id is bounded like every other row id, so ``0``, a negative or a value\npast int32 is a 422 rather than a database lookup.\nThe reading position is similarly nullable and bounded to the ten stages.",
         "properties": {
+          "course_last_stage": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Last Stage"
+          },
           "energy_scaffolding_archived": {
             "title": "Energy Scaffolding Archived",
             "type": "boolean"
