@@ -5970,6 +5970,23 @@
         "title": "ProgramCalendarResponse",
         "type": "object"
       },
+      "ProgramStartRequest": {
+        "additionalProperties": false,
+        "description": "The person's chosen program start date (issue #3097).\n\nA local calendar date and nothing else: the server stores its local\nmidnight in the caller's zone and derives both stage answers from it, so\nthere is no field through which a client could name a stage. Closed\n(``extra=\"forbid\"``) so an attempt to send one is refused rather than\nsilently dropped.",
+        "properties": {
+          "program_start_date": {
+            "description": "The calendar date the program starts on, in the caller's timezone. No later than today and no earlier than one full program before account creation.",
+            "format": "date",
+            "title": "Program Start Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "program_start_date"
+        ],
+        "title": "ProgramStartRequest",
+        "type": "object"
+      },
       "PromoteQuoteCreate": {
         "description": "Payload for promoting a span of a source entry into a pending quote.\n\nOnly offsets are accepted; the server slices ``anchor_text`` from the\npersisted body. ``anchor_end`` must lie strictly past ``anchor_start`` so an\nempty or inverted span is rejected before it reaches the database.",
         "properties": {
@@ -26334,6 +26351,124 @@
           }
         },
         "summary": "Get Program Calendar",
+        "tags": [
+          "stages"
+        ]
+      },
+      "put": {
+        "description": "Let the person pick, or change, the date their program starts on (#3097).\n\nThe anchor is stored as local midnight of ``program_start_date`` in the\ncaller's zone, so the calendar counts exactly the days the person sees.\nA person with no progress row yet -- a habits-only account the first time\nit needs an anchor -- gets one provisioned here, so the choice can be made\nbefore the server would otherwise stamp ``now``.\n\nThe record moves with the anchor in the same write\n(:func:`domain.stage_authority.reanchor_program`), so every reader --\nhabit reveal, course drip, prompts -- agrees from the next request on.\nInvitations already consumed stay consumed: a habit ring revealed under the\nold date is neither re-locked nor re-stamped.\n\nRefused with 422 outside the range :mod:`domain.program_start` defines, and\nwith 409 ``program_start_fixed_after_first_cycle`` once begin-again has run,\nbecause a later cycle's anchor is also its predecessor's recorded end.",
+        "operationId": "set_program_start_stages_program_calendar_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgramStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramCalendarResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Set Program Start",
         "tags": [
           "stages"
         ]
