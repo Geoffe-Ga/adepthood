@@ -1,0 +1,21 @@
+/** Copy guard shared by invitations and first-run welcome panels. */
+export const BANNED_PHRASES = [
+  'missing out',
+  "don't miss",
+  'dont miss',
+  'streak',
+  'falling behind',
+  'keep it up',
+  'last chance',
+  'almost there',
+  'you should',
+  'you need to',
+  "don't lose",
+  'dont lose',
+  'break your streak',
+  'broke your streak',
+  'on track',
+  'expire',
+  'hurry',
+  'now or never',
+] as const;
