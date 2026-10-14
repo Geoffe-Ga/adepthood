@@ -7,24 +7,31 @@ and both sides of a rename count; unavailable history runs every lane.
 
 | Changed input | Jobs selected in addition to backend quality |
 | --- | --- |
-| Docs, root guard inputs, backend meta-tests | No runtime jobs |
+| Docs and root guard inputs | No runtime jobs |
+| Backend meta-tests | Cross-boundary guards; no Python runtime or E2E jobs |
 | Backend source | Python compatibility, OpenAPI, migrations, integration, cross-boundary guards, E2E |
-| Backend unit tests | Python compatibility, OpenAPI, migrations, integration |
+| Backend unit tests | Python compatibility, OpenAPI, migrations, integration, cross-boundary guards |
 | Backend journey helpers (`backend/tests/e2e/`) | Python lanes, cross-boundary guards, E2E |
 | Frontend source | Frontend CI, E2E; cross-boundary guards run in Frontend CI |
 | Vendored content or curriculum artifacts | Content drift and E2E; non-Markdown backend inputs also select Python lanes |
 | Content generation scripts | Content drift and Python lanes |
-| Backend dependency files | Python lanes, content drift, E2E |
+| Backend dependency files | Python lanes, cross-boundary guards, content drift, E2E |
 | CI selector or its tests | All lanes in both caller workflows |
 | A caller workflow | All of that workflow's jobs |
 
 Backend quality retains its existing trigger paths because its tests read
 documents, graph data, scripts, and frontend dependency/security configuration.
 Skipping it for those changes would leave existing repository guards blind.
+It has no dependency on the selector, so a selector failure cannot skip it.
+The small cross-boundary Jest lane watches all of `backend/`: its helper allows
+guards to read arbitrary backend paths, including shared fixtures, configuration
+examples, and contract assertions in backend tests.
 Graph tests and scheduled/manual scans retain their existing scopes.
 
 Selection happens at job level, so unrelated jobs are skipped before dependencies
 are installed or Postgres services are started. Existing job names stay intact.
+Only a successful selector's explicit `false` skips a lane. A failed selector or
+missing output runs the lane; cancelling the workflow still cancels its work.
 The caller workflows retain their existing path filters; any branch protection
 requiring those workflows on unrelated changes retains its existing behavior.
 

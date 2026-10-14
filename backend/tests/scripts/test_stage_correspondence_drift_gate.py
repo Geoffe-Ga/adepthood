@@ -218,10 +218,14 @@ def test_every_gate_runs_after_the_vendored_content_check(step: str) -> None:
 def test_the_job_is_not_disarmed() -> None:
     """Only the tested content selector may skip the job; no step may swallow failure."""
     assert _disarming_fragments(_real_workflow()) == []
-    assert _job_conditions(_real_workflow()) == ["if: needs.changes.outputs.content == 'true'"]
+    condition = (
+        "if: ${{ !cancelled() && (needs.changes.result != 'success' || "
+        "needs.changes.outputs.content != 'false') }}"
+    )
+    assert _job_conditions(_real_workflow()) == [condition]
     job = _content_drift_job(_real_workflow())
     assert "    needs: changes\n" in job
-    assert "    if: needs.changes.outputs.content == 'true'\n" in job
+    assert f"    {condition}\n" in job
     assert "uses: ./.github/workflows/_affected.yml" in jobs(_real_workflow())["changes"]
 
 

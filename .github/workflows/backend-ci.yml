@@ -67,12 +67,13 @@ concurrency:
 
 jobs:
   changes:
+    permissions:
+      contents: read
     uses: ./.github/workflows/_affected.yml
 
   # Repository guards read docs, tooling and frontend configuration too. Keep
   # this gate on every existing trigger; the runtime lanes below are narrower.
   backend-quality:
-    needs: changes
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -165,7 +166,7 @@ jobs:
   # (3.12 is already covered by the backend-quality job).
   backend-compat:
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend != 'false') }}
     runs-on: ubuntu-latest
     strategy:
       # This job is the transitive-dependency canary: a red leg must not cancel
@@ -201,7 +202,7 @@ jobs:
 
   openapi-drift:
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend != 'false') }}
     # Guards the committed backend/openapi.json against the app's real routes
     # and schemas. Same shape as migration-drift below: regenerate, then fail on
     # a diff. No database service -- the exporter points DATABASE_URL at an
@@ -237,7 +238,7 @@ jobs:
 
   migration-drift:
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend != 'false') }}
     # BUG-INFRA-023: guard against models diverging from migrations.
     # Runs ``alembic upgrade head`` + ``alembic check`` on a throwaway
     # Postgres; fails if a developer added a model without generating
@@ -345,7 +346,7 @@ jobs:
 
   backend-integration:
     needs: changes
-    if: needs.changes.outputs.backend == 'true'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.backend != 'false') }}
     # The default suite runs entirely on in-memory SQLite, where
     # ``backend/conftest.py`` rewrites Postgres ``ARRAY`` columns to ``JSON``
     # and hand-mirrors the functional / partial unique indexes under
@@ -413,7 +414,7 @@ jobs:
 
   cross-boundary-drift:
     needs: changes
-    if: needs.changes.outputs.cross == 'true'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.cross != 'false') }}
     # A handful of frontend Jest tests exist only to read backend source and
     # fail when the two stacks disagree: the ten APTITUDE colours and their
     # schedule, the upload cap, which consent sources something actually
@@ -455,7 +456,7 @@ jobs:
 
   content-drift:
     needs: changes
-    if: needs.changes.outputs.content == 'true'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.content != 'false') }}
     # Issue #397: the vendored backend/content/ must match its pinned
     # CONTENT_VERSION (no silent drift, no hand edits) and the manifest
     # must satisfy the frozen schema contract. Bootstrap state (nothing

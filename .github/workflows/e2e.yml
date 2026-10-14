@@ -52,7 +52,7 @@ jobs:
   # them off one red X wastes the signal.
   journey-ledger:
     needs: changes
-    if: needs.changes.outputs.e2e == 'true'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -75,7 +75,7 @@ jobs:
 
   e2e-journeys:
     needs: changes
-    if: needs.changes.outputs.e2e == 'true'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
     runs-on: ubuntu-latest
     # A slow gate gets skipped and a skipped gate is worse than none, so the
     # budget is explicit: the lane boots a server, migrates a schema and runs
@@ -142,7 +142,7 @@ jobs:
   # real Chromium process against the same real FastAPI/Postgres boundary.
   browser-journey:
     needs: changes
-    if: needs.changes.outputs.e2e == 'true'
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
     runs-on: ubuntu-latest
     # Measured, not guessed: at 15 minutes this job was already at its cap on
     # main -- run 36363745320 (56267069) was cancelled after 13m51s of

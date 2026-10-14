@@ -41,9 +41,20 @@ class LaneSelection(unittest.TestCase):
         )
 
     def test_meta_tests_do_not_boot_services(self):
-        self.assertFalse(
-            any(affected.affected(["backend/tests/scripts/test_gate.py"]).values())
-        )
+        lanes = affected.affected(["backend/tests/scripts/test_gate.py"])
+        self.assertFalse(any(lanes[key] for key in ["backend", "content", "e2e"]))
+
+    def test_non_source_cross_boundary_inputs_run_frontend_guards(self):
+        for path in [
+            "backend/tests/fixtures/streak_parity/cadence_streaks.json",
+            "backend/tests/fixtures/transcription_contract/transcription_contract.json",
+            "backend/.env.example",
+            "backend/tests/test_deletion_backup_copy.py",
+            "backend/openapi.json",
+            "backend/future_guard_input.json",
+        ]:
+            with self.subTest(path=path):
+                self.assertTrue(affected.affected([path])["cross"])
 
     def test_backend_test_runs_python_lanes_without_e2e(self):
         lanes = affected.affected(["backend/tests/test_auth.py"])
@@ -177,6 +188,13 @@ class GitHistory(unittest.TestCase):
 
 
 class WorkflowWiring(unittest.TestCase):
+    def test_backend_quality_is_independent_of_the_selector(self):
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/backend-ci.yml").read_text()
+        job = text.split("  backend-quality:\n", 1)[1].split("    steps:\n", 1)[0]
+        self.assertNotIn("needs:", job)
+        self.assertNotIn("if:", job)
+
     def test_every_runtime_job_depends_on_the_selector(self):
         root = Path(__file__).resolve().parents[2]
         scopes = {
@@ -201,7 +219,9 @@ class WorkflowWiring(unittest.TestCase):
                 with self.subTest(workflow=name, job=job):
                     self.assertIn(
                         f"  {job}:\n    needs: changes\n"
-                        f"    if: needs.changes.outputs.{lane} == 'true'\n",
+                        "    if: ${{ !cancelled() && "
+                        "(needs.changes.result != 'success' || "
+                        f"needs.changes.outputs.{lane} != 'false') }}}}\n",
                         text,
                     )
             # Both events must trigger on selector changes too.

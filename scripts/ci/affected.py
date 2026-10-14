@@ -29,7 +29,10 @@ def affected(paths: list[str]) -> dict[str, bool]:
         shared
         or backend_workflow
         or any(
-            path.startswith(("backend/src/", "backend/tests/e2e/", "frontend/"))
+            # backendSource.ts deliberately accepts any backend path, including
+            # shared fixtures, config examples and test-owned contract inputs.
+            # Keep this cheap lane broad so new readers cannot evade it.
+            path.startswith(("backend/", "frontend/"))
             or path == "scripts/frontend/cross-boundary-drift.sh"
             for path in paths
         )
