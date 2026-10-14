@@ -182,6 +182,8 @@ function makeEntry(overrides: Partial<JournalMessage> = {}): JournalMessage {
 /** The route params the append-mode entry point arrives with. */
 interface PhotographParams {
   appendTo?: string;
+  /** The open entry's tier, carried so the capture declares it (#3059 AC15). */
+  appendTier?: string;
 }
 
 function renderScreen(params?: PhotographParams) {
@@ -200,8 +202,8 @@ function renderScreen(params?: PhotographParams) {
 const APPEND_TOKEN = 'capture-1';
 
 /** Render the screen the way the open journal entry opens it: in append mode. */
-function renderAppendScreen() {
-  return renderScreen({ appendTo: APPEND_TOKEN });
+function renderAppendScreen(appendTier: string | undefined = 'personal') {
+  return renderScreen({ appendTo: APPEND_TOKEN, appendTier });
 }
 
 /** One deferred transcription call: resolve/reject it whenever the test wants. */
@@ -2136,6 +2138,71 @@ describe('JournalPhotographScreen — classification threaded into save', () => 
 // ---------------------------------------------------------------------------
 // Append mode: the same capture, handed back to the page already being written
 // ---------------------------------------------------------------------------
+
+describe('JournalPhotographScreen — append mode declares the open entry’s own tier (#3059 AC15)', () => {
+  /** Press Transcribe and let any read it starts run. */
+  async function pressTranscribe(screen: ReturnType<typeof renderAppendScreen>): Promise<void> {
+    await settle();
+    screen.getByTestId('capture-pages-list');
+    fireEvent.press(screen.getByTestId('capture-transcribe'));
+    await settle();
+  }
+
+  it.each<[string, string | undefined]>([
+    ['an intimate entry', 'intimate'],
+    ['an entry whose tier never arrived (fails closed)', undefined],
+    ['an entry with an unrecognised tier (fails closed)', 'secret'],
+  ])('from %s: the gate shows, it cannot be widened, and no page is read', async (_n, tier) => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValue({ text: 'must never be read' });
+    const screen = renderScreen({ appendTo: APPEND_TOKEN, appendTier: tier });
+    await settle();
+
+    expect(screen.getByTestId('capture-intimate-gate')).toBeTruthy();
+    expect(screen.queryByTestId('capture-keep-personal')).toBeNull();
+    fireEvent.press(screen.getByTestId('privacy-tier-personal'));
+    fireEvent.press(screen.getByTestId('privacy-tier-public'));
+    expect(screen.getByTestId('capture-intimate-gate')).toBeTruthy();
+    await pressTranscribe(screen);
+
+    expect(mockTranscribe).not.toHaveBeenCalled();
+  });
+
+  it('from a personal entry: may narrow to intimate, which reads nothing', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    const screen = renderAppendScreen('personal');
+    await settle();
+
+    fireEvent.press(screen.getByTestId('privacy-tier-intimate'));
+    // Back to the entry's own tier is not a widening past it.
+    expect(screen.getByTestId('capture-keep-personal')).toBeTruthy();
+    await pressTranscribe(screen);
+
+    expect(mockTranscribe).not.toHaveBeenCalled();
+  });
+
+  it('from a personal entry: declares personal, and the chooser cannot widen it', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'x' });
+    const screen = renderAppendScreen('personal');
+    await settle();
+
+    fireEvent.press(screen.getByTestId('privacy-tier-public'));
+    await pressTranscribe(screen);
+
+    expect(mockTranscribe).toHaveBeenCalledTimes(1);
+    expect(mockTranscribe.mock.calls[0]?.[0]).toMatchObject({ classification: 'personal' });
+  });
+
+  it('from a public entry: declares public', async () => {
+    mockPick.mockResolvedValueOnce(picked());
+    mockTranscribe.mockResolvedValueOnce({ text: 'x' });
+    const screen = renderAppendScreen('public');
+    await pressTranscribe(screen);
+
+    expect(mockTranscribe.mock.calls[0]?.[0]).toMatchObject({ classification: 'public' });
+  });
+});
 
 describe('JournalPhotographScreen — append into the open entry', () => {
   /** Drive one page through the shared capture flow to the review stage. */

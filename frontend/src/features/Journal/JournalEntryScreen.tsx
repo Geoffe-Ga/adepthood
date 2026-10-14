@@ -3403,7 +3403,7 @@ interface PhotographedPage {
  */
 function usePhotographedPage(
   navigation: ScreenNavigation,
-  body: string,
+  { body, classification }: Pick<AutosaveApi, 'body' | 'classification'>,
   onChangeBody: (_next: string) => void,
 ): PhotographedPage {
   const pending = useCapturedTranscriptStore((store) => store.pending);
@@ -3414,10 +3414,17 @@ function usePhotographedPage(
   const bodyRef = useRef(body);
   bodyRef.current = body;
   const tokenRef = useRef<string | null>(null);
+  // The page's tier as it stands when the camera is pressed: the capture
+  // declares it on every read, so an Intimate page is never read (#3059 AC15).
+  const tierRef = useRef(classification);
+  tierRef.current = classification;
 
   const openCapture = useCallback(() => {
     tokenRef.current = openHandoff();
-    navigation.navigate('JournalPhotograph', { appendTo: tokenRef.current });
+    navigation.navigate('JournalPhotograph', {
+      appendTo: tokenRef.current,
+      appendTier: tierRef.current,
+    });
   }, [navigation, openHandoff]);
 
   useEffect(() => {
@@ -3441,7 +3448,7 @@ function usePhotographedPage(
 function useWritingSeams(navigation: ScreenNavigation, autosave: AutosaveApi, bump: () => void) {
   const { handleTitle, handleBody } = useBumpedHandlers(bump, autosave);
   const reflection = useReflectionComposer(autosave);
-  const photograph = usePhotographedPage(navigation, autosave.body, handleBody);
+  const photograph = usePhotographedPage(navigation, autosave, handleBody);
   return { handleTitle, handleBody, reflection, photograph };
 }
 

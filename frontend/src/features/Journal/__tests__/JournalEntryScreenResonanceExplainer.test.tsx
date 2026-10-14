@@ -685,6 +685,7 @@ describe('JournalEntryScreen — a stale wallet read is corrected by the pass', 
     fireEvent.press(await view.findByTestId('journal-photograph-page'));
     expect(mockNavigate).toHaveBeenCalledWith('JournalPhotograph', {
       appendTo: expect.any(String),
+      appendTier: expect.any(String),
     });
     act(() => mockBlurListener());
     await act(async () => heldPass.reject(apiError(402, 'insufficient_offerings')));
