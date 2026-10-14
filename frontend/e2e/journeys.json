@@ -1297,6 +1297,18 @@
     "coveredBy": "frontend/e2e/seed-upload.e2e.test.ts"
   },
   {
+    "id": "seed.upload-unconfirmed",
+    "description": "A person with a vault seeds a document and the vault keeps it, but its reply is lost on the way back -- a timeout, a dropped connection, or a 2xx adepthood cannot read. POST /corpus/import answers 202 degraded, and since #3052 both the server's message and the row beneath the document say the upload could not be confirmed and that sending the same file again updates it in place, never that nothing was stored. Uncovered because the lane's fake vault has no mode that commits an upload and then spoils its reply; pinned meanwhile by test_document_upload_to_a_vault.py (a committing-then-losing transport driven through the real HTTP adapter) and seedCopy.test.ts.",
+    "crosses": {
+      "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
+      "client": ["auth", "setTokenGetter", "corpus"],
+      "routes": ["POST /auth/login", "POST /corpus/import"],
+      "tables": ["user"]
+    },
+    "status": "uncovered",
+    "issue": 3229
+  },
+  {
     "id": "corpus.import-without-a-vault",
     "description": "Someone the server finds no vault for brings in a document they wrote elsewhere. A corpus lives in a vault (owner ruling on #3015), so since #3016 the answer is vault_required and nothing else happens: the document is not read, consent is not consulted, no provider is called and nothing is stored -- destination corpus, stored false, fragment_id null, vault fields null. The spec proves the document was never looked at by sending each thing the retired local import used to answer differently -- a .md with no consent, a .pdf, the same .md after turning the switch for documents on, an Intimate document, and a neighbour who agreed to nothing -- and getting the same answer every time. It still crosses PUT /corpus/consent/{source} on purpose: flipping the switch is how it proves the switch now lets nothing in.",
     "crosses": {
