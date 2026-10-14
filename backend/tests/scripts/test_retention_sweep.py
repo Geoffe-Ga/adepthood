@@ -45,7 +45,12 @@ _ARGPARSE_USAGE_EXIT = 2
 _EVENT = "retention_sweep_store"
 #: The only fields a per-store record may carry beyond logging's own.
 _ALLOWED_FIELDS = frozenset({"store", "mode", "eligible", "deleted", "blocked", "duration_ms"})
-_STANDARD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
+#: Fields logging itself, or the app's trace-id filter (``observability``), adds.
+_STANDARD_FIELDS = frozenset(logging.makeLogRecord({}).__dict__) | {
+    "message",
+    "asctime",
+    "trace_id",
+}
 
 
 @pytest.fixture
