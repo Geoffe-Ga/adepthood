@@ -237,8 +237,7 @@ says; the tier section above is where that promise is written out in full.
 The parties below, and nothing else. There is no advertising, no analytics
 service, no tracking SDK, and no data broker anywhere in this app.
 
-**The language-model provider** (Anthropic or OpenAI, depending on how the
-deployment is configured, or on your own key if you supply one). It
+**The language-model provider** (the provider whose key you saved). It
 receives: the body of a non-Intimate entry when you ask for a reflection or
 an essay, up to three other pieces of your own non-Intimate writing as
 context — passages chosen out of the corpus of your own writing, or your
@@ -253,11 +252,19 @@ have turned the corpus on**, the body of each non-Intimate entry once as it
 is saved — and once for each non-Intimate entry that was already in your
 journal on the day you turned it on — so that it can be sorted into the ten
 frequencies. It never receives an Intimate entry, and Adepthood does not
-send it a document you bring in. If you bring your own key, the production app sends it
-over HTTPS to Adepthood's server in the `X-LLM-API-Key` header. Adepthood
-forwards it over HTTPS to your account with the selected provider for that
-call. The key is used for that one call and is never persisted, logged or
-returned by Adepthood.
+send it a document you bring in.
+
+Your key is kept on your device, and how it travels depends on the feature.
+**Page reading goes directly from your device to the provider you chose.** The
+device sends your key and the photograph of the page straight to that
+provider, which sees your device's IP address and browser or app details.
+Adepthood's server is asked only whether the read may go ahead, and that
+request carries neither the key nor the page. **Every other feature that uses
+the key still passes through Adepthood's server**, including resonance notes,
+letters and completion checks: the production app sends the key over HTTPS to
+Adepthood's server in the `X-LLM-API-Key` header, and Adepthood forwards it
+over HTTPS to your account with that provider for that call. The key is used
+for that one call and is never persisted, logged or returned by Adepthood.
 
 **Your Creek Vault**, only if one is configured. A vault is a corpus of
 your own writing on infrastructure the operator arranges, reached over

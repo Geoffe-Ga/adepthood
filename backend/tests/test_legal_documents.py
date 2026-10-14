@@ -1548,6 +1548,36 @@ def test_your_data_says_operator_triage_goes_with_the_report() -> None:
     assert "your report's words are never published" in your_data
 
 
+# The owner's own-key wording (2026-10-14, #3260, #3067 B01). Page reading goes
+# from the device straight to the vendor, which sees the device's address; the
+# other features still cross Adepthood's server. The policy says both, names the
+# provider by the saved key rather than by deployment configuration, and drops
+# the sentence that sent every key through Adepthood.
+_OWN_KEY_PROMISES: Final[tuple[str, ...]] = (
+    "the provider whose key you saved",
+    "page reading goes directly from your device to the provider you chose",
+    "which sees your device's ip address and browser or app details",
+    "request carries neither the key nor the page",
+    "every other feature that uses the key still passes through adepthood's server",
+    "including resonance notes, letters and completion checks",
+)
+_RETIRED_OWN_KEY_CLAIMS: Final[tuple[str, ...]] = (
+    "depending on how the deployment is configured",
+    "anthropic or openai",
+    "if you bring your own key, the production app sends it over https",
+)
+
+
+def test_the_policy_says_where_an_own_key_travels_for_each_feature() -> None:
+    """Page reading is device-to-vendor; everything else crosses Adepthood (#3260)."""
+    prose = _prose(_PRIVACY_POLICY)
+
+    missing = [promise for promise in _OWN_KEY_PROMISES if promise not in prose]
+    assert not missing, f"the policy drops the owner's own-key wording: {missing}"
+    restated = [claim for claim in _RETIRED_OWN_KEY_CLAIMS if claim in prose]
+    assert not restated, f"the policy still makes a retired own-key claim: {restated}"
+
+
 # The off-host backup copy the owner retired on 2026-10-14 (#3260): "No off-host
 # copy; rely on Railway's 6-day backups." No public document may still promise it.
 _RETIRED_OFFHOST_CLAIMS: Final[tuple[str, ...]] = (
