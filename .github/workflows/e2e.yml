@@ -150,11 +150,14 @@ jobs:
     # 14m20s. The action-row sweep (#2860) adds 2.3 minutes of its own
     # walk, so the lane then needed ~17, and 25 was its cap -- until run
     # 36912604466 was cancelled at 25 just after all 87 specs passed: ~6
-    # minutes of setup plus 19.0 minutes of Playwright. 35 gives a slower
-    # runner headroom again without letting a hung run idle for GitHub's
-    # 6-hour default. Pinned by
+    # minutes of setup plus 19.0 minutes of Playwright. Job 116104282882
+    # then reached the 35-minute cap just after all 175 tests passed in
+    # 33.7 minutes, before cleanup and review artifacts could finish. Give
+    # the complete job 60 minutes, including setup and artifact publication;
+    # individual Playwright test/action limits remain separately bounded.
+    # The minimum budget and artifact wiring are pinned by
     # backend/tests/scripts/test_browser_lane_artifact_uploads.py.
-    timeout-minutes: 35
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:16

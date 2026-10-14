@@ -892,12 +892,13 @@ describe('a page whose deletion is in progress, and a copy in another vault (#30
     },
   );
 
-  it('keeps the choose-again hint when the connected vault has simply not confirmed', async () => {
+  it('names the automatic retry while the connected vault has not confirmed', async () => {
     const screen = await openLoaded({ classification: 'personal' });
     mockUpdate.mockRejectedValueOnce({ status: 503, detail: 'vault_withdrawal_pending' });
 
     await pressTier(screen, 'intimate');
 
-    expect(hint(screen)).toMatch(/choose Intimate again/);
+    expect(hint(screen)).toMatch(/not been confirmed.*retry/);
+    expect(hint(screen)).not.toMatch(/choose Intimate again/);
   });
 });

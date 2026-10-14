@@ -786,6 +786,37 @@ primitives. Those answers are Decision items 4 and 6-14. What is still open:
   waits for backup expiry.
 - **D02-PRIMITIVES:** reviewer confirmation of the proposed libsodium sealed
   boxes and XChaCha20-Poly1305, and the envelope format.
+
+  *Implementation proposal (B13 phase (b) slice 2), still PROPOSED and not
+  confirmed.* On 2026-10-14 (#3260) the owner chose adversarial AI reviews
+  plus the owner's own review in place of an outside reviewer, so the
+  independent-review gate is not met and no real account may enrol. The code
+  in `frontend/src/crypto/` ships with tests only and nothing in the app
+  imports it (`cryptoUnreachable.test.ts`). What it proposes:
+  - **Library deviation from libsodium.** The enforced CSP is `script-src
+    'self'` with no `'wasm-unsafe-eval'`, so a WASM build of libsodium cannot
+    load on web. The proposal uses audited pure-JavaScript implementations
+    instead, pinned exactly: `@noble/ciphers` 2.4.0 (XChaCha20-Poly1305),
+    `@noble/hashes` 2.4.0 (Argon2id) and `@scure/bip39` 2.4.0 (recovery
+    phrase). Known-answer tests pin draft-irtf-cfrg-xchacha-03 A.3.1 and
+    RFC 9106 section 5.3.
+  - **No sealed boxes yet.** Nothing in this slice needs public-key
+    encryption. Pairing, the likely first user, stays open under D03.
+  - **Envelope v1:** a format byte, a big-endian u64 object version, a fresh
+    24-byte random nonce, then ciphertext and the 16-byte tag. The AAD is a
+    length-prefixed encoding of a label, the format, a domain, and the owner,
+    object type, object id and version. Opening takes a minimum version and
+    refuses anything lower; an unknown or downgraded format fails closed.
+  - **Key hierarchy:** a random 256-bit data key made on the device, wrapped
+    once under an Argon2id key from the passphrase and once under one from a
+    24-word BIP-39 recovery phrase (Decision item 11). Each wrap is a v1
+    envelope bound to its purpose and owner. Proposed Argon2id parameters:
+    64 MiB, 3 passes, 1 lane, about 1.2-1.5 s per derivation in Node 22.
+    The public wrap refuses anything below that floor. Unwrap checks a stored
+    record before deriving: Argon2id, one lane, a 16-byte salt, at least the
+    floor, at most 10 passes and 256 MiB, and at most four times the
+    production work. Without that check, a tampered record could stall or
+    exhaust the client.
 - **BYOK-CONSENT:** a proposal only. Is BYOK consent granted once per key,
   per feature, or per call?
 - **INTIMATE-DEVICE:** may device-side inference, which is never remote,

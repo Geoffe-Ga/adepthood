@@ -892,6 +892,25 @@
     "coveredBy": "frontend/e2e/journal-margin-note-source.browser.e2e.test.ts"
   },
   {
+    "id": "journal.privacy-choice-truthfulness",
+    "description": "#3275, Refs #3057/#3260 item4: real UI Intimate PATCH and DELETE cross the live backend to an isolated recording Creek contract process. A held remote withdrawal retains its fragment while PATCH503 commits Intimate and keeps editing; reload confirms only tier/prose, independently retained remote copy stays explicit. Releasing the fault lets the actual background sweep remove the fragment; its ledger, not GET classification, proves confirmation. Real pending DELETE separately locks editing until confirmed. A genuine backend care+reflection pass with a loopback own-key provider records paid_by own_key and identities while preserving care, then reload clears live payer and preserves stored note identity (#3270). It proves hermetic routing and receipt handling, not a real vendor bill. Controlled previous/disconnected/unrecorded destination responses and photograph403 refusal cases prove only client disclosure/retry behavior; they do not certify real remote failure states or entitlement revocation. Settings discloses exact owner-approved direct page-reading versus relay destinations before key save, with desktop/phone and enlarged text inspection. Existing receipt matrix rejects unversioned model identities while retaining prose and independent essay source (#3271). No custody/local-model/attestation/production guarantee is claimed.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/{entry_id}",
+        "PATCH /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/transcribe-page/direct-admission"
+      ],
+      "tables": ["journalentry", "marginalia", "journalwithdrawalobligation"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/privacy-choices.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.vault-sourced-note-label",
     "description": "The happy bound-Creek receipt and reload label are covered by journal.margin-note-source-survives-reload using the isolated Creek contract process (#3206). Remaining uncovered across the wire: a vault that answers with no usable notes still names its source beside the real refunded empty-pass reason, and unavailable/fail-closed source paths render their error without inventing model identity or billing. Controlled UI response cases are client validation evidence, not proof of these backend outcomes. Backend inference_provenance and vault-boundary tests pin those semantics; no physical local-model or custody proof is claimed. Refs #3062 and journal.vault-bound-reflection-fails-closed.",
     "crosses": {
@@ -1654,7 +1673,7 @@
   },
   {
     "id": "journal.idle-writing-timer-clears-the-entry-body",
-    "description": "At 1280x720 the floating glass timer leaves the visible writing field unobscured. Its idle choice and running rail never shrink the sheet; expanded options remain inside the paper around the desktop rail breakpoint. Finish and Get Resonance remain hit-testable while a session runs and beneath its bounded finished-session note. A 390x640 phone with sixteen server-created habits can scroll to the first and last choices, cancel, and close without covering either page action, then links its final minute-counting habit over the real API and reads the persisted choice back. Finishing still reaches the server-backed reading view (#3131).",
+    "description": "At 1280x720 the floating glass timer leaves the visible writing field unobscured. Its idle choice and running rail never shrink the sheet; expanded options remain inside the paper around the desktop rail breakpoint. Finish and Get Resonance remain hit-testable while a session runs and beneath its bounded finished-session note. A 390x640 phone with sixteen server-created habits can scroll to the first and last choices, cancel, and close without covering either page action, then links its final minute-counting habit over the real API and reads the persisted choice back. At 844x390 and 1280x390 with normal and doubled text, and at intermediate 560px height with doubled text, measured natural content makes the whole finished surface scroll: summary, habit offer, Close and compact timer remain usable, and Finish/Get Resonance clear it at the true page bottom. Resizing a sixteen-habit picker through a short viewport preserves its state. Live doubled-text clock glyphs fit the unchanged 44px desktop rail, with no editor overlap and exact paused/resumed countdown verification. Finishing still reaches the server-backed reading view (#3131, #3205).",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["auth", "journal", "habits", "uiFlags"],
@@ -2197,7 +2216,7 @@
   },
   {
     "id": "journal.revoked-entitlement-restricts-ai-only",
-    "description": "A member whose APTITUDE entitlement is revoked by a refund, a dispute or an operator (with no live re-grant; a cancelled or ended membership does not restrict while the owner's cancel-timing decision is pending) asks for a resonance pass, a letter, completion detection or a server page read without a key of their own and is refused 403 ai_access_revoked before the minute bucket, the slot, the wallet or any dial, with funded credits left untouched; the client renders the plain ai_access_revoked copy, which says nothing was charged and that the journal, course, habits, practice, export and deletion are unaffected. The page the pass was asked of stays saved, a flagged entry still receives the care surface, a personal key is still admitted, and an account with no entitlement row at all (legacy, never comped) keeps today's access (#1938, B21 E1). Uncovered because the e2e lane cannot revoke an entitlement through the product: revocation arrives only from a Gumroad refund/cancellation ping or the admin route, and the lane's Gumroad stub emits no reversal ping. Pinned meanwhile by backend/tests/test_ai_access_revocation.py, backend/tests/test_free_core_access_invariants.py and frontend/src/api/__tests__/errorMessages.test.ts.",
+    "description": "A member whose APTITUDE entitlement is revoked by a refund, a dispute, the end of a membership's paid period (subscription_ended) or an operator (judged by the latest revocation, with no live re-grant; the cancellation click itself changes no access, and subscription_restarted gives AI back, #3259) asks for a resonance pass, a letter, completion detection or a server page read without a key of their own and is refused 403 ai_access_revoked before the minute bucket, the slot, the wallet or any dial, with funded credits left untouched; the client renders the plain ai_access_revoked copy, which says nothing was charged and that the journal, course, habits, practice, export and deletion are unaffected. The page the pass was asked of stays saved, a flagged entry still receives the care surface, a personal key is still admitted, and an account with no entitlement row at all (legacy, never comped) keeps today's access (#1938, B21 E1). Uncovered because the e2e lane cannot revoke an entitlement through the product: revocation arrives only from a Gumroad refund, dispute or subscription_ended ping or the admin route, and the lane's Gumroad stub emits no reversal ping. Pinned meanwhile by backend/tests/test_ai_access_revocation.py, backend/tests/routers/test_gumroad_subscription_events.py, backend/tests/test_free_core_access_invariants.py and frontend/src/api/__tests__/errorMessages.test.ts.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
@@ -2383,5 +2402,17 @@
     },
     "status": "uncovered",
     "issue": 3076
+  },
+  {
+    "id": "habits.pending-create-survives-account-switch",
+    "description": "A real outgoing-account habit POST is held while the user logs out and signs into another account in the same running app. Delivering its success or a controlled lost reply must not replace the incoming account habits or send old sibling updates. A real incoming-account create remains usable, and both incoming rows survive reload. Phone and desktop browser witnesses cover success and failure; real manager/store/scoped disk tests cover both create entrypoints, ABA, queued logs, missing credentials and compensation.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "goal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-owner-switch.browser.e2e.test.ts"
   }
 ]

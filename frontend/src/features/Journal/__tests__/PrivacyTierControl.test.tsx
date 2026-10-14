@@ -130,8 +130,25 @@ describe('PrivacyTierControl — intimate explainer', () => {
     const text: string = getByTestId('privacy-tier-explainer').props.children as string;
     // The implementation-specialist must put copy about AI not accessing intimate entries.
     expect(text.toLowerCase()).toMatch(/never sent to ai|not shared with ai|ai won.t|ai cannot/);
-    expect(text).toMatch(/vault.*pulled back/i);
-    expect(text).toMatch(/back.*choose Intimate again/i);
+    expect(text).toMatch(/Adepthood journal/i);
+    expect(text).toMatch(/may remain.*vault confirms/i);
+    expect(text).toMatch(/retries pending removal/i);
+    expect(text).not.toMatch(/is pulled back|choose Intimate again/i);
+  });
+
+  it('does not advertise unshipped Sangha sharing in the public tier hint', () => {
+    const { getByTestId } = renderControl('public');
+    expect(getByTestId('privacy-tier-public').props.accessibilityHint).not.toMatch(
+      /shareable.*Sangha/i,
+    );
+  });
+
+  it('qualifies the Intimate accessibility hint without claiming earlier copies were withdrawn', () => {
+    const { getByTestId } = renderControl('intimate');
+    expect(getByTestId('privacy-tier-intimate').props.accessibilityHint).toMatch(/new AI readings/);
+    expect(getByTestId('privacy-tier-intimate').props.accessibilityHint).not.toMatch(
+      /never sent|copies.*gone/i,
+    );
   });
 
   it('does NOT show the explainer when value="personal"', () => {

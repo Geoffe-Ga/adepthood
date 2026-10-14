@@ -129,11 +129,13 @@ import {
   type FeedbackTriageDetailT,
   type FeedbackTriageSummaryT,
 } from './schemas';
+import { captureSessionToken, installSessionTokenGetter } from './sessionToken';
 import { createTokenRotation, type RecoveryMode } from './tokenRotation';
 import { classifyTranscription } from './transcriptionContract';
 
 import { API_BASE_URL, KEYLESS_PAGE_READ_REACHES_SERVER } from '@/config';
 import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
+import { aiAccessRevoked } from '@/features/Journal/aiAccessRevoked';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 import {
   diagnosticRoute,
@@ -280,6 +282,7 @@ export interface TranscribePageInput {
  * a small closed set instead of raw HTTP status + detail strings.
  */
 export type TranscriptionErrorKind =
+  | 'ai_access_revoked'
   | 'invalid_image'
   | 'image_too_large'
   // The server read the image but got nothing usable back: no text in it, or
@@ -373,7 +376,7 @@ export class DocumentUploadError extends Error {
 // because ``@/api`` is where the app has always registered it.
 export { isDeviceKnownOffline, setNetworkOnlineGetter };
 
-let tokenGetter: (() => string | null) | null = null;
+export { captureSessionToken };
 
 /**
  * Reason a 401 surfaced.  Threaded through the unauthorized callback so
@@ -461,7 +464,7 @@ export function idempotencyKey(intent: string, ...parts: (string | number)[]): s
  */
 export function setTokenGetter(getter: (() => string | null) | null) {
   rotation.reset();
-  tokenGetter = getter;
+  installSessionTokenGetter(getter);
 }
 
 export function setOnUnauthorized(callback: ((reason: UnauthorizedReason) => void) | null) {
@@ -921,7 +924,7 @@ async function performTokenRefresh(currentToken: string): Promise<AuthResponse |
  */
 const rotation = createTokenRotation<AuthResponse>({
   performRefresh: performTokenRefresh,
-  currentToken: () => tokenGetter?.() ?? null,
+  currentToken: () => captureSessionToken() ?? null,
   onRotated: (response, from) => {
     onTokenRefreshedCallback?.(response.token, response.timezone, from);
   },
@@ -1907,6 +1910,7 @@ const TRANSCRIBE_STATUS_KINDS: Record<number, TranscriptionErrorKind> = {
 
 /** Classify an `ApiError` from the transcription endpoint into a stable kind. */
 function classifyTranscribeApiError(err: ApiError): TranscriptionErrorKind {
+  if (aiAccessRevoked(err)) return 'ai_access_revoked';
   const rule = TRANSCRIBE_DETAIL_RULES[err.status];
   if (rule) {
     return rule.kinds[err.detail] ?? rule.fallback;

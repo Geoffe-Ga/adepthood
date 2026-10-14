@@ -376,11 +376,23 @@ interface TimerPillProps {
   onChooseMinutes: (_minutes: number) => void;
 }
 
-function TimerReadout({ view, docked }: { view: TimerView; docked: boolean }): React.JSX.Element {
+function TimerReadout({
+  view,
+  docked,
+  idle,
+}: {
+  view: TimerView;
+  docked: boolean;
+  idle: boolean;
+}): React.JSX.Element {
   return (
     <Text
-      style={[styles.readout, docked ? styles.readoutDocked : null]}
-      numberOfLines={1}
+      style={[
+        styles.readout,
+        docked ? styles.readoutDocked : null,
+        docked && idle && styles.intrinsicReadout,
+      ]}
+      numberOfLines={docked && !idle ? undefined : 1}
       accessibilityRole="text"
       accessibilityLabel={`${WRITING_TIMER_A11Y_LABEL}: ${view.readoutA11yLabel}`}
       testID="writing-timer-readout"
@@ -388,6 +400,12 @@ function TimerReadout({ view, docked }: { view: TimerView; docked: boolean }): R
       {view.readout}
     </Text>
   );
+}
+
+/** Live controls keep their rail; the resting clock can fit its text. */
+function dockedPillStyles(docked: boolean, idle: boolean) {
+  if (!docked) return undefined;
+  return [styles.pillDocked, idle && styles.intrinsicReadout];
 }
 
 /** The paper pill itself, shared by its expanded and desk-side mounts. */
@@ -409,7 +427,7 @@ function TimerPill({
         styles.pill,
         compact ? styles.pillCompact : styles.pillExpanded,
         !compact && expandedRail && styles.pillExpandedRail,
-        docked ? styles.pillDocked : null,
+        dockedPillStyles(docked, idle),
       ]}
       pointerEvents="auto"
       testID="writing-timer-pill"
@@ -418,7 +436,7 @@ function TimerPill({
         style={[styles.row, docked ? styles.rowDocked : null]}
         testID="writing-timer-row-readout"
       >
-        <TimerReadout view={view} docked={docked} />
+        <TimerReadout view={view} docked={docked} idle={idle} />
         {compact && idle ? null : (
           <TimerControls
             view={view}
@@ -705,6 +723,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     textAlignVertical: 'center',
     lineHeight: touchTarget.minimum,
+  },
+  // At rest this sits below the finished note; it can use its natural width.
+  // Live controls retain their narrow rail beside the writing field.
+  intrinsicReadout: {
+    width: 'auto',
+    minWidth: touchTarget.minimum,
   },
   /**
    * Presets share their row's width instead of demanding their own. ``flex: 1``

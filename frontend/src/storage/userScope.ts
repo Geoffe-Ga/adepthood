@@ -46,6 +46,7 @@ export const DEVICE_OWNER_KEY = '@adepthood/device_owner';
 const SCOPE_MARKER = '#u';
 
 let activeUserId: number | null = null;
+let activeUserGeneration = 0;
 
 /**
  * Point the device-local caches at ``userId``'s namespace, or at the legacy
@@ -53,7 +54,13 @@ let activeUserId: number | null = null;
  * was never recorded).
  */
 export function setActiveUser(userId: number | null): void {
+  if (activeUserId !== userId) activeUserGeneration += 1;
   activeUserId = userId;
+}
+
+/** Identity changes invalidate pending work even when the same account returns. */
+export function getActiveUserGeneration(): number {
+  return activeUserGeneration;
 }
 
 /** The account the cache keys currently resolve to, or ``null`` when anonymous. */

@@ -23,6 +23,7 @@ import type { BlockOverlapNotice } from './useTranscriptionRun';
 
 import type { TranscriptionErrorKind } from '@/api';
 import {
+  AI_ACCESS_REVOKED_COPY,
   CREDIT_EXHAUSTED_COPY,
   INSUFFICIENT_OFFERINGS_COPY,
   LLM_KEY_REQUIRED_COPY,
@@ -47,6 +48,7 @@ const blockInputA11y = (position: number): string =>
  *  spent provider balances are sourced from the shared code map, so each story
  *  has a single source of truth. */
 const TRANSCRIBE_ERROR_COPY: Readonly<Record<TranscriptionErrorKind, string>> = {
+  ai_access_revoked: AI_ACCESS_REVOKED_COPY,
   provider_error: 'The transcription helper had trouble just now. Give it a moment and try again.',
   network: "We couldn't reach the transcription helper. Check your connection and try again.",
   timeout: "That took longer than expected. Try again whenever you're ready.",

@@ -671,6 +671,66 @@ real platform backup, and this record updated with its date.
 
 ---
 
+## Gumroad Webhook Registration
+
+Gumroad sends one form-encoded "ping" per event to every URL registered for
+that event's resource. The backend receives them all at
+`POST /webhooks/gumroad/ping`, authenticated by the `secret` query parameter,
+which must equal the backend's `GUMROAD_WEBHOOK_SECRET`. Every ping is stored
+verbatim; the table below is what each one then does
+(`backend/src/routers/gumroad.py`, `_EVENT_HANDLERS`).
+
+| Resource | What the app does |
+|----------|-------------------|
+| `sale` | Grants course access for an APTITUDE product, or credits a token pack |
+| `refund` | Reverses the sale once: revokes access (restricting AI) and claws back pack credits, flags `refunded` |
+| `dispute` | Same as `refund` |
+| `cancellation` | Records the click for audit only; **no access changes** (#3259) |
+| `subscription_ended` | Revokes course access; operator-funded AI is refused with `403 ai_access_revoked`. Journal, course, habits, practice, export and deletion stay open |
+| `subscription_restarted` | Gives back the access that sale's `subscription_ended` took. Never re-grants one revoked by a refund, a dispute or an operator |
+
+The membership events are ordered by Gumroad's own event times
+(`cancelled_at`, `ended_at`, `restarted_at`) when the ping carries them, so a
+late or replayed ping never overrides a newer one.
+
+Register each resource once, with a Gumroad API access token (Gumroad →
+Settings → Advanced → Applications) and the production backend URL:
+
+```bash
+# Read both values from the password manager; do not persist them in history.
+read -rs GUMROAD_ACCESS_TOKEN
+read -rs GUMROAD_WEBHOOK_SECRET
+BACKEND=https://<backend-domain>
+
+for resource in sale refund dispute cancellation subscription_ended subscription_restarted; do
+  curl --fail-with-body -sS https://api.gumroad.com/v2/resource_subscriptions -X PUT \
+    -d "access_token=$GUMROAD_ACCESS_TOKEN" \
+    -d "resource_name=$resource" \
+    --data-urlencode "post_url=$BACKEND/webhooks/gumroad/ping?secret=$GUMROAD_WEBHOOK_SECRET"
+  echo
+done
+
+# Verify: each resource should list exactly one subscription to the backend.
+curl --fail-with-body -sS -G https://api.gumroad.com/v2/resource_subscriptions \
+  -d "access_token=$GUMROAD_ACCESS_TOKEN" -d resource_name=subscription_ended
+```
+
+Register `cancellation`, `subscription_ended` and `subscription_restarted`
+only on a backend that includes #3259. An older backend treats a cancellation
+as an immediate revocation and ignores restarts.
+
+Every ping is keyed on its `sale_id`; one without it is refused with
+`400 malformed_payload` and Gumroad retries it. Before relying on the
+membership events, send one test ping per resource from Gumroad and confirm
+in the logs that it was answered `gumroad_webhook_accepted` rather than
+`malformed_payload`.
+
+To rotate the secret, set the new `GUMROAD_WEBHOOK_SECRET` on the backend,
+then re-run the loop above with the new value and delete the old
+subscriptions (`DELETE /v2/resource_subscriptions/:id`).
+
+---
+
 ## Wallet Audit Hardening (Post-Deploy)
 
 The `walletaudit` table is the forensic record for every wallet mutation
