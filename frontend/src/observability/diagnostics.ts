@@ -104,6 +104,7 @@ export interface DiagnosticMetadata {
 /** The backend mints UUID4 hex; its wider inbound header alphabet is not prose-safe. */
 export function safeDiagnosticRequestId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
+  // UUID4's version nibble is 4; its variant nibble is 8, 9, a or b.
   return /^(?:[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.test(
     value,
   )
