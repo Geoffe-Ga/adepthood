@@ -86,6 +86,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from services.botmason import ImagePayload, LLMResponse
+    from services.reflection_boundary import ReflectionBoundary
 
 
 class Recorder(enum.StrEnum):
@@ -413,10 +414,16 @@ def record_classifier_inputs(monkeypatch: pytest.MonkeyPatch, ledger: Ledger) ->
     origin = reply_within
 
     async def _recorded(
-        content: str, *, api_key: str | None, timeout_seconds: float | None
+        content: str,
+        *,
+        boundary: ReflectionBoundary,
+        api_key: str | None,
+        timeout_seconds: float | None,
     ) -> LLMResponse:
         await ledger.dial(Recorder.CLASSIFIER, "classify", content)
-        return await origin(content, api_key=api_key, timeout_seconds=timeout_seconds)
+        return await origin(
+            content, boundary=boundary, api_key=api_key, timeout_seconds=timeout_seconds
+        )
 
     monkeypatch.setattr(frequency_classification, "_reply_within", _recorded)
 

@@ -635,7 +635,7 @@
   },
   {
     "id": "journal.withdraw-connected-vault-copy",
-    "description": "A writer whose Personal page and generated Voice Draft have reached their connected Creek vault deletes that page. The first content-free Voice Draft retraction fails at the real HTTP boundary, so Adepthood answers with its stable retryable withdrawal message and keeps the page visible instead of claiming success while derived plaintext remains. Repeating the same action after Creek recovers confirms both the AI-attributed draft and journal replica are absent before the local page disappears. The lane uses the production client and an out-of-process contract fake that records only opaque ids, tiers, actions, and digests; no journal or generated prose returns through its control surface.",
+    "description": "A vault-bound writer's Personal page reaches their connected Creek vault, and the vault, not the app provider, answers its resonance pass (#3061). The writer asks for a first letter on that note. No vault advertises a letter capability yet, so the request is refused with 503 reflection_source_unavailable (#3156): the wallet and its audit trail do not move, no provider surface is dialled, a second ask is refused the same way (nothing was cached), and no Voice Draft request or fragment reaches the vault. Deleting the page then withdraws the vault's journal replica before the local page answers 404. The Voice Draft half (a failed draft retraction keeping the page visible, then a confirmed retry) is declared under journal.withdraw-voice-draft-copy until the vault writes letters (#3203). The lane uses the production client and an out-of-process contract fake that records only opaque ids, tiers, actions, and digests; no journal or generated prose returns through its control surface.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal", "resonance"],
@@ -699,7 +699,7 @@
   },
   {
     "id": "journal.intimate-reclassification-withdraws-copies",
-    "description": "A writer whose Personal page and generated Voice Draft have reached their connected Creek vault chooses Intimate for that page (#3060, #3077). The stricter tier is committed locally whatever the vault says. When the first content-free Voice Draft retraction fails at the real HTTP boundary, the PATCH answers the stable retryable 503 vault_withdrawal_pending -- the existing privacy control keeps Intimate selected and offers a retry -- instead of a 200 while the AI-authored draft is still in the vault. Choosing Intimate again re-sends the owed DELETE from a durable, content-free obligation row and succeeds only once the vault confirms both the draft and the journal replica absent. The lane uses the production client against the out-of-process contract fake.",
+    "description": "A vault-bound writer whose Personal page has reached their connected Creek vault chooses Intimate for that page (#3060, #3077). First, their ask for a letter on the vault's margin note is refused with 503 reflection_source_unavailable (#3156). Nothing is charged, nothing is dialled, and no Voice Draft reaches the vault, so there is no draft to retract. The stricter tier is then committed, the vault's journal replica is withdrawn and confirmed absent, and a further choice of Intimate sends nothing. The Voice Draft retraction half (a failed draft DELETE answered with the retryable 503 vault_withdrawal_pending, then retried from a durable obligation row) is declared under journal.intimate-withdraws-voice-draft until the vault writes letters (#3203). The lane uses the production client against the out-of-process contract fake.",
     "crosses": {
       "screen": "frontend/src/features/Journal/PrivacyTierControl.tsx",
       "client": ["journal", "resonance"],
@@ -714,6 +714,38 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-intimate-withdrawal.e2e.test.ts"
+  },
+  {
+    "id": "journal.withdraw-voice-draft-copy",
+    "description": "A writer whose Personal page and its generated Voice Draft have both reached their connected Creek vault deletes that page. The first content-free Voice Draft retraction fails at the real HTTP boundary, so Adepthood answers with its stable retryable vault_withdrawal_pending and keeps the page visible instead of claiming success while derived plaintext remains. Repeating the action after Creek recovers confirms the AI-attributed draft and the journal replica absent before the local page disappears. Uncovered because every account that can mirror a Voice Draft to a vault is vault-bound, and #3156 refuses a vault-bound first letter (503 reflection_source_unavailable), so no new Voice Draft can reach a vault until the vault writes letters itself (#3203). Restored by re-enabling the draft assertions in frontend/e2e/journal-vault-withdrawal.e2e.test.ts. Pinned meanwhile by backend/tests/test_journal_delete_completion.py and backend/tests/test_creek_vault_voice_drafts.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "GET /journal/{entry_id}",
+        "DELETE /journal/{entry_id}"
+      ],
+      "tables": ["journalentry", "marginalia", "voicedraftretraction"]
+    },
+    "status": "uncovered",
+    "issue": 3203
+  },
+  {
+    "id": "journal.intimate-withdraws-voice-draft",
+    "description": "A writer whose Personal page and its generated Voice Draft have both reached their connected Creek vault chooses Intimate for that page (#3060, #3077). When the first content-free Voice Draft retraction fails at the real HTTP boundary, the PATCH answers the retryable 503 vault_withdrawal_pending while the tier stays committed. Each further choice of Intimate re-sends the owed DELETE from a durable, content-free obligation row, and the PATCH succeeds only once the vault confirms the draft and the journal replica absent. Uncovered for the same reason as journal.withdraw-voice-draft-copy: under #3156 a vault-bound first letter is refused, so no new Voice Draft reaches a vault until the vault writes letters (#3203). Restored by re-enabling the draft assertions in frontend/e2e/journal-intimate-withdrawal.e2e.test.ts. Pinned meanwhile by backend/tests/test_voice_draft_mirroring.py and backend/tests/test_creek_vault_voice_drafts.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/PrivacyTierControl.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "PATCH /journal/{entry_id}",
+        "GET /journal/{entry_id}"
+      ],
+      "tables": ["journalentry", "marginalia", "voicedraftretraction"]
+    },
+    "status": "uncovered",
+    "issue": 3203
   },
   {
     "id": "journal.stage-prompts-and-cadences",
@@ -759,6 +791,24 @@
         "POST /journal/{entry_id}/suggestions/detect"
       ],
       "tables": ["journalentry", "marginalia", "walletaudit", "uservaultconfig"]
+    },
+    "status": "uncovered",
+    "issue": 3061
+  },
+  {
+    "id": "journal.vault-bound-essay-corpus-transcription-fail-closed",
+    "description": "A writer who has connected a vault asks for a margin note's letter, photographs a page, or -- having agreed to the corpus -- saves, edits, or grants consent over writing they already had. None of those is answered by the app's own model provider, whatever BYOK key the request carries (#3061, #3156). No vault advertises an essay, a classification adepthood may call, or a transcription today, so each fails closed: a first letter is a 503 reflection_source_unavailable before any charge, with the note's essay left empty so a later ask can still buy one (a letter already bought still reopens free); a page is the same 503 before the image, payer, or wallet gate; and a save or edit stores no corpus fragment while a consent grant's sweep stops before its first offer and leaves every entry unmarked, so the writing is not demoted for a refusal about the account. The first-letter refusal is also asserted across the wire, against the lane's vault owner, inside journal.withdraw-connected-vault-copy and journal.intimate-reclassification-withdraws-copies: 503, the wallet and its audit trail unchanged, no provider dial, no Voice Draft in the vault. The owner decided the vault will write letters (#3203). This journey stays uncovered as a whole because no lane spec drives the corpus or transcription routes for a vault-bound writer, and the transcription capture itself is uncovered (#2768). Pinned at the route by backend/tests/security/test_vault_bound_essay_and_corpus.py, each refusal with an app-provider counterweight that watches the same dial spy fire, and structurally by backend/tests/security/test_app_provider_construction_chokepoint.py, which fails any ungated provider dial or classifier call.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "journal", "corpusConsent"],
+      "routes": [
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "POST /journal/transcribe-page",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "PUT /corpus/consent/{source}"
+      ],
+      "tables": ["marginalia", "walletaudit", "corpusfragment", "journalentry"]
     },
     "status": "uncovered",
     "issue": 3061

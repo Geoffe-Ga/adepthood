@@ -747,8 +747,9 @@ async def generate_essay(
 
     ``prior_drafts`` are the app's own earlier letters, passed for content only;
     see :data:`NO_STYLE_TRANSFER_INSTRUCTION`. Unlike the resonance half, this
-    path is cloud-only (``routers.journal._cache_essay`` builds its LLM with no
-    vault selection), so what is threaded here reaches every account.
+    path is app-provider-only (``routers.journal._cache_essay`` takes its LLM
+    from the boundary chokepoint, and a vault-bound writer is refused before it
+    -- #3156), so what is threaded here reaches every app-provider-bound account.
     """
     prompt = _build_essay_prompt(body, note.anchor_text, note.kind, note.note, prior_drafts)
     completion = await llm.complete(prompt)
