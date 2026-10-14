@@ -343,7 +343,7 @@
       ]
     },
     "issue": 2871,
-    "gap": "local model runtime and serving proof (Geoffe-Ga/Creek-Vault#1849, #2871) is outside this repo; adepthood proves routing only, and #3156 still lets essays reach the app provider"
+    "gap": "local model runtime and serving proof (Geoffe-Ga/Creek-Vault#1849, #2871) is outside this repo; adepthood proves only which destinations its AI operations dial"
   },
   "C14": {
     "status": "uncovered",
@@ -462,8 +462,8 @@
         "backend/tests/security/test_ai_boundary_network_matrix.py::test_vault_bound_operation_dials_only_its_vault"
       ]
     },
-    "issue": 3156,
-    "gap": "essay, corpus classification and transcription still reach the app provider under VAULT_BOUND (#3156); the deployment vault and Creek's downstream model are not driven at the socket"
+    "issue": 2871,
+    "gap": "the deployment-wide vault is proven at the seam, not the socket; whether the vault's own model stays local is Creek's to prove (Geoffe-Ga/Creek-Vault#1849, #2871)"
   },
   "C24": {
     "status": "partial",
