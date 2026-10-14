@@ -17,7 +17,11 @@ from bounds import RowIdPath
 from database import get_session
 from dependencies.ownership import log_ownership_denied, require_owned_habit
 from dependencies.timezone import current_user_timezone
-from domain.habit_links import assert_linked_units_allowed, assert_units_allowed_if_linked
+from domain.habit_links import (
+    assert_linked_units_allowed,
+    assert_units_allowed_if_linked,
+    clear_practice_habit_links,
+)
 from domain.habit_stats import compute_habit_stats
 from domain.ui_flags import clear_writing_habit_links
 from error_responses import build_router
@@ -441,10 +445,12 @@ async def delete_habit(
     # NULL into a NOT NULL column and failing the request for any habit that
     # had ever been checked in (#2763).
     #
-    # A writing timer linked to this habit is unlinked first (#2861). The
-    # column's ``ON DELETE SET NULL`` would do it on Postgres; doing it here
-    # keeps the rule true wherever foreign keys are not enforced.
+    # A writing timer (#2861) or practice (#3151) linked to this habit is
+    # unlinked first. The columns' ``ON DELETE SET NULL`` would do it on
+    # Postgres; doing it here keeps the rule true wherever foreign keys are
+    # not enforced.
     await clear_writing_habit_links(session, cast("int", habit_id))
+    await clear_practice_habit_links(session, cast("int", habit_id))
     await session.delete(habit)
     await session.commit()
     logger.info(

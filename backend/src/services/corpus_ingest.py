@@ -105,6 +105,7 @@ from services.frequency_classification import (
     classify_frequencies,
 )
 from services.privacy_lineage import LineageOperation, observe_entry_lineage
+from services.reflection_boundary import ReflectionBoundary
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ CLASSIFICATION_CALLS_PER_INGEST: Final[int] = 1
 class IngestOutcome(enum.StrEnum):
     """What became of one attempt to put writing into a corpus.
 
-    Four outcomes and exactly one of them stores anything. They are named
+    Five outcomes and exactly one of them stores anything. They are named
     rather than collapsed into ``fragment is None`` because a *caller with a
     user in front of it* has to say which of them happened: "you have not
     agreed to this yet", "that tier never enters the corpus" and "nothing in
@@ -135,6 +136,10 @@ class IngestOutcome(enum.StrEnum):
     NO_CONSENT = "no_consent"
     TIER_REFUSED = "tier_refused"
     UNCLASSIFIED = "unclassified"
+    #: The writer's AI operations are bound to their vault, and the only
+    #: classifier this spine can call is the app provider's (#3156). Not
+    #: :attr:`UNCLASSIFIED`: nothing was asked, so nothing was found wanting.
+    BOUNDARY_REFUSED = "boundary_refused"
 
 
 @dataclass(frozen=True)
@@ -174,6 +179,7 @@ class IngestResult:
 _NO_CONSENT_RESULT = IngestResult(IngestOutcome.NO_CONSENT)
 _TIER_REFUSED_RESULT = IngestResult(IngestOutcome.TIER_REFUSED)
 _UNCLASSIFIED_RESULT = IngestResult(IngestOutcome.UNCLASSIFIED)
+_BOUNDARY_REFUSED_RESULT = IngestResult(IngestOutcome.BOUNDARY_REFUSED)
 
 # What the journal path's log line calls each non-storing outcome. A mapping
 # rather than a chain of branches so it is total by construction: an outcome
@@ -184,6 +190,7 @@ _JOURNAL_LOG_OUTCOMES: Final[Mapping[IngestOutcome, str]] = MappingProxyType(
         IngestOutcome.NO_CONSENT: "no_consent",
         IngestOutcome.TIER_REFUSED: "withdrawn",
         IngestOutcome.UNCLASSIFIED: "unclassified",
+        IngestOutcome.BOUNDARY_REFUSED: "boundary_refused",
     }
 )
 
@@ -193,6 +200,7 @@ async def _classify_and_record(
     *,
     user_id: int,
     request: IngestRequest,
+    boundary: ReflectionBoundary,
     timeout_seconds: float | None,
 ) -> IngestResult:
     """Classify this writing and store it, or report that it recognised nothing.
@@ -232,7 +240,10 @@ async def _classify_and_record(
     """
     await session.commit()
     classification = await classify_frequencies(
-        request.content, classification=request.tier, timeout_seconds=timeout_seconds
+        request.content,
+        classification=request.tier,
+        boundary=boundary,
+        timeout_seconds=timeout_seconds,
     )
     if not classification.is_classified():
         return _UNCLASSIFIED_RESULT
@@ -255,6 +266,7 @@ async def ingest_content(
     *,
     user_id: int,
     request: IngestRequest,
+    boundary: ReflectionBoundary,
     timeout_seconds: float | None = None,
 ) -> IngestResult:
     """Put one piece of writing into ``user_id``'s corpus, or say why not.
@@ -283,6 +295,18 @@ async def ingest_content(
     on paying for that answer. Callers that offer one piece of writing catch it
     and carry on; the one that offers a batch stops.
 
+    ``boundary`` is the writer's
+    :class:`~services.reflection_boundary.ReflectionBoundary`, resolved by the
+    caller from server state and required so that no caller can omit it
+    (#3156). Under ``VAULT_BOUND`` this answers
+    :attr:`IngestOutcome.BOUNDARY_REFUSED` after the consent gate and before the
+    commit and the classifier: the only classifier this spine can call is the
+    app provider, and a writer who connected a vault never has their writing
+    answered by it. No vault classification is asked for instead -- no vault
+    serves a classify adepthood may call yet (see
+    :mod:`services.frequency_source`) -- so the honest answer is "not ingested",
+    and the next edit or sweep offers the entry again.
+
     ``timeout_seconds`` is passed straight to the classifier and bounds only
     the provider call. It is stated at the call rather than carried on
     :class:`IngestRequest` because it is a fact about *this caller's patience*,
@@ -294,9 +318,15 @@ async def ingest_content(
     consent = await load_consent(session, user_id=user_id, source=request.source)
     if not consent.granted:
         return _NO_CONSENT_RESULT
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        return _BOUNDARY_REFUSED_RESULT
     try:
         return await _classify_and_record(
-            session, user_id=user_id, request=request, timeout_seconds=timeout_seconds
+            session,
+            user_id=user_id,
+            request=request,
+            boundary=boundary,
+            timeout_seconds=timeout_seconds,
         )
     except IntimateContentRefusedError:
         return _TIER_REFUSED_RESULT
@@ -306,7 +336,11 @@ async def ingest_content(
 
 
 async def ingest_journal_entry(
-    session: AsyncSession, entry: JournalEntry, *, timeout_seconds: float | None = None
+    session: AsyncSession,
+    entry: JournalEntry,
+    *,
+    boundary: ReflectionBoundary,
+    timeout_seconds: float | None = None,
 ) -> CorpusFragment | None:
     """Write ``entry`` into its account's corpus, replacing what it had there.
 
@@ -342,6 +376,13 @@ async def ingest_journal_entry(
     therefore leaves no fragment rather than a stale one, durably; the entry
     stays a candidate and the next edit or sweep offers it again.
 
+    ``boundary`` is the entry owner's resolved boundary. Under ``VAULT_BOUND``
+    the previous fragment is still withdrawn -- the corpus must not go on
+    quoting what the entry no longer says -- but nothing is classified and the
+    outcome is logged as ``boundary_refused``: ids and that word only. The
+    shadow lineage observation is skipped too, because no body is about to
+    leave. See :func:`ingest_content`.
+
     ``timeout_seconds`` bounds the provider call and nothing else; see
     :func:`ingest_content`.
     """
@@ -364,11 +405,9 @@ async def ingest_journal_entry(
     if not consent.granted:
         return None
     removed = await delete_fragments_for_entry(session, user_id=entry.user_id, entry_id=entry_id)
-    if entry.deleted_at is not None:
-        # A soft-deleted row is invisible to every other read path and must not
-        # be classified back into view. Read off the persisted row rather than
-        # off anything a client sent.
-        _log_outcome(entry.user_id, entry_id, "withdrawn", removed)
+    withheld = _withheld_from_classifier(entry, boundary)
+    if withheld is not None:
+        _log_outcome(entry.user_id, entry_id, withheld, removed)
         return None
     # Shadow only (#3059): consent is granted and the entry is live, so its body
     # is about to go to the classifier. ``_classify_and_record`` commits before
@@ -383,9 +422,26 @@ async def ingest_journal_entry(
             source=INGEST_SOURCE,
             source_entry_id=entry_id,
         ),
+        boundary=boundary,
         timeout_seconds=timeout_seconds,
     )
     return _journal_fragment(result, user_id=entry.user_id, entry_id=entry_id, removed=removed)
+
+
+def _withheld_from_classifier(entry: JournalEntry, boundary: ReflectionBoundary) -> str | None:
+    """Why a consented entry's old fragment is withdrawn and nothing replaces it, if it is.
+
+    ``"withdrawn"`` for a soft-deleted row: invisible to every other read path,
+    it must not be classified back into view, and the deletion is read off the
+    persisted row rather than off anything a client sent. ``"boundary_refused"``
+    for a vault-bound owner (#3156): the classifier is the app provider, which
+    never answers them. ``None`` when the entry may be offered.
+    """
+    if entry.deleted_at is not None:
+        return "withdrawn"
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        return _JOURNAL_LOG_OUTCOMES[IngestOutcome.BOUNDARY_REFUSED]
+    return None
 
 
 def _journal_fragment(

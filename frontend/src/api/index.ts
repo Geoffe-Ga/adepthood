@@ -2922,6 +2922,8 @@ export interface UserPractice {
   custom_name?: string | null;
   /** ritual-03: per-user mode_config override (validated server-side as ModeConfig). */
   mode_config_override?: ModeConfig | null;
+  /** #3151: the habit this practice's sessions count toward; null when unlinked. */
+  habit_id?: number | null;
   /** ritual-03: server-resolved (custom_name ?? practice.name); may be absent on legacy payloads. */
   effective_name?: string | null;
   /** ritual-03: server-resolved (mode_config_override ?? practice.mode_config). */

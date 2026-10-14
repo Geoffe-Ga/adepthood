@@ -80,7 +80,7 @@ from fastapi import Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from dependencies.creek_vault import get_creek_vault_client
+from dependencies.creek_vault import get_creek_vault_client, resolve_reflection_boundary
 from dependencies.document_payload import guard_document_payload
 from domain.corpus_import import ImportDestination
 from domain.creek_vault import CreekVaultPipelineClient
@@ -204,12 +204,18 @@ async def put_corpus_consent(
     under a decision already standing -- so it goes where sweeps are kept, the
     append-only :class:`models.corpus_sweep.CorpusSweep` log and the log line,
     rather than onto a shape that also answers ``GET``.
+
+    The sweep runs under the account's AI-operation boundary, resolved here from
+    server state: a writer who connected a vault has nothing classified by the
+    app provider, so their grant is recorded and the sweep stops before its
+    first offer (#3156).
     """
     async with hold_account(session, user_id):
         await ensure_account_live(session, user_id)
         change = await set_consent(session, user_id=user_id, source=source, granted=payload.granted)
         await session.commit()
-    await backfill_after_consent(session, user_id=user_id, change=change)
+    boundary = await resolve_reflection_boundary(session, user_id)
+    await backfill_after_consent(session, user_id=user_id, change=change, boundary=boundary)
     await session.commit()
     return _to_response(change.state)
 
