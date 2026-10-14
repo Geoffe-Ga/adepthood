@@ -14,9 +14,10 @@ purchase it claims to reverse.
 
 The two handlers are deliberately asymmetric about product class.
 ``process_refund`` reverses whatever the stored sale delivered and claims
-every sale it resolves. ``process_cancellation`` acts only on an APTITUDE
-product — nothing else is a subscription — and is inert for anything else,
-taking no claim so the refund path stays armed.
+every sale it resolves. ``process_cancellation``
+(:mod:`services.gumroad_subscriptions`) acts only on an APTITUDE product —
+nothing else is a subscription — and never takes the claim, so the refund
+path stays armed.
 """
 
 from __future__ import annotations
@@ -37,7 +38,8 @@ from domain.entitlements import (
 from models.gumroad_sale import SALE_RESOURCE_NAME, GumroadSale
 from models.user import User
 from models.wallet_audit import REASON_GUMROAD_PURCHASE, REASON_GUMROAD_REFUND, WalletAudit
-from services.gumroad_revocation import process_cancellation, process_refund
+from services.gumroad_revocation import process_refund
+from services.gumroad_subscriptions import process_cancellation
 from services.token_packs import claim_token_pack_sales
 
 APTITUDE_PRODUCT_ID = "prod_course_abc"
