@@ -83,6 +83,17 @@ describe('what each outcome says', () => {
     expect(SEED_STATUS_LINES.capability_unsupported).toContain('Intimate');
   });
 
+  test('an unconfirmed upload never claims the vault was left unchanged', () => {
+    // #3052. `degraded` is answered after the document went over the wire, and
+    // a vault can keep it and then lose its reply, so the line may only say the
+    // outcome is unconfirmed.
+    const line = SEED_STATUS_LINES.degraded;
+
+    expect(line.toLowerCase()).toContain('confirm');
+    expect(line).not.toMatch(/nothing|wasn't stored|unchanged|never sent|wasn't sent/i);
+    expect(line).not.toBe(SEED_STATUS_LINES.failed);
+  });
+
   test('the size refusal names the limit', () => {
     expect(SEED_STATUS_LINES.too_large).toContain(MAX_SEED_DOCUMENT_LABEL);
   });

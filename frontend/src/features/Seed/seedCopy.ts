@@ -38,7 +38,12 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
     'Marked Intimate? That stays on this device — pick a different privacy level if you want ' +
     "this in your vault. Otherwise Adepthood can't send to your vault just yet; keep this one " +
     'and try again later.',
-  degraded: "This didn't finish, and nothing in your vault changed. You can send it again.",
+  // Answered after the document went over, so it cannot promise the vault is
+  // unchanged: the vault may have kept it and lost only its reply (#3052).
+  // Sending again is safe — the same file updates in place.
+  degraded:
+    "We couldn't confirm this reached your vault. Send it again — the same file updates in " +
+    'place rather than making a second copy.',
   in_corpus: 'Kept with the rest of your writing. It will show up in reflections from here on.',
   // The ordinary first answer rather than an error state: the corpus is off
   // until somebody turns it on. It names the setting rather than the endpoint,
