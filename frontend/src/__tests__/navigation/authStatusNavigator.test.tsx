@@ -99,6 +99,7 @@ type MockAuth = {
   // navigator render at any auth state has a non-null TZ string available.
   userTimezone: string;
   userTimezoneReady: boolean;
+  recoverUserTimezone: jest.Mock;
   setUserTimezone: jest.Mock;
   login: jest.Mock;
   signup: jest.Mock;
@@ -116,6 +117,7 @@ function buildAuth(overrides: Partial<MockAuth> = {}): MockAuth {
     authStatus: 'anonymous',
     userTimezone: 'UTC',
     userTimezoneReady: true,
+    recoverUserTimezone: jest.fn(() => Promise.resolve()),
     setUserTimezone: jest.fn(),
     login: jest.fn(() => Promise.resolve()),
     signup: jest.fn(() => Promise.resolve()),

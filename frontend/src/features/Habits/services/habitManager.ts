@@ -1024,6 +1024,7 @@ const quarantineCheckIn = async (
     did_complete: checkIn.did_complete,
     ...(checkIn.completed_units === undefined ? {} : { completed_units: checkIn.completed_units }),
     ...(checkIn.operation_id === undefined ? {} : { operation_id: checkIn.operation_id }),
+    ...(checkIn.replay_id === undefined ? {} : { replay_id: checkIn.replay_id }),
     timestamp: checkIn.timestamp,
     ...(checkIn.completed_on === undefined ? {} : { completed_on: checkIn.completed_on }),
     status,
@@ -1126,7 +1127,7 @@ const drainPendingCheckIns = async (
   calendar: ReplayCalendar,
 ): Promise<void> => {
   const scope = capturePendingCheckInScope();
-  const pending = await loadPendingCheckIns(scope);
+  const pending = await loadPendingCheckIns(scope, true);
   if (pending.length === 0 || getActiveUser() !== owner) return;
   // One clock read and one record read per pass: the policy is pure, and
   // only the head can carry a retry record, so a stale read cannot matter.
