@@ -93,6 +93,13 @@ export type RootStackParamList = {
          * — never the transcribed prose, and never any page image.
          */
         appendTo?: string;
+        /**
+         * Append mode only: the open entry's privacy tier when the camera was
+         * pressed. The capture declares it on every page read and locks its
+         * chooser to it (#3059 AC15); absent or unrecognised, the capture fails
+         * closed to ``intimate`` and reads nothing.
+         */
+        appendTier?: string;
       }
     | undefined;
   JournalEntry:

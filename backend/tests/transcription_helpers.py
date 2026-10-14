@@ -63,9 +63,16 @@ def b64(raw: bytes) -> str:
     return base64.b64encode(raw).decode()
 
 
-def payload(raw: bytes, media_type: str = "image/jpeg") -> dict[str, str]:
+#: The tier a page declares unless a test says otherwise: an egress tier, so a
+#: suite about something else is not refused ``tier_refused`` (#3059 AC15).
+DEFAULT_TIER = "personal"
+
+
+def payload(
+    raw: bytes, media_type: str = "image/jpeg", classification: str = DEFAULT_TIER
+) -> dict[str, str]:
     """Build a transcribe-page request body from raw image bytes."""
-    return {"image_base64": b64(raw), "media_type": media_type}
+    return {"image_base64": b64(raw), "media_type": media_type, "classification": classification}
 
 
 def priced_response(text: str) -> LLMResponse:

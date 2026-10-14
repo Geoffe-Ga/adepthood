@@ -144,7 +144,11 @@ answers to this record's follow-up questions, given the same evening.
    or forwarded. Our server is asked only a content-free admission question
    (`POST /journal/transcribe-page/direct-admission`), so the operator's
    incident switch (`PRIVACY_SUSPEND_EXTERNAL_AI`) still stops the call. The
-   exit test is `backend/tests/security/test_byok_only_cloud.py`.
+   exit test is `backend/tests/security/test_byok_only_cloud.py`. The
+   question carries the page's declared tier and nothing else; any tier but
+   `personal` or `public` is refused 403 `tier_refused`, so the server never
+   admits an Intimate page (#3059 AC15,
+   `backend/tests/security/test_transcription_tier_refusal.py`).
 4. **BotMason credits pay for non-cloud inference only.**
    (`owner:2026-10-07#B12-credits`, `owner:2026-10-07#followup-runtime`)
    That means the vault-local model (B05,

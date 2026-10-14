@@ -138,6 +138,8 @@
       "backend/tests/test_essay_endpoint.py::test_intimate_essay_is_never_charged_and_never_dialled",
       "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
       "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
+      "backend/tests/security/test_transcription_tier_refusal.py::test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched",
+      "backend/tests/security/test_transcription_tier_refusal.py::test_the_direct_admission_never_admits_a_non_egress_tier",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[admits_egress-C08]"
     ],
     "sinks": [

@@ -507,7 +507,9 @@ def test_transcribe_request_repr_never_leaks_image_base64() -> None:
     generated repr (which also backs ``str``) omits the payload; without it the
     value would leak into any log line or traceback that stringifies the model.
     """
-    request = TranscribePageRequest(image_base64=_REPR_SENTINEL_IMAGE_B64, media_type="image/jpeg")
+    request = TranscribePageRequest(
+        image_base64=_REPR_SENTINEL_IMAGE_B64, media_type="image/jpeg", classification="personal"
+    )
 
     assert _REPR_SENTINEL_IMAGE_B64 not in repr(request)
     assert _REPR_SENTINEL_IMAGE_B64 not in str(request)

@@ -24,7 +24,11 @@ interface Deferred {
 }
 
 const mockTranscribe = jest.fn() as jest.MockedFunction<
-  (_args: { imageBase64: string; mediaType: string }) => Promise<{ text: string }>
+  (_args: {
+    imageBase64: string;
+    mediaType: string;
+    classification: string;
+  }) => Promise<{ text: string }>
 >;
 
 jest.mock('@/api', () => {
@@ -81,6 +85,7 @@ function renderRun(pages: CapturePage[]) {
       useTranscriptionRun({
         pages: livePages,
         started: true,
+        classification: 'personal',
         onRetake: jest.fn(),
         onRemove: jest.fn(),
       }),
@@ -95,6 +100,19 @@ function sentImages(): string[] {
 
 beforeEach(() => {
   mockTranscribe.mockReset();
+});
+
+describe('useTranscriptionRun — every read declares the run’s tier (#3059 AC15)', () => {
+  it('sends the classification it was given with each page', async () => {
+    queueDeferred(2);
+    renderRun([page('page-1'), page('page-2')]);
+
+    await waitFor(() => expect(mockTranscribe).toHaveBeenCalledTimes(HARD_BOUND));
+    expect(mockTranscribe.mock.calls.map((call) => call[0]?.classification)).toEqual([
+      'personal',
+      'personal',
+    ]);
+  });
 });
 
 describe('useTranscriptionRun — the concurrency bound survives a mid-flight removal', () => {

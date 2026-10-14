@@ -21,8 +21,10 @@ import type { PrivacyTier } from './PrivacyTierControl';
 
 import { Button } from '@/components/Button';
 
-/** The one-promise gate copy: warm, declinable, and specific to transcription. */
-const INTIMATE_GATE_COPY =
+/** The one-promise gate copy: warm, declinable, and specific to transcription.
+ *  Also the copy for the server's own refusal of the declared tier (#3059 AC15),
+ *  so the same promise reads the same wherever it is kept. */
+export const INTIMATE_TRANSCRIPTION_GATE_COPY =
   'Intimate writing is never handed to an outside AI, so photo transcription is off for this entry. You can type it privately instead.';
 const TYPE_INSTEAD_LABEL = 'Type it instead';
 const KEEP_PERSONAL_LABEL = 'Keep as Personal';
@@ -36,6 +38,12 @@ export interface CaptureClassificationControlProps {
   onTypeInstead: () => void;
   /** Revert the selection to ``personal``, re-enabling transcription. */
   onKeepPersonal: () => void;
+  /**
+   * False in append mode for an Intimate entry (#3059 AC15): the gate offers no
+   * "Keep as Personal", since the capture may never declare a wider tier than
+   * the page it joins.
+   */
+  canKeepPersonal?: boolean;
 }
 
 /** The intimate transcription gate: the one-promise copy over its two declinable
@@ -45,12 +53,13 @@ function IntimateGate({
   onKeepPersonal,
 }: {
   onTypeInstead: () => void;
-  onKeepPersonal: () => void;
+  /** Null when reverting would widen the capture past its floor. */
+  onKeepPersonal: (() => void) | null;
 }): React.JSX.Element {
   return (
     <View testID="capture-intimate-gate" style={styles.intimateGate}>
       <Text testID="capture-intimate-explainer" style={styles.intimateGateText}>
-        {INTIMATE_GATE_COPY}
+        {INTIMATE_TRANSCRIPTION_GATE_COPY}
       </Text>
       <Button
         testID="capture-type-instead"
@@ -58,13 +67,15 @@ function IntimateGate({
         accessibilityLabel={TYPE_INSTEAD_LABEL}
         onPress={onTypeInstead}
       />
-      <Button
-        testID="capture-keep-personal"
-        variant="secondary"
-        label={KEEP_PERSONAL_LABEL}
-        accessibilityLabel={KEEP_PERSONAL_LABEL}
-        onPress={onKeepPersonal}
-      />
+      {onKeepPersonal ? (
+        <Button
+          testID="capture-keep-personal"
+          variant="secondary"
+          label={KEEP_PERSONAL_LABEL}
+          accessibilityLabel={KEEP_PERSONAL_LABEL}
+          onPress={onKeepPersonal}
+        />
+      ) : null}
     </View>
   );
 }
@@ -76,12 +87,16 @@ export function CaptureClassificationControl({
   onChange,
   onTypeInstead,
   onKeepPersonal,
+  canKeepPersonal = true,
 }: CaptureClassificationControlProps): React.JSX.Element {
   return (
     <View testID="capture-classification" style={styles.classification}>
       <PrivacyTierControl value={value} onChange={onChange} showExplainer={false} />
       {value === 'intimate' ? (
-        <IntimateGate onTypeInstead={onTypeInstead} onKeepPersonal={onKeepPersonal} />
+        <IntimateGate
+          onTypeInstead={onTypeInstead}
+          onKeepPersonal={canKeepPersonal ? onKeepPersonal : null}
+        />
       ) : null}
     </View>
   );

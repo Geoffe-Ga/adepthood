@@ -16,7 +16,8 @@ metadata (user id, token count) is logged.
 **A writer's own key never reaches this router** (ADR 0009 phase (a), #3067).
 A device holding a key reads the page by calling its vendor directly, after
 asking :func:`direct_admission` -- which carries neither the key nor the page
--- whether the operator's external-AI incident switch is on. This route takes no
+-- whether the operator's external-AI incident switch is on, and whether the
+page's declared tier may leave the primary boundary at all. This route takes no
 ``X-LLM-API-Key`` header: one sent anyway by a stale client is not declared,
 never read, never forwarded and never logged, so the request is keyless and is
 refused ``llm_key_required`` unless the armed stub test seam answers it.
@@ -35,17 +36,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.creek_vault import resolve_reflection_boundary
+from domain.privacy_tier import admits_egress
 from domain.transcription import (
     TranscriptionVerdict,
     build_transcription_prompt,
     classify_transcription,
 )
 from error_responses import build_router
-from errors import bad_gateway, service_unavailable, unprocessable
+from errors import bad_gateway, forbidden, service_unavailable, unprocessable
 from rate_limit import limiter
 from rate_limit_keys import per_user_rate_limit_key
 from routers.auth import get_current_user
-from schemas.transcription import TranscribePageRequest, TranscribePageResponse
+from schemas.transcription import (
+    DirectAdmissionRequest,
+    TranscribePageRequest,
+    TranscribePageResponse,
+)
 from services.botmason import (
     ImagePayload,
     LLMProviderError,
@@ -72,6 +78,12 @@ from services.reflection_boundary import (
 from services.wallet import preflight_deduction
 
 logger = logging.getLogger(__name__)
+
+#: The refusal for a page whose declared tier may not leave the primary
+#: boundary (#3059 AC15): ``intimate``, an unknown tier, the empty string, a
+#: wrong-case spelling. Non-retryable: the same page declared the same way is
+#: refused the same way.
+TIER_REFUSED = "tier_refused"
 
 # A page is one dial: there is no corrective retry on the transcription path.
 _TRANSCRIPTION_ATTEMPTS = 1
@@ -194,6 +206,19 @@ def _validate_image(image_base64: str, media_type: str) -> ImagePayload:
     return _build_attachment(image_base64, media_type)
 
 
+def _refuse_ineligible_tier(classification: str) -> None:
+    """Refuse 403 ``tier_refused`` unless the declared tier may egress (#3059 AC15).
+
+    The first statement of both page-read doors, so a refused page touches no
+    boundary row, payer gate, slot, wallet, usage log or provider. The tier is
+    the client's declaration -- the route is stateless and has no entry row to
+    read it from -- so this is defence in depth behind the client's own gate
+    (#1882): it cannot stop a client that lies, but it stops one that forgot.
+    """
+    if not admits_egress(classification):
+        raise forbidden(TIER_REFUSED)
+
+
 async def _app_provider_boundary(session: AsyncSession, user_id: int) -> ReflectionBoundary:
     """Return the caller's boundary, failing a vault-bound page closed before any charge (#3156).
 
@@ -296,8 +321,10 @@ async def transcribe_page(
     """Transcribe one keyless image of text on the armed stub seam, or refuse.
 
     Stateless: no journal row is written and the metered call carries no
-    ``journal_entry_id``. Strict ordering — an operator's external-AI
-    suspension answers 503 ``ai_suspended`` before anything else (#3075), then a
+    ``journal_entry_id``. Strict ordering — a page whose declared tier may not
+    leave the primary boundary is refused 403 ``tier_refused`` before anything
+    else (#3059), then an operator's external-AI
+    suspension answers 503 ``ai_suspended`` (#3075), then a
     vault-bound writer is answered 503 ``reflection_source_unavailable`` (#3156),
     then the payer gate runs, then the image is validated (422 without any charge).
     This route holds no key of the writer's own -- a device with one reads the
@@ -313,6 +340,7 @@ async def transcribe_page(
     Only metadata (user id, total tokens) is logged — never the base64 image
     payload or the transcribed text.
     """
+    _refuse_ineligible_tier(payload.classification)
     require_external_ai_available()
     boundary = await _app_provider_boundary(session, current_user)
     # The payer gate precedes validation: outside the stub seam a keyless page
@@ -368,6 +396,7 @@ async def transcribe_page(
 @limiter.limit(TRANSCRIBE_USER_RATE_LIMIT, key_func=per_user_rate_limit_key)
 async def direct_admission(
     request: Request,  # noqa: ARG001 — consumed by @limiter.limit decorator
+    payload: DirectAdmissionRequest,
 ) -> Response:
     """Say whether a device may read a page by calling its own vendor directly.
 
@@ -375,9 +404,13 @@ async def direct_admission(
     the device sends the page straight to the vendor that key belongs to. What
     the device cannot know is whether an operator has switched external AI off
     for a privacy incident (#3075), the one control meant to stop a BYOK call
-    too, so it asks here first. The request carries no body, no key and no page;
-    the answer is 204 with no body, or 503 ``ai_suspended``. Nothing is charged,
-    metered or logged beyond the access line every request gets.
+    too, so it asks here first. The request carries the page's declared tier and
+    nothing else -- no key and no page. A tier that may not leave the primary
+    boundary is refused 403 ``tier_refused`` first (#3059), so the server never
+    admits an Intimate page; otherwise the answer is 204 with no body, or 503
+    ``ai_suspended``. Nothing is charged, metered or logged beyond the access
+    line every request gets.
     """
+    _refuse_ineligible_tier(payload.classification)
     require_external_ai_available()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

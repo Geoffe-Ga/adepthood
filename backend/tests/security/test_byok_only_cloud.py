@@ -97,6 +97,8 @@ _RELAYED_ROUTES: Final = ("resonance", "essay", "detect")
 _KEY_HEADER: Final = "X-LLM-API-Key"
 _TRANSCRIBE: Final = "/journal/transcribe-page"
 _DIRECT_ADMISSION: Final = "/journal/transcribe-page/direct-admission"
+#: An admission declares the page's tier and nothing else (#3059 AC15).
+_ADMISSION_BODY: Final = {"classification": "personal"}
 _LOCAL_HOSTS: Final = frozenset({"localhost", "localhost.localdomain", "testserver", ""})
 
 #: A notes reply both SDKs can carry, so a BYOK counterweight pass succeeds.
@@ -550,13 +552,16 @@ async def test_a_key_sent_anyway_with_a_page_is_never_forwarded_or_logged(
 
 
 @pytest.mark.asyncio
-async def test_the_direct_admission_carries_nothing_and_admits(
+async def test_the_direct_admission_carries_only_a_tier_and_admits(
     async_client: AsyncClient, cloud_ready: EgressSpy
 ) -> None:
-    """204 with an empty body: the device may call its vendor; the server dials nothing."""
+    """204 with an empty body: the device may call its vendor; the server dials nothing.
+
+    The request carries the page's declared tier and nothing else (#3059 AC15).
+    """
     headers, _, _ = await signup(async_client, "direct_admitted")
 
-    resp = await async_client.post(_DIRECT_ADMISSION, headers=headers)
+    resp = await async_client.post(_DIRECT_ADMISSION, headers=headers, json=_ADMISSION_BODY)
 
     assert resp.status_code == HTTPStatus.NO_CONTENT, resp.text
     assert resp.content == b""
@@ -572,7 +577,7 @@ async def test_the_direct_admission_refuses_while_external_ai_is_suspended(
     headers, _, _ = await signup(async_client, "direct_suspended")
     suspend_ai(monkeypatch)
 
-    resp = await async_client.post(_DIRECT_ADMISSION, headers=headers)
+    resp = await async_client.post(_DIRECT_ADMISSION, headers=headers, json=_ADMISSION_BODY)
 
     assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
     assert resp.json() == {"detail": "ai_suspended"}
@@ -582,6 +587,6 @@ async def test_the_direct_admission_refuses_while_external_ai_is_suspended(
 @pytest.mark.asyncio
 async def test_the_direct_admission_requires_a_session(async_client: AsyncClient) -> None:
     """An anonymous caller is refused before anything else."""
-    resp = await async_client.post(_DIRECT_ADMISSION)
+    resp = await async_client.post(_DIRECT_ADMISSION, json=_ADMISSION_BODY)
 
     assert resp.status_code == HTTPStatus.UNAUTHORIZED

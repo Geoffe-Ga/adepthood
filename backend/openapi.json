@@ -1245,6 +1245,21 @@
         "title": "DepthPreferencesUpdate",
         "type": "object"
       },
+      "DirectAdmissionRequest": {
+        "description": "What a device declares before reading a page with its own vendor (ADR 0009).\n\nOnly the page's tier: never the page, never the key. The server admits a\nread only for a tier that may leave the primary boundary, so it never\nadmits an Intimate page to a vendor it cannot see.",
+        "properties": {
+          "classification": {
+            "description": "The declared privacy tier of the entry the page belongs to. Only `personal` and `public` may be read; any other value, `intimate` included, is refused 403 `tier_refused` before anything is charged or sent to a model.",
+            "title": "Classification",
+            "type": "string"
+          }
+        },
+        "required": [
+          "classification"
+        ],
+        "title": "DirectAdmissionRequest",
+        "type": "object"
+      },
       "DocumentImportResponse": {
         "description": "What became of one imported document, and where it went.\n\n``destination`` is the discriminator: a ``vault`` answer carries\n``vault_status`` and possibly a ``vault_ref`` and ``tags``, and a\n``corpus`` answer carries ``corpus_status`` and possibly a ``fragment_id``.\nThe other side is ``null`` in each case, which is a stronger statement than\nan absent field -- it says that vocabulary did not apply, rather than that\nnobody filled it in.",
         "properties": {
@@ -8356,8 +8371,13 @@
         "type": "object"
       },
       "TranscribePageRequest": {
-        "description": "One captured image of text (a page, screenshot, or screen) to transcribe.\n\n``image_base64`` is the base64-encoded image bytes and ``media_type`` its\ndeclared MIME type. Neither field is stored: the request is stateless, so\nthe bytes live only for the duration of the single vision call.",
+        "description": "One captured image of text (a page, screenshot, or screen) to transcribe.\n\n``image_base64`` is the base64-encoded image bytes and ``media_type`` its\ndeclared MIME type. ``classification`` is the tier of the entry the page\nbelongs to, judged before anything else. No field is stored: the request\nis stateless, so the bytes live only for the duration of the single vision\ncall.",
         "properties": {
+          "classification": {
+            "description": "The declared privacy tier of the entry the page belongs to. Only `personal` and `public` may be read; any other value, `intimate` included, is refused 403 `tier_refused` before anything is charged or sent to a model.",
+            "title": "Classification",
+            "type": "string"
+          },
           "image_base64": {
             "description": "Base64-encoded image bytes.",
             "minLength": 1,
@@ -8377,7 +8397,8 @@
         },
         "required": [
           "image_base64",
-          "media_type"
+          "media_type",
+          "classification"
         ],
         "title": "TranscribePageRequest",
         "type": "object"
@@ -18672,7 +18693,7 @@
     },
     "/journal/transcribe-page": {
       "post": {
-        "description": "Transcribe one keyless image of text on the armed stub seam, or refuse.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — an operator's external-AI\nsuspension answers 503 ``ai_suspended`` before anything else (#3075), then a\nvault-bound writer is answered 503 ``reflection_source_unavailable`` (#3156),\nthen the payer gate runs, then the image is validated (422 without any charge).\nThis route holds no key of the writer's own -- a device with one reads the\npage by calling its vendor directly (ADR 0009 phase (a), #3067) -- so\noutside the armed stub test seam the gate refuses 402 ``llm_key_required``\nbefore the body is decoded and before the slot or the wallet is touched\n(#3096). On the seam the wallet is\ndeducted (402 ``insufficient_offerings`` when out of capacity). A provider\nfailure rolls the transaction back so a failed pass never bills, and so\ndoes a reply that is no text or a refusal (422 ``no_text_found`` /\n``transcription_refused``). Usage is committed atomically with the charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
+        "description": "Transcribe one keyless image of text on the armed stub seam, or refuse.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — a page whose declared tier may not\nleave the primary boundary is refused 403 ``tier_refused`` before anything\nelse (#3059), then an operator's external-AI\nsuspension answers 503 ``ai_suspended`` (#3075), then a\nvault-bound writer is answered 503 ``reflection_source_unavailable`` (#3156),\nthen the payer gate runs, then the image is validated (422 without any charge).\nThis route holds no key of the writer's own -- a device with one reads the\npage by calling its vendor directly (ADR 0009 phase (a), #3067) -- so\noutside the armed stub test seam the gate refuses 402 ``llm_key_required``\nbefore the body is decoded and before the slot or the wallet is touched\n(#3096). On the seam the wallet is\ndeducted (402 ``insufficient_offerings`` when out of capacity). A provider\nfailure rolls the transaction back so a failed pass never bills, and so\ndoes a reply that is no text or a refusal (422 ``no_text_found`` /\n``transcription_refused``). Usage is committed atomically with the charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
         "operationId": "transcribe_page_journal_transcribe_page_post",
         "parameters": [
           {
@@ -18812,7 +18833,7 @@
     },
     "/journal/transcribe-page/direct-admission": {
       "post": {
-        "description": "Say whether a device may read a page by calling its own vendor directly.\n\nA writer's own key never reaches this server (ADR 0009 phase (a), #3067):\nthe device sends the page straight to the vendor that key belongs to. What\nthe device cannot know is whether an operator has switched external AI off\nfor a privacy incident (#3075), the one control meant to stop a BYOK call\ntoo, so it asks here first. The request carries no body, no key and no page;\nthe answer is 204 with no body, or 503 ``ai_suspended``. Nothing is charged,\nmetered or logged beyond the access line every request gets.",
+        "description": "Say whether a device may read a page by calling its own vendor directly.\n\nA writer's own key never reaches this server (ADR 0009 phase (a), #3067):\nthe device sends the page straight to the vendor that key belongs to. What\nthe device cannot know is whether an operator has switched external AI off\nfor a privacy incident (#3075), the one control meant to stop a BYOK call\ntoo, so it asks here first. The request carries the page's declared tier and\nnothing else -- no key and no page. A tier that may not leave the primary\nboundary is refused 403 ``tier_refused`` first (#3059), so the server never\nadmits an Intimate page; otherwise the answer is 204 with no body, or 503\n``ai_suspended``. Nothing is charged, metered or logged beyond the access\nline every request gets.",
         "operationId": "direct_admission_journal_transcribe_page_direct_admission_post",
         "parameters": [
           {
@@ -18832,6 +18853,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectAdmissionRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "204": {
             "description": "Successful Response"
