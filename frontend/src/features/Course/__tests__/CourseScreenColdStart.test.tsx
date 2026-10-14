@@ -43,6 +43,7 @@ jest.mock('../../../api', () => ({
     programCalendar: () => mockProgramCalendar(),
   },
   course: {
+    nextUnread: () => Promise.resolve(null),
     stageContentAll: (...a: unknown[]) => mockStageContent(...a),
     stageProgress: (...a: unknown[]) => mockStageProgress(...a),
     markRead: jest.fn(),

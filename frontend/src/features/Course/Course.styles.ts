@@ -132,6 +132,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: rhythm.screenPaddingH,
   },
 
+  // "Read next" sits in the gutter just above the "Chapters" band (#3147).
+  readNextBand: {
+    paddingHorizontal: rhythm.screenPaddingH,
+    marginTop: SPACING.md,
+  },
+
   // The "Chapters" band: the landing's one small-caps list spine.
   sectionBand: {
     paddingHorizontal: rhythm.screenPaddingH,
