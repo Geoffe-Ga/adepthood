@@ -14,7 +14,7 @@ media: []
 
 Let’s get right to it. What is the relationship to Free Will? That’s what this whole course is about after all, isn’t it?
 
-When Beige is the loudest note in someone’s life, there is no complex concept of “free will.” And it is the loudest note for all of us, at first: the stages unlock in order, roughly the way Wilber theorizes—by decentration, making your current subjective experience an object you can examine through the lens of the next stage. But unlocking the next stage never sends Beige into the past. Its behaviors and concerns keep arising whenever life calls for them—in skillful dosages or discordant ones—for the rest of your days. Few adults walk around with Beige as their loudest note, and fewer still sign up for a course about Free Will while their concerns are hung up in its realm. But if you haven’t integrated this root note properly, you will likely recognize its chief concerns sounding through your current personality, either as allergies or as addictions.
+When Beige is the loudest note in someone’s life, there is no complex concept of “free will.” And it is the loudest note for all of us, at first: the stages come online in order, roughly the way Wilber describes it—by what he calls decentration: each new stage lets you step back and look at the water you were just swimming in. But a new stage coming online never sends Beige into the past. Its behaviors and concerns keep arising whenever life calls for them—in skillful dosages or discordant ones—for the rest of your days. Few adults walk around with Beige as their loudest note, and fewer still sign up for a course about Free Will while their concerns are hung up in its realm. But if you haven’t integrated this root note properly, you will likely recognize its chief concerns sounding through your current personality, either as allergies or as addictions.
 
 When we first move through Beige we operate like a Biological Machine—a bundle of reflexes, needs, cravings, and instincts. Basically, a baby. An addict deep in the territory of abuse. A victim of trauma, deprivation, or circumstance struggling to survive.
 
@@ -22,7 +22,7 @@ It’s not something to feel guilty about.
 
 In fact, your first step to true Agency is to recognize whether you have either an allergy or an addiction to physical or financial security that comes at the expense of a Whole human experience.
 
-While the material of this course teaches you to integrate the lessons of what Spiral Dynamics calls Tier 1 stages (the first six, in which the very philosophical concept of Free Will isn’t typically a primary concern) it is also important to note that if you do not also *learn to express them healthily*, Free Will is impossible. You don't transcend Beige—you learn when to play that note and when to play others.
+This course teaches you to integrate the lessons of the first six Stages (what Spiral Dynamics calls Tier 1—where the philosophical idea of Free Will rarely even comes up), but knowing the lessons isn’t enough. Unless you also *learn to express them healthily*, Free Will is impossible. You don't transcend Beige—you learn when to play that note and when to play others.
 
 That means having the discernment to figure out what pragmatically serves when it comes to our basic biological needs, and when to let go of obsessing about safety and security because you’ve done enough to ground yourself.
 

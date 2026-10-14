@@ -28,7 +28,7 @@ Orange teaches you to *stop pushing* and start *thinking*. Where's the fulcrum? 
 
 This is why Orange loves frameworks, models, and systems. Not because Orange is rigid—but because a good model is a lever. It gives you a way to *see* the structure of a problem so you can find the point of maximum leverage.
 
-Example: You're overwhelmed and burned out. The Red approach is to push through—work harder, sleep less, dominate the fatigue. That's pushing the boulder.
+Example: You're overwhelmed and burned out. Red's shadow says push through—work harder, sleep less, dominate the fatigue. That's pushing the boulder.
 
 The Orange approach is to ask: *What's the actual bottleneck?* Is it time? Energy? Clarity? Nervous system regulation? Then: *What's the smallest change that would address the bottleneck?*
 

@@ -104,7 +104,7 @@ OPTIONS:
     --unit          Run unit tests only (default)
     --integration   Run integration tests only
     --e2e           Run end-to-end tests only
-    --all           Run all test types
+    --all           Run all test types in separate SQLite/Postgres processes
     --coverage      Generate coverage report (term + html + xml) and enforce
                     the 90% threshold here
     --coverage-data Collect coverage data only - no report, no threshold. For
@@ -330,6 +330,7 @@ else
             ;;
         all)
             echo "=== Running All Tests ==="
+            SQLITE_ARGS=("${PYTEST_ARGS[@]}" --ignore=tests/integration)
             ;;
     esac
 fi
@@ -363,11 +364,6 @@ elif $COVERAGE_DATA; then
     )
 fi
 
-# Run tests
-if $VERBOSE; then
-    echo "Running pytest with args: ${PYTEST_ARGS[*]}"
-fi
-
 # An absent runner is not a red suite. Without this check the line below
 # answers `pytest: command not found` with "✗ Tests failed", which is a verdict
 # on code that was never executed -- the same defect the pre-commit entry above
@@ -378,10 +374,35 @@ if ! command -v pytest &> /dev/null; then
     exit "$MISSING_RUNNER_EXIT_CODE"
 fi
 
-pytest "${PYTEST_ARGS[@]}" "${PYTEST_TARGETS[@]}" || {
-    echo "✗ Tests failed" >&2
-    exit "$TEST_FAILURE_EXIT_CODE"
+run_pytest() {
+    if $VERBOSE; then
+        echo "Running pytest with args: $*"
+    fi
+    pytest "$@" || {
+        echo "✗ Tests failed" >&2
+        exit "$TEST_FAILURE_EXIT_CODE"
+    }
 }
+
+if [ "$TEST_TYPE" = "all" ] && [ ${#TARGETS[@]} -eq 0 ]; then
+    # SQLite fixtures rewrite process-global ARRAY metadata to JSON. Keep the
+    # live Postgres package pristine, as CI does. Other integration-marked
+    # HTTP tests use SQLite too, so the marker alone is not the boundary.
+    # The same whole-suite lock protects both processes and their coverage data.
+    if $COVERAGE || $COVERAGE_DATA; then
+        # Collect first; only the combined result may report/enforce the grade.
+        SQLITE_ARGS+=(--cov --cov-branch --cov-report= --cov-fail-under=0)
+    fi
+    run_pytest "${SQLITE_ARGS[@]}" "${PYTEST_TARGETS[@]}"
+
+    POSTGRES_ARGS=("${PYTEST_ARGS[@]}")
+    if $COVERAGE || $COVERAGE_DATA; then
+        POSTGRES_ARGS+=(--cov-append)
+    fi
+    run_pytest "${POSTGRES_ARGS[@]}" tests/integration
+else
+    run_pytest "${PYTEST_ARGS[@]}" "${PYTEST_TARGETS[@]}"
+fi
 
 echo "✓ Tests passed"
 

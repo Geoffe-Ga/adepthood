@@ -72,9 +72,9 @@ But the truth is that everything you’re working on here is rippling outward an
 
 A rising tide of consciousness raises all boats.
 
-A Whole Adept who is more thoughtful, loving, caring, conscious, clear, present, awake, and luminous can’t help but raise the vibration of those they come in contact with. In the deep sense, we cannot work on ourselves without simultaneously affecting the groups and even the systems we are parts of.
+A Whole Adept who is a little more present, a little kinder, a little clearer than they were yesterday can’t help but change the room they walk into. In the deep sense, we cannot work on ourselves without simultaneously affecting the groups and even the systems we are parts of.
 
-In fact, self-actualization is a compulsory gateway to pass through for justice and systemic change! We’ll talk about getting into community and contributing to movements later, but don’t let anyone steer you away from this work by suggesting you are only being self-serving.
+In fact, getting your own house in order is part of what makes you any use to justice and systemic change. We’ll talk about getting into community and contributing to movements later, but don’t let anyone steer you away from this work by suggesting you are only being self-serving.
 
 You may find that those same people end up wanting to join you for meditation once they see how much your self-work is improving your happiness, self-love, self-efficacy, and impact on the world.
 

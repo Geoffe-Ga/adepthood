@@ -39,6 +39,7 @@ touches it.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -67,6 +68,7 @@ from tests.incident.test_privacy_suspension import (
     _call_route,
     seed_entry,
     signup,
+    suspend_ai,
 )
 from tests.provider_transport import (
     ANTHROPIC_KEY,
@@ -76,6 +78,7 @@ from tests.provider_transport import (
     use_openai,
 )
 from tests.support.reflecting_vault import ReflectingVaultClient
+from tests.transcription_helpers import PNG_BYTES, payload
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -87,6 +90,13 @@ _BODY: Final = "I meditated by the river and the willow bent without breaking."
 _QUOTE: Final = "the willow bent without breaking"
 _VAULT_NOTE: Final = "The vault reads this passage back."
 _ROUTES: Final = ("resonance", "essay", "detect", "transcribe")
+#: The routes that still relay the writer's key to the vendor from the server.
+#: Page reading left this set in phase (a)'s second half: the device calls the
+#: vendor itself, so the server has no key to forward (#3067).
+_RELAYED_ROUTES: Final = ("resonance", "essay", "detect")
+_KEY_HEADER: Final = "X-LLM-API-Key"
+_TRANSCRIBE: Final = "/journal/transcribe-page"
+_DIRECT_ADMISSION: Final = "/journal/transcribe-page/direct-admission"
 _LOCAL_HOSTS: Final = frozenset({"localhost", "localhost.localdomain", "testserver", ""})
 
 #: A notes reply both SDKs can carry, so a BYOK counterweight pass succeeds.
@@ -342,7 +352,7 @@ async def test_every_ai_route_refuses_a_keyless_request_with_no_dial(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("route", _ROUTES)
+@pytest.mark.parametrize("route", _RELAYED_ROUTES)
 async def test_every_ai_route_counterweight_dials_with_the_writers_key(
     async_client: AsyncClient,
     db_session: AsyncSession,
@@ -485,3 +495,93 @@ async def test_a_credit_debit_stands_only_beside_a_vault_answered_receipt(
     for user_id in (keyless_id, byok_id, vault_id):
         if await _settled_debits(db_session, user_id):
             assert not (await _note_sources(db_session, user_id)) & _APP_PROVIDER_SOURCES
+
+
+# --- page reading is client-direct: the server never takes the key ------------
+
+
+def _declared_headers(path: str) -> set[str]:
+    """The header parameters the route at ``path`` declares in the live schema."""
+    operation = app.openapi()["paths"][path]["post"]
+    return {
+        str(parameter["name"]).lower()
+        for parameter in operation.get("parameters", [])
+        if parameter.get("in") == "header"
+    }
+
+
+def test_the_page_read_route_declares_no_key_header() -> None:
+    """The server no longer accepts a key for a page read; a relayed route still does.
+
+    The relayed route is the counterweight: it shows the schema check can see a
+    declared key header at all, so the page-read half is not vacuously empty.
+    """
+    assert _KEY_HEADER.lower() not in _declared_headers(_TRANSCRIBE)
+    assert _KEY_HEADER.lower() in _declared_headers("/journal/{entry_id}/resonance")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [OPENAI_KEY, ANTHROPIC_KEY], ids=["openai", "anthropic"])
+async def test_a_key_sent_anyway_with_a_page_is_never_forwarded_or_logged(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    cloud_ready: EgressSpy,
+    caplog: pytest.LogCaptureFixture,
+    key: str,
+) -> None:
+    """A stale client's header is not a payer: refused keyless, nothing dialled or logged."""
+    headers, user_id, _ = await signup(async_client, f"stale_header_{key[:6]}")
+
+    with caplog.at_level(logging.DEBUG):
+        resp = await async_client.post(
+            _TRANSCRIBE,
+            headers={**headers, _KEY_HEADER: key},
+            json=payload(PNG_BYTES, "image/png"),
+        )
+
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert resp.json() == {"detail": botmason.KEY_REQUIRED_DETAIL}
+    assert key not in resp.text
+    cloud_ready.assert_silent()
+    assert await _audit_rows(db_session, user_id) == []
+    for record in caplog.records:
+        assert key not in record.getMessage()
+        assert key not in str(record.__dict__)
+
+
+@pytest.mark.asyncio
+async def test_the_direct_admission_carries_nothing_and_admits(
+    async_client: AsyncClient, cloud_ready: EgressSpy
+) -> None:
+    """204 with an empty body: the device may call its vendor; the server dials nothing."""
+    headers, _, _ = await signup(async_client, "direct_admitted")
+
+    resp = await async_client.post(_DIRECT_ADMISSION, headers=headers)
+
+    assert resp.status_code == HTTPStatus.NO_CONTENT, resp.text
+    assert resp.content == b""
+    assert _KEY_HEADER.lower() not in _declared_headers(_DIRECT_ADMISSION)
+    cloud_ready.assert_silent()
+
+
+@pytest.mark.asyncio
+async def test_the_direct_admission_refuses_while_external_ai_is_suspended(
+    async_client: AsyncClient, cloud_ready: EgressSpy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The operator's incident switch still stops a page read the device would send itself."""
+    headers, _, _ = await signup(async_client, "direct_suspended")
+    suspend_ai(monkeypatch)
+
+    resp = await async_client.post(_DIRECT_ADMISSION, headers=headers)
+
+    assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE, resp.text
+    assert resp.json() == {"detail": "ai_suspended"}
+    cloud_ready.assert_silent()
+
+
+@pytest.mark.asyncio
+async def test_the_direct_admission_requires_a_session(async_client: AsyncClient) -> None:
+    """An anonymous caller is refused before anything else."""
+    resp = await async_client.post(_DIRECT_ADMISSION)
+
+    assert resp.status_code == HTTPStatus.UNAUTHORIZED

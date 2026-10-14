@@ -10,6 +10,7 @@ import {
   progressLabel,
   mergeBlocks,
   hasTerminalError,
+  TERMINAL_ERROR_KINDS,
   selectSeamOverlaps,
   EMPTY_RUN_STATE,
 } from '../transcriptionRun';
@@ -461,7 +462,7 @@ describe('progressLabel', () => {
       type: 'reject',
       id: 'p1',
       attempt: 1,
-      error: 'model_lacks_vision',
+      error: 'key_required',
     });
     state = transcriptionRunReducer(state, { type: 'resolve', id: 'p2', attempt: 1, text: 'B' });
 
@@ -499,6 +500,14 @@ describe('progressLabel', () => {
   });
 });
 
+describe('TERMINAL_ERROR_KINDS', () => {
+  it('names only failures a page read can still produce', () => {
+    // model_lacks_vision is gone: the server no longer reads a page with a
+    // writer's key, and the device only ever asks for a vision model (#3067).
+    expect([...TERMINAL_ERROR_KINDS].sort()).toEqual(['credit_exhausted', 'key_required']);
+  });
+});
+
 describe('hasTerminalError', () => {
   it('is false while no page has hit a terminal, unretryable failure', () => {
     let state = initState(['p1', 'p2']);
@@ -512,14 +521,14 @@ describe('hasTerminalError', () => {
     expect(hasTerminalError(state)).toBe(false);
   });
 
-  it('is true once any page fails with the config-level model_lacks_vision kind', () => {
+  it('is true once any page fails with the terminal key_required kind', () => {
     let state = initState(['p1', 'p2']);
     state = transcriptionRunReducer(state, { type: 'start', id: 'p1', attempt: 1 });
     state = transcriptionRunReducer(state, {
       type: 'reject',
       id: 'p1',
       attempt: 1,
-      error: 'model_lacks_vision',
+      error: 'key_required',
     });
     expect(hasTerminalError(state)).toBe(true);
   });
@@ -538,7 +547,7 @@ describe('selectStartable — a terminal failure stops the run, not just the but
     return transcriptionRunReducer(state, { type: 'reject', id: 'p1', attempt: 1, error });
   }
 
-  it.each<TranscriptionErrorKind>(['credit_exhausted', 'service_credit_exhausted'])(
+  it.each<TranscriptionErrorKind>(['credit_exhausted', 'key_required'])(
     'dispatches nothing more once a page has failed with %s',
     (error) => {
       const state = failFirstPageWith(error);
@@ -546,12 +555,6 @@ describe('selectStartable — a terminal failure stops the run, not just the but
       expect(selectStartable(state)).toEqual([]);
     },
   );
-
-  it('stops the fan-out for a model that cannot read images either', () => {
-    // Pre-existing terminal kind: the same argument always applied to it, and
-    // the run kept dispatching anyway.
-    expect(selectStartable(failFirstPageWith('model_lacks_vision'))).toEqual([]);
-  });
 
   it('keeps dispatching after an ordinary transient failure', () => {
     // The guard must be keyed on the kind, not on "something failed" — a

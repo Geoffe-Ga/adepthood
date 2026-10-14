@@ -4,13 +4,13 @@ stage: 5
 chapter: 16
 order: 16
 slug: why-exercise-is-non-negotiable-for-understanding
-title: "Why Exercise is Non-Negotiable for Understanding"
+title: "Why Exercise Does So Much for Understanding"
 content_type: chapter
 release_day: 15
 media: []
 ---
 
-## Why Exercise is Non-Negotiable for Understanding
+## Why Exercise Does So Much for Understanding
 
 Here's what most people miss about exercise: it's not just physical. It's *cognitive*.
 
@@ -20,7 +20,7 @@ When you move your body intensely, several things happen in your brain:
 
 BDNF is like fertilizer for your brain. It promotes the growth of new neurons and strengthens existing neural connections. Regular exercise literally makes you smarter—or more precisely, it makes your brain more plastic, more capable of learning and adapting.
 
-If you're trying to master a new skill, solve a complex problem, or think more clearly, exercise is not optional. It's the substrate on which cognitive performance is built.
+If you're trying to learn a skill, crack a hard problem, or just think straight, exercise is the cheapest lever you've got. It's the soil the thinking grows in.
 
 **Default Mode Network Gets Regulated**
 

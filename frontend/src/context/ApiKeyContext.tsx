@@ -23,7 +23,9 @@ import { loadLocalModelPreferred, saveLocalModelPreferred } from '@/storage/loca
  *
  * Between calls the key lives in device storage. On supported requests it is
  * transmitted to Adepthood, then forwarded to the provider; Adepthood never
- * persists it in the server database or returns it in an API response.
+ * persists it in the server database or returns it in an API response. Page
+ * reading is the exception: it goes from this device straight to the key's
+ * vendor and never reaches Adepthood (ADR 0009 phase (a), #3067).
  *
  * The future Adepthood-model choice stays release-gated until a real
  * Adepthood-operated backend provider exists. While unavailable, stored legacy

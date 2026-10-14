@@ -890,7 +890,7 @@ are being written in the clear.
 | `BOTMASON_PROVIDER` | No | `stub` | Reported in the boot log; nothing else reads it since ADR 0009 phase (a) (#3067). A cloud model is reached only with the writer's own key (`X-LLM-API-Key`, whose prefix selects the provider). Every other AI request -- resonance pass, letter, completion check, page transcription -- is refused `402 llm_key_required` before anything is charged, credits included, unless the writer's own vault answers it. Credits pay only when the caller's vault answers; whether the vault itself uses a cloud model is the vault's boundary (`CREEK_DOWNSTREAM_MODEL`, under the Creek deployment's `CREEK_CLOUD_CONSENT`), and is not yet verified per receipt -- a known gap escalated to the owner (a managed vault with `CREEK_CLOUD_CONSENT` could answer from a cloud model on an operator-held key); frequency classification and corpus backfill degrade to unclassified with no cloud call. `openai` or `anthropic` here no longer makes the server pay for anyone. The canned stub answer survives only as the `BOTMASON_STUB_SEAM` test seam below. |
 | `BOTMASON_STUB_SEAM` | Never in prod | *(unset)* | Test seam only. Exactly `true` lets the canned BotMason stub answer keyless requests on a `stub` server, as the backend suite (`backend/conftest.py`) and the end-to-end lane (`frontend/e2e/globalSetup.ts`) need. Anything else leaves it off. With it armed, the backend boots only with `ENV` set **explicitly** to `development` or `e2e` (an unset `ENV` refuses: it cannot tell a laptop from an unlabelled host) and with no platform variable present (`RAILWAY_ENVIRONMENT_NAME`, `RAILWAY_ENVIRONMENT`, `RAILWAY_PROJECT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_PUBLIC_DOMAIN`, whatever their value). Production, staging, previews and a mistyped `ENV` all refuse to boot, because the stub hands writers text-replaced sentences presented as a reflection (#3096). |
 | `LLM_API_KEY` | No | — | **Not read** since ADR 0009 phase (a) (#3067): no request carrying a person's content is sent on the server's own provider account, and no other use of it exists. Leave it unset; while one is set the boot log warns `llm_api_key_unused` (by name, never the value). Sentry still scrubs the name. |
-| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve).  Applies to the provider the writer's own key selects. #623's server-paid refusal of `claude-opus-5`, `claude-opus-4-7` and `gpt-4-turbo` is subsumed by ADR 0009 phase (a): nothing is server-paid, so a keyless request reaches no model; a writer's own key (BYOK) still reaches those models. |
+| `LLM_MODEL` | No | Provider default | `gpt-4o-mini` (OpenAI) or `claude-sonnet-5` (Anthropic). Allowlisted per provider in `backend/src/services/botmason.py`; an id outside the allowlist fails fast at startup rather than reaching the provider. See [Verifying allowlisted models still resolve](#verifying-allowlisted-models-still-resolve).  Applies to the provider the writer's own key selects on the routes that still relay it (resonance, letters, completion detection). It does **not** govern page reading: a page read with the writer's own key goes from their device straight to the vendor (ADR 0009 phase (a), #3067) and always uses that vendor's registry default (`gpt-4o-mini` or `claude-sonnet-5`), whatever this is set to. #623's server-paid refusal of `claude-opus-5`, `claude-opus-4-7` and `gpt-4-turbo` is subsumed by ADR 0009 phase (a): nothing is server-paid, so a keyless request reaches no model; a writer's own key (BYOK) still reaches those models. |
 | `BOTMASON_DAILY_GENERATION_CEILING` | No | `100` | Charged generations (resonance passes, first essay letters, page transcriptions) one user may make per UTC day, net of refunded failures; past it a request answers `429 daily_generation_limit_reached` with `Retry-After` set to the seconds until 00:00 UTC, and nothing is charged. The default is the owner-ratified "configurable launch ceiling of 100 charged generations/day/user" (#623). Parsed like `BOTMASON_MONTHLY_CAP`: unset, empty, malformed or negative means 100. `0` is an emergency brake that refuses every charged generation. BYOK generations are never charged, so never counted. Counted from `walletaudit` in the database, so it holds across every worker and ignores the rate-limit kill switch. Because BYOK bypasses it, `0` does not stop external inference: `PRIVACY_SUSPEND_EXTERNAL_AI` is the control that also stops BYOK calls. |
 | `WEB_CONCURRENCY` | No | `2` | Number of Uvicorn worker processes. All rate-limit state lives in each worker's memory (there is no shared store), so the effective per-deployment budget of every limit -- ambient floor, burst floors, per-client ceiling, declared route limits -- is `WEB_CONCURRENCY` x the stated limit . That includes the per-user generation limit of 5 resonance or essay generations per minute (#623): it is per worker, so a deployment admits up to `WEB_CONCURRENCY` x 5 per user per minute. The other two generation guardrails are not: the cap of 2 concurrent generations per user (a `generationslot` lease row) and the daily ceiling above are both database-backed and hold across workers |
 | `ALLOWED_HOSTS` | Recommended in prod | *(empty)* | Comma-separated hostnames this deploy answers as, canonical one **first**. The authority half of the same question `TRUSTED_PROXY_CIDRS` answers for the scheme: both halves of every absolute URL the app mints are otherwise written by the caller, most visibly the router's trailing-slash `307`, which is answered before any auth check runs. A request naming an unlisted host is **not rejected** — its authority is replaced with the first entry and it proceeds normally, so a platform health prober whose `Host` you cannot predict still gets its `200` and nothing needs a path exemption; the original `Host` is recorded on that request's access-log line as `original_host`. Left empty, nothing is settled and behaviour is exactly as before, which is what keeps local dev, Expo and LAN addresses working unconfigured. Entries are bare hostnames with an optional port (`api.example.com`, `localhost:8000`) — no scheme, path or userinfo. Matching ignores the port; the substitution is verbatim. Wildcards are refused, not supported: this variable also names the host a non-matching request is settled onto, and a pattern has no single host to substitute. A malformed entry refuses the boot on every `ENV`; an unset one only warns, and only in production. |
@@ -1321,41 +1321,27 @@ built with, so a deploy that silently shipped stale content is visible without
 opening a shell.
 
 A 503 from `GET /health` or `GET /health/ready` means the database is
-unreachable. A 503 from an application route does not — see the next section
-for the other one.
+unreachable. A 503 from an application route does not: `ai_suspended` is the
+operator's own incident switch (`PRIVACY_SUSPEND_EXTERNAL_AI`), and the
+generation slot fails closed with its own code.
 
-### When the shared AI balance runs out
+### When an AI provider balance runs out
 
-**Since ADR 0009 phase (a) (#3067) this should not happen:** no request is
-sent on the server's own provider account, so there is no shared balance to
-run out. If `llm_service_credit_exhausted` is ever logged, a call was made with
-the server's key, which phase (a) forbids for a person's content: treat it as a
-privacy incident (`docs/ops/privacy-incident-response.md`), not a billing one.
-The rest of this section describes the signal as it was before phase (a).
+**There is no shared balance any more.** Since ADR 0009 phase (a) (#3067) no
+request is sent on the server's own provider account: every vendor call carries
+the writer's own key, and `services.botmason._resolve_api_key` refuses any other
+before a client is built. The `503 llm_service_credit_exhausted` code that once
+reported a spent server balance is retired with it; no route can emit it. If a
+vendor call is ever made on `LLM_API_KEY`, that is a privacy incident
+(`docs/ops/privacy-incident-response.md`), not a billing one.
 
-`llm_service_credit_exhausted` is the one application-route `503` that is not a
-database problem, and it is the only outage in this app that no amount of
-waiting clears: the provider account behind `LLM_API_KEY` has a spent balance or
-a reached spend cap, and every reflection, resonance pass, and page
-transcription that uses the server key fails until someone tops it up.
-
-**The signal.** A `WARNING` on the `services.botmason` logger whose message is
-exactly `llm_service_credit_exhausted`, carrying `provider` and `byok=false`,
-with the provider's own words on the attached exception. Alert on it: it is not
-retried, so it will not repeat on its own the way a transient failure does, and
-one line is the whole notice you get. Its `INFO` sibling
-`llm_credit_exhausted` (`byok=true`) is *not* an outage — that is a user's own
-key coming back empty, and the user has already been told in words they can act
-on. Do not page on it; it is there so that a support question has an answer.
-
-**What users see meanwhile.** Callers using their own key are unaffected. Callers
-on the server key get copy that names the condition, says restoring it is ours,
-and offers pasting their own key in Settings as the way not to wait. Nothing
-about the provider, the account, or the key reaches them.
-
-**The fix.** Add credit (or raise the cap) on the provider account for
-`LLM_API_KEY`, or rotate `LLM_API_KEY` to a funded account and redeploy. No
-code change and no migration; the next request succeeds.
+**A writer's own key coming back empty** is `402 llm_credit_exhausted`, logged
+once at `INFO` on the `services.botmason` logger with `provider` and the
+provider's own words on the attached exception. It is not an outage and not
+retried: the writer has already been told, in words they can act on, to top up
+their own provider account. Do not page on it; it is there so that a support
+question has an answer. A page read is called from the writer's device straight
+to their vendor, so a spent key there never reaches the server or its logs.
 
 ### Verifying allowlisted models still resolve
 

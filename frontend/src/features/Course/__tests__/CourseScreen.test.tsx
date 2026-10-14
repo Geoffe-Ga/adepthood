@@ -7,6 +7,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
 import { colors, rhythm, STAGE_COLORS } from '../../../design/tokens';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
+import { useProgramStore } from '../../../store/useProgramStore';
 
 import { settle } from '@/testing/asyncSettle';
 
@@ -97,6 +98,7 @@ const defaultProgramCalendar = {
   cycle_number: 1,
 };
 const mockProgramCalendar = (jest.fn() as any).mockResolvedValue(defaultProgramCalendar);
+const mockUiFlags = (jest.fn() as any).mockResolvedValue({ course_last_stage: null });
 const mockStageContent = (jest.fn() as any).mockResolvedValue(sampleContent);
 const mockStageProgress = (jest.fn() as any).mockResolvedValue(sampleProgress);
 const mockMarkRead = (jest.fn() as any).mockResolvedValue({
@@ -139,6 +141,7 @@ const mockStageIntroBody = (jest.fn() as any).mockResolvedValue({
 });
 
 jest.mock('../../../api', () => ({
+  uiFlags: { get: (...args: unknown[]) => mockUiFlags(...args) },
   stages: {
     listAll: (...args: unknown[]) => mockStagesList(...args),
     programCalendar: (...args: unknown[]) => mockProgramCalendar(...args),
@@ -198,12 +201,17 @@ const flushMicrotasks = async (): Promise<void> => {
   }
 };
 
+beforeEach(() => {
+  useProgramStore.setState({ programStartDate: null, programStartDay: null });
+});
+
 describe('CourseScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
     mockStagesList.mockResolvedValue(sampleStages);
     mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
+    mockUiFlags.mockResolvedValue({ course_last_stage: null });
     mockStageContent.mockResolvedValue(sampleContent);
     mockStageProgress.mockResolvedValue(sampleProgress);
     // Default: no intro for the stage — card hidden unless a test opts in.
@@ -261,7 +269,7 @@ describe('CourseScreen', () => {
     expect(flat.flex).toBe(1);
   });
 
-  it('defaults to the stage the server reports as current', async () => {
+  it('defaults to the server current stage before any reading', async () => {
     const { getByTestId } = render(<CourseScreen />);
 
     await settle();
@@ -270,7 +278,7 @@ describe('CourseScreen', () => {
     expect(getByTestId('stage-selector')).toBeTruthy();
   });
 
-  it('takes the server stage over the completion count when they disagree', async () => {
+  it('takes the server stage over completion count before any reading', async () => {
     // Someone who put the app down for two months: the calendar has opened
     // stage 4 and the server has recorded them entering it, while only stage 1
     // is complete. Counting completions would answer 2 and drop them back into
@@ -294,6 +302,52 @@ describe('CourseScreen', () => {
     expect(mockStageContent).toHaveBeenCalledWith(4);
     expect(mockStageProgress).toHaveBeenCalledWith(4);
     expect(mockStageContent).not.toHaveBeenCalledWith(2);
+  });
+
+  it('opens on the last read Frequency ahead of the calendar', async () => {
+    const anchor = new Date();
+    anchor.setDate(anchor.getDate() - 21);
+    useProgramStore.setState({ programStartDate: anchor });
+    mockUiFlags.mockResolvedValue({ course_last_stage: 1 });
+    render(<CourseScreen />);
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(1);
+    expect(mockProgramCalendar).not.toHaveBeenCalled();
+  });
+
+  it('uses the program date before the server stage when no Frequency has been read', async () => {
+    const anchor = new Date();
+    anchor.setDate(anchor.getDate() - 42);
+    useProgramStore.setState({ programStartDate: anchor });
+    render(<CourseScreen />);
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(3);
+    expect(mockProgramCalendar).not.toHaveBeenCalled();
+  });
+
+  it.each([3, 10])('falls back when saved Frequency %s is locked or absent', async (stage) => {
+    mockUiFlags.mockResolvedValue({ course_last_stage: stage });
+    render(<CourseScreen />);
+    await settle();
+    expect(mockStageContent).toHaveBeenCalledWith(2);
+  });
+
+  it('keeps a newer route selection when an older saved-Frequency request resolves', async () => {
+    let resolveFlags!: (_flags: { course_last_stage: number }) => void;
+    mockUiFlags.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFlags = resolve;
+      }),
+    );
+    const { rerender, getByTestId } = render(<CourseScreen />);
+    await settle();
+    mockRouteParams = { stageNumber: 2 };
+    rerender(<CourseScreen />);
+    await settle();
+    resolveFlags({ course_last_stage: 1 });
+    await settle();
+    expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+    expect(mockStageContent).not.toHaveBeenCalledWith(1);
   });
 
   it('displays stage metadata for selected stage', async () => {
@@ -450,6 +504,7 @@ describe('CourseScreen', () => {
   // 2 (the program calendar), so stage 1 can only come from the link itself.
   describe('opened through a /course/:stageNumber deep link', () => {
     it('shows the linked stage cover and metadata and selects its pill', async () => {
+      mockUiFlags.mockResolvedValue({ course_last_stage: 2 });
       mockRouteParams = tabParamsFromPath('course/1', 'Course');
       const { getByTestId, getByText } = render(<CourseScreen />);
 
@@ -460,6 +515,7 @@ describe('CourseScreen', () => {
       expect(getByTestId('stage-metadata')).toBeTruthy();
       expect(getByText('First stage')).toBeTruthy();
       expect(mockStageContent).toHaveBeenCalledWith(1);
+      expect(mockUiFlags).not.toHaveBeenCalled();
     });
 
     it.each(['course/abc', 'course/0', 'course/11'])(

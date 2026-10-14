@@ -12,7 +12,7 @@ media: []
 
 ## The Default Habit of Red: Looking at Alcohol/Intoxicants
 
-Every stage of APTITUDE comes with a Default Habit—a behavior that arises unconsciously when the energetic tone of that stage is dominant but unexamined. For Red, that habit is intoxication.
+Every stage of APTITUDE comes with a Default Habit—a small, ongoing practice you build over the stage's three weeks. Red's is Looking at Alcohol/Intoxicants—which means noticing what you reach for and why, not swearing it off.
 
 At first, this might seem like a mismatch. Isn’t Red the fire of will? The rise of ego? The conquering hero stage where you seize the sword and take the throne? Yes. But here’s the shadow: when you don’t yet love yourself, when you’re still ruled by shame or a need to prove your worth, that fire doesn’t forge—it burns. And when you’ve burned out, what do you reach for?
 

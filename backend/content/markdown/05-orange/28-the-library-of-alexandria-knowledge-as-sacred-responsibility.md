@@ -26,7 +26,7 @@ And it's why Orange takes knowledge seriously. Not as a status symbol. Not as in
 
 When you learn something valuable, you have a responsibility to pass it on. To write it down. To teach it. To contribute to the collective library of human understanding.
 
-This is why APTITUDE insists on the Four Quadrant Vow. It's not enough to get smarter. You have to ask: *What am I building with this knowledge? Who am I sharing it with? What am I contributing to the "WE"?*
+This is why APTITUDE offers the Four Quadrant Vow. Getting smarter is the easy half; the vow asks the harder questions: *What am I building with this knowledge? Who am I sharing it with? What am I contributing to the "WE"?*
 
 Because if you die with your insights still locked in your head, that's a tragedy. That's the Library burning again.
 

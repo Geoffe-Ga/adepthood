@@ -12,7 +12,7 @@ media: []
 
 ## The Final Invitation
 
-APTITUDE has brought you here. Through Beige's grounding. Purple's receiving. Red's assertion. Blue's connection. Orange's achievement. Green's descent. Yellow's integration. Teal's witnessing. Ultraviolet's devotion. And Clear Light's radiance.
+APTITUDE has brought you here. Through Beige's grounding. Purple's receiving. Red's assertion. Blue's connection. Orange's achievement. Green's descent. Yellow's integration. Teal's connection to the True Self. Ultraviolet's devotion. And Clear Light's emptiness.
 
 You've done the work. You've built the foundation. You've logged the hours. You've touched the truth.
 

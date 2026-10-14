@@ -64,7 +64,10 @@ describe('the BYOK disclosure is constrained by the implementation', () => {
     const llm = readBackendSource('src', 'services', 'botmason.py');
 
     expect(journal).toContain('Header(alias="X-LLM-API-Key"');
-    expect(transcription).toContain('Header(alias="X-LLM-API-Key"');
+    // Page reading no longer crosses Adepthood with the key (ADR 0009 phase (a),
+    // #3067): the device calls the vendor itself, so the disclosure overstates
+    // that one feature's exposure rather than understating any.
+    expect(transcription).not.toContain('X-LLM-API-Key"');
     expect(llm).toContain('return _validated_header_key(header_value)');
     expect(llm.match(/key = _resolve_api_key\(api_key\)/g)?.length).toBe(2);
     expect(llm).toContain('never persisted, logged, or echoed back');

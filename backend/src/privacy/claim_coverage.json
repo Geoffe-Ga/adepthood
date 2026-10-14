@@ -1,0 +1,393 @@
+{
+  "C03": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": [
+      "db.journalentry.message",
+      "db.journalentry.title",
+      "net.hosting_platform",
+      "backup.railway_platform",
+      "backup.offhost_pg_dump"
+    ],
+    "issue": 3067,
+    "gap": "the server holds the keys; no adversarial test gives a reviewer operator access and finds prose unreadable"
+  },
+  "C04": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/security/test_recipient_register.py::test_every_outbound_dial_has_exactly_one_register_row",
+      "backend/tests/security/test_recipient_register.py::test_shipped_register_blocks_every_claim",
+      "backend/tests/security/test_recipient_register.py::test_unknown_provider_and_off_list_model_never_dial",
+      "backend/tests/security/test_content_canary_sinks.py::test_content_sentinel_never_reaches_commercial_or_monitoring_sinks"
+    ],
+    "sinks": ["net.openai", "net.anthropic", "net.creek_downstream_model"],
+    "issue": 3065,
+    "gap": "vendor training settings stay UNVERIFIED; no receipt binds a provider account's no-training terms"
+  },
+  "C05": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/security/test_content_canary_sinks.py::test_content_sentinel_never_reaches_commercial_or_monitoring_sinks",
+      "backend/tests/security/test_content_canary_sinks.py::test_balance_and_usage_do_not_vary_with_content",
+      "backend/tests/security/test_recipient_register.py::test_shipped_register_blocks_every_claim"
+    ],
+    "sinks": [
+      "net.gumroad",
+      "net.resend",
+      "net.smtp_relay",
+      "net.creek_provisioning",
+      "net.google_identity",
+      "net.apple_identity",
+      "telemetry.sentry_envelope"
+    ],
+    "issue": 3065,
+    "gap": "business-process access and processor agreements are unverified; the frontend Sentry envelope is not driven"
+  },
+  "C06": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/security/test_recipient_register.py::test_every_outbound_dial_has_exactly_one_register_row",
+      "backend/tests/security/test_recipient_register.py::test_processor_purpose_claim_also_needs_non_content_purposes",
+      "backend/tests/security/test_recipient_register.py::test_shipped_register_blocks_every_claim",
+      "backend/tests/security/test_content_canary_sinks.py::test_content_sentinel_never_reaches_commercial_or_monitoring_sinks"
+    ],
+    "sinks": [
+      "net.openai",
+      "net.anthropic",
+      "net.creek_vault_connected",
+      "net.creek_vault_deployment",
+      "net.creek_provisioning",
+      "net.creek_downstream_model",
+      "net.gumroad",
+      "net.resend",
+      "net.smtp_relay",
+      "net.google_identity",
+      "net.apple_identity",
+      "net.hosting_platform",
+      "net.fly",
+      "telemetry.sentry_envelope",
+      "backup.offhost_pg_dump"
+    ],
+    "issue": 3065,
+    "gap": "processor purposes and agreements stay UNVERIFIED; content recipients are not reconciled to contracts"
+  },
+  "C07": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/test_intimate_privacy_guard.py::test_intimate_entry_under_vault_boundary_reaches_neither_vault_nor_app_provider",
+      "backend/tests/test_intimate_privacy_guard.py::test_intimate_resonance_zero_cloud_calls",
+      "backend/tests/test_journal_vault_write.py::test_create_intimate_entry_never_touches_vault",
+      "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+    ],
+    "sinks": [
+      "net.openai",
+      "net.anthropic",
+      "net.creek_vault_connected",
+      "net.creek_vault_deployment",
+      "net.creek_downstream_model",
+      "net.fly",
+      "vault.creek_volume",
+      "vault.creek_embeddings",
+      "vault.creek_ledger",
+      "vault.fly_snapshots",
+      "db.corpusfragment.content",
+      "telemetry.sentry_envelope",
+      "telemetry.root_log",
+      "telemetry.access_log"
+    ],
+    "by_sink": {
+      "net.openai": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ],
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+      ],
+      "db.corpusfragment.content": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row"
+      ],
+      "telemetry.sentry_envelope": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ],
+      "telemetry.root_log": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ],
+      "telemetry.access_log": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ]
+    },
+    "issue": 3069,
+    "gap": "recorders sit at adepthood's seams, not the socket or filesystem; vault-side stores, Fly and Creek's own model are inferred from the vault client double"
+  },
+  "C08": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/test_intimate_privacy_guard.py::test_intimate_resonance_zero_cloud_calls",
+      "backend/tests/test_intimate_privacy_guard.py::test_intimate_essay_zero_cloud_calls",
+      "backend/tests/test_intimate_privacy_guard.py::test_intimate_distress_surfaces_local_care_zero_cloud",
+      "backend/tests/test_completion_detection_endpoint.py::test_independent_completion_check_keeps_intimate_entries_off_the_provider",
+      "backend/tests/test_essay_endpoint.py::test_intimate_essay_is_never_charged_and_never_dialled",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+    ],
+    "sinks": [
+      "net.openai",
+      "net.anthropic",
+      "net.creek_vault_connected",
+      "net.creek_vault_deployment",
+      "net.creek_downstream_model"
+    ],
+    "by_sink": {
+      "net.openai": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+      ],
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+      ]
+    },
+    "issue": 3059,
+    "gap": "OCR (transcribe-page, outside BARRIERED) and BYOK keys are not driven by the matrix; dials are recorded at generate_response's bindings, not the socket"
+  },
+  "C09": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/services/test_corpus_store.py::test_the_write_path_refuses_intimate_before_building_a_row",
+      "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row",
+      "backend/tests/services/test_corpus_store.py::test_retrieval_never_returns_an_intimate_fragment",
+      "backend/tests/services/test_corpus_ingest.py::test_an_intimate_entry_is_never_offered_to_the_classifier",
+      "backend/tests/services/test_corpus_ingest.py::test_re_tiering_an_entry_to_intimate_takes_it_out_of_the_corpus",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
+    ],
+    "sinks": [
+      "db.corpusfragment.content",
+      "vault.creek_embeddings",
+      "vault.creek_ledger",
+      "net.creek_downstream_model"
+    ],
+    "by_sink": {
+      "db.corpusfragment.content": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/services/test_corpus_store.py::test_the_table_itself_refuses_an_intimate_row"
+      ]
+    },
+    "issue": 3059,
+    "gap": "vault-side embedding and ledger closure is inferred from the vault double; backup-restore replay is not driven (C21)"
+  },
+  "C10": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/test_intimate_privacy_guard.py::test_intimate_prior_body_excluded_from_resonance_prompt",
+      "backend/tests/test_intimate_privacy_guard.py::test_only_eligible_prior_letters_reach_the_cloud_prompt",
+      "backend/tests/test_privacy_lineage.py::test_folded_intimate_quote_never_reaches_resonance_prompt",
+      "backend/tests/test_privacy_lineage.py::test_folded_intimate_quote_never_reaches_unrelated_entry_grounding",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+    ],
+    "sinks": [
+      "net.openai",
+      "net.anthropic",
+      "net.creek_vault_connected",
+      "net.creek_vault_deployment"
+    ],
+    "by_sink": {
+      "net.openai": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+      ],
+      "net.anthropic": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+      ]
+    },
+    "issue": 3059,
+    "gap": "folded quotes still carry Intimate text (strict xfail, owner decision D01 #3059); no lineage taint"
+  },
+  "C11": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/test_journal_vault_write.py::test_create_intimate_entry_never_touches_vault",
+      "backend/tests/test_journal_vault_write.py::test_patch_to_intimate_clears_prior_vault_ref_and_tags",
+      "backend/tests/test_journal_vault_write.py::test_late_in_flight_upsert_cannot_resurrect_an_intimate_entry",
+      "backend/tests/test_creek_vault_tier_ceiling.py::test_an_intimate_ingest_never_reaches_the_wire",
+      "backend/tests/test_voice_draft_mirroring.py::test_intimate_essay_never_attempts_a_mirror",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+    ],
+    "sinks": [
+      "net.creek_vault_connected",
+      "net.creek_vault_deployment",
+      "vault.creek_volume",
+      "vault.fly_snapshots"
+    ],
+    "by_sink": {
+      "net.creek_vault_connected": [
+        "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
+        "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+      ]
+    },
+    "issue": 3060,
+    "gap": "a lost acknowledgment is driven for the journal copy, not for a Voice Draft; vault-side snapshots and backups (C21) are not reached"
+  },
+  "C12": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/security/test_telemetry_sentinels.py::test_scrub_event_ships_no_canary_from_any_channel",
+      "backend/tests/security/test_telemetry_sentinels.py::test_route_raising_a_canary_ships_a_clean_but_diagnosable_event",
+      "backend/tests/security/test_telemetry_sentinels.py::test_share_token_never_reaches_the_access_log",
+      "backend/tests/security/test_telemetry_sentinels.py::test_uvicorns_own_traceback_is_content_free",
+      "backend/tests/security/test_telemetry_sentinels.py::test_uvicorns_access_logger_is_switched_off",
+      "backend/tests/security/test_telemetry_sentinels.py::test_outbound_request_urls_stay_out_of_the_info_stream",
+      "backend/tests/security/test_telemetry_sentinels.py::test_a_rate_limited_share_token_never_reaches_the_log",
+      "backend/tests/security/test_telemetry_sentinels.py::test_a_search_query_string_reaches_no_log"
+    ],
+    "sinks": [
+      "telemetry.sentry_envelope",
+      "telemetry.frontend_sentry_envelope",
+      "telemetry.root_log",
+      "telemetry.access_log",
+      "telemetry.uvicorn_error_log",
+      "telemetry.uvicorn_access_log",
+      "telemetry.outbound_client_log",
+      "telemetry.rate_limit_log",
+      "telemetry.vault_telemetry",
+      "db.llmusagelog"
+    ],
+    "issue": 3160,
+    "gap": "database and middleware error paths carrying Intimate canaries are not yet driven end-to-end"
+  },
+  "C13": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": [
+      "net.creek_vault_connected",
+      "net.creek_vault_deployment",
+      "net.creek_downstream_model",
+      "net.openai",
+      "net.anthropic"
+    ],
+    "issue": 2871,
+    "gap": "no managed vault installs a pinned local model; no packet-level test proves the reflection stays in its boundary"
+  },
+  "C14": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": [],
+    "issue": 3070,
+    "gap": "product-integrity claim with no privacy sink; Course completeness and provenance are B17's to prove"
+  },
+  "C15": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": [],
+    "issue": 3071,
+    "gap": "product-integrity claim with no privacy sink; habit cadence is B18's to prove"
+  },
+  "C16": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": [],
+    "issue": 3072,
+    "gap": "product-integrity claim with no privacy sink; practice timer progression is B19's to prove"
+  },
+  "C17": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": [],
+    "issue": 3070,
+    "gap": "product-integrity claim with no privacy sink; repertoire category mapping is B17 and B19's to prove"
+  },
+  "C18": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": [],
+    "issue": 3073,
+    "gap": "product-integrity claim with no privacy sink; optional and declinable features are B20's to prove"
+  },
+  "C19": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": [],
+    "issue": 1938,
+    "gap": "product-integrity claim with no privacy sink; the zero-payment beta path is B21's to prove"
+  },
+  "C20": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": [
+      "db.journalentry.message",
+      "db.journalentry.title",
+      "net.hosting_platform",
+      "net.creek_vault_connected",
+      "net.creek_vault_deployment",
+      "vault.creek_volume"
+    ],
+    "issue": 3058,
+    "gap": "encrypted storage is operator-readable; no test pins what each 'encrypted' or 'private vault' phrase promises"
+  },
+  "C21": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/test_restore_suppression.py::test_restored_backup_does_not_resurrect_soft_deleted_entry",
+      "backend/tests/test_restore_suppression.py::test_reapply_reowes_resurrected_withdrawals_and_clears_the_vault_handle",
+      "backend/tests/test_restore_suppression.py::test_reapply_withdraws_the_resurrected_corpus_copy",
+      "backend/tests/test_journal_vault_write.py::test_delete_withdraws_remote_before_soft_delete_and_retries_on_failure",
+      "backend/tests/test_journal_deletion_in_progress.py::test_delete_503_then_refused_patch_then_sweep_leaves_no_corpus_copy"
+    ],
+    "sinks": [
+      "db.journalentry.message",
+      "db.journalentry.title",
+      "db.corpusfragment.content",
+      "net.creek_vault_connected",
+      "net.creek_vault_deployment",
+      "vault.creek_volume",
+      "vault.creek_embeddings",
+      "backup.railway_platform",
+      "backup.offhost_pg_dump"
+    ],
+    "issue": 3162,
+    "gap": "no crash at every commit boundary with replay; vendor and backup copies have no verified deadline"
+  },
+  "C22": {
+    "status": "uncovered",
+    "tests": [],
+    "sinks": ["net.creek_vault_connected", "net.creek_vault_deployment", "net.creek_provisioning"],
+    "issue": 2871,
+    "gap": "vault health reports storage and service only; no test proves a reflection came from the named local model"
+  },
+  "C23": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_vault_notes_with_candidates_make_zero_app_provider_calls",
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_vault_failure_never_falls_back",
+      "backend/tests/security/test_vault_boundary_no_fallback.py::test_byok_header_does_not_authorize_fallback_under_vault_boundary"
+    ],
+    "sinks": [
+      "net.openai",
+      "net.anthropic",
+      "net.creek_vault_connected",
+      "net.creek_vault_deployment",
+      "net.creek_downstream_model"
+    ],
+    "issue": 3161,
+    "gap": "no socket-level matrix proves a vault-bound writer's AI operations dial only their vault with each dependency down"
+  },
+  "C24": {
+    "status": "partial",
+    "tests": [
+      "backend/tests/security/test_claim_coverage_manifest.py::test_the_shipped_manifest_has_no_findings",
+      "backend/tests/incident/test_runbook_drift.py::test_every_claim_row_names_an_existing_control"
+    ],
+    "sinks": [],
+    "issue": 3076,
+    "gap": "no deploy receipt binds a serving build to these passing suites; independent verification is pending"
+  }
+}

@@ -75,9 +75,17 @@ _CSV_TEXT = (
     "31,Awareness,Whole Adept \n"
 )
 
+#: A stand-in Modes of the Wavelength CSV (#3135), vendored verbatim too.
+_MODES_CSV_TEXT = "Medicine Dosages,,\n,Rising,Peaking\nBeige,Inspiration,Mastery\n"
 
-def _content_tarball(manifest: dict[str, Any] | None = None, *, include_csv: bool = True) -> bytes:
-    """A tarball holding a valid manifest, its Markdown files and the CSV."""
+
+def _content_tarball(
+    manifest: dict[str, Any] | None = None,
+    *,
+    include_csv: bool = True,
+    include_modes_csv: bool = True,
+) -> bytes:
+    """A tarball holding a valid manifest, its Markdown files and both CSVs."""
     payload = manifest if manifest is not None else _MANIFEST
     files = {
         "manifest.json": json.dumps(payload),
@@ -86,6 +94,8 @@ def _content_tarball(manifest: dict[str, Any] | None = None, *, include_csv: boo
     }
     if include_csv:
         files[sync_content_module.STAGE_CORRESPONDENCE_CSV_SOURCE] = _CSV_TEXT
+    if include_modes_csv:
+        files[sync_content_module.WAVELENGTH_MODES_CSV_SOURCE] = _MODES_CSV_TEXT
     return _make_tarball(files)
 
 
@@ -285,6 +295,7 @@ def test_sync_handles_markdownless_manifest_and_missing_example(tmp_path: Path) 
         {
             "manifest.json": json.dumps(manifest),
             sync_content_module.STAGE_CORRESPONDENCE_CSV_SOURCE: _CSV_TEXT,
+            sync_content_module.WAVELENGTH_MODES_CSV_SOURCE: _MODES_CSV_TEXT,
         }
     )
 
@@ -320,17 +331,50 @@ def test_sync_vendors_stage_correspondence_csv(content_dir: Path) -> None:
     assert compute_tree_digest(content_dir) != digest_before
 
 
-def test_vendored_extra_files_table_names_the_csv() -> None:
-    """The temporary uncontracted surface is exactly one declared file."""
+def test_vendored_extra_files_table_names_the_csvs() -> None:
+    """The temporary uncontracted surface is exactly the two declared CSVs."""
     assert sync_content_module.VENDORED_EXTRA_FILES == (
         (
             sync_content_module.STAGE_CORRESPONDENCE_CSV_SOURCE,
             sync_content_module.STAGE_CORRESPONDENCE_CSV_VENDORED,
         ),
+        (
+            sync_content_module.WAVELENGTH_MODES_CSV_SOURCE,
+            sync_content_module.WAVELENGTH_MODES_CSV_VENDORED,
+        ),
     )
     assert sync_content_module.STAGE_CORRESPONDENCE_CSV_SOURCE == (
         "google_docs/database_of_course_curriculum/APTITUDE Complete Map.csv"
     )
+    assert sync_content_module.WAVELENGTH_MODES_CSV_SOURCE == (
+        "google_docs/database_of_course_curriculum/"
+        "The Archetypal Wavelength - Modes of the Wavelength.csv"
+    )
+
+
+def test_sync_vendors_wavelength_modes_csv(content_dir: Path) -> None:
+    """#3135: the Modes of the Wavelength CSV is vendored byte-for-byte."""
+    sync(_SHA, content_dir, fetch=_fetch_for(_content_tarball()), sleep=lambda _: None)
+
+    vendored = content_dir / sync_content_module.WAVELENGTH_MODES_CSV_VENDORED
+    assert vendored.read_bytes() == _MODES_CSV_TEXT.encode()
+    digest_before = compute_tree_digest(content_dir)
+    vendored.write_bytes(vendored.read_bytes() + b"x")
+    assert compute_tree_digest(content_dir) != digest_before
+
+
+def test_sync_aborts_when_tarball_lacks_wavelength_modes_csv(content_dir: Path) -> None:
+    """A tarball without the Modes CSV fails the sync before any swap."""
+    with pytest.raises(
+        SyncContentError, match=re.escape(sync_content_module.WAVELENGTH_MODES_CSV_SOURCE)
+    ):
+        sync(
+            _SHA,
+            content_dir,
+            fetch=_fetch_for(_content_tarball(include_modes_csv=False)),
+            sleep=lambda _: None,
+        )
+    assert not (content_dir / sync_content_module.WAVELENGTH_MODES_CSV_VENDORED).exists()
 
 
 def test_sync_aborts_when_tarball_lacks_stage_correspondence_csv(content_dir: Path) -> None:

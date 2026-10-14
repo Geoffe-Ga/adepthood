@@ -522,6 +522,29 @@ async def test_get_content_not_found(
 
 
 @pytest.mark.asyncio
+async def test_mark_read_remembers_highest_read_stage_per_user(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Reading position advances independently of calendar and never regresses."""
+    headers, user_id = await _signup(async_client)
+    _, earlier = await _seed_stage_with_content(db_session, stage_number=1)
+    _, later = await _seed_stage_with_content(db_session, stage_number=2)
+    await _set_user_stage(db_session, user_id, stage_number=2)
+    initial_flags = await async_client.get("/ui-flags", headers=headers)
+    assert initial_flags.json()["course_last_stage"] is None
+
+    for item, expected in [(earlier[0], 1), (later[0], 2), (earlier[0], 2), (later[0], 2)]:
+        response = await async_client.post(f"/course/content/{item.id}/mark-read", headers=headers)
+        assert response.status_code == HTTPStatus.OK
+        flags = await async_client.get("/ui-flags", headers=headers)
+        assert flags.json()["course_last_stage"] == expected
+
+    other_headers, _ = await _signup(async_client, username="other-reader")
+    other_flags = await async_client.get("/ui-flags", headers=other_headers)
+    assert other_flags.json()["course_last_stage"] is None
+
+
+@pytest.mark.asyncio
 async def test_mark_content_read(
     async_client: AsyncClient,
     db_session: AsyncSession,

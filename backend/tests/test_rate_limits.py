@@ -817,6 +817,9 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     # Per address and per account: an uncharged unusable read (#2851) must not
     # be buyable by rotating addresses.
     "routers.transcription.transcribe_page": ("20 per 1 minute", "20 per 1 minute"),
+    # The content-free admission a device asks before a client-direct page read
+    # (#3067) keeps the page-read budget it replaced.
+    "routers.transcription.direct_admission": ("20 per 1 minute", "20 per 1 minute"),
 }
 
 # One sentinel for every ``{param}`` segment. The coverage guard below only
@@ -825,10 +828,10 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
 _PATH_PARAM_SENTINEL = "1"
 _PATH_PARAM = re.compile(r"\{[^}]+\}")
 
-# 159 mounted ``APIRoute``s share 133 distinct paths. Pinned so a future router
+# 160 mounted ``APIRoute``s share 134 distinct paths. Pinned so a future router
 # that collapses the walk (the failure mode #2909 itself was) fails here rather
 # than quietly guarding fewer paths than it claims.
-_DISTINCT_MOUNTED_PATHS = 133
+_DISTINCT_MOUNTED_PATHS = 134
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:

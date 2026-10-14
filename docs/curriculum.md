@@ -230,6 +230,22 @@ running database.
    cd backend && python -m scripts.content_completeness
    cd backend && python -m scripts.content_completeness --check
    ```
+
+   Then confirm the Map's Rx/OD phase names still equal the vendored
+   `The Archetypal Wavelength - Modes of the Wavelength.csv` (#3135). The
+   re-pin also vendors that CSV, to
+   `backend/content/curriculum/modes_of_the_wavelength.csv`:
+
+   ```bash
+   cd backend && python -m scripts.check_wavelength_terms
+   ```
+
+   It runs in the same `content-drift` job. A failure names each stage, phase
+   and expression whose name in `archetypal_wavelength.json` differs from the
+   CSV. Fix it by carrying the CSV term into the mirror and rewriting that
+   phase's description. Never fix it by editing the CSV. A stage with no CSV
+   row (today only Clear Light) must mark each manifestation
+   `"source": "app-authored"`.
 4. **Run the parity and consumer tests.** `backend/tests/test_stage_correspondence.py`
    holds `archetypal_wavelength.json`'s copy of the seven fields equal to the
    artifact, stage by stage, and pins the #1637 stages literally.

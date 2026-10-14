@@ -102,6 +102,7 @@ beforeEach(() => {
     Promise.resolve({
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
+      course_last_stage: null,
       writing_session_habit_id: partial.writing_session_habit_id ?? null,
     }),
   );
@@ -572,6 +573,7 @@ describe('WritingSessionOffer — keeping it as a habit the writer already has (
     finish?.({
       has_seen_welcome: true,
       energy_scaffolding_archived: false,
+      course_last_stage: null,
       writing_session_habit_id: 21,
     });
     await waitFor(() => expect(view.queryByTestId('save-as-habit-linked')).not.toBeNull());

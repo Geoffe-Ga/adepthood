@@ -22,22 +22,20 @@ export interface HabitsSummary {
 }
 
 export function useHabitsSummary(): HabitsSummary {
-  const { userTimezone } = useAuth();
+  const { userTimezone, userTimezoneReady = true } = useAuth();
   const habitsLoading = useHabitStore((state) => state.loading);
   const habits = useHabitStore((state) => state.habits);
 
-  useEffect(() => {
-    void habitManager.loadHabits(userTimezone);
-  }, [userTimezone]);
+  const reload = useCallback(() => {
+    if (userTimezoneReady) void habitManager.loadHabits(userTimezone);
+    else void habitManager.loadHabits(userTimezone, { replayCheckIns: false });
+  }, [userTimezone, userTimezoneReady]);
+  useEffect(reload, [reload]);
   // The shelf stays mounted once visited, so without this the read above is
   // the only one it ever does (#2764) — the same treatment entries and the
   // weekly prompt got in #2358. Foregrounding the app onto the shelf counts as
   // a return too, which #2764 missed (#2847).
-  useRefetchOnReturn(
-    useCallback(() => {
-      void habitManager.loadHabits(userTimezone);
-    }, [userTimezone]),
-  );
+  useRefetchOnReturn(reload);
   // `countDoneToday` buckets into "today" at call time, which is correct; this
   // is what asks it again when "today" changes underneath a mounted shelf. The
   // key itself is unused — the subscription is the point.

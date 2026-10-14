@@ -12,13 +12,13 @@ media: []
 
 ## The Practice Never Ends: Maintenance and Deepening
 
-Let me be clear: Clear Light is not the finish line. It's a plateau. A stable resting place. But the practice continues.
+Let me be clear: Clear Light is not the finish line. It isn't a plateau either. It's one more note—one you'll keep losing and finding. The practice continues.
 
-You'll still sit 90 minutes, 4x per week. Not because you're trying to get somewhere, but because this is maintenance. This is what keeps you here. What prevents regression.
+You'll still sit 90 minutes, 4x per week—if you choose to. Not to get somewhere, and not to stop yourself sliding back. There's no back. You sit because sitting is how you keep the whole instrument in tune.
 
 You'll still journal. Still do the Baby Waterfall Conventions. Still walk. Still show up.
 
-The difference is: now it's effortless. It's not discipline anymore. It's devotion. It's joy. It's what you do because it's who you are.
+The difference is: more of it is devotion now, and less of it is discipline. Not none. Some mornings it's still discipline, and you sit anyway, and that counts.
 
 And from this place, you can begin to teach. To hold space. To serve.
 

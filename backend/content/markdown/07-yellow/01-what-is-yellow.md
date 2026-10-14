@@ -22,7 +22,7 @@ Anatomically, we've left the Throat behind. Orange and Green were expression—g
 
 In Spiral Dynamics, Yellow is the first "second-tier" stage. It's where the entire spiral becomes visible as a whole. You can see why Beige matters (grounding is foundational). Why Purple matters (symbolism and intuition are real). Why Red matters (agency and power are necessary). Why Blue matters (order and belonging stabilize). Why Orange matters (progress and innovation move us forward). Why Green matters (empathy and shadow work heal the wounds). And you no longer need to reject one to embrace another. You can *access* them all, contextually, as needed.
 
-In Integral Theory, this is the "integral" or "autonomous" stage—the capacity to hold multiple perspectives without collapsing into relativism. You can honor that different people have different notes unlocked, that different situations call for different chords, and that no single lens captures the whole truth.
+In Integral Theory, this is the "integral" or "autonomous" stage—the capacity to hold multiple perspectives without collapsing into relativism. You can honor that different people have different notes loud right now, that different situations call for different chords, and that no single lens captures the whole truth.
 
 APTITUDE calls this **Wisdom**. Orange and Green were Understanding—how the exterior works, how the interior works. Yellow opens the category that asks the next question: given all that, *what should actually be done here?* Specifically, Yellow cultivates **Systems Wisdom**—the ability to see structures rather than only symptoms, and to notice that a systemic intervention is nearly always the only one that moves the needle. Turn that capacity on yourself and you stop being merely *subject to* your conditioning and start being able to *observe* it. You become an **Intentional Actor**—someone who can choose their response, not just execute a program.
 
@@ -32,7 +32,7 @@ Yellow is also where the practice gets *serious*. We're at 45 minutes of daily m
 
 You're not here to optimize anymore. You're not here to achieve or heal. You're here to *integrate*. To take everything you've learned and weave it into a coherent Whole. To stop fragmenting yourself across contexts and start showing up as one unified being.
 
-This is the stage where Adepthood crystallizes. Where you move from student to practitioner. Where the training becomes your life.
+This is the stage where the pieces start talking to each other. Where the training stops being a thing you do and starts being a way you live—on the good weeks, anyway. On the other weeks it goes back to being a thing you do, and that counts too; that's what most of a practicing life looks like.
 
 Welcome to Yellow. The work just got real.
 

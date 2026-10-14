@@ -78,10 +78,10 @@ logger = logging.getLogger(__name__)
 # A distinct event name rather than another `_degraded` reason, because it is a
 # distinct kind of fact: `frequency_classification_degraded` records that one
 # piece of writing was not placed, and this records that nothing will be until
-# an operator acts. It is WARNING for the same reason
-# ``botmason.credit_exhausted_error`` logs the server-key branch at WARNING --
-# this path never threads a caller's own key, so the only person who can settle
-# the bill is reading server logs.
+# an operator acts. It is WARNING because the corpus path never threads a
+# caller's own key, so nobody downstream of this line is told; since ADR 0009
+# phase (a) (#3067) a keyless call reaches no vendor at all, so this fires only
+# on the select path that does thread the caller's key.
 CREDIT_EXHAUSTED_EVENT = "frequency_classification_credit_exhausted"
 
 # The per-fragment cost ceiling, in characters of input.

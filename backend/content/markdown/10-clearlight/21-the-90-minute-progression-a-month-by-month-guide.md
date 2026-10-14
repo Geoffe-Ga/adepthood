@@ -36,4 +36,4 @@ And here's what you'll notice: 90 minutes doesn't feel that much longer than 75.
 
 Once you're stable at 90 minutes, this is maintenance. You're not trying to go longer (though you can if retreats call you to 2-hour or 3-hour sits). You're deepening *within* the 90 minutes.
 
-Each sit becomes a little clearer. A little more stable. A little more effortless. This is the path of the Adept: not dramatic breakthroughs, but steady, incremental deepening that compounds over years into profound transformation.
+Some sits get clearer. Some don't. Over years, the average drifts—a little more stable, a little less fight. This is the path of the Adept: not dramatic breakthroughs, just showing up through the whole Wavelength, including the months when it feels like nothing.

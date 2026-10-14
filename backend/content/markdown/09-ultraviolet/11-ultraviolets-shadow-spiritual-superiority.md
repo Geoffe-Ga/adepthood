@@ -16,7 +16,7 @@ Ultraviolet's shadow is the most seductive of all: **spiritual superiority**.
 
 You've done the work. You've sat the retreats. You've touched jhanic bliss and non-dual awareness. You've integrated the spiral. And now, subtly, you start to believe you're *better* than people who haven't.
 
-You look at someone stuck at Orange and think, "They're so unconscious." You hear someone speak from Green and think, "They don't understand hierarchy." You see someone at Red and feel pity—or worse, contempt.
+You look at someone leading with Orange and think, "They're so unconscious." You hear someone speak from Green and think, "They don't understand complexity." You see someone in a Red moment and feel pity—or worse, contempt.
 
 This is the shadow. The moment you start using your understanding to elevate yourself above others, you've lost the plot.
 
@@ -45,10 +45,10 @@ The antidote is humility. Real humility—not false modesty, but the bone-deep r
 **Practicing Humility as Medicine:**
 
 **1. Remember your own path.**
-You were at every stage you now see others inhabiting. You were confused, reactive, unconscious. You still are, in some domains. You didn't will yourself into clarity—grace, teachers, conditions brought you here.
+Every note you now hear someone leaning on has been the loudest note in your own chord at some point. You were confused, reactive, unconscious. You still are, in some domains. You didn't will yourself into clarity—grace, teachers, conditions brought you here.
 
 **2. See the Buddha-nature in everyone.**
-Every person you meet has the same capacity for awakening you do. They're just at a different point on the path. Some will surpass you. Some are your teachers, even if they don't know it.
+Every person you meet has the same capacity for awakening you do. They're playing a different chord today. Some are better musicians than you'll ever be. Some are your teachers, even if they don't know it.
 
 **3. Serve without needing recognition.**
 If you're truly awake, you don't need to prove it. You just show up. You hold space. You offer what's helpful. And you let the work speak for itself.

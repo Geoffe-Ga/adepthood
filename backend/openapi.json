@@ -8307,8 +8307,21 @@
         "type": "object"
       },
       "UiFlagsResponse": {
-        "description": "The caller's UI flags, plus the habit their writing timer checks off.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.\n``writing_session_habit_id`` is ``None`` until the writer links a habit, and\nagain after they clear the link or delete that habit.",
+        "description": "The caller's UI flags, writing habit link and course reading position.\n\n``user_id`` is intentionally excluded — the caller already knows its own\nidentity from the JWT, and surfacing surrogate keys aids enumeration.\n``writing_session_habit_id`` is ``None`` until the writer links a habit, and\nagain after they clear the link or delete that habit.",
         "properties": {
+          "course_last_stage": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Last Stage"
+          },
           "energy_scaffolding_archived": {
             "title": "Energy Scaffolding Archived",
             "type": "boolean"
@@ -8332,14 +8345,28 @@
         "required": [
           "has_seen_welcome",
           "energy_scaffolding_archived",
-          "writing_session_habit_id"
+          "writing_session_habit_id",
+          "course_last_stage"
         ],
         "title": "UiFlagsResponse",
         "type": "object"
       },
       "UiFlagsUpdate": {
-        "description": "Partial update for the UI flags (PATCH).\n\nThe two booleans are plain, non-nullable fields defaulting to their\ncolumn's own default, so an explicit ``null`` is refused by the annotation\nat a ``loc`` naming the flag rather than reaching a NOT NULL column. Only\nthe fields the caller sets are applied -- unspecified flags keep their\nstored value, because the domain dumps with ``exclude_unset=True`` and no\ndefault here is ever written on its own. An empty payload is rejected (422)\nby :class:`~schemas.partial_update.PartialUpdateModel`.\n\n``writing_session_habit_id`` is the one deliberate exception to that\nbase's non-null doctrine. Its column *is* nullable -- \"no habit linked\" is\na real state -- so an explicit ``null`` is a legitimate value meaning\n\"clear the link\", not a defect to refuse. The three states still stay\napart through ``model_fields_set``: omitted leaves the link alone, ``null``\nclears it, and an id sets it once the caller is shown to own that habit.\nThe id is bounded like every other row id, so ``0``, a negative or a value\npast int32 is a 422 rather than a database lookup.",
+        "description": "Partial update for the UI flags (PATCH).\n\nThe two booleans are plain, non-nullable fields defaulting to their\ncolumn's own default, so an explicit ``null`` is refused by the annotation\nat a ``loc`` naming the flag rather than reaching a NOT NULL column. Only\nthe fields the caller sets are applied -- unspecified flags keep their\nstored value, because the domain dumps with ``exclude_unset=True`` and no\ndefault here is ever written on its own. An empty payload is rejected (422)\nby :class:`~schemas.partial_update.PartialUpdateModel`.\n\n``writing_session_habit_id`` and ``course_last_stage`` are exceptions to that\nbase's non-null doctrine. Its column *is* nullable -- \"no habit linked\" is\na real state -- so an explicit ``null`` is a legitimate value meaning\n\"clear the link\", not a defect to refuse. The three states still stay\napart through ``model_fields_set``: omitted leaves the link alone, ``null``\nclears it, and an id sets it once the caller is shown to own that habit.\nThe id is bounded like every other row id, so ``0``, a negative or a value\npast int32 is a 422 rather than a database lookup.\nThe reading position is similarly nullable and bounded to the ten stages.",
         "properties": {
+          "course_last_stage": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Last Stage"
+          },
           "energy_scaffolding_archived": {
             "title": "Energy Scaffolding Archived",
             "type": "boolean"
@@ -18139,26 +18166,9 @@
     },
     "/journal/transcribe-page": {
       "post": {
-        "description": "Transcribe one image of text, charging BotMason only when it pays the provider.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — an operator's external-AI\nsuspension answers 503 ``ai_suspended`` before anything else (#3075), then a\nvault-bound writer is answered 503 ``reflection_source_unavailable`` (#3156),\nthen the image is validated (422 without any charge), then the caller key and\nvision capability are resolved.\nWith no personal key, a server with no real provider (402\n``llm_key_required``) or an empty wallet (402 ``insufficient_offerings``) is\nrefused before the slot or the wallet is touched (#3096). A valid caller\nkey bypasses both BotMason buckets; otherwise the wallet is deducted (402\nwhen out of capacity). A provider failure rolls the transaction back so a\nfailed pass never bills, and so does a reply that is no text or a refusal\n(422 ``no_text_found`` / ``transcription_refused``). Usage is metered (one\nrow per real, non-stub call) and committed atomically with any charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
+        "description": "Transcribe one keyless image of text on the armed stub seam, or refuse.\n\nStateless: no journal row is written and the metered call carries no\n``journal_entry_id``. Strict ordering — an operator's external-AI\nsuspension answers 503 ``ai_suspended`` before anything else (#3075), then a\nvault-bound writer is answered 503 ``reflection_source_unavailable`` (#3156),\nthen the payer gate runs, then the image is validated (422 without any charge).\nThis route holds no key of the writer's own -- a device with one reads the\npage by calling its vendor directly (ADR 0009 phase (a), #3067) -- so\noutside the armed stub test seam the gate refuses 402 ``llm_key_required``\nbefore the body is decoded and before the slot or the wallet is touched\n(#3096). On the seam the wallet is\ndeducted (402 ``insufficient_offerings`` when out of capacity). A provider\nfailure rolls the transaction back so a failed pass never bills, and so\ndoes a reply that is no text or a refusal (422 ``no_text_found`` /\n``transcription_refused``). Usage is committed atomically with the charge.\n\nOnly metadata (user id, total tokens) is logged — never the base64 image\npayload or the transcribed text.",
         "operationId": "transcribe_page_journal_transcribe_page_post",
         "parameters": [
-          {
-            "in": "header",
-            "name": "X-LLM-API-Key",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "maxLength": 256,
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Llm-Api-Key"
-            }
-          },
           {
             "in": "header",
             "name": "authorization",
@@ -18289,6 +18299,129 @@
           }
         },
         "summary": "Transcribe Page",
+        "tags": [
+          "journal"
+        ]
+      }
+    },
+    "/journal/transcribe-page/direct-admission": {
+      "post": {
+        "description": "Say whether a device may read a page by calling its own vendor directly.\n\nA writer's own key never reaches this server (ADR 0009 phase (a), #3067):\nthe device sends the page straight to the vendor that key belongs to. What\nthe device cannot know is whether an operator has switched external AI off\nfor a privacy incident (#3075), the one control meant to stop a BYOK call\ntoo, so it asks here first. The request carries no body, no key and no page;\nthe answer is 204 with no body, or 503 ``ai_suspended``. Nothing is charged,\nmetered or logged beyond the access line every request gets.",
+        "operationId": "direct_admission_journal_transcribe_page_direct_admission_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "402": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The account has no credit left for this operation."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "An upstream dependency this route relies on failed."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Direct Admission",
         "tags": [
           "journal"
         ]

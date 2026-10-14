@@ -52,8 +52,8 @@ You have a profound sit. Everything dissolves. You touch something vast. You thi
 
 Then the next day, you're anxious and irritable. And you're confused. "What happened?"
 
-What happened: you confused a temporary state with a permanent stage. States come and go. Stages are developmental—they stick.
+What happened: you confused a state with a stage—or, more precisely, with a capacity. States come and go, even the vast ones. A capacity is what's left over afterward: a little more ability to meet the next anxious morning. It doesn't stick either; it's just slower to fade and easier to rebuild.
 
-**The Fix:** Don't chase peak experiences. Don't cling to bliss. Notice the state, appreciate it, let it pass. Keep training. Stages emerge from consistent practice over years, not from one good sit.
+**The Fix:** Don't chase peak experiences. Don't cling to bliss. Notice the state, appreciate it, let it pass. Keep training. Capacities grow from consistent practice over years, not from one good sit.
 
 ---

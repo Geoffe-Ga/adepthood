@@ -26,6 +26,11 @@ handlers or the access record. The frontend counterpart is
 
 ## Transports
 
+This table is machine-read. The bold name in each row is a key in the privacy
+sink registry (`backend/src/privacy/sinks.py`). If you add a row, add a sink
+for it too, or `test_claim_coverage_manifest.py` fails. To attach a telemetry
+test to claim C12, see `docs/privacy/claim-coverage.md`.
+
 | # | Transport | What it may carry | Chokepoint (code) | Enforcing test | Retention | Who can read |
 |---|---|---|---|---|---|---|
 | 1 | **Backend Sentry** (only if `SENTRY_DSN` is set) | `event_id`, `timestamp`, `platform`, `level`, `environment`, `release`, `sdk{name,version}`, `tags.request_id`, `contexts.adepthood_request{request_id, request_path = route template, request_method}`, and per exception: `type`, `module`, `mechanism{type, handled}`, frames `{filename, function, lineno, in_app}`, and `value` = declared `safe_code` or `message_withheld`. No integrations are installed. | `sentry.scrub_event` (allowlist rebuild), `sentry.APPROVED_INTEGRATIONS` | `test_telemetry_sentinels.py` (Sentry sections), `test_error_monitoring.py`, `test_legal_documents.py` | TBD (B08) | TBD (owner) |

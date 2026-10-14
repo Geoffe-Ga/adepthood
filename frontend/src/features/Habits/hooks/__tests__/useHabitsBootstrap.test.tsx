@@ -1,6 +1,7 @@
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { act, renderHook } from '@testing-library/react-native';
 
+import { habitManager } from '../../services/habitManager';
 import { useBootstrapHabits } from '../useHabits';
 
 const mockRegister = jest.fn<(signal?: AbortSignal) => Promise<string | undefined>>();
@@ -29,6 +30,18 @@ beforeEach(() => {
 });
 
 describe('useBootstrapHabits lifecycle', () => {
+  it('defers replay until the account timezone is authoritative, including actual UTC', () => {
+    const { rerender } = renderHook<void, { ready: boolean }>(
+      ({ ready }) => useBootstrapHabits('UTC', ready),
+      {
+        initialProps: { ready: false },
+      },
+    );
+    expect(habitManager.loadHabits).toHaveBeenLastCalledWith('UTC', { replayCheckIns: false });
+    rerender({ ready: true });
+    expect(habitManager.loadHabits).toHaveBeenLastCalledWith('UTC');
+  });
+
   it('aborts the in-flight notification work when the hook unmounts', async () => {
     const { unmount } = renderHook(() => useBootstrapHabits('UTC'));
 

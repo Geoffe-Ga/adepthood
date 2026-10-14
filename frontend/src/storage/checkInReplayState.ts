@@ -21,7 +21,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { z } from 'zod';
 
 import { serialize } from './serializedWrite';
-import { scopedKey } from './userScope';
+import { getActiveUser, scopedKey } from './userScope';
 
 const CHECKIN_REPLAY_STATE_KEY_BASE = '@adepthood/pending_checkin_replay_state';
 
@@ -66,20 +66,31 @@ export async function loadCheckInReplayState(): Promise<ReplayHeadState | null> 
 }
 
 /** Persist the head's retry record. Total: a failed write is logged, not thrown. */
-export async function saveCheckInReplayState(state: ReplayHeadState): Promise<void> {
+export async function saveCheckInReplayState(
+  state: ReplayHeadState,
+  owner: number | null = getActiveUser(),
+): Promise<void> {
+  if (getActiveUser() !== owner) return;
   const key = replayStateKey();
   try {
-    await serialize(key, () => AsyncStorage.setItem(key, JSON.stringify(state)));
+    await serialize(key, async () => {
+      if (getActiveUser() === owner) await AsyncStorage.setItem(key, JSON.stringify(state));
+    });
   } catch {
     console.warn(WARN_WRITE);
   }
 }
 
 /** Remove the retry record: the queue drained, gave up, or the user left. */
-export async function clearCheckInReplayState(): Promise<void> {
+export async function clearCheckInReplayState(
+  owner: number | null = getActiveUser(),
+): Promise<void> {
+  if (getActiveUser() !== owner) return;
   const key = replayStateKey();
   try {
-    await serialize(key, () => AsyncStorage.removeItem(key));
+    await serialize(key, async () => {
+      if (getActiveUser() === owner) await AsyncStorage.removeItem(key);
+    });
   } catch {
     console.warn(WARN_CLEAR);
   }

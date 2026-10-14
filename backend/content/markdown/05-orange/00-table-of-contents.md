@@ -30,7 +30,7 @@
 
 [The Default Habit of Orange: Exercise](#the-default-habit-of-orange-exercise)
 
-[Why Exercise is Non-Negotiable for Understanding](#why-exercise-is-non-negotiable-for-understanding)
+[Why Exercise Does So Much for Understanding](#why-exercise-does-so-much-for-understanding)
 
 [How to Structure Your Exercise Practice](#how-to-structure-your-exercise-practice)
 

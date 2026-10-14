@@ -22,20 +22,20 @@ This is the Wavelength of the jhana practitioner. The meditator cultivating stat
 
 The six phases of Ultraviolet's Wavelength map the territory of deepening realization:
 
-**Rising: Rx = Ascending | OD = Transcending**
+**Rising: Rx = Unification of Mind | OD = Worldly Desire**
 
-**Peaking: Rx = Clarity | OD = Superiority**
+**Peaking: Rx = Jhana | OD = Bliss Addiction**
 
-**Withdrawal: Rx = Discernment | OD = Judgment**
+**Withdrawal: Rx = Metta and Meditative Joy | OD = Agitation Due to Worry or Remorse**
 
-**Diminishing: Rx = Humility | OD = Humiliation**
+**Diminishing: Rx = Sustained Attention | OD = Doubt**
 
-**Bottoming Out: Rx = Devotion | OD = Dogma**
+**Bottoming Out: Rx = Pleasure | OD = Aversion**
 
-**Restoration: Rx = Recommitment | OD = Righteousness**
+**Restoration: Rx = Directed Attention | OD = Laziness or Lethargy**
 
 This is the rhythm of the serious practitioner. The one who sits retreats. Who deepens year after year. Who is committed to the path not as a hobby, but as *the work*.
 
-We'll explore each phase. But first, recognize: Ultraviolet's Wavelength is about *going deeper*. Not wider. Deeper. Into the same practices. The same insights. Until they stabilize as your baseline reality.
+We'll explore each phase. But first, recognize: Ultraviolet's Wavelength is about *going deeper*. Not wider. Deeper. Into the same practices. The same insights. Until they're familiar enough that you can find your way back when they fade—and they will fade. That's the Wavelength, not a failure.
 
 ---

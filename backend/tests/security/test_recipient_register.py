@@ -22,7 +22,7 @@ import dataclasses
 import re
 import shutil
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, timedelta
 from pathlib import Path
 from types import MappingProxyType
@@ -405,13 +405,18 @@ def test_a_removed_row_leaves_its_dial_unclaimed() -> None:
 # ── Scopes and owner fields ───────────────────────────────────────────────────
 
 
+#: A provider's BYOK routes since #3067: relayed by this server, and device-direct.
+_BYOK_ROUTES = 2
+
+
 def test_byok_scope_is_never_blanket_guarantee_eligible() -> None:
     """Traffic on the user's own vendor account is governed by that account, not ours."""
     for recipient in PROVIDER_RECIPIENTS.values():
         byok = [s for s in RECIPIENTS[recipient].scopes if s.kind is ScopeKind.USER_OWNED_ACCOUNT]
-        assert len(byok) == 1
-        assert byok[0].blanket_guarantee_eligible is False
-        assert DataClass.CONTENT in byok[0].data_classes
+        assert len(byok) == _BYOK_ROUTES
+        for scope in byok:
+            assert scope.blanket_guarantee_eligible is False
+            assert DataClass.CONTENT in scope.data_classes
 
     assert "blanket_guarantee_eligible" not in {f.name for f in dataclasses.fields(Scope)}
     assert all(
@@ -783,3 +788,101 @@ def test_privacy_package_imports_only_stdlib() -> None:
             else:
                 continue
             assert roots <= set(sys.stdlib_module_names) | {"privacy", "__future__"}, path
+
+
+# ── Device-direct dials (ADR 0009 phase (a), #3067) ─────────────────────────────
+
+FRONTEND_SRC = SRC_ROOT.parents[1] / "frontend" / "src"
+_CLIENT_SOURCE_SUFFIXES = frozenset({".ts", ".tsx"})
+
+
+def _is_shipped_client_source(path: Path) -> bool:
+    """A frontend module that ships in the app: not a test, a mock or a fixture."""
+    return (
+        path.suffix in _CLIENT_SOURCE_SUFFIXES
+        and "__tests__" not in path.parts
+        and "__mocks__" not in path.parts
+        and ".test." not in path.name
+    )
+
+
+def client_dial_gaps(
+    frontend_src: Path,
+    register: Mapping[RecipientId, Recipient],
+) -> set[str]:
+    """Every device-side dial of a registered host its row does not name, and every stale claim.
+
+    A dial is a shipped frontend module carrying an ``https://<host>`` literal for
+    a host some row registers. The device sends to that party directly, so the
+    row has to say so -- and a module a row claims must still dial it.
+    """
+    found: dict[str, set[RecipientId]] = {}
+    for path in frontend_src.rglob("*"):
+        if not _is_shipped_client_source(path):
+            continue
+        text = path.read_text(encoding="utf-8")
+        module = path.relative_to(frontend_src.parent).as_posix()
+        for row in register.values():
+            if any(f"https://{host}" in text for host in row.hosts):
+                found.setdefault(module, set()).add(row.id)
+    gaps = {
+        f"unregistered: {module} dials {rid}"
+        for module, rids in found.items()
+        for rid in rids
+        if module not in register[rid].client_dial_modules
+    }
+    gaps |= {
+        f"stale: {rid} claims {module}"
+        for rid, row in register.items()
+        for module in row.client_dial_modules
+        if rid not in found.get(module, set())
+    }
+    return gaps
+
+
+def test_every_device_direct_dial_is_registered() -> None:
+    """The page read the device sends straight to a vendor is a registered route."""
+    assert client_dial_gaps(FRONTEND_SRC, RECIPIENTS) == set()
+    for rid in (RecipientId.OPENAI, RecipientId.ANTHROPIC):
+        assert "src/api/byokDirect.ts" in RECIPIENTS[rid].client_dial_modules
+
+
+def test_a_planted_device_dial_is_an_unregistered_gap(tmp_path: Path) -> None:
+    """A new frontend module reaching a registered host fails the sweep until its row names it."""
+    copied = tmp_path / "src"
+    shutil.copytree(FRONTEND_SRC, copied, ignore=shutil.ignore_patterns("node_modules"))
+    (copied / "api" / "planted.ts").write_text(
+        "export const url = 'https://api.openai.com/v1/responses';\n", encoding="utf-8"
+    )
+
+    assert client_dial_gaps(copied, RECIPIENTS) == {
+        f"unregistered: src/api/planted.ts dials {RecipientId.OPENAI}"
+    }
+
+
+def test_a_row_claiming_a_device_dial_that_is_gone_is_stale() -> None:
+    """A claim on a module that no longer dials the host fails as stale."""
+    openai = RECIPIENTS[RecipientId.OPENAI]
+    register = _with_row(
+        dataclasses.replace(
+            openai, client_dial_modules=openai.client_dial_modules | {"src/api/index.ts"}
+        )
+    )
+
+    assert client_dial_gaps(FRONTEND_SRC, register) == {
+        f"stale: {RecipientId.OPENAI} claims src/api/index.ts"
+    }
+
+
+@pytest.mark.parametrize("rid", [RecipientId.OPENAI, RecipientId.ANTHROPIC])
+def test_the_device_direct_scope_names_what_the_vendor_now_sees(rid: RecipientId) -> None:
+    """The device-direct page read carries the page, the key and the device's network identity."""
+    [direct] = [s for s in RECIPIENTS[rid].scopes if "device" in s.trigger]
+
+    assert direct.kind is ScopeKind.USER_OWNED_ACCOUNT
+    assert direct.data_classes == frozenset(
+        {DataClass.CONTENT, DataClass.METADATA, DataClass.CREDENTIAL}
+    )
+    for disclosed in ("page reading", "IP address", "user agent", "Origin"):
+        assert disclosed in direct.trigger
+    assert not direct.blanket_guarantee_eligible

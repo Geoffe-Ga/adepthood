@@ -13,7 +13,10 @@ Read it slowly, and take only what resonates.
 ## Your torus — the auric field
 
 Picture the field around you as a torus: a doughnut of energy that flows up
-through you, blooms out around you, and folds back in to rise again. It is the
+through you, blooms out around you, and folds back in to rise again. If that
+sounds abstract, try it with one breath: inhale and feel the lift up your
+spine, exhale and feel it settle back around you. That loop, felt rather than
+imagined, is the torus. It is the
 living shape of your presence — the vibration you are already emitting, moment
 to moment.
 
@@ -25,8 +28,8 @@ it is right now, and it is always in motion.
 
 Around that torus turns a spiral. Every honest pass through experience — every
 practice, every reflection, every ordinary day met with a little more presence
-— winds the spiral one more turn. As it turns, it grows the torus wider and
-lifts it, opening you toward the higher Stages of the arc.
+— winds the spiral one more turn. As it turns, it grows the torus wider,
+opening you toward more of the Stages — more notes under your hands.
 
 The spiral never retraces the same circle. It rises. What returns comes back
 around at a new turn, carrying everything the last turn taught you.
@@ -46,10 +49,9 @@ already doing in the field around you.
 
 The wave itself moves through six phases in every cycle — Rising, Peaking,
 Withdrawal, Diminishing, Bottoming Out, and Restoration — and then it turns
-again. As the spiral lifts through the Stages of the arc, the same six-phase
-wave sounds again at a higher octave: the same music, pitched higher, richer in
-overtones. The rising octaves are those lifting Stages — each one the familiar
-cycle sung anew.
+again. As the spiral adds Stages, the same six-phase wave sounds again in a new
+register: the same music, richer in overtones. The octaves are those added
+Stages — each one the familiar cycle sung with one more voice in the choir.
 
 An octave up is not "more worthy." It is the same song, wider in range. Every
 octave is whole in itself.

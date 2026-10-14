@@ -35,6 +35,6 @@ These could be media messages, cultural myths, family dynamics, religious script
     Pick a social system you feel entangled with—something that holds power over others. It might be healthcare, education, law enforcement, capitalism, the nuclear family, your digital sangha, etc. Free write for 15 minutes on how this system both reflects and represses self-love. How does it enforce domination? How might it look if it were built from the ground up by people who deeply knew their own worth?
 
 4.  As usual, if none of these questions move you,
-    journal about your challenges and successes working with the APTITUDE program. f
+    journal about your challenges and successes working with the APTITUDE program.
 
 Share what comes up in the Digital Sangha if you feel moved. Naming the dynamics is part of disarming them. And hearing echoes of your story in others is part of the antidote.

@@ -42,7 +42,7 @@ Each day, journal about where you are. What phase are you in—physically, emoti
 
 Then ask: What's the medicine (Rx) for this phase? What's the poison (OD) I need to avoid? How can I move through this phase skillfully?
 
-For example: "I'm in Diminishing creatively. The medicine is Reorienting—stepping back to reassess the project. The poison is Dithering—endlessly tweaking without committing. Today, I'll pause, reflect, and set a clear intention for the next step."
+For example: "I'm in Diminishing creatively. The medicine is Establish—settling on the one structure that will actually hold the project and putting it on the calendar. The poison is Confusion—re-opening every decision until nothing holds. Today, I'll pick the plan, write it on the wall, and leave it there."
 
 This is practicing *real-time integration*. You're not just living the Wavelength unconsciously. You're *surfing* it. Collaborating with it. Using your awareness to navigate it more skillfully.
 

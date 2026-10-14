@@ -12,9 +12,9 @@ media: []
 
 ## The Archetypal Wavelength in Clear Light: Full Cycle
 
-At Clear Light, you don't transcend the Wavelength. You *master* it. You see the full cycle—Rising, Peaking, Withdrawal, Diminishing, Bottoming Out, Restoration—and you know how to work with each phase skillfully.
+At Clear Light, you don't transcend the Wavelength. You get to *know* it—every phase, by feel, the way you know a road you've driven in the dark. You see the full cycle—Rising, Peaking, Withdrawal, Diminishing, Bottoming Out, Restoration—and you know how to work with each phase skillfully.
 
-The image descriptions from `ImageDescriptions.md` show this beautifully. There are infographics for Clear Light that map:
+The Clear Light infographics show this beautifully. They map:
 
 - **Influence during Highs and Lows**: How external forces impact you at Peaking and Bottoming Out. At Peaking, you're vulnerable to inflation, grandiosity, believing your own hype. At Bottoming Out, you're vulnerable to despair, collapse, the belief that it will never get better. Clear Light teaches you to see these influences *and* not be moved by them.
 

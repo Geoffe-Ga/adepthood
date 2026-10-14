@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -137,7 +138,17 @@ _HIJACKING_PID = "999999"
 # Placeholders are substituted by replacement rather than by ``str.format`` so
 # the shell's own ``${...}`` expansions do not have to be brace-escaped, which
 # is how a shim ends up writing to a path named after a literal dollar sign.
+_PHASE_FAILURE_ENV = "ADEPTHOOD_PHASE_FAILURE"
+_PG_PROBE_ENV = "ADEPTHOOD_PG_PROBE"
+
 _PYTEST_SHIM = """#!/usr/bin/env bash
+phase=sqlite
+for argument in "$@"; do
+    if [ "$argument" = tests/integration ]; then phase=postgres; fi
+done
+if [ -n "${ADEPTHOOD_PG_PROBE:-}" ]; then
+    printf '%s\\n' "${TEST_POSTGRES_URL:-}" >> "$ADEPTHOOD_PG_PROBE"
+fi
 { printf '%s\\n' "@MARKER@"; printf '%s\\n' "$@"; } >> "@LOG@"
 if [ -n "${@PROBE@:-}" ] && [ -f "@LOCK@" ]; then
     cp "@LOCK@" "${@PROBE@}"
@@ -150,6 +161,7 @@ if [ -n "$gate" ] && [ ! -f "$gate" ]; then
     : > "$gate@BLOCKED@"
     while [ ! -f "$gate" ]; do sleep @POLL@; done
 fi
+if [ "${ADEPTHOOD_PHASE_FAILURE:-}" = "$phase" ]; then exit 1; fi
 exit "${@EXIT@:-0}"
 """
 
@@ -915,3 +927,104 @@ def test_the_pre_push_suite_hook_routes_through_the_test_script() -> None:
     assert "pytest -n auto" not in entry, (
         f"the hook invokes pytest directly, bypassing the whole-suite lock; got: {entry.strip()}"
     )
+
+
+@pytest.mark.parametrize("coverage", [(), ("--coverage",)])
+def test_all_keeps_sqlite_type_mutation_out_of_postgres_process(
+    runner: _Runner, coverage: tuple[str, ...]
+) -> None:
+    """A real pytest run must not carry SQLite's metadata rewrite into PG."""
+    backend = runner.root / "backend"
+    (backend / "pytest.ini").write_text(
+        "[pytest]\npythonpath = .\nmarkers = integration: PostgreSQL lane\n"
+    )
+    (backend / ".coveragerc").write_text("[run]\nsource = lane_behavior\n")
+    (backend / "lane_behavior.py").write_text(
+        "def sqlite_behavior():\n    return 'sqlite'\n"
+        "def postgres_behavior():\n    return 'postgres'\n"
+    )
+    (backend / "lane_metadata.py").write_text(
+        "from sqlalchemy import Column, Integer, MetaData, Table\n"
+        "from sqlalchemy.dialects.postgresql import ARRAY\n"
+        "table = Table('progress', MetaData(), Column('stages', ARRAY(Integer)))\n"
+    )
+    (backend / "tests/a_sqlite").mkdir()
+    (backend / "tests/a_sqlite/test_types.py").write_text(
+        "import pytest\nfrom sqlalchemy import JSON\nfrom lane_metadata import table\n"
+        "from lane_behavior import sqlite_behavior\n"
+        "@pytest.mark.integration\ndef test_sqlite_rewrites_array():\n"
+        "    table.c.stages.type = JSON()\n"
+        "    assert sqlite_behavior() == 'sqlite'\n"
+    )
+    (backend / "tests/test_unit.py").write_text("def test_unit():\n    assert True\n")
+    (backend / "tests/integration").mkdir()
+    (backend / "tests/integration/test_b_postgres.py").write_text(
+        "import pytest\nfrom sqlalchemy.dialects.postgresql import ARRAY\n"
+        "from lane_metadata import table\nfrom lane_behavior import postgres_behavior\n"
+        "@pytest.mark.integration\n"
+        "def test_postgres_retains_array():\n"
+        "    assert isinstance(table.c.stages.type, ARRAY), 'SQLite metadata leaked'\n"
+        "    assert postgres_behavior() == 'postgres'\n"
+    )
+    shim = Path(runner.env[_PATH_ENV].split(os.pathsep)[0]) / "pytest"
+    pytest_executable = shlex.quote(_real_executable("pytest"))
+    shim.write_text(f'#!/usr/bin/env bash\nexec {pytest_executable} "$@"\n')
+    result = runner.run("--all", *coverage, extra_env={"PYTEST_WORKERS": "0"})
+    assert result.returncode == _PASSED_EXIT_CODE, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("coverage", [(), ("--coverage",), ("--coverage-data",)])
+def test_all_runs_every_lane_with_combined_coverage(
+    runner: _Runner, coverage: tuple[str, ...]
+) -> None:
+    """All tests run; the PG process adds its coverage to the SQLite process."""
+    result = runner.run("--all", *coverage)
+    assert result.returncode == _PASSED_EXIT_CODE, result.stderr
+    calls = runner.invocations()
+    assert len(calls) == 2
+    assert "--ignore=tests/integration" in calls[0]
+    assert calls[0][-1] == "tests/"
+    assert calls[1][-1] == "tests/integration"
+    assert all("-m" not in call for call in calls)
+    if coverage:
+        assert "--cov-append" not in calls[0]
+        assert "--cov-append" in calls[1]
+    if coverage == ("--coverage",):
+        assert "--cov-report=" in calls[0]
+        assert "--cov-fail-under=0" in calls[0]
+        assert "--cov-report=xml" not in calls[0]
+        assert "--cov-fail-under=90" not in calls[0]
+        assert "--cov-fail-under=90" in calls[1]
+        assert "--cov-report=xml" in calls[1]
+
+
+@pytest.mark.parametrize(("phase", "expected_calls"), [("sqlite", 1), ("postgres", 2)])
+def test_all_propagates_either_phase_failure(
+    runner: _Runner, phase: str, expected_calls: int
+) -> None:
+    """Neither a failed SQLite suite nor a failed live-PG suite can pass."""
+    result = runner.run("--all", extra_env={_PHASE_FAILURE_ENV: phase})
+    assert result.returncode == _TESTS_FAILED_EXIT_CODE
+    assert len(runner.invocations()) == expected_calls
+    assert not runner.lock_path().exists()
+
+
+def test_all_preserves_postgres_environment_and_lock_through_second_phase(
+    runner: _Runner, tmp_path: Path
+) -> None:
+    """The PG URL reaches both processes; the second still owns the suite lock."""
+    pg_probe = tmp_path / "postgres-urls"
+    lock_probe = tmp_path / "last-phase-lock"
+    pg_url = "postgresql+asyncpg://test@localhost/test"
+    result = runner.run(
+        "--all",
+        extra_env={
+            "TEST_POSTGRES_URL": pg_url,
+            _PG_PROBE_ENV: str(pg_probe),
+            _LOCK_PROBE_ENV: str(lock_probe),
+        },
+    )
+    assert result.returncode == _PASSED_EXIT_CODE, result.stderr
+    assert pg_probe.read_text().splitlines() == [pg_url, pg_url]
+    assert lock_probe.read_text().strip().isdigit()
+    assert not runner.lock_path().exists()

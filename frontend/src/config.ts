@@ -102,3 +102,14 @@ export const SANGHA_INVITE_URL = resolveEnv(
   'EXPO_PUBLIC_SANGHA_INVITE_URL',
   '',
 );
+
+/**
+ * Whether a page read with no key of the writer's own may still go to the server.
+ *
+ * Only in a development build. Since ADR 0009 phase (a) (#3067) the server's
+ * page-read route can answer a keyless page only from its stub test seam
+ * (`BOTMASON_STUB_SEAM`), which a production server refuses to boot with; a
+ * production build therefore refuses `key_required` on the device and sends the
+ * page nowhere, rather than uploading it only to be refused.
+ */
+export const KEYLESS_PAGE_READ_REACHES_SERVER: boolean = __DEV__;

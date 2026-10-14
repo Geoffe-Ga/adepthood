@@ -38,6 +38,6 @@ Repetitive devotional chanting, done with full attention for 45 minutes, is a fo
 
 **6. Noting Practice (45 min)**
 
-This is a vipassana technique. Sit in meditation and mentally "note" everything that arises: "thinking," "hearing," "itching," "planning," "remembering." The noting keeps you anchored in the present moment and prevents you from getting lost in thought. Do this for 45 minutes and you'll develop a kind of meta-awareness that's astonishing in its clarity.
+This is a vipassana technique. Sit in meditation and mentally "note" everything that arises: "thinking," "hearing," "itching," "planning," "remembering." The noting keeps you anchored in the present moment and prevents you from getting lost in thought. Do this for 45 minutes a day for a while and the noting starts to run on its own—a watching-the-watcher that's genuinely strange the first time it shows up, and clarifying once you've lived with it.
 
-All of these work. But whatever you choose, commit to it. Do it daily. Give it the full 45 minutes. This is not optional for Yellow. This is the practice that unlocks everything else.
+All of these work. Whatever you choose, give it the full 45 minutes and aim for at least five days a week. This is the one practice in the whole course you're most likely to feel ripple into everything else—which is the invitation, not the rule. You still get to decide how deep you go.
