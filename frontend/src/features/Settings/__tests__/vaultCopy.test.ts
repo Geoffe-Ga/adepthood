@@ -387,7 +387,7 @@ describe('vaultCopy — the form deck, verbatim', () => {
 
   it('VAULT_ADDRESS_UNREADABLE covers an address nothing can parse', () => {
     expect(vaultCopy.VAULT_ADDRESS_UNREADABLE).toBe(
-      'Adepthood cannot read that as an address. Copy it again from your vault.',
+      'Adepthood does not recognise that as an address. Copy it again from your vault.',
     );
   });
 

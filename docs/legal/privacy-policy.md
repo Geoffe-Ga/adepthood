@@ -275,8 +275,8 @@ sent.
 
 Four things are worth knowing about a vault. It is **optional** — with
 none configured, none of this happens and the app is otherwise unchanged.
-Each connection or allocation is **bound to one named account**: another
-account cannot read or write through it, so nobody's writing reaches somebody
+Each connection or allocation is **bound to one named account**: no other
+account can read or write through it, so nobody's writing reaches somebody
 else's corpus. An ordinary Fly vault activated by Adepthood is
 **provider-managed and operator-readable**: Fly and privileged Adepthood or
 Creek operators can access its stored bytes and restart it without you. It is
@@ -308,7 +308,7 @@ that vault, and as the vault paragraph above says, Fly and privileged
 Adepthood or Creek operators can access what it stores.
 
 **Gumroad**, for purchases. It receives what you type into its own
-checkout, which Adepthood never sees; Adepthood sends it a licence key to
+checkout, which stays with Gumroad; Adepthood sends it a licence key to
 verify and receives back the sale record it keeps.
 
 **Sentry**, if — and only if — the deployment configures it. It is how a
