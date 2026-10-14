@@ -63,6 +63,33 @@ Each claim group edits its own entries: C07–C11 (#3159), C12 (#3160), C13 and
 C23 (#3161), and C21 (#3162). Neither the validator nor the registry needs
 changing to add a test to a claim.
 
+## Proving the tests have teeth
+
+A green claim suite shows the product is clean today. It does not show the
+suite would notice a guard being deleted. Two more checks cover that (#3163).
+
+- **Guard mutation.** `backend/tests/support/privacy_guards.py` lists each
+  privacy guard, a permissive no-op that replaces it, and the claims it backs.
+  `backend/tests/security/test_privacy_guard_mutations.py` runs each claim's
+  manifest tests in a subprocess with the guard replaced, and requires the run
+  to fail. It then reruns the failing tests with nothing replaced, and requires
+  them to pass. The plugin that does the replacing
+  (`backend/tests/support/privacy_guard_mutation.py`) acts only when loaded
+  with `-p` and enabled by its environment variable, and a test asserts that
+  nothing in `backend/src` imports it.
+  - When you add a guard, add a row. When a row's mutated run passes, the
+    claim's manifest entry is missing the test that notices that guard. If
+    no such test exists, the guard is unprotected: file it as a P0 against
+    the owning epic and mark the row `xfail(strict=True)` naming the issue.
+  - This file runs in every whole-suite run (`check-all.sh`, the pre-push
+    hook and backend CI). A targeted run includes it only when you name it.
+- **Multi-process ordering.**
+  `backend/tests/integration/test_privacy_orderings_multiprocess.py` runs the
+  barrier, reclassification, erasure and resume races in separate `spawn`
+  processes, each with its own engine and pool, against the Postgres lane. The
+  ordering is read back from rows the workers committed, never from shared
+  memory.
+
 ## Example
 
 ```json
