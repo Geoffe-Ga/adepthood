@@ -81,6 +81,10 @@ ENV EXPO_PUBLIC_GUMROAD_HELP_URL=$EXPO_PUBLIC_GUMROAD_HELP_URL
 # render refuses to produce a conf without an https API origin. ADR 0009
 # phase (b), #3067.
 RUN npx expo export --platform web
+# Railway exposes this platform commit only when declared as a build ARG.
+# Stamp independently of Sentry labels and the backend's served release.
+ARG RAILWAY_GIT_COMMIT_SHA
+RUN node web-hardening/build-receipt.js dist
 RUN node web-hardening/sri.js stamp dist
 RUN node web-hardening/csp.js nginx.conf nginx.rendered.conf
 
