@@ -73,6 +73,7 @@ from domain.data_export import MANIFEST, Included, Omitted
 from domain.feedback_triage import DRAFT_METADATA_FIELDS, FORBIDDEN_DRAFT_FIELDS, DraftSource
 from domain.frequencies import Frequency
 from domain.resonance import PRIOR_DRAFT_LIMIT
+from domain.retention import REDACT_INSTEAD_OF_DELETE
 from main import validate_journal_encryption_config
 from models.corpus_fragment import CorpusSource
 from models.feedback import FEEDBACK_RETENTION_DAYS
@@ -774,16 +775,42 @@ async def test_an_intimate_entry_never_reaches_a_vault() -> None:
     assert outcome.vault_ref is None
 
 
-def test_the_purchase_receipt_outlives_deletion_in_both_documents() -> None:
+# What both documents must say about a purchase receipt after deletion (#3063
+# AC15): the receipt stays, the address on a sale linked to the account is
+# blanked, and only a sale never linked to any account keeps its address.
+_RECEIPT_FACTS: Final[tuple[str, ...]] = (
+    "purchase receipt",
+    "on a purchase linked to your account",
+    "the email address is blanked",
+    "a purchase never linked to any account keeps its email address",
+)
+# What the documents once said: that every receipt keeps the address.
+_RECEIPT_OVERCLAIMS: Final[tuple[str, ...]] = (
+    "stays with the email address on it",
+    "and so does the email address on it",
+    "deliberately outlives a deletion",
+    "address appears nowhere but the purchase receipt",
+)
+
+
+@pytest.mark.parametrize("document", [_PRIVACY_POLICY, _YOUR_DATA], ids=lambda path: path.name)
+def test_the_purchase_receipt_outlives_deletion_without_its_address(document: Path) -> None:
     """The policy and ``your-data.md`` agree with the code on what survives.
 
-    ``gumroadsale`` is the one table whose rows keep an email address after an
-    account is erased. Two user-facing documents now describe that, and the
-    disposition in the code is what makes both of them true.
+    ``gumroadsale`` is anonymised, not erased: deletion blanks the buyer's
+    email (and Gumroad's raw payload) on every sale linked to the account and
+    keeps the receipt (``services.account_deletion._anonymise_linked_sales``).
+    A sale never linked to an account keeps its email, its only claim path.
+    The copy says exactly that, and no longer says every receipt keeps it.
     """
     assert POLICY["gumroadsale"].disposition is Disposition.ANONYMISE
-    assert "receipt" in _read(_PRIVACY_POLICY)
-    assert "receipt" in _read(_YOUR_DATA)
+    assert "email" in REDACT_INSTEAD_OF_DELETE["gumroadsale"]
+    copy = _prose(document)
+
+    missing = [fact for fact in _RECEIPT_FACTS if fact not in copy]
+    assert not missing, f"{document.name} does not say: {missing}"
+    restated = [claim for claim in _RECEIPT_OVERCLAIMS if claim in copy]
+    assert not restated, f"{document.name} still says the receipt keeps the address: {restated}"
 
 
 def test_the_terms_permit_a_gift_and_still_forbid_resale() -> None:

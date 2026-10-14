@@ -173,21 +173,60 @@ def test_deletion_copy_drops_the_overclaims(surface: Path) -> None:
     assert not restated, f"{surface.name} still overclaims deletion: {restated}"
 
 
+# The words that scope the held figure to the copies made under the old rule.
+_HELD_COPIES_SCOPE: Final = "made before"
+
+
+def _unscoped_held_figure_sentences(copy: str) -> list[str]:
+    """Sentences naming the held off-platform figure without scoping it to older copies.
+
+    ``HELD_OFFHOST_DUMP_RETENTION_DAYS`` is true only of the copies made before
+    the runbook's retention was shortened; stated bare, it reads as the
+    schedule for every new copy, which is no longer what the runbook does.
+    """
+    held = f"{HELD_OFFHOST_DUMP_RETENTION_DAYS} days"
+    return [
+        sentence
+        for sentence in _SENTENCE_BREAK.split(copy)
+        if held in sentence and _HELD_COPIES_SCOPE not in sentence
+    ]
+
+
+def test_a_bare_held_figure_is_unscoped() -> None:
+    """The held figure must be scoped to the older copies in its own sentence."""
+    held = f"{HELD_OFFHOST_DUMP_RETENTION_DAYS} days"
+    scoped = f"copies {_HELD_COPIES_SCOPE} the change may be kept for up to {held}."
+    bare = f"copies {_HELD_COPIES_SCOPE} the change are pruned. copies are kept {held}."
+
+    assert _unscoped_held_figure_sentences(scoped) == []
+    assert len(_unscoped_held_figure_sentences(bare)) == 1
+
+
 @pytest.mark.parametrize("document", _SCHEDULE_DOCUMENTS, ids=lambda path: path.name)
 def test_schedule_documents_name_each_leg_and_who_keeps_the_manual_one(document: Path) -> None:
-    """Both legs' retentions appear, and the off-platform leg is the operator's, by hand.
+    """Each leg's retention appears, and the off-platform leg is the operator's, by hand.
 
-    The off-platform figure is the retention the oldest copies *still held*
-    were written under (``HELD_OFFHOST_DUMP_RETENTION_DAYS``), not the shorter
-    one the runbook now prunes at: until those copies age out, the longer
-    figure is the one that is true of every copy, and the ~97-day bound the
-    copy states rests on it. Restating the schedule is the owner's (AC16).
+    The off-platform leg is stated twice: the retention the runbook now prunes
+    at (``OFFHOST_DUMP_RETENTION_DAYS``), for new copies, and the longer one
+    the copies *still held* were written under
+    (``HELD_OFFHOST_DUMP_RETENTION_DAYS``), scoped to copies made before the
+    change. Until those age out, the ~97-day bound the copy states rests on
+    the longer figure, so it must stay; but stated bare it would misdescribe
+    every new copy. Restating the schedule is the owner's (AC16).
     """
     copy = _prose(document)
 
-    assert HELD_OFFHOST_DUMP_RETENTION_DAYS >= OFFHOST_DUMP_RETENTION_DAYS
-    for days in (RAILWAY_PLATFORM_BACKUP_DAYS, HELD_OFFHOST_DUMP_RETENTION_DAYS):
+    # Once the held copies have aged out and the held figure is lowered to the
+    # runbook's, the copy's transition sentence goes, and this test with it.
+    assert HELD_OFFHOST_DUMP_RETENTION_DAYS > OFFHOST_DUMP_RETENTION_DAYS
+    for days in (
+        RAILWAY_PLATFORM_BACKUP_DAYS,
+        OFFHOST_DUMP_RETENTION_DAYS,
+        HELD_OFFHOST_DUMP_RETENTION_DAYS,
+    ):
         assert f"{days} days" in copy, f"{document.name} does not name the {days}-day retention"
+    unscoped = _unscoped_held_figure_sentences(copy)
+    assert not unscoped, f"{document.name} states the held figure for every copy: {unscoped}"
     assert _MANUAL_LEG in copy, f"{document.name} does not say the off-platform leg is manual"
 
 
