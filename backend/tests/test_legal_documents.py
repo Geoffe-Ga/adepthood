@@ -289,6 +289,11 @@ _DERIVED_PLAINTEXT_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
         "completionsuggestion.completed_on": "**detected amounts and dates**",
         "completionsuggestion.anchor_start": "where in the entry",
         "completionsuggestion.anchor_end": "where in the entry",
+        # Named on 2026-10-14 (#3260, #3058 AC5): kept plaintext and disclosed.
+        "journalentry.classification": "**an entry's tier**",
+        "journalentry.tag": "**an entry's tag**",
+        "journalentry.reflection_scope_key": "**an entry's reflection scope**",
+        "corpusfragment.tier": "**a corpus passage's tier**",
     }
 )
 
@@ -310,6 +315,13 @@ def test_the_policy_discloses_the_derived_data_it_stores_unencrypted() -> None:
     prose = _prose(_PRIVACY_POLICY)
     encrypted = _encrypted_columns()
 
+    every_column = {
+        f"{table.name}.{column.name}"
+        for table in SQLModel.metadata.tables.values()
+        for column in table.columns
+    }
+    missing = sorted(set(_DERIVED_PLAINTEXT_DISCLOSURES) - every_column)
+    assert not missing, f"no longer in the schema; update the disclosure: {missing}"
     still_encrypted = sorted(set(_DERIVED_PLAINTEXT_DISCLOSURES) & encrypted)
     assert not still_encrypted, f"now encrypted; narrow the disclosure: {still_encrypted}"
     undisclosed = sorted(

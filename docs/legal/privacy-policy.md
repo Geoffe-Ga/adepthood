@@ -92,9 +92,14 @@ and Wavelength-phase labels the vault gives back are kept on the entry.
 to record a habit or practice you finished, the suggestion it offers keeps the
 amount and date it found (say, 5 miles on a given day), where in the entry it
 found them, and which habit or practice it points at; the suggestion's wording
-and the quoted words are encrypted, these are not. None of these is your
-words, but each says something about them, and anyone who can read the
-database can read them.
+and the quoted words are encrypted, these are not. **An entry's tier**: the
+privacy tier you chose for it (Public, Personal or Intimate). **An entry's
+tag**: what kind of entry it is, such as a free-form page, a practice note or
+an answer to a weekly prompt. **An entry's reflection scope**: for an entry
+that reflects on a stretch of time, which period it covers. **A corpus
+passage's tier**: each passage in the corpus is stored with the privacy tier
+of the writing it came from. None of these is your words, but each says
+something about them, and anyone who can read the database can read them.
 
 **If you connect your own vault or activate a managed one**, Adepthood stores
 the address and access credential and uses them only to send your own entries
