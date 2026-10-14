@@ -129,6 +129,7 @@ import {
   type FeedbackTriageDetailT,
   type FeedbackTriageSummaryT,
 } from './schemas';
+import { captureSessionToken, installSessionTokenGetter } from './sessionToken';
 import { createTokenRotation, type RecoveryMode } from './tokenRotation';
 import { classifyTranscription } from './transcriptionContract';
 
@@ -373,7 +374,7 @@ export class DocumentUploadError extends Error {
 // because ``@/api`` is where the app has always registered it.
 export { isDeviceKnownOffline, setNetworkOnlineGetter };
 
-let tokenGetter: (() => string | null) | null = null;
+export { captureSessionToken };
 
 /**
  * Reason a 401 surfaced.  Threaded through the unauthorized callback so
@@ -461,7 +462,7 @@ export function idempotencyKey(intent: string, ...parts: (string | number)[]): s
  */
 export function setTokenGetter(getter: (() => string | null) | null) {
   rotation.reset();
-  tokenGetter = getter;
+  installSessionTokenGetter(getter);
 }
 
 export function setOnUnauthorized(callback: ((reason: UnauthorizedReason) => void) | null) {
@@ -921,7 +922,7 @@ async function performTokenRefresh(currentToken: string): Promise<AuthResponse |
  */
 const rotation = createTokenRotation<AuthResponse>({
   performRefresh: performTokenRefresh,
-  currentToken: () => tokenGetter?.() ?? null,
+  currentToken: () => captureSessionToken() ?? null,
   onRotated: (response, from) => {
     onTokenRefreshedCallback?.(response.token, response.timezone, from);
   },

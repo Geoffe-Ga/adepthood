@@ -2383,5 +2383,17 @@
     },
     "status": "uncovered",
     "issue": 3076
+  },
+  {
+    "id": "habits.pending-create-survives-account-switch",
+    "description": "A real outgoing-account habit POST is held while the user logs out and signs into another account in the same running app. Delivering its success or a controlled lost reply must not replace the incoming account habits or send old sibling updates. A real incoming-account create remains usable, and both incoming rows survive reload. Phone and desktop browser witnesses cover success and failure; real manager/store/scoped disk tests cover both create entrypoints, ABA, queued logs, missing credentials and compensation.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "goal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-owner-switch.browser.e2e.test.ts"
   }
 ]
