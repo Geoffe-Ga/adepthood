@@ -136,7 +136,9 @@
       "backend/tests/test_essay_endpoint.py::test_intimate_essay_is_never_charged_and_never_dialled",
       "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
       "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_a_byok_row_reaches_the_keyed_client",
       "backend/tests/security/test_transcription_tier_refusal.py::test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched",
+      "backend/tests/security/test_transcription_tier_refusal.py::test_a_page_of_an_egress_tier_is_still_read_and_billed",
       "backend/tests/security/test_transcription_tier_refusal.py::test_the_direct_admission_never_admits_a_non_egress_tier",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[admits_egress-C08]"
     ],
@@ -150,18 +152,20 @@
     "by_sink": {
       "net.openai": [
         "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
-        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
+        "backend/tests/security/test_transcription_tier_refusal.py::test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched"
       ],
       "net.anthropic": [
         "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
-        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
+        "backend/tests/security/test_transcription_tier_refusal.py::test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched"
       ],
       "net.creek_vault_connected": [
         "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
       ]
     },
     "issue": 3059,
-    "gap": "OCR (transcribe-page, outside BARRIERED) and BYOK keys are not driven by the matrix; dials are recorded at generate_response's bindings, not the socket"
+    "gap": "OCR (transcribe-page) is driven keyless and BYOK by its own refusal suite, not the matrix's steps; dials and BYOK clients are recorded at generate_response and provider entrypoints, not the socket"
   },
   "C09": {
     "status": "partial",
@@ -226,6 +230,7 @@
       "backend/tests/test_voice_draft_mirroring.py::test_intimate_essay_never_attempts_a_mirror",
       "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
       "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart",
+      "backend/tests/security/test_voice_draft_lost_ack_withdrawal.py::test_a_voice_draft_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart",
       "backend/tests/test_journal_vault_write.py::test_failed_intimate_withdrawal_is_visible_and_retryable_from_persisted_state",
       "backend/tests/integration/test_privacy_orderings_multiprocess.py::test_no_mirror_lands_after_an_intimate_reclassification_in_another_process",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[admits_egress-C11]",
@@ -240,11 +245,12 @@
     "by_sink": {
       "net.creek_vault_connected": [
         "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
-        "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+        "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart",
+        "backend/tests/security/test_voice_draft_lost_ack_withdrawal.py::test_a_voice_draft_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
       ]
     },
     "issue": 3060,
-    "gap": "a lost acknowledgment is driven for the journal copy, not for a Voice Draft; vault-side snapshots and backups (C21) are not reached"
+    "gap": "vault-side snapshots and backups (C21) are not reached"
   },
   "C12": {
     "status": "partial",
@@ -257,11 +263,18 @@
       "backend/tests/security/test_telemetry_sentinels.py::test_outbound_request_urls_stay_out_of_the_info_stream",
       "backend/tests/security/test_telemetry_sentinels.py::test_a_rate_limited_share_token_never_reaches_the_log",
       "backend/tests/security/test_telemetry_sentinels.py::test_a_search_query_string_reaches_no_log",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_failing_migration_prints_its_type_but_not_the_row",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_cli_hardening_formats_every_configured_handler_content_free",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_cli_hardening_makes_the_uncaught_traceback_content_free",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_thread_dying_uncaught_prints_its_type_but_not_its_message",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_thread_exiting_via_system_exit_prints_nothing",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_an_intimate_entry_never_reaches_the_failing_provider",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_middleware_failure_during_an_intimate_write_ships_no_canary",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_failing_vault_echoing_the_entry_ships_no_canary",
+      "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_echoing_the_prompt_as_its_model_ships_no_canary_to_the_usage_row",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[exception_reason-C12]",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[scrub_event-C12]"
     ],
@@ -274,6 +287,8 @@
       "telemetry.uvicorn_access_log",
       "telemetry.outbound_client_log",
       "telemetry.rate_limit_log",
+      "telemetry.migration_log",
+      "telemetry.thread_excepthook",
       "telemetry.vault_telemetry",
       "db.llmusagelog"
     ],
@@ -322,10 +337,25 @@
       ],
       "telemetry.rate_limit_log": [
         "backend/tests/security/test_telemetry_sentinels.py::test_a_rate_limited_share_token_never_reaches_the_log"
+      ],
+      "telemetry.migration_log": [
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_failing_migration_prints_its_type_but_not_the_row",
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_cli_hardening_formats_every_configured_handler_content_free",
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_cli_hardening_makes_the_uncaught_traceback_content_free"
+      ],
+      "telemetry.thread_excepthook": [
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_thread_dying_uncaught_prints_its_type_but_not_its_message",
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_thread_exiting_via_system_exit_prints_nothing"
+      ],
+      "telemetry.vault_telemetry": [
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_failing_vault_echoing_the_entry_ships_no_canary"
+      ],
+      "db.llmusagelog": [
+        "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_echoing_the_prompt_as_its_model_ships_no_canary_to_the_usage_row"
       ]
     },
     "issue": 3064,
-    "gap": "frontend envelope is proven by Jest (JournalEditorCrashEnvelope.test.tsx), which pytest cannot cite; vault telemetry and llmusagelog are not driven on a failure path"
+    "gap": "frontend envelope is Jest-only (JournalEditorCrashEnvelope.test.tsx); vault telemetry is driven on a failed journal ingest only, llmusagelog on the resonance path only"
   },
   "C13": {
     "status": "partial",
@@ -402,8 +432,12 @@
     "gap": "product-integrity claim with no privacy sink; the zero-payment beta path is B21's to prove"
   },
   "C20": {
-    "status": "uncovered",
-    "tests": [],
+    "status": "partial",
+    "tests": [
+      "backend/tests/test_custody_decision_record.py::test_no_affirmative_present_tense_custody_claim",
+      "backend/tests/test_custody_decision_record.py::test_no_unscoped_custody_claim_in_the_policy_terms_or_app_copy",
+      "backend/tests/test_custody_decision_record.py::test_server_env_keys_alone_recover_every_in_scope_journal_column"
+    ],
     "sinks": [
       "db.journalentry.message",
       "db.journalentry.title",
@@ -413,7 +447,7 @@
       "vault.creek_volume"
     ],
     "issue": 3058,
-    "gap": "encrypted storage is operator-readable; no test pins what each 'encrypted' or 'private vault' phrase promises"
+    "gap": "no test maps each UI 'encrypted' or 'private vault' phrase to a runtime capability; tenant credential, URL and receipt isolation are unpinned"
   },
   "C21": {
     "status": "partial",

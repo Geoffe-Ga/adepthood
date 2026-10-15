@@ -47,6 +47,7 @@ const SCOPE_MARKER = '#u';
 
 let activeUserId: number | null = null;
 let activeUserGeneration = 0;
+let activeUserTransitioning = false;
 
 export function getActiveUserGeneration(): number {
   return activeUserGeneration;
@@ -66,10 +67,21 @@ export function subscribeActiveUser(listener: () => void): () => void {
  * was never recorded).
  */
 export function setActiveUser(userId: number | null): void {
+  activeUserTransitioning = false;
   if (activeUserId === userId) return;
   activeUserId = userId;
   activeUserGeneration += 1;
   activeUserListeners.forEach((listener) => listener());
+}
+
+/** Reject old and newly-started authenticated work until cleanup commits its scope. */
+export function beginActiveUserTransition(): void {
+  activeUserTransitioning = true;
+  activeUserGeneration += 1;
+}
+
+export function isActiveUserTransitioning(): boolean {
+  return activeUserTransitioning;
 }
 
 /** The account the cache keys currently resolve to, or ``null`` when anonymous. */

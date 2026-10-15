@@ -23,9 +23,12 @@ import copy
 import logging
 import os
 import re
+import sys
+import threading
 import traceback
 import uuid
 from collections.abc import Mapping
+from types import TracebackType
 from typing import IO
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -415,6 +418,7 @@ def configure_logging(stream: IO[str] | None = None) -> None:
         root.addHandler(handlers[0])
     _apply_log_level(root, handlers, level)
     _harden_library_loggers()
+    _install_thread_excepthook()
 
 
 def _harden_library_loggers() -> None:
@@ -442,6 +446,77 @@ def _harden_server_handlers() -> None:
         for handler in logging.getLogger(name).handlers:
             if not isinstance(handler.formatter, ContentFreeFormatter):
                 handler.setFormatter(ContentFreeFormatter(_SERVER_LOG_FORMAT))
+
+
+#: The default hooks' header for a thread that died with an unhandled exception.
+_THREAD_EXCEPTION_HEADER = "Exception in thread {name}:\n"
+
+
+def _content_free_thread_excepthook(args: threading.ExceptHookArgs) -> None:
+    """Print a thread's unhandled exception as :func:`render_exception` renders it.
+
+    Same shape as :func:`threading.excepthook` -- a header naming the thread,
+    then the traceback -- and, like it, silent for ``SystemExit``. The thread's
+    name is chosen by code, never by a user.
+    """
+    if args.exc_value is None or isinstance(args.exc_value, SystemExit):
+        return
+    name = args.thread.name if args.thread is not None else threading.get_ident()
+    sys.stderr.write(_THREAD_EXCEPTION_HEADER.format(name=name))
+    sys.stderr.write(render_exception(args.exc_value))
+    sys.stderr.flush()
+
+
+def _install_thread_excepthook() -> None:
+    """Replace the interpreter's default ``threading.excepthook`` (idempotent).
+
+    Only the default: a hook the host installed on purpose -- pytest's, a crash
+    reporter's -- is the host's decision and is left in place.
+    """
+    if threading.excepthook is threading.__excepthook__:
+        threading.excepthook = _content_free_thread_excepthook
+
+
+def _content_free_excepthook(
+    _exc_type: type[BaseException],
+    exc: BaseException,
+    _tb: TracebackType | None,
+) -> None:
+    """Print an uncaught exception as :func:`render_exception` renders it.
+
+    The ``sys.excepthook`` signature; the frames are read from
+    ``exc.__traceback__``, which is the traceback the interpreter passes.
+    """
+    sys.stderr.write(render_exception(exc))
+    sys.stderr.flush()
+
+
+def make_cli_output_content_free(log_format: str) -> None:
+    """Make a command-line process's log handlers and uncaught traceback content-free.
+
+    For a process that configures logging itself instead of calling
+    :func:`configure_logging` -- ``alembic upgrade head`` in the runtime CMD,
+    whose ``env.py`` loads alembic.ini through ``fileConfig``. Every handler on
+    the root logger and on every configured logger gets
+    :class:`ContentFreeFormatter` in ``log_format``, and ``sys.excepthook``
+    prints only :func:`render_exception`: a failing migration's database error
+    quotes the statement's parameters, which are row data (#3352).
+    """
+    for handler in _configured_handlers():
+        if not isinstance(handler.formatter, ContentFreeFormatter):
+            handler.setFormatter(ContentFreeFormatter(log_format))
+    sys.excepthook = _content_free_excepthook
+
+
+def _configured_handlers() -> list[logging.Handler]:
+    """Return every handler on the root logger and on every named logger."""
+    loggers = [logging.getLogger()]
+    loggers.extend(
+        logger
+        for logger in logging.Logger.manager.loggerDict.values()
+        if isinstance(logger, logging.Logger)
+    )
+    return [handler for logger in loggers for handler in logger.handlers]
 
 
 def remove_app_log_handlers_for_tests() -> None:

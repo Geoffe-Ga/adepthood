@@ -383,6 +383,7 @@ export interface ReleasedHabit {
 /** The Return surface the server reports for the caller. */
 export interface ReturnState {
   eligible: boolean;
+  offer_episode: string | null;
   weeks: ReturnWeek[];
   arc: ReturnArc | null;
   offer_dismissed: boolean;

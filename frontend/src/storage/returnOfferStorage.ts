@@ -1,20 +1,44 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
-// Persists the "the Return offer was set aside" flag so a decline is honoured
-// across launches — the offer stays quiet until the person chooses otherwise.
 
-const RETURN_OFFER_DISMISSED_KEY = '@adepthood/return_offer_dismissed';
-const FLAG_TRUE = 'true';
-
-export async function saveReturnOfferDismissed(value: boolean): Promise<void> {
-  await AsyncStorage.setItem(RETURN_OFFER_DISMISSED_KEY, String(value));
+export interface ReturnOfferIdentity {
+  readonly userId: number;
+  /** Opaque identity observed on the server; never reconstructed from a stage. */
+  readonly episode: string;
 }
 
-export async function loadReturnOfferDismissed(): Promise<boolean> {
+const KEY_BASE = '@adepthood/return_offer_dismissed';
+const MAX_EPISODE_LENGTH = 128;
+
+function storageKey(identity: ReturnOfferIdentity): string {
+  const { userId, episode } = identity;
+  if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error('Return account is unknown');
+  if (typeof episode !== 'string' || episode.length === 0 || episode.length > MAX_EPISODE_LENGTH) {
+    throw new Error('Return offer episode is unknown');
+  }
+  return `${KEY_BASE}#u${userId}#e${encodeURIComponent(episode)}`;
+}
+
+/** Capture both fields before awaiting storage. The old global boolean is
+ * deliberately untouched: even a known prior account cannot prove its episode. */
+export async function saveReturnOfferDismissed(
+  identity: ReturnOfferIdentity,
+  value: boolean,
+): Promise<void> {
+  const key = storageKey(identity);
   try {
-    const raw = await AsyncStorage.getItem(RETURN_OFFER_DISMISSED_KEY);
-    return raw === FLAG_TRUE;
+    await AsyncStorage.setItem(key, String(value));
+  } catch (error) {
+    reportDiagnostic('storage_write_failed', { storage: 'return_offer' });
+    throw error;
+  }
+}
+
+export async function loadReturnOfferDismissed(identity: ReturnOfferIdentity): Promise<boolean> {
+  const key = storageKey(identity);
+  try {
+    return (await AsyncStorage.getItem(key)) === 'true';
   } catch {
     reportDiagnostic('storage_read_failed', { storage: 'return_offer' });
     return false;

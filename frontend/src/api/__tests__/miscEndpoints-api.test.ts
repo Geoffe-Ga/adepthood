@@ -132,7 +132,16 @@ describe('course misc endpoints', () => {
   });
 
   test('siteResources GETs the always-available resource list', async () => {
-    const resources = [{ slug: 'faq', title: 'FAQ', description: 'desc', url: 'https://x' }];
+    const resources = [
+      {
+        slug: 'faq',
+        title: 'FAQ',
+        description: 'desc',
+        url: 'https://x',
+        order: 1,
+        is_read: false,
+      },
+    ];
     mockFetch.mockReturnValueOnce(jsonResponse(resources));
 
     const result = await course.siteResources('tok');

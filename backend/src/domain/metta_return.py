@@ -18,6 +18,7 @@ the elapsed-week math.
 from __future__ import annotations
 
 import enum
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -142,6 +143,19 @@ def current_offer_episode(progress: StageProgress | None) -> str | None:
     if progress is None or not is_return_eligible(progress):
         return None
     return f"{progress.cycle_number}:{progress.current_stage}"
+
+
+def offer_episode_identity(progress: StageProgress | None) -> str | None:
+    """Opaque account-and-episode correlation handle, not an auth credential.
+
+    The client must round-trip this value, never reconstruct the internal
+    historical dismissal coordinate. Authentication remains the server's job.
+    """
+    episode = current_offer_episode(progress)
+    if episode is None or progress is None:
+        return None
+    coordinate = f"adepthood:return-offer:{progress.user_id}:{episode}"
+    return hashlib.sha256(coordinate.encode()).hexdigest()
 
 
 def _elapsed_days(anchor: datetime, now: datetime) -> int:

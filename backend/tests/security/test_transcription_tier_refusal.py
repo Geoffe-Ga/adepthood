@@ -20,12 +20,21 @@ gate, the generation slot, the wallet, the usage log and the provider.
 Each spy below *delegates* to the real function, so the same spies fire on the
 ``personal`` / ``public`` counterweights: a spy that could not see a call would
 fail there rather than pass every refusal.
+
+Every test runs twice (#3353): once keyless (the app seam) and once carrying a
+writer's own ``X-LLM-API-Key`` (BYOK), the header a stale client still sends.
+Neither door reads it, so a key buys no way past the tier check, and no provider
+client is ever built for it -- on a refusal or on an admitted page. The
+construction recorder is reachable: a dial handed a key goes through the real
+``services.botmason.generate_response`` to the provider entrypoint that would
+build the client (:func:`tests.support.egress_recorders.record_provider_constructions`).
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Final
 
@@ -36,18 +45,23 @@ from sqlmodel import col
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
 from routers import transcription as transcription_router
+from services import botmason
 from tests.incident.test_privacy_suspension import signup
+from tests.support.egress_recorders import Ledger, record_provider_constructions
 from tests.transcription_helpers import (
     JPEG_BYTES,
     SENTINEL_TEXT,
     b64,
-    patch_generate_response,
     priced_response,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from httpx import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from services.botmason import ImagePayload, LLMResponse
 
 _TRANSCRIBE: Final = "/journal/transcribe-page"
 _ADMISSION: Final = "/journal/transcribe-page/direct-admission"
@@ -58,6 +72,14 @@ _REFUSAL: Final = {"detail": "tier_refused"}
 #: of an eligible tier.
 _DENIED: Final = ("intimate", "INTIMATE", "Intimate", "secret", "", "Personal", " personal")
 _ADMITTED: Final = ("personal", "public")
+
+#: A well-formed OpenAI-shaped key. Never valid: no client is really built for it.
+_BYOK_KEY: Final = "sk-transcription-byok-not-a-real-key"  # pragma: allowlist secret
+#: Who the request says pays: nobody (the app seam), or the writer's own key.
+_PAYERS: Final = (
+    pytest.param({}, id="app-seam"),
+    pytest.param({"X-LLM-API-Key": _BYOK_KEY}, id="byok"),
+)
 
 #: The router-level seams a page read crosses, in order, before it is billed
 #: and dialled. ``generate_response`` is the provider dial itself (here a
@@ -94,14 +116,45 @@ def _record_async(
     return _spy
 
 
+@dataclass(frozen=True)
+class Seams:
+    """What a request reached: the router seams in order, and any provider client built."""
+
+    calls: list[str]
+    constructions: Ledger
+
+    @property
+    def clients(self) -> list[str]:
+        """The providers a client was built for, in order (none is really built)."""
+        return [event.verb for event in self.constructions.events]
+
+
 @pytest.fixture
-def seams(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def seams(monkeypatch: pytest.MonkeyPatch) -> Seams:
     """Record, in order, every router seam a request reaches (each still runs for real)."""
     calls: list[str] = []
+    constructions = Ledger()
+    assert record_provider_constructions(monkeypatch, constructions), "no provider is registered"
     # A priced reply, so a read that got through keeps a usage row: the stub
     # seam's own canned reply is unpriced and would leave the usage assertions
-    # below nothing to see.
-    patch_generate_response(monkeypatch, priced_response(SENTINEL_TEXT))
+    # below nothing to see. A dial handed a key goes on to the real one, so a
+    # forwarded key reaches the construction recorder rather than this canned
+    # reply.
+    priced = priced_response(SENTINEL_TEXT)
+    real_dial = botmason.generate_response
+
+    async def _dial(
+        user_message: str,
+        conversation_history: list[dict[str, str]],
+        system_prompt: str | None = None,
+        api_key: str | None = None,
+        images: Sequence[ImagePayload] | None = None,
+    ) -> LLMResponse:
+        if api_key is None:
+            return priced
+        return await real_dial(user_message, conversation_history, system_prompt, api_key, images)
+
+    monkeypatch.setattr(transcription_router, "generate_response", _dial)
     for name in _ASYNC_SEAMS:
         real = getattr(transcription_router, name)
         monkeypatch.setattr(transcription_router, name, _record_async(calls, name, real))
@@ -121,7 +174,7 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         real_gate()
 
     monkeypatch.setattr(transcription_router, "require_external_ai_available", _gate)
-    return calls
+    return Seams(calls, constructions)
 
 
 async def _wallet(session: AsyncSession, user_id: int) -> tuple[int, int]:
@@ -144,53 +197,77 @@ async def _usage_rows(session: AsyncSession, user_id: int) -> int:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payer", _PAYERS)
 @pytest.mark.parametrize("tier", _DENIED)
 async def test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched(
-    async_client: AsyncClient, db_session: AsyncSession, seams: list[str], tier: str
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    seams: Seams,
+    tier: str,
+    payer: dict[str, str],
 ) -> None:
-    """403 ``tier_refused``: no boundary read, payer, slot, charge, usage row or dial."""
-    headers, user_id, _ = await signup(async_client, f"tier_refused_{tier.encode().hex()}")
+    """403 ``tier_refused``: no boundary read, payer, slot, charge, usage row, dial or client."""
+    headers, user_id, _ = await signup(
+        async_client, f"tier_refused_{tier.encode().hex()}_{len(payer)}"
+    )
     before = await _wallet(db_session, user_id)
 
-    resp = await async_client.post(_TRANSCRIBE, headers=headers, json=_page(tier))
+    resp = await async_client.post(_TRANSCRIBE, headers=headers | payer, json=_page(tier))
 
+    # The forbidden effect first, so a page that got through fails on what it did.
+    assert seams.clients == []
     assert resp.status_code == HTTPStatus.FORBIDDEN, resp.text
     assert resp.json() == _REFUSAL
-    assert seams == []
+    assert seams.calls == []
     assert await _wallet(db_session, user_id) == before
     assert await _usage_rows(db_session, user_id) == 0
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payer", _PAYERS)
 async def test_a_page_with_no_declared_tier_is_refused_before_anything_is_touched(
-    async_client: AsyncClient, db_session: AsyncSession, seams: list[str]
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    seams: Seams,
+    payer: dict[str, str],
 ) -> None:
     """The tier is required: a body without one never reaches the handler."""
-    headers, user_id, _ = await signup(async_client, "tier_missing")
+    headers, user_id, _ = await signup(async_client, f"tier_missing_{len(payer)}")
     before = await _wallet(db_session, user_id)
 
-    resp = await async_client.post(_TRANSCRIBE, headers=headers, json=_page(None))
+    resp = await async_client.post(_TRANSCRIBE, headers=headers | payer, json=_page(None))
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, resp.text
     assert [entry["loc"] for entry in resp.json()["detail"]] == [["body", "classification"]]
-    assert seams == []
+    assert seams.clients == []
+    assert seams.calls == []
     assert await _wallet(db_session, user_id) == before
     assert await _usage_rows(db_session, user_id) == 0
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payer", _PAYERS)
 @pytest.mark.parametrize("tier", _ADMITTED)
 async def test_a_page_of_an_egress_tier_is_still_read_and_billed(
-    async_client: AsyncClient, db_session: AsyncSession, seams: list[str], tier: str
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    seams: Seams,
+    tier: str,
+    payer: dict[str, str],
 ) -> None:
-    """Counterweight: the same spies see every seam, and the wallet is charged."""
-    headers, user_id, _ = await signup(async_client, f"tier_admitted_{tier}")
+    """Counterweight: the same spies see every seam, the wallet is charged, and no key is used.
+
+    A stale client's key is never read, so the page is read keyless on the
+    app seam and no client is built for the key even on an admitted page.
+    """
+    headers, user_id, _ = await signup(async_client, f"tier_admitted_{tier}_{len(payer)}")
     before = await _wallet(db_session, user_id)
 
-    resp = await async_client.post(_TRANSCRIBE, headers=headers, json=_page(tier))
+    resp = await async_client.post(_TRANSCRIBE, headers=headers | payer, json=_page(tier))
 
     assert resp.status_code == HTTPStatus.OK, resp.text
-    assert seams == [
+    assert seams.clients == []
+    assert seams.calls == [
         "require_external_ai_available",
         "resolve_reflection_boundary",
         "require_ai_payer",
@@ -207,44 +284,65 @@ async def test_a_page_of_an_egress_tier_is_still_read_and_billed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payer", _PAYERS)
 @pytest.mark.parametrize("tier", _DENIED)
 async def test_the_direct_admission_never_admits_a_non_egress_tier(
-    async_client: AsyncClient, seams: list[str], tier: str
+    async_client: AsyncClient,
+    seams: Seams,
+    tier: str,
+    payer: dict[str, str],
 ) -> None:
     """The device is told no, so the page never leaves it for the vendor."""
-    headers, _, _ = await signup(async_client, f"admission_refused_{tier.encode().hex()}")
+    headers, _, _ = await signup(
+        async_client, f"admission_refused_{tier.encode().hex()}_{len(payer)}"
+    )
 
-    resp = await async_client.post(_ADMISSION, headers=headers, json={"classification": tier})
+    resp = await async_client.post(
+        _ADMISSION, headers=headers | payer, json={"classification": tier}
+    )
 
     assert resp.status_code == HTTPStatus.FORBIDDEN, resp.text
     assert resp.json() == _REFUSAL
-    assert seams == []
+    assert seams.clients == []
+    assert seams.calls == []
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payer", _PAYERS)
 @pytest.mark.parametrize("body", [None, {}], ids=["no-body", "no-classification"])
 async def test_the_direct_admission_requires_a_declared_tier(
-    async_client: AsyncClient, seams: list[str], body: dict[str, str] | None
+    async_client: AsyncClient,
+    seams: Seams,
+    body: dict[str, str] | None,
+    payer: dict[str, str],
 ) -> None:
     """A request that declares no tier is refused by the schema, never admitted."""
-    headers, _, _ = await signup(async_client, f"admission_missing_{body is None}")
+    headers, _, _ = await signup(async_client, f"admission_missing_{body is None}_{len(payer)}")
 
-    resp = await async_client.post(_ADMISSION, headers=headers, json=body)
+    resp = await async_client.post(_ADMISSION, headers=headers | payer, json=body)
 
     assert resp.status_code == HTTPStatus.UNPROCESSABLE_ENTITY, resp.text
-    assert seams == []
+    assert seams.clients == []
+    assert seams.calls == []
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payer", _PAYERS)
 @pytest.mark.parametrize("tier", _ADMITTED)
 async def test_the_direct_admission_still_admits_an_egress_tier(
-    async_client: AsyncClient, seams: list[str], tier: str
+    async_client: AsyncClient,
+    seams: Seams,
+    tier: str,
+    payer: dict[str, str],
 ) -> None:
-    """Counterweight: 204, and the incident switch is still consulted."""
-    headers, _, _ = await signup(async_client, f"admission_admitted_{tier}")
+    """Counterweight: 204, the incident switch is still consulted, and no key is used."""
+    headers, _, _ = await signup(async_client, f"admission_admitted_{tier}_{len(payer)}")
 
-    resp = await async_client.post(_ADMISSION, headers=headers, json={"classification": tier})
+    resp = await async_client.post(
+        _ADMISSION, headers=headers | payer, json={"classification": tier}
+    )
 
     assert resp.status_code == HTTPStatus.NO_CONTENT, resp.text
     assert resp.content == b""
-    assert seams == ["require_external_ai_available"]
+    assert seams.clients == []
+    assert seams.calls == ["require_external_ai_available"]

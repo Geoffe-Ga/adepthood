@@ -1103,15 +1103,10 @@ async function handleUnauthorizedRetry<T>(
   if (ctx.initialDetail === 'invalid_credentials') return null;
 
   if (!token) return retryWithRefresh<T>(ctx, 'refresh');
-  // Caller passed an explicit token override. A foreign one (e.g. probing
-  // with a known-bad token from a settings screen) leaves the global session
-  // alone. The session's own token -- which many stores pass explicitly, read
-  // from the auth context -- is the session: it rides a refresh already in
-  // flight or a rotation already known, so a 401 that only means "this token
-  // was just rotated" is retried on the successor instead of signing the user
-  // out (#3034). It never starts a refresh of its own; with none underway the
-  // session's current token was refused, and that is a session expiration.
-  return isSessionLineage(token) ? retryWithRefresh<T>(ctx, 'join-only') : null;
+  // A captured credential from this session keeps automatic renewal. Foreign
+  // overrides never recover through the live session, and a changed session
+  // no longer contains the initiating token in its remembered rotation chain.
+  return isSessionLineage(token) ? retryWithRefresh<T>(ctx, 'refresh') : null;
 }
 
 /**
@@ -2571,10 +2566,20 @@ export const mettaReturn = {
       schema: returnArcSchema as unknown as z.ZodType<ReturnArc>,
     });
   },
-  dismissOffer(token?: string): Promise<MettaReturnState> {
+  dismissOffer(
+    command: { expected_offer_episode: string },
+    token?: string,
+  ): Promise<MettaReturnState> {
     return request<MettaReturnState>('/metta-return/offer/dismiss', {
       method: 'POST',
+      body: { expected_offer_episode: command.expected_offer_episode },
       token,
+      headers: {
+        [IDEMPOTENCY_KEY_HEADER]: idempotencyKey(
+          'dismiss-return-offer',
+          command.expected_offer_episode,
+        ),
+      },
       schema: mettaReturnStateSchema as unknown as z.ZodType<MettaReturnState>,
     });
   },
@@ -2898,6 +2903,8 @@ export interface SiteResource {
   title: string;
   description: string;
   url: string;
+  order: number;
+  is_read: boolean;
 }
 
 /** Metadata for a stage's course introduction (body fetched separately). */
@@ -2914,6 +2921,25 @@ export type NextUnread = NextUnreadT;
 
 const nextUnreadResponseSchema =
   nextUnreadSchema.nullable() as unknown as z.ZodType<NextUnread | null>;
+
+const siteResourcesSchema = z.array(
+  z.object({
+    slug: z.string().min(1),
+    title: z.string(),
+    description: z.string(),
+    url: z.string(),
+    order: z.number().int().positive(),
+    is_read: z.boolean(),
+  }),
+);
+const startHereProgressSchema = z
+  .object({
+    total_items: z.number().int().nonnegative(),
+    read_items: z.number().int().nonnegative(),
+    progress_percent: z.number().min(0).max(100),
+    next_unlock_day: z.number().int().nullable(),
+  })
+  .refine((progress) => progress.read_items <= progress.total_items);
 
 export const course = {
   /** Whole stage-content list via the ``Page`` envelope. */
@@ -2950,7 +2976,16 @@ export const course = {
     return request<ContentBody>(`/course/content/${contentId}/body`, { token });
   },
   siteResources(token?: string): Promise<SiteResource[]> {
-    return request<SiteResource[]>('/course/site-resources', { token });
+    return request<SiteResource[]>('/course/site-resources', {
+      token,
+      schema: siteResourcesSchema,
+    });
+  },
+  startHereProgress(token?: string): Promise<CourseProgress> {
+    return request<CourseProgress>('/course/start-here/progress', {
+      token,
+      schema: startHereProgressSchema,
+    });
   },
   /** Mark a Start Here resource read; idempotent on the backend (#3148). */
   markResourceRead(slug: string, token?: string): Promise<ResourceCompletion> {

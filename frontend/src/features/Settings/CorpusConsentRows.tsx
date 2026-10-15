@@ -1,9 +1,8 @@
 import { FileQuestion, FileText, Globe, PenLine, type LucideIcon } from 'lucide-react-native';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import {
-  CORPUS_CONSENT_FAILURE,
   CORPUS_NOT_SORTED_YET_NOTE,
   CORPUS_REVOKE_CANCEL_LABEL,
   CORPUS_REVOKE_CONFIRM_LABEL,
@@ -18,9 +17,23 @@ import {
   SettingsRowText,
   SettingsSwitchRow,
 } from './shared/SettingsSwitchRow';
+import {
+  confirmationMatches,
+  useCorpusConsent,
+  type ConsentConfirmation,
+} from './useCorpusConsent';
 
-import { corpusConsent, type CorpusConsent } from '@/api';
-import { BORDER_RADIUS, SPACING, colors, ink, rhythm, surface, touchTarget } from '@/design/tokens';
+import type { CorpusConsent } from '@/api';
+import {
+  BORDER_RADIUS,
+  SPACING,
+  colors,
+  ink,
+  rhythm,
+  surface,
+  touchTarget,
+  uiType,
+} from '@/design/tokens';
 
 /** The note row's glyph, the same size as a switch row's. */
 const NOTE_ICON_SIZE = 22;
@@ -50,61 +63,6 @@ const NOTE_ICON_SIZE = 22;
  * cannot exist yet would be a permission gathered early and spent later
  * without anyone being asked again; those rows say what they are and wait.
  */
-
-/** Loaded-state model: null until the first read answers, one way or another. */
-type Decisions = readonly CorpusConsent[] | null;
-
-interface ConsentController {
-  decisions: Decisions;
-  error: string | null;
-  pending: string | null;
-  decide: (_source: string, _granted: boolean) => void;
-}
-
-/**
- * A state updater that swaps in one source's new state and leaves the rest.
- *
- * Lifted out of the write path so the merge is a named thing rather than a
- * callback inside a callback inside a callback.
- */
-function replaceSource(state: CorpusConsent) {
-  return (current: Decisions): CorpusConsent[] =>
-    (current ?? []).map((entry) => (entry.source === state.source ? state : entry));
-}
-
-/** Read every source once, then write one decision at a time. */
-function useCorpusConsent(): ConsentController {
-  const [decisions, setDecisions] = useState<Decisions>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<string | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    void corpusConsent
-      .list()
-      .then((states) => {
-        if (live) setDecisions(states);
-      })
-      .catch(() => {
-        if (live) setError(CORPUS_CONSENT_FAILURE);
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  const decide = useCallback((source: string, granted: boolean) => {
-    setError(null);
-    setPending(source);
-    void corpusConsent
-      .set(source, granted)
-      .then((state) => setDecisions(replaceSource(state)))
-      .catch(() => setError(CORPUS_CONSENT_FAILURE))
-      .finally(() => setPending(null));
-  }, []);
-
-  return { decisions, error, pending, decide };
-}
 
 interface RevokeConfirmProps {
   source: string;
@@ -210,12 +168,32 @@ export interface CorpusConsentRowsProps {
   offeredOnly?: boolean;
 }
 
-/** Every source's row, the revoke question, and the banner for a failed read or write. */
-export function CorpusConsentRows({
-  offeredOnly = false,
-}: CorpusConsentRowsProps = {}): React.JSX.Element {
-  const { decisions, error, pending, decide } = useCorpusConsent();
-  const [confirming, setConfirming] = useState<string | null>(null);
+const ConsentRetry = ({
+  error,
+  retry,
+}: {
+  error: string | null;
+  retry: () => Promise<void>;
+}): React.JSX.Element | null =>
+  error ? (
+    <TouchableOpacity
+      onPress={() => void retry()}
+      accessibilityRole="button"
+      accessibilityLabel="Try again"
+      testID="corpus-consent-retry"
+      style={styles.retry}
+    >
+      <Text style={styles.retryText}>Try again</Text>
+    </TouchableOpacity>
+  ) : null;
+
+/** Keep each withdrawal question local while shared decisions remain confirmed. */
+function useConsentQuestion({
+  decisions,
+  epoch,
+  decide,
+}: Pick<ReturnType<typeof useCorpusConsent>, 'decisions' | 'epoch' | 'decide'>) {
+  const [confirming, setConfirming] = useState<ConsentConfirmation | null>(null);
 
   const onValueChange = useCallback(
     (source: string, next: boolean) => {
@@ -223,22 +201,34 @@ export function CorpusConsentRows({
         decide(source, true);
         return;
       }
-      setConfirming(source);
+      const decision = decisions?.find((row) => row.source === source);
+      if (decision?.granted) setConfirming({ epoch, decision });
     },
-    [decide],
+    [decide, decisions, epoch],
   );
 
   const onConfirmRevoke = useCallback(
     (source: string) => {
       setConfirming(null);
-      decide(source, false);
+      if (confirming) decide(source, false, confirming);
     },
-    [decide],
+    [decide, confirming],
   );
+
+  return { confirming, onValueChange, onConfirmRevoke, cancel: () => setConfirming(null) };
+}
+
+/** Every source's row, the revoke question, and the banner for a failed read or write. */
+export function CorpusConsentRows({
+  offeredOnly = false,
+}: CorpusConsentRowsProps = {}): React.JSX.Element {
+  const { decisions, epoch, error, pending, decide, retry } = useCorpusConsent();
+  const question = useConsentQuestion({ decisions, epoch, decide });
 
   return (
     <>
       <SettingsFeedbackBanner idPrefix="corpus-consent" error={error} status={null} />
+      <ConsentRetry error={error} retry={retry} />
       {(decisions ?? []).map((decision) => {
         if (!sortsAnything(decision.source)) {
           return offeredOnly ? null : (
@@ -249,11 +239,14 @@ export function CorpusConsentRows({
           <SourceRow
             key={decision.source}
             decision={decision}
-            busy={pending === decision.source}
-            confirming={confirming === decision.source}
-            onValueChange={(next) => onValueChange(decision.source, next)}
-            onConfirmRevoke={() => onConfirmRevoke(decision.source)}
-            onCancelRevoke={() => setConfirming(null)}
+            busy={pending.includes(decision.source)}
+            confirming={
+              question.confirming?.decision.source === decision.source &&
+              confirmationMatches(question.confirming, epoch, decisions)
+            }
+            onValueChange={(next) => question.onValueChange(decision.source, next)}
+            onConfirmRevoke={() => question.onConfirmRevoke(decision.source)}
+            onCancelRevoke={question.cancel}
           />
         );
       })}
@@ -262,6 +255,12 @@ export function CorpusConsentRows({
 }
 
 const styles = StyleSheet.create({
+  retryText: { ...uiType.button, color: ink.soft },
+  retry: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+  },
   noteRow: {
     flexDirection: 'row',
     alignItems: 'center',

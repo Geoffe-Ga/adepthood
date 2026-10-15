@@ -42,6 +42,7 @@ async function signUpAndOpenChapter(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Skip the welcome' }).click();
   await page.getByRole('button', { name: 'Open Journal menu' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Course', exact: true }).click();
+  await page.getByTestId('stage-pill-1').click();
   await page.getByRole('button', { name: CHAPTER_TITLE, exact: true }).click();
   await expect(page.getByTestId('chapter-reader')).toBeVisible();
 }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type * as ApiModule from '../../../../api';
-import { ApiError, goalCompletions, habits } from '../../../../api';
+import { ApiError, goalCompletions, habits, setTokenGetter } from '../../../../api';
 import {
   capturePendingCheckInScope,
   loadDroppedCheckIns,
@@ -14,7 +14,7 @@ import {
 import type { PendingCheckIn } from '../../../../storage/habitStorage';
 import { serialize } from '../../../../storage/serializedWrite';
 import { setUserTimezonePending } from '../../../../storage/userCalendar';
-import { setActiveUser } from '../../../../storage/userScope';
+import { getActiveUser, setActiveUser } from '../../../../storage/userScope';
 import { useDroppedCheckInStore } from '../../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import { HABIT_DEFAULTS } from '../../HabitDefaults';
@@ -49,6 +49,9 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+const tokenFor = (owner: number) =>
+  `e30.${btoa(JSON.stringify({ sub: String(owner), exp: 4_000_000_000 }))}.sig`;
+
 const queued = (operationId: string, goalId = 1): PendingCheckIn => ({
   goal_id: goalId,
   did_complete: true,
@@ -60,6 +63,7 @@ const queued = (operationId: string, goalId = 1): PendingCheckIn => ({
 beforeEach(async () => {
   await AsyncStorage.clear();
   setActiveUser(1);
+  setTokenGetter(() => tokenFor(getActiveUser() ?? 1));
   setUserTimezonePending(1, false);
   useHabitStore.setState({ habits: [], loading: false, error: null });
   jest.mocked(habits.listAll).mockResolvedValue([]);
@@ -68,6 +72,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   setActiveUser(null);
+  setTokenGetter(null);
   jest.restoreAllMocks();
   jest.mocked(AsyncStorage.getItem).mockImplementation(mockStorageRead);
   setUserTimezonePending(1, false);
@@ -172,7 +177,11 @@ describe('offline queue replay with concurrent writers (#3086)', () => {
     expect(useDroppedCheckInStore.getState().entries).toHaveLength(2);
     expect(await loadPendingCheckIns()).toHaveLength(1);
     expect(
-      jest.mocked(goalCompletions.create).mock.calls.every(([, options]) => options === undefined),
+      jest
+        .mocked(goalCompletions.create)
+        .mock.calls.every(
+          ([, options]) => options?.token === tokenFor(1) && options.idempotencyKey === undefined,
+        ),
     ).toBe(true);
   });
 
@@ -231,7 +240,10 @@ describe('offline queue replay with concurrent writers (#3086)', () => {
       expect(calls).toHaveLength(2);
       expect(calls[0]).toEqual(calls[1]);
       if (kind === 'signed units') {
-        expect(calls[0]![1]).toEqual({ idempotencyKey: `log-unit:${entry.operation_id}` });
+        expect(calls[0]![1]).toEqual({
+          token: tokenFor(1),
+          idempotencyKey: `log-unit:${entry.operation_id}`,
+        });
       } else {
         // Amount-less writes are naturally idempotent on (user, goal, day):
         // backend/tests/test_goal_completions.py::test_same_day_completion_is_idempotent.

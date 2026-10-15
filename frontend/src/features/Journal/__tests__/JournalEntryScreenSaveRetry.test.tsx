@@ -816,14 +816,15 @@ describe('a retried create is one entry (#2936)', () => {
 describe('a page whose deletion is in progress, and a copy in another vault (#3094/#3098)', () => {
   const DELETION_PENDING = { status: 409, detail: 'journal_entry_deletion_pending' };
 
-  it('says the page is set to be deleted when a body save is refused, and offers no retry', async () => {
+  it('a save 409 without destination metadata describes a pending deletion without promising confirmation', async () => {
     const screen = await openLoaded();
     mockUpdate.mockRejectedValueOnce(DELETION_PENDING);
 
     await typeBody(screen, 'Words typed after the delete.');
 
     expect(hint(screen)).toMatch(/set to be deleted, so it can’t be edited/);
-    expect(hint(screen)).toMatch(/once your Creek vault confirms its copy is gone/);
+    expect(hint(screen)).toMatch(/Deletion has not finished/);
+    expect(hint(screen)).not.toMatch(/once|vault confirms|reconnect/iu);
     expect(screen.queryByTestId('journal-save-retry')).toBeNull();
   });
 
@@ -837,7 +838,10 @@ describe('a page whose deletion is in progress, and a copy in another vault (#30
     expect(hint(screen)).toMatch(/set to be deleted, so it can’t be edited/);
     const finishError = screen.getByTestId('journal-finish-error').props.children as string;
     expect(finishError).toMatch(/set to be deleted/);
-    expect(finishError).not.toMatch(/Check your connection|still saving/);
+    expect(finishError).not.toMatch(
+      /Check your connection|still saving|once|vault confirms|reconnect/iu,
+    );
+    expect(finishError).toMatch(/Deletion has not finished/);
     expect(screen.queryByTestId('journal-save-retry')).toBeNull();
 
     const sent = mockUpdate.mock.calls.length;

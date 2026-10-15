@@ -1,6 +1,13 @@
 import { expect, test } from '@playwright/test';
 
-import { frontendUrl, setProgramAnchorDaysAgo, signUp } from './journalHabitsBrowserSupport';
+import {
+  backendUrl,
+  bearer,
+  frontendUrl,
+  setProgramAnchorDaysAgo,
+  signUp,
+  tokenFor,
+} from './journalHabitsBrowserSupport';
 
 // The calendar is on Orange while the reader is still reading Blue.
 const ORANGE_START_DAYS_AGO = 84;
@@ -13,10 +20,28 @@ const VIEWPORTS = [
 ];
 
 for (const viewport of VIEWPORTS) {
-  test(`Course restores the marked-read Frequency at ${viewport.width}px`, async ({ page }) => {
+  test(`Course restores the marked-read Frequency at ${viewport.width}px`, async ({
+    page,
+    request,
+  }) => {
     await page.setViewportSize(viewport);
     const email = await signUp(page, 'course-reading-position');
     setProgramAnchorDaysAgo(email, ORANGE_START_DAYS_AGO);
+    // This witness concerns last-read Frequency precedence AFTER Start Here.
+    // Persist genuine resource marks; keep the original Blue assertion intact.
+    const token = await tokenFor(request, email);
+    const catalog = await request.get(`${backendUrl()}/course/site-resources`, {
+      headers: bearer(token),
+    });
+    expect(catalog.status()).toBe(200);
+    for (const resource of (await catalog.json()) as Array<{ slug: string }>) {
+      const marked = await request.post(
+        `${backendUrl()}/course/site-resources/${encodeURIComponent(resource.slug)}/mark-read`,
+        { headers: bearer(token) },
+      );
+      expect(marked.status()).toBe(200);
+    }
+
     await page.goto(`${frontendUrl()}/course/${BLUE_STAGE}`);
     await expect(page.getByTestId('stage-pill-4')).toHaveCSS(
       'border-top-color',
