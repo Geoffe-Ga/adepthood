@@ -134,7 +134,7 @@ import { createTokenRotation, type RecoveryMode } from './tokenRotation';
 import { classifyTranscription } from './transcriptionContract';
 
 import { API_BASE_URL, KEYLESS_PAGE_READ_REACHES_SERVER } from '@/config';
-import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
+import type { Habit as LocalHabit, HabitGoalSetup } from '@/features/Habits/Habits.types';
 import { aiAccessRevoked } from '@/features/Journal/aiAccessRevoked';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 import {
@@ -1309,6 +1309,8 @@ export interface ApiHabitStats {
 }
 
 export interface HabitCreatePayload {
+  /** Atomic initial ladder; omit on ordinary habit edits. */
+  goals?: HabitGoalSetup;
   name: string;
   icon: string;
   start_date: string;
@@ -1488,6 +1490,8 @@ export const habits = {
 
 // Goal completion types and client
 export interface GoalCompletionPayload {
+  /** True only for units measured by a timer. */
+  via_timer?: boolean;
   goal_id: number;
   did_complete?: boolean;
   /** Signed unit delta. Omit for the legacy full-target/idempotent behavior. */
@@ -3295,6 +3299,15 @@ export const practices = {
 };
 
 export const userPractices = {
+  /** Link or clear the caller-owned adoption, rather than the shared catalog row. */
+  linkHabit(userPracticeId: number, habitId: number | null, token?: string): Promise<UserPractice> {
+    return request<UserPractice>(`/user-practices/${userPracticeId}/habit`, {
+      method: 'PATCH',
+      body: { habit_id: habitId },
+      token,
+      schema: userPracticeSchema as unknown as z.ZodType<UserPractice>,
+    });
+  },
   create(payload: UserPracticeCreate, token?: string): Promise<UserPractice> {
     return request<UserPractice>('/user-practices/', {
       method: 'POST',

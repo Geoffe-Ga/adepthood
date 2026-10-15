@@ -87,6 +87,15 @@ import {
   toApiPayload,
 } from './habitMerge';
 import { clampPosition, insertAt, stampPositionalOrder } from './habitOrdering';
+import {
+  clearLogUnitRollbackBaseline,
+  enqueueLogUnit,
+  forgetLogUnit,
+  laterOptimisticLogUnits,
+  rememberLogUnit,
+  rebasePendingLogUnitRollbacks,
+  takeLogUnitRollbackBaseline,
+} from './logUnitOrder';
 import { classifyReplayFailure, hasExhaustedRetries, nextHeadState } from './replayPolicy';
 import {
   ClientMintedIdError,
@@ -274,6 +283,14 @@ const startDateForAdd = (
   return base === null ? new Date() : calculateHabitStartDate(base, slotIndex);
 };
 
+/** Keep the optimistic ladder consistent with an atomic timer-habit create. */
+const buildAddedGoals = (name: string, tempId: number, input: AddHabitInput): Goal[] =>
+  buildTierGoals(name, (ti) => tempId - ti - 1).map((goal) => {
+    if (!input.goals) return goal;
+    const { target_unit, frequency, frequency_unit } = input.goals;
+    return { ...goal, target_unit, frequency, frequency_unit, target: input.goals[goal.tier] };
+  });
+
 /**
  * Build a brand-new habit row from a minimal user input. Stage cycles through
  * STAGE_ORDER so habits added after the original ten still pick up an
@@ -319,9 +336,9 @@ const buildAddedHabitAtSlot = (
     energy_cost: input.energy_cost ?? 5,
     energy_return: input.energy_return ?? 5,
     start_date: startDateForAdd(prev, isCarryover, slotIndex, tz),
-    goals: buildTierGoals(name, (ti) => tempId - ti - 1),
+    goals: buildAddedGoals(name, tempId, input),
     completions: [],
-    revealed: false,
+    revealed: input.revealed ?? false,
     hasClientMintedIds: true,
     // Partition-scoped ordinal, not a global one: carryover and program slots
     // each restart at 0, so read sort_order only after splitting by is_carryover.
@@ -686,6 +703,38 @@ const reconcileStoredHabitDay = (
   );
   setHabits(next);
   void persistHabits(next);
+};
+
+/** Confirm measured time without inventing an optimistic history row. */
+const withQuietLogConfirmation = (
+  habits: Habit[],
+  ctx: LogUnitContext,
+  result: CheckInResult,
+  later: ReadonlySet<string>,
+): Habit[] => {
+  const prepared = ctx.next.find((habit) => habit.id === ctx.habitId)!;
+  const timestamp = prepared.completions!.find(
+    (completion) => completion.id === ctx.operationId,
+  )!.timestamp;
+  const confirm = (habit: Habit): Habit => ({
+    ...habit,
+    streak: result.streak,
+    last_completion_date:
+      habit.last_completion_date && new Date(habit.last_completion_date) > new Date(timestamp)
+        ? habit.last_completion_date
+        : timestamp,
+    completions: [
+      ...(habit.completions ?? []).filter(
+        (completion) => completionDayKey(completion, ctx.timezone) !== ctx.dayKey,
+      ),
+      { id: ctx.operationId, timestamp, local_day: ctx.dayKey, completed_units: result.day_units },
+      ...(habit.completions ?? []).filter(
+        (completion) => completion.id !== undefined && later.has(completion.id),
+      ),
+    ],
+  });
+  if (!habits.some((habit) => habit.id === ctx.habitId)) return [...habits, confirm(prepared)];
+  return habits.map((habit) => (habit.id === ctx.habitId ? confirm(habit) : habit));
 };
 
 /**
@@ -1637,6 +1686,7 @@ const insertHabitAtWithId = async (
     created = await habitsApi.create(
       {
         ...toApiPayload(next[at] ?? newHabit, zone),
+        ...(input.goals ? { goals: input.goals } : {}),
       },
       ...scope.credentials,
     );
@@ -1844,6 +1894,7 @@ export const habitManager = {
       await habitsApi.create(
         {
           ...toApiPayload(newHabit, zone),
+          ...(input.goals ? { goals: input.goals } : {}),
         },
         ...scope.credentials,
       );
@@ -2054,8 +2105,20 @@ export const habitManager = {
    */
   applyLogUnitContext: (ctx: LogUnitContext): void => {
     if (!ctx.scope.current()) return;
+    if (!ctx.isDemoSeed && ctx.serverGoalId !== null) rememberLogUnit(ctx, true);
     setHabits(ctx.next);
     void persistHabits(ctx.next);
+  },
+
+  /** Reserve request order without claiming an unconfirmed timer completion. */
+  reserveLogUnitContext: (ctx: LogUnitContext): void => {
+    if (!ctx.scope.current()) return;
+    rememberLogUnit(ctx, false);
+  },
+
+  /** Cancel an internal reservation; confirmed store and disk remain untouched. */
+  discardLogUnitContext: (ctx: LogUnitContext): void => {
+    forgetLogUnit(ctx);
   },
 
   /**
@@ -2063,9 +2126,22 @@ export const habitManager = {
    * placeholder, and rejects with `ClientMintedIdError` when this device minted
    * the goal id — the caller turns that into a resync.
    */
-  commitLogUnitContext: async (ctx: LogUnitContext): Promise<CheckInResult | null> => {
-    if (!ctx.scope.current()) return null;
-    if (ctx.isDemoSeed === true) return null;
+  commitLogUnitContext: async (
+    ctx: LogUnitContext,
+    {
+      viaTimer = false,
+      isCurrent = () => true,
+      onCommitted,
+    }: {
+      viaTimer?: boolean;
+      isCurrent?: () => boolean;
+      onCommitted?: (_result: CheckInResult) => void;
+    } = {},
+  ): Promise<CheckInResult | null> => {
+    if (!ctx.scope.current() || ctx.isDemoSeed === true) {
+      forgetLogUnit(ctx);
+      return null;
+    }
     // A non-server goal id used to be posted on purpose, to draw the 404
     // ``goal_not_found`` that triggers the stale-scaffold resync. That trade
     // cannot hold: an onboarding scaffold's goal id is a positive integer in
@@ -2077,33 +2153,59 @@ export const habitManager = {
     // build predating the marker, or a real server id whose goal was deleted
     // server-side, is visible only in the server's answer.
     if (ctx.serverGoalId === null) {
+      forgetLogUnit(ctx);
       throw new ClientMintedIdError(
         'This habit has not finished saving to your account, so its goal id names no server row.',
       );
     }
     const serverGoalId = ctx.serverGoalId;
-    return serializeLogUnitCommit(`${ctx.habitId}:${ctx.dayKey}`, () =>
-      !ctx.scope.current()
-        ? Promise.resolve(null)
-        : goalCompletionsApi.create(
-            {
-              goal_id: serverGoalId,
-              did_complete: ctx.amount !== 0,
-              completed_on: ctx.completedOn,
-              completed_units: ctx.amount,
-            },
-            {
-              idempotencyKey: logUnitIdempotencyKey(ctx.operationId),
-              ...(ctx.scope.credentials.length ? { token: ctx.scope.credentials[0] } : {}),
-            },
-          ),
-    );
+    enqueueLogUnit(ctx);
+    return serializeLogUnitCommit(`${ctx.habitId}:${ctx.dayKey}`, async () => {
+      try {
+        if (!ctx.scope.current() || !isCurrent()) return null;
+        const result = await goalCompletionsApi.create(
+          {
+            goal_id: serverGoalId,
+            did_complete: ctx.amount !== 0,
+            completed_on: ctx.completedOn,
+            completed_units: ctx.amount,
+            ...(viaTimer ? { via_timer: true } : {}),
+          },
+          {
+            idempotencyKey: logUnitIdempotencyKey(ctx.operationId),
+            ...(ctx.scope.credentials.length ? { token: ctx.scope.credentials[0] } : {}),
+          },
+        );
+        if (ctx.scope.current()) onCommitted?.(result);
+        return result;
+      } finally {
+        forgetLogUnit(ctx);
+      }
+    });
   },
 
   /** Replace this habit/day's optimistic rows with the confirmed server total. */
   reconcileLogUnitContext: (ctx: LogUnitContext, result: CheckInResult): void => {
     if (!ctx.scope.current()) return;
     reconcileStoredHabitDay(ctx.habitId, ctx.dayKey, ctx.timezone, result, ctx.operationId);
+    forgetLogUnit(ctx);
+    clearLogUnitRollbackBaseline(ctx);
+  },
+
+  /** Confirm a quiet log before the next request in this habit/day's stream. */
+  reconcileReservedLogUnitContext: (ctx: LogUnitContext, result: CheckInResult): void => {
+    if (!ctx.scope.current()) return;
+    if (!getHabits().some((habit) => habit.id === ctx.habitId)) {
+      forgetLogUnit(ctx);
+      return;
+    }
+    const later = laterOptimisticLogUnits(ctx);
+    const confirm = (habits: Habit[]) => withQuietLogConfirmation(habits, ctx, result, later);
+    rebasePendingLogUnitRollbacks(confirm);
+    const next = confirm(getHabits());
+    setHabits(next);
+    void persistHabits(next);
+    forgetLogUnit(ctx);
   },
 
   /**
@@ -2114,8 +2216,10 @@ export const habitManager = {
    */
   rollbackLogUnitContext: (ctx: LogUnitContext): void => {
     if (!ctx.scope.current()) return;
-    setHabits(ctx.prev);
-    void persistHabits(ctx.prev);
+    forgetLogUnit(ctx);
+    const baseline = takeLogUnitRollbackBaseline(ctx);
+    setHabits(baseline);
+    void persistHabits(baseline);
   },
 
   /**

@@ -85,6 +85,8 @@ test('an unlinked writing timer points to Settings, which opens on the habit pic
   await page.goBack();
   await expect(page.getByTestId('journal-body-input')).toBeVisible();
   await runASession(page);
-  await expect(page.getByText(`${HABIT_NAME} checked off`)).toBeVisible();
+  await expect(page.getByTestId('writing-session-log-notice')).toHaveText(
+    `Logged 20 minutes to ${HABIT_NAME}`,
+  );
   await expect(page.getByTestId('link-habit-nudge')).toHaveCount(0);
 });

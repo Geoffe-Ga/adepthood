@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react';
 import { Platform } from 'react-native';
 
 /**
@@ -59,4 +60,18 @@ export function webDisabledState<P>(disabled: boolean): Partial<P> {
 export function webCurrentState<P>(current: boolean): Partial<P> {
   if (Platform.OS !== 'web') return {};
   return { 'aria-current': current ? 'true' : undefined } as unknown as Partial<P>;
+}
+
+/** React Native Web's press responder handles Space only for button roles.
+ * Capture it for radio options before it can scroll the surrounding page. */
+export function webRadioSpace<P>(disabled: boolean, activate: () => void): Partial<P> {
+  if (Platform.OS !== 'web') return {};
+  return {
+    onKeyDownCapture: (event: KeyboardEvent<HTMLElement>) => {
+      if (event.key !== ' ' && event.key !== 'Spacebar') return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!disabled && !event.repeat) activate();
+    },
+  } as unknown as Partial<P>;
 }

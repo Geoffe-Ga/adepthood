@@ -28,6 +28,12 @@ export interface UseSaveSessionMutationParams {
   setSaveError: (_msg: string | null) => void;
   /** Caller copy for failures: its fallback and any per-status override. */
   errorOptions: FormatErrorOptions;
+  /** Optional independent work after persistence; its failure cannot undo this sitting. */
+  onConfirmed?: (
+    _session: PracticeSessionResponse,
+    _payload: PracticeSessionCreate,
+    _source?: 'timer' | 'manual',
+  ) => Promise<void>;
 }
 
 /**
@@ -42,6 +48,7 @@ export function useSaveSessionMutation({
   commit,
   setSaveError,
   errorOptions,
+  onConfirmed,
 }: UseSaveSessionMutationParams): OptimisticMutation<
   PracticeSessionCreate,
   PracticeSessionResponse
@@ -54,6 +61,11 @@ export function useSaveSessionMutation({
     commit: async (payload) => {
       const session = await practiceSessions.create(payload);
       commit();
+      // Finish the sitting without waiting for its optional habit write. The
+      // linked-habit controller owns that write's result and factual notice.
+      void Promise.resolve()
+        .then(() => onConfirmed?.(session, payload))
+        .catch(() => {});
       return session;
     },
     rollback: (_input, err) => {

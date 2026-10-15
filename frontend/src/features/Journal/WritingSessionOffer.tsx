@@ -63,6 +63,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { JOURNAL_HABIT_DEFAULT_GOALS } from './journalHabitDefaults';
 import type { FinishedWriting } from './keepAsPractice';
 import OfferAction from './OfferAction';
 import {
@@ -102,7 +103,7 @@ import { decorativeHidden } from '@/components/a11yHidden';
 import { useAuth } from '@/context/AuthContext';
 import { BORDER_RADIUS, SPACING, colors, editorialType } from '@/design/tokens';
 import { useRingEnabled } from '@/features/Depth/depthRings';
-import type { Habit } from '@/features/Habits/Habits.types';
+import type { Habit, HabitGoalSetup } from '@/features/Habits/Habits.types';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { clampPosition, insertAt, stagePreview } from '@/features/Habits/services/habitOrdering';
 import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
@@ -372,7 +373,7 @@ interface OfferMoves {
   practiceKept: () => void;
   confirmHabit: () => void;
   backToOffer: () => void;
-  chooseNew: () => void;
+  chooseNew: (_setup: HabitGoalSetup) => void;
   chooseExisting: (_habit: Habit) => void;
   /** The habit an existing-habit link landed on, for the confirmation. */
   linkedName: string | null;
@@ -432,12 +433,14 @@ function useHabitChoiceMoves(
  * Split out of ``useOfferMoves`` so each hook stays one readable thing.
  */
 function useConfirmNewHabit({
+  goals,
   settle,
   setPhase,
   linkNew,
   position,
   tz,
 }: {
+  goals: HabitGoalSetup;
   settle: () => void;
   setPhase: (_phase: Phase) => void;
   linkNew: (_habitId: number) => Promise<void>;
@@ -448,7 +451,7 @@ function useConfirmNewHabit({
     setPhase('saving');
     void habitManager
       .insertHabitAtWithId(
-        { name: JOURNALING_HABIT_NAME, icon: JOURNALING_HABIT_ICON },
+        { name: JOURNALING_HABIT_NAME, icon: JOURNALING_HABIT_ICON, goals, revealed: true },
         position,
         tz,
       )
@@ -463,7 +466,25 @@ function useConfirmNewHabit({
         if (habitId !== null) await linkNew(habitId);
         setPhase('saved');
       });
-  }, [linkNew, position, setPhase, settle, tz]);
+  }, [goals, linkNew, position, setPhase, settle, tz]);
+}
+
+/** Keep the chosen goal ladder while the writer places the new habit. */
+function useNewHabitGoals(
+  placement: ReturnType<typeof usePlacement>,
+  setPhase: (_phase: Phase) => void,
+) {
+  const [goals, setGoals] = useState<HabitGoalSetup>(JOURNAL_HABIT_DEFAULT_GOALS);
+  const chooseNew = useCallback(
+    (setup: HabitGoalSetup) => {
+      setGoals(setup);
+      placement.reset();
+      setPhase('placing');
+    },
+    [placement, setPhase],
+  );
+
+  return { goals, chooseNew };
 }
 
 /**
@@ -481,6 +502,7 @@ function useOfferMoves(
   token: string | undefined,
 ): OfferMoves {
   const [phase, setPhase] = useState<Phase>('offered');
+  const { goals, chooseNew } = useNewHabitGoals(placement, setPhase);
   const { chooseExisting, linkedName, linkNew, newLinked } = useHabitChoiceMoves(
     settle,
     setPhase,
@@ -500,12 +522,8 @@ function useOfferMoves(
     setPhase('choosing');
   }, [tz]);
 
-  const chooseNew = useCallback(() => {
-    placement.reset();
-    setPhase('placing');
-  }, [placement]);
-
   const confirmHabit = useConfirmNewHabit({
+    goals,
     settle,
     setPhase,
     linkNew,
@@ -694,6 +712,8 @@ const styles = StyleSheet.create({
   },
   /** The row being placed, marked so the eye finds it without a colour claim. */
   rowNew: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
     backgroundColor: colors.paper.anchorHighlight,
     borderRadius: BORDER_RADIUS.sm,
     paddingHorizontal: SPACING.xs,
@@ -705,6 +725,8 @@ const styles = StyleSheet.create({
   },
   rowControls: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    maxWidth: '100%',
     gap: SPACING.xs,
   },
   actions: {

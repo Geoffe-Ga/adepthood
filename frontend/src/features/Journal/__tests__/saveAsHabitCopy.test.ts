@@ -16,7 +16,7 @@ import {
   WRITING_HABIT_NEW,
   WRITING_TIMER_ROW_LINKED_PENDING,
   WRITING_TIMER_ROW_UNLINKED,
-  checkedOffToast,
+  loggedToast,
   linkedHabitConfirmation,
   savedHabitConfirmation,
   stagePreviewLabel,
@@ -56,18 +56,19 @@ describe('saveAsHabitCopy — the strings themselves', () => {
 
   it('says where the habit went, and that it is the writer who opens it', () => {
     expect(savedHabitConfirmation()).toContain(JOURNALING_HABIT_NAME);
-    expect(savedHabitConfirmation()).toMatch(/locked/i);
+    expect(savedHabitConfirmation()).not.toMatch(/locked/i);
   });
 });
 
 describe('saveAsHabitCopy — the writing-habit link (#2861)', () => {
-  it('confirms a check-off by the habit’s own name and nothing more', () => {
-    expect(checkedOffToast('Morning pages')).toBe('Morning pages checked off');
+  it('names the measured amount and the habit without scoring it', () => {
+    expect(loggedToast(10, 'minutes', 'Morning pages')).toBe('Logged 10 minutes to Morning pages');
+    expect(loggedToast(1, 'sessions', 'Journaling')).toBe('Logged a session to Journaling');
   });
 
   it('says once what linking will do', () => {
     expect(linkedHabitConfirmation('Morning pages')).toBe(
-      'Morning pages will be checked off when a timer ends.',
+      'Morning pages will receive your timer’s minutes or completed sessions.',
     );
   });
 
@@ -76,7 +77,7 @@ describe('saveAsHabitCopy — the writing-habit link (#2861)', () => {
   });
 
   it('labels each habit row with what choosing it does', () => {
-    expect(writingHabitChooseA11y('Stretch')).toBe('Check off Stretch when a writing timer ends');
+    expect(writingHabitChooseA11y('Stretch')).toBe('Log writing timer activity to Stretch');
   });
 
   it('names the Settings row by the link, and never reads "not linked" for a pending one', () => {
@@ -102,7 +103,7 @@ describe('saveAsHabitCopy — the writing-habit link (#2861)', () => {
   });
 
   it('sweeps every new string too', () => {
-    expect(SAVE_AS_HABIT_COPY_ENTRIES).toContain(checkedOffToast(JOURNALING_HABIT_NAME));
+    expect(SAVE_AS_HABIT_COPY_ENTRIES).toContain(loggedToast(10, 'minutes', JOURNALING_HABIT_NAME));
     expect(SAVE_AS_HABIT_COPY_ENTRIES).toContain(OFFER_SWITCH_DESCRIPTION);
     expect(SAVE_AS_HABIT_COPY_ENTRIES).toContain(WRITING_TIMER_ROW_LINKED_PENDING);
   });

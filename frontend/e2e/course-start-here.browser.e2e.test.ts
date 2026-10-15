@@ -216,6 +216,13 @@ for (const viewport of VIEWPORTS) {
       .getByRole('dialog')
       .getByRole('button', { name: 'Open Energy Scaffolding', exact: true });
     await expect(activeResource).toHaveCSS('background-color', 'rgb(243, 236, 223)');
+    await expect
+      .poll(() =>
+        page
+          .getByTestId('screen-drawer-panel')
+          .evaluate((panel) => new DOMMatrixReadOnly(getComputedStyle(panel).transform).m41),
+      )
+      .toBe(0);
     await doubleText(page.getByRole('dialog').getByTestId('course-drawer-start-here'));
     await expectVisibleGlyphs(activeResource);
     await page.screenshot({
