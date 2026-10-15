@@ -16,7 +16,7 @@ import WritingSessionBanner from '../WritingSessionBanner';
 import WritingSessionSurface from '../WritingSessionSurface';
 import WritingTimer from '../WritingTimer';
 
-import { SPACING, colors, journalLayout, touchTarget } from '@/design/tokens';
+import { SPACING, journalLayout, surface, touchTarget } from '@/design/tokens';
 
 function flat(style: StyleProp<ViewStyle>): ViewStyle {
   return StyleSheet.flatten(style);
@@ -46,11 +46,40 @@ function dp(value: unknown): number {
  * it to share or fight over that band.
  */
 describe('the writing timer floats in every state', () => {
-  it('uses opaque paper on native where no backdrop blur protects the readout', () => {
+  it('draws the pill on opaque canvas paper so no page text reads through it (#3403)', () => {
     const timer = render(<WritingTimer onComplete={jest.fn()} />);
-    expect(flat(timer.getByTestId('writing-timer-pill').props.style).backgroundColor).toBe(
-      colors.paper.background,
-    );
+    const pill = flat(timer.getByTestId('writing-timer-pill').props.style);
+    expect(pill.backgroundColor).toBe(surface.canvas);
+    expect(pill).not.toHaveProperty('backdropFilter');
+  });
+
+  it('keeps the unit on the preset row in the desktop rail at the tighter gap (#3403)', () => {
+    const rn = require('react-native');
+    const spy = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 1280, height: 720, scale: 1, fontScale: 1 });
+    try {
+      const timer = render(<WritingTimer onComplete={jest.fn()} />);
+      const row = flat(timer.getByTestId('writing-timer-row-presets').props.style);
+      expect(row.gap).toBe(SPACING.xs);
+      const preset = flat(timer.getByTestId('writing-timer-preset-10').props.style);
+      expect(preset.minWidth).toBe(touchTarget.minimum);
+      expect(preset.minHeight).toBe(touchTarget.minimum);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('sets a unit that enlarged text wraps alone at the trailing edge, under the last preset', () => {
+    const timer = render(<WritingTimer onComplete={jest.fn()} />);
+    const row = flat(timer.getByTestId('writing-timer-row-presets').props.style);
+    expect(row.flexWrap).toBe('wrap');
+    expect(row.justifyContent).toBe('flex-end');
+  });
+
+  it('keeps the usual preset gap below the rail', () => {
+    const timer = render(<WritingTimer onComplete={jest.fn()} />);
+    expect(flat(timer.getByTestId('writing-timer-row-presets').props.style).gap).toBe(SPACING.sm);
   });
 
   it('floats the expanded idle pill while resonance stays in flow', () => {

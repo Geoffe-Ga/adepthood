@@ -61,7 +61,7 @@ import {
   editorialType,
   journalLayout,
   journalSheet,
-  glass,
+  floatingChrome,
   touchTarget,
 } from '@/design/tokens';
 import type {
@@ -103,13 +103,16 @@ export interface WritingTimerProps {
 function PresetRow({
   minutes,
   onChoose,
+  rail,
 }: {
   minutes: number;
   onChoose: (next: number) => void;
+  /** True in the narrow desktop rail, where the unit only fits at the tighter gap. */
+  rail: boolean;
 }): React.JSX.Element {
   return (
     <View
-      style={[styles.row, styles.presetRow]}
+      style={[styles.row, styles.presetRow, rail && styles.presetRowRail]}
       accessibilityRole="radiogroup"
       accessibilityLabel={WRITING_TIMER_PRESET_GROUP_LABEL}
       testID="writing-timer-row-presets"
@@ -449,7 +452,7 @@ function TimerPill({
         )}
       </View>
       {!compact && view.showPresets ? (
-        <PresetRow minutes={minutes} onChoose={onChooseMinutes} />
+        <PresetRow minutes={minutes} onChoose={onChooseMinutes} rail={expandedRail} />
       ) : null}
     </View>
   );
@@ -662,8 +665,7 @@ const styles = StyleSheet.create({
     paddingVertical: WRITING_TIMER_PILL_PADDING_V,
     paddingHorizontal: SPACING.md,
     borderRadius: BORDER_RADIUS.xl,
-    ...glass.pill,
-    ...glass.web,
+    ...floatingChrome.pill,
   },
   pillExpanded: {
     width: '100%',
@@ -696,8 +698,21 @@ const styles = StyleSheet.create({
   // with it instead of clipping the unit or shrinking the touch targets.
   presetRow: {
     flexWrap: 'wrap',
+    // The presets grow to fill each line, so this moves only a unit that
+    // enlarged text pushes onto a line alone: it sits at the trailing edge,
+    // under the last number it qualifies, rather than at the start of the line.
+    justifyContent: 'flex-end',
     height: 'auto',
     minHeight: WRITING_TIMER_ROW_HEIGHT,
+  },
+  /**
+   * The desktop rail is a margin's width: at the row's usual gap its four
+   * 44dp presets leave no room for the unit, which then wrapped onto a line of
+   * its own. The tighter gap keeps the unit on the row without shrinking a
+   * target.
+   */
+  presetRowRail: {
+    gap: SPACING.xs,
   },
   rowDocked: {
     flexDirection: 'column',

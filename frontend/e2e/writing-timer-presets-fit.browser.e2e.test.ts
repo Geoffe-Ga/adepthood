@@ -30,6 +30,8 @@ const TEXT_SCALE = 2;
 const TOUCH_MINIMUM = 44;
 /** Sub-pixel rounding allowance between a box and the edge that holds it. */
 const EDGE_TOLERANCE = 1;
+/** WCAG 2.1 AA contrast for a preset's label against what it is drawn on. */
+const AA_CONTRAST = 4.5;
 
 interface Rect {
   left: number;
@@ -101,6 +103,131 @@ async function expectPresetsInView(page: Page, label: string): Promise<void> {
   }
 }
 
+/** How one preset reads once its press and focus feedback has settled. */
+interface PresetInk {
+  minutes: string;
+  /** The opacity the label is drawn at, compounded through every ancestor. */
+  opacity: number;
+  /** The label's contrast against the preset's fill, or the pill's where it has none. */
+  contrast: number;
+  /** Whether the preset paints a fill of its own. */
+  filled: boolean;
+}
+
+/** Read the pill's surface and every preset's label contrast. */
+async function readPresetInk(page: Page): Promise<{ pillAlpha: number; presets: PresetInk[] }> {
+  return page.evaluate((presets) => {
+    interface Rgba {
+      r: number;
+      g: number;
+      b: number;
+      a: number;
+    }
+    const channels = (color: string): Rgba => {
+      const parts = (/rgba?\(([^)]+)\)/.exec(color)?.[1] ?? '')
+        .split(',')
+        .map((part) => parseFloat(part));
+      const [r, g, b, a = 1] = parts;
+      if (r === undefined || g === undefined || b === undefined) {
+        throw new Error(`unreadable colour ${color}`);
+      }
+      return { r, g, b, a };
+    };
+    const linear = (channel: number): number => {
+      const c = channel / 255;
+      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    };
+    const luminance = ({ r, g, b }: Rgba): number =>
+      0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+    const ratio = (one: Rgba, other: Rgba): number => {
+      const light = Math.max(luminance(one), luminance(other));
+      const dark = Math.min(luminance(one), luminance(other));
+      return (light + 0.05) / (dark + 0.05);
+    };
+    const pill = document.querySelector('[data-testid="writing-timer-pill"]');
+    if (pill === null) throw new Error('the timer pill is not on the page');
+    const pillFill = channels(getComputedStyle(pill).backgroundColor);
+    return {
+      pillAlpha: pillFill.a,
+      presets: presets.map((minutes) => {
+        const button = document.querySelector(`[data-testid="writing-timer-preset-${minutes}"]`);
+        const label = button?.querySelector('[dir="auto"]');
+        if (!(button instanceof HTMLElement) || !(label instanceof HTMLElement)) {
+          throw new Error(`preset ${minutes} has no label`);
+        }
+        let opacity = 1;
+        for (let node: Element | null = label; node !== null; node = node.parentElement) {
+          opacity *= parseFloat(getComputedStyle(node).opacity);
+        }
+        const fill = channels(getComputedStyle(button).backgroundColor);
+        const filled = fill.a > 0;
+        return {
+          minutes,
+          opacity,
+          contrast: ratio(channels(getComputedStyle(label).color), filled ? fill : pillFill),
+          filled,
+        };
+      }),
+    };
+  }, PRESETS);
+}
+
+/**
+ * The pill is opaque, so no page text reads through it, and every preset's
+ * label meets AA on what it is drawn on once feedback has settled. The chosen
+ * preset is the one filled preset, so it reads as chosen at every size.
+ */
+async function expectPresetsReadable(page: Page, label: string, chosen: string): Promise<void> {
+  await expect
+    .poll(async () => (await readPresetInk(page)).presets.every((ink) => ink.opacity === 1), {
+      message: `${label}: preset feedback settles to full opacity`,
+    })
+    .toBe(true);
+  const ink = await readPresetInk(page);
+  expect(ink.pillAlpha, `${label}: the timer pill is opaque over the page`).toBe(1);
+  for (const preset of ink.presets) {
+    expect(
+      preset.contrast,
+      `${label}: preset ${preset.minutes} label meets AA`,
+    ).toBeGreaterThanOrEqual(AA_CONTRAST);
+    expect(preset.filled, `${label}: only the chosen preset is filled`).toBe(
+      preset.minutes === chosen,
+    );
+  }
+}
+
+/** The unit sits on the preset row, after the last preset and centred on it. */
+async function expectUnitOnPresetRow(page: Page, label: string): Promise<void> {
+  const last = await page
+    .getByTestId(`writing-timer-preset-${PRESETS[PRESETS.length - 1]}`)
+    .boundingBox();
+  const unit = await page.getByTestId('writing-timer-preset-unit').boundingBox();
+  if (last === null || unit === null) throw new Error(`${label}: the preset row is not laid out`);
+  expect(unit.x, `${label}: the unit follows the last preset`).toBeGreaterThanOrEqual(
+    last.x + last.width,
+  );
+  expect(
+    Math.abs(unit.y + unit.height / 2 - (last.y + last.height / 2)),
+    `${label}: the unit is centred on the preset row`,
+  ).toBeLessThanOrEqual(EDGE_TOLERANCE);
+}
+
+/** A unit that enlarged text pushes onto a line of its own ends at the last preset's edge. */
+async function expectWrappedUnitTrailing(page: Page, label: string): Promise<void> {
+  const last = await page
+    .getByTestId(`writing-timer-preset-${PRESETS[PRESETS.length - 1]}`)
+    .boundingBox();
+  const unit = await page.getByTestId('writing-timer-preset-unit').boundingBox();
+  if (last === null || unit === null) throw new Error(`${label}: the preset row is not laid out`);
+  expect(unit.y, `${label}: the unit wrapped below the presets`).toBeGreaterThanOrEqual(
+    last.y + last.height,
+  );
+  expect(
+    Math.abs(unit.x + unit.width - (last.x + last.width)),
+    `${label}: the wrapped unit ends at the last preset's trailing edge`,
+  ).toBeLessThanOrEqual(EDGE_TOLERANCE);
+}
+
 /** Tap a preset where it is drawn, without letting the browser scroll it into view. */
 async function tapPreset(page: Page, minutes: string): Promise<void> {
   const box = await page.getByTestId(`writing-timer-preset-${minutes}`).boundingBox();
@@ -123,15 +250,17 @@ async function choosePresetsByKeyboard(page: Page, label: string): Promise<void>
   );
 }
 
-/** Double every text face in the idle timer, as enlarged text would set it. */
-async function doubleTimerText(page: Page): Promise<void> {
-  await page.getByTestId('writing-timer-pill').evaluate((pill, scale) => {
+/** Set every text face in the idle timer to a multiple of its own size, as enlarged text would. */
+async function scaleTimerText(page: Page, scale: number): Promise<void> {
+  await page.getByTestId('writing-timer-pill').evaluate((pill, factor) => {
     for (const text of pill.querySelectorAll<HTMLElement>('[dir="auto"]')) {
       const style = getComputedStyle(text);
-      text.style.fontSize = `${parseFloat(style.fontSize) * scale}px`;
-      text.style.lineHeight = `${parseFloat(style.lineHeight) * scale}px`;
+      text.dataset.baseFontSize ??= style.fontSize;
+      text.dataset.baseLineHeight ??= style.lineHeight;
+      text.style.fontSize = `${parseFloat(text.dataset.baseFontSize) * factor}px`;
+      text.style.lineHeight = `${parseFloat(text.dataset.baseLineHeight) * factor}px`;
     }
-  }, TEXT_SCALE);
+  }, scale);
 }
 
 async function openWritingPage(page: Page, prefix: string): Promise<void> {
@@ -146,17 +275,29 @@ test('every idle preset is in view and in reach at 1280px, at 390px, and with do
   await page.setViewportSize(LAPTOP);
   await openWritingPage(page, 'writing-timer-presets');
   await expectPresetsInView(page, '1280');
+  await expectPresetsReadable(page, '1280', '20');
+  await expectUnitOnPresetRow(page, '1280');
   await page.screenshot({ path: testInfo.outputPath('presets-1280.png') });
+  await scaleTimerText(page, TEXT_SCALE);
+  await expectPresetsInView(page, '1280 doubled');
+  await expectWrappedUnitTrailing(page, '1280 doubled');
+  await page.screenshot({ path: testInfo.outputPath('presets-1280-doubled.png') });
+  await scaleTimerText(page, 1);
 
   await page.setViewportSize(PHONE);
   await expectPresetsInView(page, '390');
+  await expectPresetsReadable(page, '390', '20');
+  await expectUnitOnPresetRow(page, '390');
   await page.screenshot({ path: testInfo.outputPath('presets-390.png') });
 
-  await doubleTimerText(page);
+  await scaleTimerText(page, TEXT_SCALE);
   await expectPresetsInView(page, '390 doubled');
+  await expectPresetsReadable(page, '390 doubled', '20');
   await page.screenshot({ path: testInfo.outputPath('presets-390-doubled.png') });
   await tapPreset(page, '30');
   await choosePresetsByKeyboard(page, '390 doubled');
+  await expectPresetsReadable(page, '390 doubled, 45 chosen', '45');
+  await page.screenshot({ path: testInfo.outputPath('presets-390-doubled-chosen.png') });
 });
 
 test('every idle preset is in view and in reach at 200% browser zoom on a phone', async ({
@@ -167,11 +308,12 @@ test('every idle preset is in view and in reach at 200% browser zoom on a phone'
   try {
     await openWritingPage(page, 'writing-timer-presets-zoom');
     await expectPresetsInView(page, '200%');
+    await expectPresetsReadable(page, '200%', '20');
     await page.screenshot({ path: testInfo.outputPath('presets-zoom-200.png') });
     await tapPreset(page, '30');
     await choosePresetsByKeyboard(page, '200%');
-    // Photograph the chosen preset once its press feedback has settled.
-    await expect(page.getByTestId('writing-timer-preset-45')).toHaveCSS('opacity', '1');
+    // Photograph the chosen preset once its press and focus feedback has settled.
+    await expectPresetsReadable(page, '200%, 45 chosen', '45');
     await page.screenshot({ path: testInfo.outputPath('presets-zoom-200-chosen.png') });
   } finally {
     await context.close();
