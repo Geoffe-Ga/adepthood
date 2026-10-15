@@ -148,6 +148,13 @@ from services.corpus_ingest import (
 )
 from services.corpus_invitation import record_completed_pass
 from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.creek_vault_letters import (
+    LetterAsk,
+    VaultLetterAnswer,
+    VaultLetterOutcome,
+    vault_letter_refusal,
+    write_vault_letter,
+)
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
     VaultRelatedSurfaces,
@@ -203,6 +210,7 @@ from services.llm_usage import (
     summarize_usage,
 )
 from services.marginalia import (
+    VAULT_RECEIPT,
     BotmasonResonanceLLM,
     InferenceReceipt,
     reanchor_entry_marginalia,
@@ -3303,32 +3311,47 @@ def _log_essay_cache_hit(note: Marginalia, stage: str) -> None:
     )
 
 
-def _refuse_vault_bound_essay(note: Marginalia, boundary: ReflectionBoundary) -> None:
-    """Fail a vault-bound writer's first letter closed, before any charge or dial (#3156).
+def _log_letter_unavailable(note: Marginalia, reason: VaultSourceUnavailableReason) -> None:
+    """One WARNING in a closed vocabulary: ids, the operation and the reason word.
 
-    A letter is written by the app provider and only by it: no vault advertises
-    an essay capability, so for a writer whose AI operations are bound to their
-    vault there is no source this request may use. That is the reflection
-    route's refusal, under its token -- a 503 ``reflection_source_unavailable``
-    -- and it is raised ahead of the payer, price and guardrail gates, so
-    nothing is staged, nothing is charged, nothing is dialled and ``essay``
-    stays ``NULL`` for a later ask. A BYOK key changes none of it: a key pays
-    for a call, it does not consent to one.
-
-    One WARNING in a closed vocabulary: ids, the operation and this module's
-    reason word, never the body, a prompt, a key or a letter.
+    Never the body, a prompt, a key or a letter -- the reflection route's
+    refusal record, under its token (#3156).
     """
-    if boundary is not ReflectionBoundary.VAULT_BOUND:
-        return
     logger.warning(
         REFLECTION_SOURCE_UNAVAILABLE,
         extra={
             "user_id": note.user_id,
             "id": note.id,
             "operation": GenerationFeature.ESSAY.value,
-            "reason": VaultSourceUnavailableReason.CAPABILITY_MISSING.value,
+            "reason": reason.value,
         },
     )
+
+
+async def _require_vault_letters(
+    session: AsyncSession, note: Marginalia, clients: _EssayClients
+) -> None:
+    """Admit a vault-bound writer's first letter only when their vault writes letters (#3203).
+
+    A vault-bound writer's letter is written by their vault or not at all
+    (#3156): the app provider is never asked, and a BYOK key changes none of it
+    -- a key pays for a call, it does not consent to one. So a vault that is not
+    available, or that does not advertise ``letters`` (and the ``voice-drafts``
+    resource that retracts what it writes), is the reflection route's refusal:
+    a 503 ``reflection_source_unavailable``, raised ahead of the payer, price
+    and guardrail gates, so nothing is staged, charged or dialled and ``essay``
+    stays ``NULL`` for a later ask -- #3183's fail-closed answer, unchanged.
+
+    The commit releases the pooled connection the ownership reads opened before
+    the handshake dials.
+    """
+    if clients.boundary is not ReflectionBoundary.VAULT_BOUND:
+        return
+    await session.commit()
+    reason = await vault_letter_refusal(clients.vault_client)
+    if reason is None:
+        return
+    _log_letter_unavailable(note, reason)
     raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
 
 
@@ -3337,11 +3360,14 @@ def _require_price_acknowledged(clients: _EssayClients) -> None:
 
     Runs before the barrier and before any charge, so a stale client that
     still asks on open is answered 409 with nothing spent and nothing dialled.
-    A valid BYOK key pays its own provider and is never charged here.
+    A valid BYOK key pays its own provider and is never charged here -- but
+    only when that provider answers: a vault-written letter takes a credit
+    whatever key header rides along (#3258), so it is priced like one.
     """
     if not ESSAY_PRICE_UNITS or clients.price_acknowledged:
         return
-    if resolve_chat_api_key(clients.api_key) is None:
+    key_pays = clients.boundary is ReflectionBoundary.APP_PROVIDER
+    if not key_pays or resolve_chat_api_key(clients.api_key) is None:
         raise conflict(ESSAY_PRICE_UNACKNOWLEDGED)
 
 
@@ -3373,10 +3399,16 @@ async def _expand_essay(
     require_external_ai_available()
     # Before the payer gate: asking a vault-bound writer for a key or a price
     # would be a false next step when no source may answer them (#3156).
-    _refuse_vault_bound_essay(note, clients.boundary)
+    await _require_vault_letters(session, note, clients)
     # Before the price gate: asking a writer with no way to pay to acknowledge
-    # a price would be a false next step (#3096).
-    await require_ai_payer(session, user_id, clients.api_key)
+    # a price would be a false next step (#3096). A key pays only when the app
+    # provider answers; a vault letter needs credits (#3258).
+    await require_ai_payer(
+        session,
+        user_id,
+        clients.api_key,
+        app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
+    )
     _require_price_acknowledged(clients)
     # A first letter is about to be asked for: the per-user guardrails (#623)
     # admit it only now, after the cached, intimate, 404 and 409 exits above.
@@ -3462,19 +3494,52 @@ async def _cache_and_mirror_essay(
         # Shadow only (#3059). ``_cache_essay`` commits before it dials, so this
         # read is released with its own before anything leaves the process.
         await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
-        cached = await _cache_essay(
-            session,
-            note,
-            _sanitize_message(entry.message),
-            api_key=clients.api_key,
-            boundary=clients.boundary,
-        )
-    # The provider answered with something that was not a letter, so there is no
-    # letter: the note comes back with ``essay`` unset -- the same no-letter
-    # state the privacy floor returns -- and nothing is mirrored, because
-    # mirroring a refusal would put it in the vault the cache refused it from.
-    # Mirror only a letter this request may serve: a refused regeneration leaves
-    # a stored demo letter in the row, which must never reach the vault (#3096).
+        cached = await _write_first_letter(session, note=note, entry=entry, clients=clients)
+    return await _mirror_app_written_letter(session, entry=entry, cached=cached, clients=clients)
+
+
+async def _write_first_letter(
+    session: AsyncSession,
+    *,
+    note: Marginalia,
+    entry: JournalEntry,
+    clients: _EssayClients,
+) -> Marginalia:
+    """Have the one source this writer's boundary allows write the letter (#3156, #3203).
+
+    The vault for a vault-bound writer -- it writes and keeps the letter in one
+    call, with no app provider to fall back to -- and the app provider for
+    everyone else.
+    """
+    if clients.boundary is ReflectionBoundary.VAULT_BOUND:
+        return await _cache_vault_letter(session, note=note, entry=entry, clients=clients)
+    return await _cache_essay(
+        session,
+        note,
+        _sanitize_message(entry.message),
+        api_key=clients.api_key,
+        boundary=clients.boundary,
+    )
+
+
+async def _mirror_app_written_letter(
+    session: AsyncSession,
+    *,
+    entry: JournalEntry,
+    cached: Marginalia,
+    clients: _EssayClients,
+) -> Marginalia:
+    """Mirror an app-written letter once; a vault-written one is already in the vault.
+
+    The provider answered with something that was not a letter, so there is no
+    letter: the note comes back with ``essay`` unset -- the same no-letter
+    state the privacy floor returns -- and nothing is mirrored, because
+    mirroring a refusal would put it in the vault the cache refused it from.
+    Mirror only a letter this request may serve: a refused regeneration leaves
+    a stored demo letter in the row, which must never reach the vault (#3096).
+    """
+    if clients.boundary is ReflectionBoundary.VAULT_BOUND:
+        return cached
     essay = demo_visibility.served_letter(cached)
     if essay is None:
         return cached
@@ -3527,6 +3592,109 @@ async def _mirror_cached_essay(
             destination=await resolved_vault_destination(session, entry.user_id),
         )
     return cached
+
+
+def _letter_ask(note: Marginalia, entry: JournalEntry) -> LetterAsk:
+    """What the vault is asked to expand: the note, its sanitized entry, and the tier."""
+    return LetterAsk(
+        owner_user_id=entry.user_id,
+        marginalia_id=cast("int", note.id),
+        body=_sanitize_message(entry.message),
+        note=note.note,
+        anchor_text=note.anchor_text,
+        kind=note.kind,
+        classification=entry.classification,
+    )
+
+
+async def _cache_vault_letter(
+    session: AsyncSession,
+    *,
+    note: Marginalia,
+    entry: JournalEntry,
+    clients: _EssayClients,
+) -> Marginalia:
+    """Charge, have the vault write and keep the letter, then cache it (#3203).
+
+    The vault-bound twin of :func:`_cache_essay`, under the same account hold
+    that just re-read the entry's tier and liveness. The economy is the app
+    provider's (#623, #3062): one unit, deducted before the commit that precedes
+    the call -- whatever key header rode along, since the vault never uses it
+    (#3258) -- kept when a letter is cached and refunded by the ``finally``
+    guard on every other ending. The receipt is the vault's, so a vault letter
+    is never billed as a demo.
+
+    The call runs under this entry's Voice Draft hold as well, account
+    outermost and entry innermost, because the letter *is* a Voice Draft: the
+    intent row :func:`services.creek_vault_letters.write_vault_letter` commits
+    before dialling is what an Intimate PATCH or a DELETE retracts it by.
+    """
+    destination = await resolved_vault_destination(session, entry.user_id)
+    spent = await preflight_deduction(session, note.user_id) if ESSAY_PRICE_UNITS else None
+    # The minute hit, after the charge is staged and before it commits, as on
+    # the app-provider path.
+    consume_generation_minute(note.user_id)
+    await session.commit()
+    charge = _EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
+    answer: VaultLetterAnswer | None = None
+    settled = False
+    try:
+        async with voice_draft_privacy.hold(session, cast("int", entry.id)):
+            answer = await write_vault_letter(
+                session,
+                clients.vault_client,
+                _letter_ask(note, entry),
+                entry=entry,
+                destination=destination,
+            )
+            if answer.letter is not None:
+                outcome = await _keep_letter(session, note, answer.letter, VAULT_RECEIPT, charge)
+                _log_settled_essay(note, charge, summarize_usage(()), outcome)
+                settled = True
+    finally:
+        if not settled:
+            await _refund_failed_pass(
+                session,
+                note.user_id,
+                spent,
+                reason=REASON_REFUND_FAILED_ESSAY,
+                trace=_FailedGeneration(
+                    feature=GenerationFeature.ESSAY,
+                    key=charge.key,
+                    usage=(),
+                    attempts=_ESSAY_ATTEMPTS,
+                ),
+            )
+    return await _vault_letter_answer(session, note, answer)
+
+
+# The endings that answer the note with no letter rather than a refusal: the
+# vault's care guard spoke instead (the essay route has no care surface, so the
+# writer sees the same retryable no-letter state an intimate entry gets), or
+# the tier admitted no vault at all.
+_NO_LETTER_OUTCOMES = frozenset({VaultLetterOutcome.ESCALATED, VaultLetterOutcome.NOT_OFFERED})
+
+
+async def _vault_letter_answer(
+    session: AsyncSession, note: Marginalia, answer: VaultLetterAnswer
+) -> Marginalia:
+    """Answer a settled vault letter: the cached note, the no-letter note, or a 503.
+
+    Every failure -- a refused, unreadable or unreachable vault, an answer that
+    was not a letter, a withheld or suspended request -- is #3183's refusal
+    under its token. Never a fallback to the app provider.
+    """
+    if answer.letter is not None:
+        await session.refresh(note)
+        logger.info(
+            "marginalia_essay_generated",
+            extra={"user_id": note.user_id, "id": note.id, "prior_draft_count": 0},
+        )
+        return note
+    if answer.outcome in _NO_LETTER_OUTCOMES:
+        return note
+    _log_letter_unavailable(note, VaultSourceUnavailableReason.NO_ANSWER)
+    raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
 
 
 async def _essay_charge(
@@ -3584,10 +3752,10 @@ async def _cache_essay(
 
     **The adapter comes from the boundary chokepoint, before the charge (#3156).**
     :func:`services.reflection_boundary.require_app_provider_llm` is the only
-    way this seam gets a provider: :func:`_expand_essay` already answered a
-    vault-bound caller its 503, so a refusal here is a missing check upstream,
-    and it lands before anything is staged -- a 500 with nothing charged, never
-    a dial.
+    way this seam gets a provider: a vault-bound caller is answered by
+    :func:`_cache_vault_letter` or refused upstream, so a refusal here is a
+    missing check upstream, and it lands before anything is staged -- a 500
+    with nothing charged, never a dial.
     """
     prior_letters = await _prior_letter_essays(
         session, user_id=note.user_id, exclude_entry_id=note.journal_entry_id
