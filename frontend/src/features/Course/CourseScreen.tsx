@@ -9,7 +9,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   course as courseApi,
   stages as stagesApi,
-  uiFlags,
   type ContentItem,
   type CourseProgress,
   type NextUnread,
@@ -33,7 +32,7 @@ import { ink, resolveStageColor } from '../../design/tokens';
 import type { RootTabParamList } from '../../navigation/BottomTabs';
 import { useAppRoute } from '../../navigation/hooks';
 import type { RootStackParamList } from '../../navigation/RootStack';
-import { useProgramStore, programStage } from '../../store/useProgramStore';
+import { useProgramStore } from '../../store/useProgramStore';
 
 import { deriveChapterNeighbors, type ChapterNav } from './chapterNav';
 import ChapterReader, { type WriteNotePassage } from './ChapterReader';
@@ -41,14 +40,20 @@ import ContentCard from './ContentCard';
 import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
 import CourseDrawer, { useCourseDrawerBodies, useCourseDrawerContent } from './CourseDrawer';
+import { captureCourseSession, type CourseSession } from './courseSession';
+import { loadInitialReadingStage } from './initialReadingStage';
 import ReadNextButton, { useNextUnread, type NextUnreadState } from './ReadNextButton';
 import ResourceViewer, { type ResourceTarget } from './ResourceViewer';
 import RetryButton from './RetryButton';
-import SiteResourcesPanel from './SiteResourcesPanel';
+import { START_HERE } from './stageDisplay';
 import StageIntroCard from './StageIntroCard';
 import StageSelector from './StageSelector';
+import StartHereSection from './StartHereSection';
+import { useStartHereStore } from './startHereStore';
+import { useEnergyScaffoldingHandoff } from './useEnergyScaffoldingHandoff';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
+import { useDepthPreferencesStore, selectEnableHabits } from '@/store/useDepthPreferencesStore';
 
 const DEFAULT_STAGE_NUMBER = 1;
 
@@ -58,21 +63,26 @@ const EMPTY_CONTENT: ContentItem[] = [];
 
 // --- Hook: load stages on mount ---
 
-async function defaultReadingStage(
-  stagesList: Stage[],
-  programAnchor: Date | null,
-): Promise<number> {
-  const { course_last_stage: lastReadStage } = await uiFlags.get();
-  const savedStage = stagesList.find(
-    (stage) => stage.stage_number === lastReadStage && stage.is_unlocked,
+async function loadCourseEntry(
+  routeStage: number | null,
+  anchor: Date | null,
+  session: CourseSession | null,
+  current: () => boolean,
+) {
+  if (!session) throw new Error('Course session is unavailable');
+  const stagesList = await stagesApi.listAll(session.token);
+  if (!current()) return null;
+  if (routeStage !== null) return { stagesList, initialStage: null };
+  const snapshot = await useStartHereStore.getState().load();
+  if (!current()) return null;
+  const initialStage = await loadInitialReadingStage(
+    stagesList,
+    anchor,
+    snapshot?.progress ?? null,
+    null,
+    session,
   );
-  // Reading position survives devices. Cycle resets may lock that Frequency
-  // again, so only an available saved stage takes precedence over the calendar.
-  return (
-    savedStage?.stage_number ??
-    programStage(programAnchor) ??
-    (await stagesApi.programCalendar()).current_stage
-  );
+  return { stagesList, initialStage };
 }
 
 function useStagesLoader() {
@@ -88,18 +98,16 @@ function useStagesLoader() {
 
   const init = useCallback(async () => {
     const requestId = (requestSeq.current += 1);
-    const isLatest = () => requestId === requestSeq.current;
+    const session = captureCourseSession();
+    const isLatest = () => requestId === requestSeq.current && (!session || session.current());
     setLoading(true);
     setError(false);
     try {
-      const stagesList = await stagesApi.listAll();
-      if (routeStageNumber === null) {
-        const initialStage = await defaultReadingStage(stagesList, programAnchor);
-        if (!isLatest()) return;
-        setSelectedStage(initialStage);
-      }
-      if (!isLatest()) return;
-      setAllStages(stagesList);
+      const entry = await loadCourseEntry(routeStageNumber, programAnchor, session, isLatest);
+      if (!isLatest() || !entry) return;
+      if (entry.initialStage !== null) setSelectedStage(entry.initialStage);
+      setAllStages(entry.stagesList);
+      if (routeStageNumber !== null) void useStartHereStore.getState().load();
     } catch {
       if (!isLatest()) return;
       // Track failure explicitly so the screen can show error+retry instead of
@@ -145,6 +153,13 @@ function useStageContent(selectedStage: number, stagesLoaded: boolean) {
     // Only the newest in-flight request may settle; stale ones are dropped.
     const requestId = (requestSeq.current += 1);
     const isLatest = () => requestId === requestSeq.current;
+    if (selectedStage === START_HERE) {
+      setContent([]);
+      setProgress(null);
+      setLoadingContent(false);
+      setError(false);
+      return;
+    }
     setLoadingContent(true);
     setError(false);
     try {
@@ -656,7 +671,11 @@ function useCourseReadingPosition(
     refresh();
   }, [handleMarkRead, refresh]);
   const readNext = useMemo(() => ({ state, onOpen: openNext }), [state, openNext]);
-  return { readNext, onMarkRead, onResourceRead: refresh };
+  const onResourceRead = useCallback(() => {
+    refresh();
+    void useStartHereStore.getState().load(true);
+  }, [refresh]);
+  return { readNext, onMarkRead, onResourceRead };
 }
 
 // --- Main component ---
@@ -754,7 +773,6 @@ const StageHeader = ({
         spiralColor={selectedStageData.spiral_dynamics_color}
       />
     )}
-    <SiteResourcesPanel onSelect={viewer.handleResourcePress} />
     {selectedStageData && <StageMetadata stage={selectedStageData} />}
     <CourseProgressBar
       progress={stageContent.progress}
@@ -762,7 +780,7 @@ const StageHeader = ({
       error={stageContent.error}
     />
     <View style={styles.introBand}>
-      <EditorialSection title="Start here">
+      <EditorialSection title="About this stage">
         <StageIntroCard stageNumber={selectedStage} onOpen={viewer.handleIntroPress} />
       </EditorialSection>
     </View>
@@ -811,10 +829,12 @@ const StagePanel = ({
 };
 
 interface CourseScreenDrawerProps {
+  activeResourceSlug?: string;
   drawer: ScreenDrawerState;
   stages: Stage[];
   selectedStage: number;
   onChapterPress: (_stageNumber: number, _item: ContentItem) => void;
+  onResourcePress: (_resource: ResourceTarget) => void;
 }
 
 /** The Course header drawer: a stage-grouped table of contents whose chapter
@@ -824,13 +844,25 @@ const CourseScreenDrawer = ({
   stages,
   selectedStage,
   onChapterPress,
+  onResourcePress,
+  activeResourceSlug,
 }: CourseScreenDrawerProps): React.JSX.Element => {
+  const resources = useStartHereStore((state) => state.resources);
+  const resourceStatus = useStartHereStore((state) => state.status);
   const { sections, retry } = useCourseDrawerContent(stages, drawer.isOpen);
   const { bodies, status, confirmBodySearch } = useCourseDrawerBodies(sections);
   return (
     <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Course" title="Course">
       <DrawerNavSection currentScreen="Course" onNavigate={drawer.close} />
       <CourseDrawer
+        resources={resources}
+        resourceStatus={resourceStatus}
+        onResourcesRetry={() => void useStartHereStore.getState().load(true)}
+        activeResourceSlug={activeResourceSlug}
+        onResourcePress={(resource) => {
+          onResourcePress(resource);
+          drawer.close();
+        }}
         stages={stages}
         selectedStage={selectedStage}
         sections={sections}
@@ -880,6 +912,36 @@ interface CourseLandingProps {
   onChapterPress: (_stageNumber: number, _item: ContentItem) => void;
 }
 
+function StartHereLanding({ viewer, readNext }: Pick<CourseLandingProps, 'viewer' | 'readNext'>) {
+  const startHere = useStartHereStore();
+  const habitsEnabled = useDepthPreferencesStore(selectEnableHabits);
+  const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList>>();
+  const openEnergy = useCallback(
+    (session: CourseSession) => {
+      navigation.navigate('Habits', {
+        onboardingIntent: 'energy-scaffolding',
+        onboardingOwner: session.owner,
+        onboardingGeneration: session.generation,
+      });
+    },
+    [navigation],
+  );
+  const energyHandoff = useEnergyScaffoldingHandoff(habitsEnabled, openEnergy);
+  return (
+    <StartHereSection
+      readNext={<ReadNextButton state={readNext.state} onOpen={readNext.onOpen} />}
+      resources={startHere.resources}
+      progress={startHere.progress}
+      status={startHere.status}
+      onSelect={viewer.handleResourcePress}
+      onRetry={() => void startHere.load(true)}
+      habitsEnabled={habitsEnabled}
+      energyStatus={energyHandoff.status}
+      onStartEnergy={energyHandoff.start}
+    />
+  );
+}
+
 /** The Course landing view: header, stage selector, the stage-panel scroll
  *  surface, and the shelf drawer mounted over it. */
 const CourseLanding = ({
@@ -904,24 +966,42 @@ const CourseLanding = ({
           selectedStage={selectedStage}
           onSelectStage={onStageSelect}
         />
-        <StagePanel
-          selectedStage={selectedStage}
-          selectedStageData={selectedStageData}
-          stageContent={stageContent}
-          viewer={viewer}
-          readNext={readNext}
-        />
+        {selectedStage === START_HERE ? (
+          <StartHereLanding viewer={viewer} readNext={readNext} />
+        ) : (
+          <StagePanel
+            selectedStage={selectedStage}
+            selectedStageData={selectedStageData}
+            stageContent={stageContent}
+            viewer={viewer}
+            readNext={readNext}
+          />
+        )}
         <BottomFade />
         <CourseScreenDrawer
           drawer={drawer}
           stages={allStages}
           selectedStage={selectedStage}
           onChapterPress={onChapterPress}
+          onResourcePress={viewer.handleResourcePress}
+          activeResourceSlug={viewer.viewingResource?.slug}
         />
       </ContentContainer>
     </SafeAreaView>
   );
 };
+
+function CourseReaderOverlay({
+  overlay,
+  ...drawerProps
+}: { overlay: React.ReactNode } & React.ComponentProps<typeof CourseScreenDrawer>) {
+  return (
+    <>
+      {overlay}
+      <CourseScreenDrawer {...drawerProps} />
+    </>
+  );
+}
 
 const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
@@ -943,15 +1023,15 @@ const CourseScreen = (): React.JSX.Element => {
   if (overlay !== null) {
     // Drawer must mount alongside the reader so the hamburger works while reading.
     return (
-      <>
-        {overlay}
-        <CourseScreenDrawer
-          drawer={drawer}
-          stages={allStages}
-          selectedStage={selectedStage}
-          onChapterPress={handleChapterPress}
-        />
-      </>
+      <CourseReaderOverlay
+        overlay={overlay}
+        drawer={drawer}
+        stages={allStages}
+        selectedStage={selectedStage}
+        onChapterPress={handleChapterPress}
+        onResourcePress={viewer.handleResourcePress}
+        activeResourceSlug={viewer.viewingResource?.slug}
+      />
     );
   }
 

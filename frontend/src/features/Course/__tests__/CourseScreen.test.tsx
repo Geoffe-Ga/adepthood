@@ -87,6 +87,9 @@ const sampleProgress: CourseProgress = {
   next_unlock_day: 3,
 };
 
+const mockTokenA = 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature';
+const mockTokenB = 'e30.eyJzdWIiOiIyIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature';
+let mockSessionToken = mockTokenA;
 const mockStagesList = (jest.fn() as any).mockResolvedValue(sampleStages);
 // GET /stages/program-calendar — the server's one answer to which stage this
 // person is in. Default matches ``sampleStages``: they have just finished stage 1.
@@ -107,20 +110,31 @@ const mockMarkRead = (jest.fn() as any).mockResolvedValue({
   content_id: 1,
   completed_at: '2026-01-15T10:00:00Z',
 });
-const mockSiteResources = (jest.fn() as any).mockResolvedValue([
+const mockStartHereProgress = (jest.fn() as any).mockResolvedValue({
+  total_items: 2,
+  read_items: 2,
+  progress_percent: 100,
+  next_unlock_day: null,
+});
+const sampleResources = [
   {
     slug: 'philosophy',
     title: 'Philosophy',
     description: '',
     url: 'content://philosophy',
+    order: 1,
+    is_read: true,
   },
   {
     slug: 'about',
     title: 'About',
     description: '',
     url: 'content://about',
+    order: 2,
+    is_read: true,
   },
-]);
+];
+const mockSiteResources = (jest.fn() as any).mockResolvedValue(sampleResources);
 const mockContentBody = (jest.fn() as any).mockResolvedValue({
   title: 'Chapter One',
   content_type: 'chapter',
@@ -141,6 +155,7 @@ const mockStageIntroBody = (jest.fn() as any).mockResolvedValue({
 });
 
 jest.mock('../../../api', () => ({
+  captureSessionToken: () => mockSessionToken,
   uiFlags: { get: (...args: unknown[]) => mockUiFlags(...args) },
   stages: {
     listAll: (...args: unknown[]) => mockStagesList(...args),
@@ -152,6 +167,7 @@ jest.mock('../../../api', () => ({
     stageProgress: (...args: unknown[]) => mockStageProgress(...args),
     markRead: (...args: unknown[]) => mockMarkRead(...args),
     contentBody: (...args: unknown[]) => mockContentBody(...args),
+    startHereProgress: () => mockStartHereProgress(),
     siteResources: (...args: unknown[]) => mockSiteResources(...args),
     siteResourceBody: (...args: unknown[]) => mockSiteResourceBody(...args),
     stageIntro: (...args: unknown[]) => mockStageIntro(...args),
@@ -210,6 +226,14 @@ describe('CourseScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
+    mockSessionToken = mockTokenA;
+    mockSiteResources.mockResolvedValue(sampleResources);
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 2,
+      read_items: 2,
+      progress_percent: 100,
+      next_unlock_day: null,
+    });
     mockStagesList.mockResolvedValue(sampleStages);
     mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
     mockUiFlags.mockResolvedValue({ course_last_stage: null });
@@ -218,6 +242,84 @@ describe('CourseScreen', () => {
     // Default: no intro for the stage — card hidden unless a test opts in.
     mockStageIntro.mockRejectedValue({ detail: 'content_not_found' });
   });
+
+  it('opens unread Start Here before the saved Frequency without ever requesting stage zero', async () => {
+    mockSiteResources.mockResolvedValue(
+      sampleResources.map((resource) => ({ ...resource, is_read: false })),
+    );
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 2,
+      read_items: 0,
+      progress_percent: 0,
+      next_unlock_day: null,
+    });
+    mockUiFlags.mockResolvedValue({ course_last_stage: 2 });
+    const view = render(<CourseScreen />);
+    await settle();
+    expect(view.getByTestId('start-here-section')).toBeTruthy();
+    expect(view.getByText('0 of 2 read')).toBeTruthy();
+    expect(mockStageContent).not.toHaveBeenCalledWith(0);
+    expect(mockStageProgress).not.toHaveBeenCalledWith(0);
+    expect(view.queryByTestId('stage-intro-card')).toBeNull();
+  });
+
+  it('preserves an explicit Frequency route while Start Here remains unread', async () => {
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 2,
+      read_items: 0,
+      progress_percent: 0,
+      next_unlock_day: null,
+    });
+    mockRouteParams = { stageNumber: 2 };
+    const view = render(<CourseScreen />);
+    await settle();
+    expect(view.getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+    expect(view.queryByTestId('start-here-section')).toBeNull();
+    expect(mockStageContent).toHaveBeenCalledWith(2);
+  });
+
+  it("does not start another account's resource or flag reads from a held old stage response", async () => {
+    let finish!: (_stages: Stage[]) => void;
+    mockStagesList.mockReturnValueOnce(
+      new Promise<Stage[]>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    render(<CourseScreen />);
+    await settle();
+    require('@/storage/userScope').setActiveUser(2);
+    mockSessionToken = mockTokenB;
+    await act(async () => finish(sampleStages));
+    await settle();
+    expect(mockStartHereProgress).not.toHaveBeenCalled();
+    expect(mockUiFlags).not.toHaveBeenCalled();
+    expect(mockStageContent).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    'drops held account A reading flags after an owner transition (ABA=%s)',
+    async (aba) => {
+      let finish!: (_flags: { course_last_stage: number }) => void;
+      mockUiFlags.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      );
+      const view = render(<CourseScreen />);
+      await settle();
+      expect(mockUiFlags).toHaveBeenCalledTimes(1);
+      require('@/storage/userScope').setActiveUser(2);
+      mockSessionToken = mockTokenB;
+      if (aba) {
+        require('@/storage/userScope').setActiveUser(1);
+        mockSessionToken = mockTokenA;
+      }
+      await act(async () => finish({ course_last_stage: 2 }));
+      await settle();
+      expect(view.queryByTestId('stage-cover')).toBeNull();
+      expect(mockStageContent).not.toHaveBeenCalled();
+    },
+  );
 
   it('shows loading spinner initially', () => {
     mockStagesList.mockReturnValue(new Promise(() => {}));
@@ -360,7 +462,7 @@ describe('CourseScreen', () => {
     expect(getByText('Second stage')).toBeTruthy();
   });
 
-  it('hangs the "Start here" band from the screen gutter with the rest of the landing', async () => {
+  it('hangs the "About this stage" band from the screen gutter with the rest of the landing', async () => {
     const { getByText } = render(<CourseScreen />);
 
     await settle();
@@ -370,7 +472,7 @@ describe('CourseScreen', () => {
       props: { style?: StyleProp<ViewStyle> };
       parent: Node | null;
     }
-    let node: Node | null = (getByText('Start here') as Node).parent;
+    let node: Node | null = (getByText('About this stage') as Node).parent;
     let inset: number | undefined;
     while (node && inset === undefined) {
       const padding = StyleSheet.flatten(node.props.style)?.paddingHorizontal;
@@ -656,10 +758,11 @@ describe('CourseScreen', () => {
     const { getByTestId, getByText, queryByTestId } = render(<CourseScreen />);
 
     await settle();
-    expect(getByTestId('site-resources-panel')).toBeTruthy();
+    await act(async () => fireEvent.press(getByTestId('start-here-pill')));
+    expect(getByTestId('start-here-section')).toBeTruthy();
 
     await act(async () => {
-      fireEvent.press(getByTestId('site-resource-chip-philosophy'));
+      fireEvent.press(getByTestId('start-here-resource-philosophy'));
     });
 
     await settle();
@@ -884,6 +987,13 @@ describe('single scroll surface', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
+    mockSessionToken = mockTokenA;
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 0,
+      read_items: 0,
+      progress_percent: 0,
+      next_unlock_day: null,
+    });
     mockStagesList.mockResolvedValue(sampleStages);
     mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
     mockStageContent.mockResolvedValue(sampleContent);
@@ -955,6 +1065,13 @@ describe('CourseScreen Spiral-Dynamics accent colors', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouteParams = undefined;
+    mockSessionToken = mockTokenA;
+    mockStartHereProgress.mockResolvedValue({
+      total_items: 0,
+      read_items: 0,
+      progress_percent: 0,
+      next_unlock_day: null,
+    });
     mockStagesList.mockResolvedValue(sampleStages);
     mockProgramCalendar.mockResolvedValue(defaultProgramCalendar);
     mockStageContent.mockResolvedValue(sampleContent);
@@ -1000,4 +1117,9 @@ describe('CourseScreen Spiral-Dynamics accent colors', () => {
     expect(backgroundColorOf(getByTestId('stage-cover-progress').props.style)).toBe(colors.neutral);
     expect(backgroundColorOf(getByTestId('progress-bar-fill').props.style)).toBe(colors.neutral);
   });
+});
+
+beforeEach(() => {
+  require('@/storage/userScope').setActiveUser(1);
+  require('../startHereStore').useStartHereStore.getState().reset();
 });

@@ -101,6 +101,7 @@ const mockProgramCalendar = jest.fn(() =>
   }),
 );
 jest.mock('../../../api', () => ({
+  captureSessionToken: () => 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature',
   uiFlags: { get: () => Promise.resolve({ course_last_stage: null }) },
   stages: {
     listAll: (...a: unknown[]) => mockStagesList(...a),
@@ -113,6 +114,13 @@ jest.mock('../../../api', () => ({
     markRead: jest.fn(),
     contentBody: () =>
       Promise.resolve({ title: 'Chapter', content_type: 'chapter', body_markdown: 'x\n' }),
+    startHereProgress: () =>
+      Promise.resolve({
+        total_items: 0,
+        read_items: 0,
+        progress_percent: 0,
+        next_unlock_day: null,
+      }),
     siteResources: () => Promise.resolve([]),
     siteResourceBody: jest.fn(),
     // No intro in these drawer scenarios -- keep the intro card hidden.
@@ -503,4 +511,9 @@ describe('Course header drawer', () => {
     expect(queryByTestId('course-drawer-stage-3')).toBeTruthy();
     expect(queryByTestId('course-drawer-loading-3')).toBeTruthy();
   });
+});
+
+beforeEach(() => {
+  require('@/storage/userScope').setActiveUser(1);
+  require('../startHereStore').useStartHereStore.getState().reset();
 });

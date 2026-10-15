@@ -1,5 +1,6 @@
 // HabitsScreen.tsx
 
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -35,6 +36,7 @@ import {
   isHabitUnlocked,
   stageRangeForPage,
 } from './HabitUtils';
+import { useEnergyOnboardingIntent } from './hooks/useEnergyOnboardingIntent';
 import { useHabits } from './hooks/useHabits';
 import { useModalCoordinator } from './hooks/useModalCoordinator';
 import { usePagination } from './hooks/usePagination';
@@ -43,6 +45,7 @@ import { isServerBackedHabit } from './services/serverIds';
 
 import { DrawerNavSection, ScreenDrawer, useScreenDrawer } from '@/components/drawer';
 import { ContentContainer } from '@/components/layout/ContentContainer';
+import type { RootTabParamList } from '@/navigation/BottomTabs';
 
 /** Habits per page — the ceiling that fills the screen 1-up on mobile and 2x5 on landscape/desktop. */
 const HABITS_PER_PAGE = MAX_HABITS;
@@ -807,9 +810,30 @@ const HabitsScreenDrawer = ({
   );
 };
 
-const HabitsScreen = () => {
+function useCourseEnergyIntent(
+  { route, navigation }: Partial<BottomTabScreenProps<RootTabParamList, 'Habits'>>,
+  modals: ReturnType<typeof useHabitsScreenState>['modals'],
+) {
+  const clearIntent = useCallback(
+    () =>
+      navigation?.setParams({
+        onboardingIntent: undefined,
+        onboardingOwner: undefined,
+        onboardingGeneration: undefined,
+      }),
+    [navigation],
+  );
+  const openEnergy = useCallback(() => modals.open('onboarding'), [modals]);
+  useEnergyOnboardingIntent(route?.params, navigation ? clearIntent : undefined, openEnergy);
+}
+
+const HabitsScreen = ({
+  route,
+  navigation,
+}: Partial<BottomTabScreenProps<RootTabParamList, 'Habits'>> = {}) => {
   const state = useHabitsScreenState();
   const { habits, modals, actions, ui, responsive, pagination } = state;
+  useCourseEnergyIntent({ route, navigation }, modals);
   const { columns, gridGutter, scale, width, isLG, isXL } = responsive;
   const drawer = useScreenDrawer('Habits');
   const { barVisible, toggleBarVisible } = usePaginationBarVisibility();

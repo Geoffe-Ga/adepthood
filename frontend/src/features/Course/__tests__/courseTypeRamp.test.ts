@@ -43,7 +43,6 @@ type Region =
   | 'stageMetadata'
   | 'introCard'
   | 'chapterList'
-  | 'resources'
   | 'readerChrome'
   | 'readerSheetHead'
   | 'landingError'
@@ -56,7 +55,6 @@ const REGIONS: readonly Region[] = [
   'stageMetadata',
   'introCard',
   'chapterList',
-  'resources',
   'readerChrome',
   'readerSheetHead',
   'landingError',
@@ -88,9 +86,6 @@ const REGION: Readonly<Record<string, Region>> = {
   'styles.contentCardTitle': 'chapterList',
   'styles.contentCardSubtitle': 'chapterList',
   'styles.contentCardStatusText': 'chapterList',
-  // "From Aptitude Guru" and its chips.
-  'styles.resourcesHeading': 'resources',
-  'styles.resourceChipText': 'resources',
   // The reader's header row, its footer buttons and the read toast.
   'styles.viewerBackText': 'readerChrome',
   'styles.viewerTitle': 'readerChrome',
@@ -115,7 +110,6 @@ const REGION: Readonly<Record<string, Region>> = {
 
 /** Text the reader taps: held to the interactive floor, never a caption. */
 const TAPPABLE = [
-  'styles.resourceChipText',
   'styles.stagePillText',
   'styles.stagePillCheck',
   'styles.introCardTitle',
@@ -126,18 +120,13 @@ const TAPPABLE = [
 ] as const;
 
 /** The landing's sub-section labels: sentence-case muted captions (DESIGN.md "Eyebrows are eyebrows"). */
-const SUB_LABELS = [
-  'styles.stageDetailLabel',
-  'styles.introCardLabel',
-  'styles.resourcesHeading',
-] as const;
+const SUB_LABELS = ['styles.stageDetailLabel', 'styles.introCardLabel'] as const;
 
 /** Landing blocks whose text hangs from the screen gutter. */
 const GUTTERED = [
   'headerBand',
   'stageSelectorContent',
   'stageCover',
-  'resourcesPanel',
   'stageMetadata',
   'progressBarContainer',
   'introBand',

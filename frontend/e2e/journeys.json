@@ -1125,6 +1125,39 @@
     "coveredBy": "frontend/e2e/course.e2e.test.ts"
   },
   {
+    "id": "course.start-here-is-first-for-new-readers",
+    "description": "A new reader opens Course on ordered Start Here resources, reads actual served Markdown, marks resources through the reader, reloads to retain confirmed marks, and uses Read next through every resource into an unlocked chapter. Chromium covers phone and desktop with normal and targeted doubled rendered text; this is not native OS text-scale certification. A reader opens the served Energy Scaffolding resource from the Course drawer, then uses its separate action to open the existing Habits onboarding on both cold and mounted Habits tabs. The browser explicitly exits the existing discard confirmation, verifies a disabled Habits ring removes the Course action, and holds an unchanged real server-disabled preference response during cold hydration to prove the action cannot bypass an unconfirmed ring. It opens onboarding only; it does not claim to create or reorder habits. Phone and desktop inspect targeted doubled resource drawer/action text above the footer fade.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["course", "stages", "habits", "goalGroups", "depthPreferences"],
+      "routes": [
+        "GET /stages",
+        "GET /course/site-resources",
+        "GET /course/start-here/progress",
+        "GET /course/next-unread",
+        "GET /course/site-resources/{slug}/body",
+        "POST /course/site-resources/{slug}/mark-read",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/stages/{stage_number}/progress",
+        "GET /course/content/{content_id}/body",
+        "GET /depth-preferences",
+        "GET /habits/",
+        "GET /goal-groups/"
+      ],
+      "tables": [
+        "stagecontent",
+        "contentcompletion",
+        "resourcecompletion",
+        "userdepthpreferences",
+        "habit",
+        "goalgroup",
+        "goal"
+      ]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course-start-here.browser.e2e.test.ts"
+  },
+  {
     "id": "course.restores-last-read-frequency",
     "description": "At desktop and phone widths, a reader marks a Blue chapter read while the program calendar is on Orange, then reloads Course without route parameters and finds Blue selected. The browser uses the real reader scroll and mark-read action, GET /ui-flags, and GET /stages without response stubs.",
     "crosses": {
@@ -2383,5 +2416,17 @@
     },
     "status": "uncovered",
     "issue": 3076
+  },
+  {
+    "id": "habits.pending-create-survives-account-switch",
+    "description": "A real outgoing-account habit POST is held while the user logs out and signs into another account in the same running app. Delivering its success or a controlled lost reply must not replace the incoming account habits or send old sibling updates. A real incoming-account create remains usable, and both incoming rows survive reload. Phone and desktop browser witnesses cover success and failure; real manager/store/scoped disk tests cover both create entrypoints, ABA, queued logs, missing credentials and compensation.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "goal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-owner-switch.browser.e2e.test.ts"
   }
 ]

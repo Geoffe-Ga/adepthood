@@ -113,6 +113,7 @@ const handleLogUnitFailure = (
   showToast: ShowToast,
   tz: string,
 ): void => {
+  if (!ctx.scope.current()) return;
   if (ctx.isDemoSeed === true) {
     // Ahead of every other branch: a demo tile fails online too — its
     // fabricated goal id draws a real ``goal_not_found``, which otherwise
@@ -173,6 +174,7 @@ const useLogUnitMutation = (
     commit: (ctx) => habitManager.commitLogUnitContext(ctx),
     rollback: (ctx, err) => handleLogUnitFailure(ctx, err, showToast, tz),
     onSuccess: (ctx, result) => {
+      if (!ctx.scope.current()) return;
       if (ctx.isDemoSeed === true) {
         // ``commitLogUnitContext`` short-circuits a demo tile to ``null``, which
         // resolves — so this path, not ``rollback``, is where a sample tap lands.
