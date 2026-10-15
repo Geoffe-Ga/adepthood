@@ -26,6 +26,7 @@ import {
   saveHabits,
   savePendingCheckIn,
 } from '@/storage/habitStorage';
+import * as habitStorage from '@/storage/habitStorage';
 import * as llmKeyStorage from '@/storage/llmKeyStorage';
 import * as notificationStorage from '@/storage/notificationStorage';
 import { _resetSerializedWriteForTests } from '@/storage/serializedWrite';
@@ -573,4 +574,75 @@ test('new anonymous work cannot rehydrate an unstamped legacy cache during the i
   expect({ networkReads, duringWipe }).toEqual({ networkReads: 0, duringWipe: [] });
   expect(useHabitStore.getState().habits).toEqual([]);
   expect(await loadHabits()).toBeNull();
+});
+
+/**
+ * #3372, mounted: a habit-cache write that A's refresh had already handed to
+ * AsyncStorage when the cleanup started must not commit after the wipe's
+ * clear. Both doors run the real ``wipeUserState`` against the real
+ * ``habitStorage``; only the one in-flight ``setItem`` is held.
+ */
+describe.each([
+  ['logout', (auth: ReturnType<typeof useAuth>) => auth.logout()],
+  [
+    'a sign-in as another account',
+    (auth: ReturnType<typeof useAuth>) => auth.login('b@test.com', 'password123'),
+  ],
+])('an in-flight habit cache write racing %s (#3372)', (_door, cleanUp) => {
+  test('cannot resurrect the outgoing rows once it commits', async () => {
+    mockAuthApi.login
+      .mockReset()
+      .mockResolvedValueOnce({ token: 'token-a', user_id: USER_A })
+      .mockResolvedValueOnce({ token: 'token-b', user_id: USER_B });
+    const result = await mountSignedOut();
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    await act(async () => {
+      await saveHabits([habitOfUserA]);
+    });
+
+    const originalSet = jest.mocked(AsyncStorage.setItem).getMockImplementation()!;
+    let releaseWrite!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let writeStarted!: () => void;
+    const writing = new Promise<void>((resolve) => {
+      writeStarted = resolve;
+    });
+    jest.mocked(AsyncStorage.setItem).mockImplementationOnce(async (key, value) => {
+      writeStarted();
+      await held;
+      await originalSet(key, value);
+    });
+
+    // The cleanup's clear must be issued while the write is still in flight;
+    // only the outgoing account's clear is signalled, the real one still runs.
+    const originalClear = habitStorage.clearHabits;
+    let markClearIssued!: () => void;
+    const clearIssued = new Promise<void>((resolve) => {
+      markClearIssued = resolve;
+    });
+    const clearSpy = jest.spyOn(habitStorage, 'clearHabits').mockImplementation(() => {
+      markClearIssued();
+      return originalClear();
+    });
+
+    await act(async () => {
+      const refreshWrite = saveHabits([{ ...habitOfUserA, name: "A's refreshed sit" }]);
+      await writing;
+      const cleanup = cleanUp(result.current.auth);
+      await clearIssued;
+      releaseWrite();
+      await Promise.all([refreshWrite, cleanup]);
+    });
+    jest.mocked(AsyncStorage.setItem).mockImplementation(originalSet);
+    clearSpy.mockRestore();
+
+    expect(await loadHabits()).toBeNull();
+    // Resume A offline: its own namespace must hold nothing the wipe removed.
+    setActiveUser(USER_A);
+    expect(await loadHabits()).toBeNull();
+  });
 });
