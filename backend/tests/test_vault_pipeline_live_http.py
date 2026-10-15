@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
+import logging
 import socket
 import time
-from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Annotated
@@ -35,13 +37,14 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import CONTRACT_VERSION, CreekVaultPipelineClient
 from main import app
 from models.user import User
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
+from observability import configure_logging, remove_app_log_handlers_for_tests
 from routers.auth import get_current_user
 from services import creek_vault_pipeline as pipeline
 from services.creek_vault_client import HttpCreekVaultClient
@@ -61,6 +64,8 @@ _FOREGROUND_BUDGET_SECONDS = 0.5
 _ACCEPTED_ANSWER_HOLD_SECONDS = _FOREGROUND_BUDGET_SECONDS * 2
 _JOURNAL_TEXT = "We are caring, sharing, and building momentum together."
 _DOCUMENT_TEXT = "Community, equality, empathy, inclusion, and collaboration are kindling."
+# The loggers ``uvicorn.Config.configure_logging`` sets a level or propagation on.
+_UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi")
 
 
 @dataclass
@@ -290,9 +295,43 @@ class _NoSignalServer(uvicorn.Server):
         """Leave shutdown under the test's control."""
 
 
+@contextmanager
+def _restoring_uvicorn_loggers() -> Iterator[None]:
+    """Put uvicorn's loggers back as they were once the server stops (#3350).
+
+    ``uvicorn.Config`` sets a level on its loggers and makes ``uvicorn.access``
+    non-propagating even without a ``log_config``. A non-propagating logger
+    gets pytest's capture handlers attached at every later test phase, where
+    the next ``configure_logging()`` would harden them, so none may outlive
+    the server.
+    """
+    loggers = [logging.getLogger(name) for name in _UVICORN_LOGGERS]
+    saved = [(logger.level, logger.propagate, list(logger.handlers)) for logger in loggers]
+    try:
+        yield
+    finally:
+        for logger, (level, propagate, handlers) in zip(loggers, saved, strict=True):
+            logger.setLevel(level)
+            logger.propagate = propagate
+            logger.handlers = handlers
+
+
 @asynccontextmanager
 async def _serve_tcp(asgi_app: ASGIApp) -> AsyncIterator[str]:
-    """Serve ``asgi_app`` on a kernel-assigned loopback socket."""
+    """Serve ``asgi_app`` on a kernel-assigned loopback socket.
+
+    ``log_config=None``: uvicorn's default dictConfig would install its own
+    handler on the ``uvicorn`` logger, stop it propagating, and close every
+    existing handler in the process -- pytest's among them.
+    """
+    with _restoring_uvicorn_loggers():
+        async with _serving(asgi_app) as url:
+            yield url
+
+
+@asynccontextmanager
+async def _serving(asgi_app: ASGIApp) -> AsyncIterator[str]:
+    """Run the server on a fresh loopback listener until the caller is done."""
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind((_HOST, 0))
@@ -303,6 +342,7 @@ async def _serve_tcp(asgi_app: ASGIApp) -> AsyncIterator[str]:
         host=_HOST,
         port=port,
         lifespan="off",
+        log_config=None,
         access_log=False,
         log_level="critical",
     )
@@ -546,3 +586,68 @@ async def test_slow_creek_jobs_converge_journal_and_import_over_live_http(
     ]
     assert {row.outcome for row in rows} == {VaultPipelineOutcome.COMPLETED}
     assert {(row.fragments_seen, row.fragments_touched) for row in rows} == {(1, 1)}
+
+
+async def _idle_asgi_app(scope: Scope, receive: Receive, send: Send) -> None:
+    """An ASGI app with nothing to serve: these tests only start and stop the server."""
+
+
+def _silent_loggers() -> list[logging.Logger]:
+    """Every non-propagating logger, which pytest's ``catching_logs`` attaches to.
+
+    pytest attaches its capture handlers (``caplog``'s among them) to the root
+    logger *and* to each logger that does not propagate, at every test phase.
+    """
+    return [
+        logger
+        for logger in logging.Logger.manager.loggerDict.values()
+        if isinstance(logger, logging.Logger) and not logger.propagate
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_live_server_leaves_a_later_capture_handler_unhardened() -> None:
+    """#3350: a capture handler attached after the server stops keeps its formatter.
+
+    uvicorn's default ``log_config`` left ``uvicorn`` non-propagating, so pytest
+    went on attaching ``caplog``'s handler to it for the rest of the session,
+    and the next ``configure_logging()`` hardened that handler. Its content-free
+    formatter works on a copy, so ``caplog`` records then lacked ``.message``.
+    """
+    async with _serve_tcp(_idle_asgi_app):
+        pass
+    probe = logging.Handler()
+    probe_formatter = logging.Formatter()
+    probe.setFormatter(probe_formatter)
+    attached = _silent_loggers()
+    for logger in attached:
+        logger.addHandler(probe)
+    access = logging.getLogger("uvicorn.access")
+    access_disabled = access.disabled
+    remove_app_log_handlers_for_tests()
+    try:
+        configure_logging(stream=io.StringIO())
+    finally:
+        for logger in attached:
+            logger.removeHandler(probe)
+        access.disabled = access_disabled
+        remove_app_log_handlers_for_tests()
+    assert probe.formatter is probe_formatter
+
+
+def _uvicorn_logger_state() -> dict[str, tuple[int, bool, bool, tuple[logging.Handler, ...]]]:
+    """Each uvicorn logger's level, propagation, disabled flag and handlers."""
+    loggers = {name: logging.getLogger(name) for name in _UVICORN_LOGGERS}
+    return {
+        name: (logger.level, logger.propagate, logger.disabled, tuple(logger.handlers))
+        for name, logger in loggers.items()
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_live_server_restores_the_uvicorn_loggers() -> None:
+    """The server's ``log_level`` must not outlive it on uvicorn's loggers."""
+    before = _uvicorn_logger_state()
+    async with _serve_tcp(_idle_asgi_app):
+        pass
+    assert _uvicorn_logger_state() == before
