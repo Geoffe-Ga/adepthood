@@ -2499,15 +2499,15 @@
   },
   {
     "id": "journal.reflection-dismissal-account-ownership",
-    "description": "Due-review reflection dismissals are account-scoped and Jest covers owner, credential and ABA transitions. The Settings-switch browser journey does not dismiss a due review; an actual reflection dismissal/reload/account-switch browser witness remains required under #3073.",
+    "description": "Due-review reflection dismissals are account-owned on this device (#3289), proved in a real browser (#3321). Two accounts are rewound in the lane database so GET /reflections/due names the same scope, c1:w1, for both: the collision an unscoped flag would turn into one account's decline hiding the other's card. Account A sets its mounted Weekly Review card aside with the real Not now control (keyboard on phone, pointer on desktop); the only record written is A's @adepthood/reflection_dismissed:c1:w1#u<A> in on-device storage, no reflection write request is sent, and after reload the server still names c1:w1 while the shelf offers the daily page instead. An unscoped legacy flag for the same scope with unknown ownership is then planted, A's next real due read is answered by the server and held from the app, and B signs in through Settings in the same running SPA: B's independently due card stays offered, the late A answer is delivered without hiding or re-deciding it, and the legacy flag stays unassigned rather than migrating to B. B's undeclined card survives B's own reload, and A, B, A returns A to its retained set-aside. The decline's keyboard reach, pointer actionability and viewport containment are asserted at normal and doubled text, at 390 and 1280. The held read lands after a logout that remounts the signed-in tree, so the hook's owner/generation guards are not the only line there; their mounted-replacement cases stay in useDueReviewOwnership.test.tsx. #3073's broader criteria are not claimed here.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["reflections"],
       "routes": ["GET /reflections/due"],
-      "tables": ["user", "journalentry"]
+      "tables": ["user", "stageprogress", "journalentry"]
     },
-    "status": "uncovered",
-    "issue": 3073
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-reflection-dismissal-owner.browser.e2e.test.ts"
   },
   {
     "id": "shared.date-shortcuts-reflow-and-keyboard",
