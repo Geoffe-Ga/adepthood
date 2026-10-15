@@ -94,7 +94,7 @@ import {
 } from './useSaveRetry';
 import { useTierWriteQueue, type TierWriteKind } from './useTierWriteQueue';
 import { countWords, wordCountLabel } from './wordCount';
-import type { WritingSessionResult } from './writingSession';
+import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
 import WritingSessionSurface from './WritingSessionSurface';
 
@@ -4606,7 +4606,8 @@ function EntryWritingSurfaces({
   // Above the edit-mode return, beside the practice hook it wraps: both kinds
   // of page finish through this one handler, so a linked habit is checked off
   // on either (#2861).
-  const onSession = useLinkedHabitCheckOff(session.onSession);
+  const [loggedSession, setLoggedSession] = useState<LoggedWritingSession>();
+  const onSession = useLinkedHabitCheckOff(session.onSession, setLoggedSession);
   if (!ctl.editGate.editMode) return null;
   return (
     <WritingSessionSurface
@@ -4614,6 +4615,7 @@ function EntryWritingSurfaces({
       initialMinutes={session.initialMinutes}
       autoStart={session.autoStart}
       onSession={onSession}
+      loggedSession={loggedSession}
       onClearanceChange={onWritingClearanceChange}
       renderOffer={session.launched ? renderLaunchedSessionNote : renderSessionOffer}
     />

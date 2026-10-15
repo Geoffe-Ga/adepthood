@@ -132,6 +132,7 @@ async function renderOffer() {
 async function openPlacing(view: ReturnType<typeof render>): Promise<void> {
   fireEvent.press(view.getByTestId('save-as-habit-accept'));
   fireEvent.press(view.getByTestId('writing-habit-new'));
+  fireEvent.press(view.getByTestId('writing-habit-goals-save'));
   await waitFor(() => expect(view.queryByTestId('save-as-habit-confirm')).not.toBeNull());
 }
 
@@ -340,7 +341,19 @@ describe('WritingSessionOffer — confirming', () => {
 
     await waitFor(() => expect(insertHabitAt).toHaveBeenCalled());
     expect(insertHabitAt).toHaveBeenCalledWith(
-      { name: 'Journaling', icon: '📓' },
+      {
+        name: 'Journaling',
+        icon: '📓',
+        revealed: true,
+        goals: {
+          target_unit: 'minutes',
+          frequency: 1,
+          frequency_unit: 'per_day',
+          low: 10,
+          clear: 20,
+          stretch: 45,
+        },
+      },
       1,
       mockUserTimezone,
     );
@@ -512,7 +525,7 @@ const ladderGoals = (): Goal[] =>
     title: tier,
     tier,
     target: index + 1,
-    target_unit: 'pages',
+    target_unit: 'minutes',
     frequency: 1,
     frequency_unit: 'per_day',
     is_additive: true,

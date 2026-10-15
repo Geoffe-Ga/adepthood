@@ -9,7 +9,8 @@
  * practice — belongs here or in the banner's ``children``, not in the ticking
  * leaf.
  *
- * Only a session that ran its whole length gets a note back. Stopping early is
+ * A full session gets a note back; an early stop gets one only after its
+ * measured habit log confirms. Stopping early is
  * the writer saying they are done, and remarking on that would be the page
  * commenting on a decision it was not asked about — the elapsed time is still
  * reported to whatever consumes the session either way. That is a decision
@@ -38,7 +39,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from './JournalEntry.styles';
-import type { WritingSessionResult } from './writingSession';
+import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 import WritingSessionBanner from './WritingSessionBanner';
 import WritingTimer from './WritingTimer';
 
@@ -46,6 +47,8 @@ import { SPACING, journalSheet } from '@/design/tokens';
 import type { EngineDeps } from '@/features/Practice/engine/types';
 
 export interface WritingSessionSurfaceProps {
+  /** A confirmed log may also give an early-stopped session a factual note. */
+  loggedSession?: LoggedWritingSession;
   /** The length the timer opens at; the writer can change it before starting. */
   initialMinutes?: number;
   /** Keep floating controls inside the writing desk when Sources occupy a side pane. */
@@ -94,6 +97,7 @@ export interface WritingSessionSurfaceProps {
  * ``WritingSessionBanner``'s docstring tells the slot's occupant not to allow.
  */
 interface StandingNote {
+  message?: string;
   result: WritingSessionResult;
   ordinal: number;
 }
@@ -118,20 +122,41 @@ function useBandClearance(
   return reportLayout;
 }
 
-function useStandingNote(onSession: WritingSessionSurfaceProps['onSession']) {
+function useStandingNote(
+  onSession: WritingSessionSurfaceProps['onSession'],
+  loggedSession: WritingSessionSurfaceProps['loggedSession'],
+) {
   const [note, setNote] = useState<StandingNote | null>(null);
-  const dismiss = useCallback(() => setNote(null), []);
-  // Held through a ref so ``record`` keeps one identity for the life of the
-  // mount: it is the ticking timer's ``onComplete``, and a consumer that
-  // re-created its callback each render would otherwise churn that prop ten
-  // times a second.
+  const latest = useRef<WritingSessionResult | null>(null);
+  const dismissed = useRef<WritingSessionResult | null>(null);
+  const dismiss = useCallback(() => {
+    dismissed.current = latest.current;
+    setNote(null);
+  }, []);
+  // Keep the timer callback stable while delivering the latest session listener.
   const onSessionRef = useRef(onSession);
   onSessionRef.current = onSession;
   const record = useCallback((result: WritingSessionResult) => {
+    latest.current = result;
+    dismissed.current = null;
     onSessionRef.current?.(result);
     if (!result.reachedFullDuration) return;
     setNote((previous) => ({ result, ordinal: (previous?.ordinal ?? 0) + 1 }));
   }, []);
+  useEffect(() => {
+    if (
+      !loggedSession ||
+      loggedSession.result !== latest.current ||
+      loggedSession.result === dismissed.current
+    )
+      return;
+    setNote((previous) => ({
+      result: loggedSession.result,
+      message: loggedSession.message,
+      ordinal:
+        previous?.result === loggedSession.result ? previous.ordinal : (previous?.ordinal ?? 0) + 1,
+    }));
+  }, [loggedSession]);
   return { note, dismiss, record };
 }
 
@@ -150,7 +175,34 @@ function useBandBounds() {
   return { scrollWholeSurface, reportBandLayout, reportContentSize };
 }
 
+function StandingSessionNote({
+  note,
+  dismiss,
+  scrollWholeSurface,
+  renderOffer,
+}: {
+  note: StandingNote | null;
+  dismiss: () => void;
+  scrollWholeSurface: boolean;
+  renderOffer: WritingSessionSurfaceProps['renderOffer'];
+}): React.JSX.Element | null {
+  if (note === null) return null;
+  return (
+    <WritingSessionBanner
+      result={note.result}
+      onDismiss={dismiss}
+      scrollWholeSurface={scrollWholeSurface}
+      loggedMessage={note.message}
+    >
+      {renderOffer === undefined || !note.result.reachedFullDuration ? null : (
+        <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
+      )}
+    </WritingSessionBanner>
+  );
+}
+
 function WritingSessionSurface({
+  loggedSession,
   initialMinutes,
   rightInset = 0,
   autoStart,
@@ -159,7 +211,7 @@ function WritingSessionSurface({
   onClearanceChange,
   deps,
 }: WritingSessionSurfaceProps): React.JSX.Element {
-  const { note, dismiss, record } = useStandingNote(onSession);
+  const { note, dismiss, record } = useStandingNote(onSession, loggedSession);
   const { scrollWholeSurface, reportBandLayout, reportContentSize } = useBandBounds();
   const reportLayout = useBandClearance(onClearanceChange, scrollWholeSurface);
   return (
@@ -178,17 +230,12 @@ function WritingSessionSurface({
         keyboardShouldPersistTaps="handled"
         testID="writing-session-band-content"
       >
-        {note === null ? null : (
-          <WritingSessionBanner
-            result={note.result}
-            onDismiss={dismiss}
-            scrollWholeSurface={scrollWholeSurface}
-          >
-            {renderOffer === undefined ? null : (
-              <React.Fragment key={note.ordinal}>{renderOffer(note.result)}</React.Fragment>
-            )}
-          </WritingSessionBanner>
-        )}
+        <StandingSessionNote
+          note={note}
+          dismiss={dismiss}
+          scrollWholeSurface={scrollWholeSurface}
+          renderOffer={renderOffer}
+        />
         <WritingTimer
           initialMinutes={initialMinutes}
           autoStart={autoStart}

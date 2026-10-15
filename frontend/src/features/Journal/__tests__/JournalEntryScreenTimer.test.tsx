@@ -6,6 +6,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import { WRITING_TIMER_CLEARANCE } from '../JournalEntry.styles';
+import type { CheckOffRequest } from '../writingHabitCheckOff';
 
 /**
  * Where the writing timer lives on the page, and what it has to survive.
@@ -59,13 +60,11 @@ jest.mock('@/navigation/hooks', () => ({
 
 jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
 
-const mockCheckOff = jest.fn((_request: { habitId: number; elapsedMs: number }) =>
-  Promise.resolve(),
-);
+const mockCheckOff = jest.fn((_request: CheckOffRequest) => Promise.resolve());
 
 jest.mock('../writingHabitCheckOff', () => ({
   ...(jest.requireActual('../writingHabitCheckOff') as Record<string, unknown>),
-  checkOffLinkedHabit: (request: { habitId: number; elapsedMs: number }) => mockCheckOff(request),
+  checkOffLinkedHabit: (request: CheckOffRequest) => mockCheckOff(request),
 }));
 
 const { useWritingHabitLinkStore } = require('@/store/useWritingHabitLinkStore') as {
@@ -282,7 +281,12 @@ describe('JournalEntryScreen — a finished session checks off the linked habit'
     expect(mockCheckOff).toHaveBeenCalledTimes(1);
     expect(mockCheckOff.mock.calls[0]?.[0]).toMatchObject({
       habitId: LINKED_HABIT_ID,
-      elapsedMs: TWENTY_MINUTES_MS,
+      result: {
+        plannedMinutes: 20,
+        elapsedMs: TWENTY_MINUTES_MS,
+        elapsedMinutes: 20,
+        reachedFullDuration: true,
+      },
     });
   });
 

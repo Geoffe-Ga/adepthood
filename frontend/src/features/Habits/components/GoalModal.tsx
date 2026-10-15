@@ -455,9 +455,6 @@ const goalEditorStyles = StyleSheet.create({
     fontWeight: '600',
     fontSize: GOAL_SAVE_BUTTON_FONT_SIZE,
   },
-  frequencySaveButton: {
-    backgroundColor: colors.tier.clear,
-  },
   frequencyDisplay: {
     width: GOAL_FREQ_INPUT_WIDTH,
     marginLeft: 0,
@@ -495,6 +492,11 @@ const goalEditorStyles = StyleSheet.create({
     marginRight: SPACING.xs,
     backgroundColor: 'transparent',
   },
+  timerTouchTarget: {
+    minHeight: touchTarget.minimum,
+    minWidth: touchTarget.minimum,
+    justifyContent: 'center',
+  },
   chipSelected: {
     backgroundColor: colors.tier.clear,
     borderColor: colors.tier.clear,
@@ -529,7 +531,35 @@ const goalEditorStyles = StyleSheet.create({
   },
 });
 
+const timerTouchStyle = (timerOnly: boolean) =>
+  timerOnly ? goalEditorStyles.timerTouchTarget : undefined;
+
+const GoalValueSave = ({
+  testID,
+  label,
+  onPress,
+  color,
+  timerOnly,
+}: {
+  testID: string;
+  label: string;
+  onPress: () => void;
+  color: string;
+  timerOnly: boolean;
+}) => (
+  <TouchableOpacity
+    testID={testID}
+    accessibilityRole="button"
+    accessibilityLabel={label}
+    onPress={onPress}
+    style={[goalEditorStyles.saveButton, timerTouchStyle(timerOnly), { backgroundColor: color }]}
+  >
+    <Text style={goalEditorStyles.saveButtonText}>Save</Text>
+  </TouchableOpacity>
+);
+
 interface GoalTargetRowProps {
+  timerOnly?: boolean;
   goal: Goal;
   onCommit: (_target: number) => void;
 }
@@ -583,7 +613,7 @@ const useNumericDraft = (
  *     filled tier-colored Save button — tap Save (or press Return / blur)
  *     to commit.
  */
-const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
+const GoalTargetRow = ({ goal, onCommit, timerOnly = false }: GoalTargetRowProps) => {
   const { editing, draft, setDraft, startEdit, trySave } = useNumericDraft(goal.target, onCommit);
   const tierLabel = TIER_LABELS[goal.tier] ?? goal.tier;
   const tierColor = getTierColor(goal.tier);
@@ -598,7 +628,7 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
         <>
           <TextInput
             testID={`goal-target-input-${goal.tier}`}
-            style={goalEditorStyles.input}
+            style={[goalEditorStyles.input, timerTouchStyle(timerOnly)]}
             value={draft}
             onChangeText={setDraft}
             // Both events back the same commit so return-key, blur, and
@@ -610,15 +640,13 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
             keyboardType="numeric"
             returnKeyType="done"
           />
-          <TouchableOpacity
+          <GoalValueSave
             testID={`goal-target-save-${goal.tier}`}
-            accessibilityRole="button"
-            accessibilityLabel={`Save ${tierLabel} target`}
+            label={`Save ${tierLabel} target`}
             onPress={trySave}
-            style={[goalEditorStyles.saveButton, { backgroundColor: tierColor }]}
-          >
-            <Text style={goalEditorStyles.saveButtonText}>Save</Text>
-          </TouchableOpacity>
+            color={tierColor}
+            timerOnly={timerOnly}
+          />
         </>
       ) : (
         <TouchableOpacity
@@ -626,7 +654,7 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
           accessibilityRole="button"
           accessibilityLabel={`Edit ${tierLabel} target, currently ${goal.target}`}
           onPress={startEdit}
-          style={goalEditorStyles.display}
+          style={[goalEditorStyles.display, timerTouchStyle(timerOnly)]}
         >
           <Text style={[goalEditorStyles.displayText, { color: tierColor }]}>{goal.target}</Text>
         </TouchableOpacity>
@@ -637,6 +665,7 @@ const GoalTargetRow = ({ goal, onCommit }: GoalTargetRowProps) => {
 };
 
 interface UnitChipRowProps {
+  timerOnly?: boolean;
   options: readonly string[];
   selected: string;
   testID: string;
@@ -682,7 +711,13 @@ const ChipScrollRow = ({ testID, children }: ChipScrollRowProps) => (
  * pinned to the formatted label so VoiceOver / TalkBack announce e.g.
  * "per day" rather than reading the raw "per_day" backend token.
  */
-const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) => (
+const UnitChipRow = ({
+  options,
+  selected,
+  testID,
+  onSelect,
+  timerOnly = false,
+}: UnitChipRowProps) => (
   <ChipScrollRow testID={testID}>
     {options.map((opt) => {
       const isSelected = opt === selected;
@@ -692,7 +727,11 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
           key={opt}
           testID={`${testID}-${opt}`}
           onPress={() => onSelect(opt)}
-          style={[goalEditorStyles.chip, isSelected && goalEditorStyles.chipSelected]}
+          style={[
+            goalEditorStyles.chip,
+            timerTouchStyle(timerOnly),
+            isSelected && goalEditorStyles.chipSelected,
+          ]}
           accessibilityRole="radio"
           accessibilityLabel={label}
           accessibilityState={{ checked: isSelected }}
@@ -718,6 +757,7 @@ const UnitChipRow = ({ options, selected, testID, onSelect }: UnitChipRowProps) 
 type NonEmptyGoals = [Goal, ...Goal[]];
 
 interface GoalUnitEditorProps {
+  timerOnly?: boolean;
   /**
    * All tier goals belonging to the habit. Any one is a valid display
    * reference (units are normalized across tiers via ``normalizeGoalUnits``),
@@ -730,6 +770,7 @@ interface GoalUnitEditorProps {
 }
 
 interface FrequencyInputProps {
+  timerOnly?: boolean;
   editing: boolean;
   draft: string;
   setDraft: (_v: string) => void;
@@ -737,12 +778,19 @@ interface FrequencyInputProps {
   trySave: () => void;
 }
 
-const FrequencyInput = ({ editing, draft, setDraft, startEdit, trySave }: FrequencyInputProps) =>
+const FrequencyInput = ({
+  editing,
+  draft,
+  setDraft,
+  startEdit,
+  trySave,
+  timerOnly = false,
+}: FrequencyInputProps) =>
   editing ? (
     <>
       <TextInput
         testID="goal-frequency-input"
-        style={goalEditorStyles.freqInput}
+        style={[goalEditorStyles.freqInput, timerTouchStyle(timerOnly)]}
         value={draft}
         onChangeText={setDraft}
         onBlur={trySave}
@@ -752,15 +800,13 @@ const FrequencyInput = ({ editing, draft, setDraft, startEdit, trySave }: Freque
         keyboardType="numeric"
         returnKeyType="done"
       />
-      <TouchableOpacity
+      <GoalValueSave
         testID="goal-frequency-save"
-        accessibilityRole="button"
-        accessibilityLabel="Save cadence"
+        label="Save cadence"
         onPress={trySave}
-        style={[goalEditorStyles.saveButton, goalEditorStyles.frequencySaveButton]}
-      >
-        <Text style={goalEditorStyles.saveButtonText}>Save</Text>
-      </TouchableOpacity>
+        color={colors.tier.clear}
+        timerOnly={timerOnly}
+      />
     </>
   ) : (
     <TouchableOpacity
@@ -768,7 +814,11 @@ const FrequencyInput = ({ editing, draft, setDraft, startEdit, trySave }: Freque
       accessibilityRole="button"
       accessibilityLabel={`Edit cadence, currently ${draft}`}
       onPress={startEdit}
-      style={[goalEditorStyles.display, goalEditorStyles.frequencyDisplay]}
+      style={[
+        goalEditorStyles.display,
+        goalEditorStyles.frequencyDisplay,
+        timerTouchStyle(timerOnly),
+      ]}
     >
       <Text style={goalEditorStyles.displayText}>{draft}</Text>
     </TouchableOpacity>
@@ -780,7 +830,12 @@ const FrequencyInput = ({ editing, draft, setDraft, startEdit, trySave }: Freque
  * once and commits through ``onUpdateGoalUnits`` — a single atomic batch
  * update that moves every tier together (#289).
  */
-const GoalUnitEditor = ({ goals, habitId, onUpdateGoalUnits }: GoalUnitEditorProps) => {
+const GoalUnitEditor = ({
+  goals,
+  habitId,
+  onUpdateGoalUnits,
+  timerOnly = false,
+}: GoalUnitEditorProps) => {
   const reference = goals[0];
 
   // Issue #289: ONE consolidated call — the backend updates every tier
@@ -801,7 +856,8 @@ const GoalUnitEditor = ({ goals, habitId, onUpdateGoalUnits }: GoalUnitEditorPro
       <View style={goalEditorStyles.row}>
         <Text style={goalEditorStyles.fieldLabel}>Unit</Text>
         <UnitChipRow
-          options={TARGET_UNITS}
+          timerOnly={timerOnly}
+          options={timerOnly ? ['minutes', 'sessions'] : TARGET_UNITS}
           selected={reference.target_unit}
           testID="goal-target-unit"
           onSelect={(value) => commit({ target_unit: value })}
@@ -809,12 +865,13 @@ const GoalUnitEditor = ({ goals, habitId, onUpdateGoalUnits }: GoalUnitEditorPro
       </View>
       <View style={goalEditorStyles.row}>
         <Text style={goalEditorStyles.fieldLabel}>How often</Text>
-        <FrequencyInput {...frequencyDraft} />
+        <FrequencyInput {...frequencyDraft} timerOnly={timerOnly} />
         <Text testID="goal-frequency-multiplier" style={goalEditorStyles.multiplier}>
           ×
         </Text>
         <UnitChipRow
-          options={FREQUENCY_UNITS}
+          timerOnly={timerOnly}
+          options={timerOnly ? ['per_day', 'per_week'] : FREQUENCY_UNITS}
           selected={reference.frequency_unit}
           testID="goal-frequency-unit"
           onSelect={(value) => commit({ frequency_unit: value })}
@@ -878,6 +935,8 @@ const buildDirectionChangePayloads = (goals: readonly Goal[], newIsAdditive: boo
 };
 
 interface GoalTargetEditorProps {
+  /** Timer linking can measure only additive minutes or complete sessions. */
+  timerOnly?: boolean;
   habit: NonNullable<GoalModalProps['habit']>;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
   onUpdateGoalUnits: GoalModalProps['onUpdateGoalUnits'];
@@ -890,7 +949,12 @@ interface GoalTargetEditorProps {
  * triggered reliably under thumb input — closing the "no way to edit habit
  * goals on mobile" gap.
  */
-const GoalTargetEditor = ({ habit, onUpdateGoal, onUpdateGoalUnits }: GoalTargetEditorProps) => {
+export const GoalTargetEditor = ({
+  habit,
+  onUpdateGoal,
+  onUpdateGoalUnits,
+  timerOnly = false,
+}: GoalTargetEditorProps) => {
   // ``== null`` (not ``!habit.id``) so a hypothetical future habit with id 0
   // still surfaces the editor — falsy-zero is a real concern even if the
   // current backend autoincrements from 1.
@@ -913,16 +977,20 @@ const GoalTargetEditor = ({ habit, onUpdateGoal, onUpdateGoalUnits }: GoalTarget
   return (
     <View style={goalEditorStyles.container} testID="goal-target-editor">
       <Text style={goalEditorStyles.sectionTitle}>Goals</Text>
-      <GoalDirectionRow isAdditive={head.is_additive} onChange={handleDirectionChange} />
+      {timerOnly ? null : (
+        <GoalDirectionRow isAdditive={head.is_additive} onChange={handleDirectionChange} />
+      )}
       {nonEmptyGoals.map((goal) => (
         <GoalTargetRow
           key={goal.id ?? goal.tier}
+          timerOnly={timerOnly}
           goal={goal}
           onCommit={(target) => onUpdateGoal(habitId, { ...goal, target })}
         />
       ))}
       <GoalUnitEditor
         goals={nonEmptyGoals}
+        timerOnly={timerOnly}
         habitId={habitId}
         onUpdateGoalUnits={onUpdateGoalUnits}
       />

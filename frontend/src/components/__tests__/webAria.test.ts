@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from '@jest/globals';
+import { describe, it, expect, afterEach, jest } from '@jest/globals';
 import { Platform } from 'react-native';
 
 import {
@@ -7,6 +7,7 @@ import {
   webDisabledState,
   webPressedState,
   webRadioState,
+  webRadioSpace,
 } from '../webAria';
 
 const originalOS = Platform.OS;
@@ -49,5 +50,60 @@ describe('webAria -- the states react-native-web cannot read from accessibilityS
     expect(webPressedState(false)).toEqual({ 'aria-pressed': false });
     expect(webDescribedBy('a b')).toEqual({ 'aria-describedby': 'a b' });
     expect(webDescribedBy('')).toEqual({});
+  });
+});
+
+interface RadioKeyboardCapture {
+  onKeyDownCapture: (_event: {
+    key: string;
+    repeat: boolean;
+    preventDefault: () => void;
+    stopPropagation: () => void;
+  }) => void;
+}
+
+function keyEvent(key: string, repeat = false) {
+  return { key, repeat, preventDefault: jest.fn(), stopPropagation: jest.fn() };
+}
+
+describe('web radio Space activation', () => {
+  it.each([' ', 'Spacebar'])('selects once with %s and prevents page scrolling', (key) => {
+    asPlatform('web');
+    const activate = jest.fn();
+    const event = keyEvent(key);
+    webRadioSpace<RadioKeyboardCapture>(false, activate).onKeyDownCapture!(event);
+    expect(activate).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['Enter', 'Escape'])('leaves %s to the existing native-web responder', (key) => {
+    asPlatform('web');
+    const activate = jest.fn();
+    const event = keyEvent(key);
+    webRadioSpace<RadioKeyboardCapture>(false, activate).onKeyDownCapture!(event);
+    expect(activate).not.toHaveBeenCalled();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  it('ignores auto-repeat activation while still preventing Space scrolling', () => {
+    asPlatform('web');
+    const activate = jest.fn();
+    const event = keyEvent(' ', true);
+    webRadioSpace<RadioKeyboardCapture>(false, activate).onKeyDownCapture!(event);
+    expect(activate).not.toHaveBeenCalled();
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it('never activates a disabled option', () => {
+    asPlatform('web');
+    const activate = jest.fn();
+    webRadioSpace<RadioKeyboardCapture>(true, activate).onKeyDownCapture!(keyEvent(' '));
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it('adds no keyboard props to native radio options', () => {
+    asPlatform('ios');
+    expect(webRadioSpace(false, jest.fn())).toEqual({});
   });
 });

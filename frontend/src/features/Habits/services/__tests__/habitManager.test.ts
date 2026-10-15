@@ -2367,6 +2367,25 @@ describe('habitManager', () => {
       expect(outcome).toEqual({ kept: true, habitId: CREATED_HABIT_ID });
     });
 
+    it('creates a timer-linked habit with its chosen goals and unlocked state atomically', async () => {
+      echoStore();
+      const goals = {
+        target_unit: 'minutes',
+        frequency: 1,
+        frequency_unit: 'per_day',
+        low: 10,
+        clear: 20,
+        stretch: 45,
+      };
+      const input = { name: 'Journaling', icon: '\u{1F4D3}', goals, revealed: true };
+      await habitManager.insertHabitAtWithId(input, 0, 'UTC');
+      expect(habitsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ goals, revealed: true }),
+      );
+      expect(habitsApi.create).toHaveBeenCalledTimes(1);
+      expect(goalsApi.update).not.toHaveBeenCalled();
+    });
+
     it('insertHabitAtWithId names no id when the habit was taken back off', async () => {
       echoStore();
       useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
@@ -2620,6 +2639,47 @@ describe('habitManager', () => {
         },
         { idempotencyKey: `log-unit:${ctx.operationId}` },
       );
+    });
+
+    it('marks measured timer units without changing the stable retry identity', async () => {
+      useHabitStore.setState({ habits: [makeServerHabit()] });
+      const ctx = habitManager.prepareLogUnit(SERVER_HABIT_ID, 10, 'UTC')!;
+      await habitManager.commitLogUnitContext(ctx, { viaTimer: true });
+      await habitManager.commitLogUnitContext(ctx, { viaTimer: true });
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(2);
+      for (const call of (goalCompletionsApi.create as jest.Mock).mock.calls) {
+        expect(call).toEqual([
+          expect.objectContaining({ completed_units: 10, via_timer: true }),
+          { idempotencyKey: `log-unit:${ctx.operationId}` },
+        ]);
+      }
+    });
+
+    it('cancels a timer log that loses its owner while waiting behind an earlier commit', async () => {
+      useHabitStore.setState({ habits: [makeServerHabit()] });
+      let releaseFirst: ((_result: CheckInResult) => void) | undefined;
+      (goalCompletionsApi.create as jest.Mock).mockImplementationOnce(
+        () =>
+          new Promise<CheckInResult>((resolve) => {
+            releaseFirst = resolve;
+          }),
+      );
+      const first = habitManager.prepareLogUnit(SERVER_HABIT_ID, 10, 'UTC')!;
+      const second = habitManager.prepareLogUnit(SERVER_HABIT_ID, 10, 'UTC')!;
+      const firstCommit = habitManager.commitLogUnitContext(first);
+      let current = true;
+      const secondCommit = habitManager.commitLogUnitContext(second, {
+        viaTimer: true,
+        isCurrent: () => current,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(1);
+      current = false;
+      releaseFirst!({ streak: 0, milestones: [], reason_code: 'units_adjusted', day_units: 10 });
+      await firstCommit;
+      await expect(secondCommit).resolves.toBeNull();
+      expect(goalCompletionsApi.create).toHaveBeenCalledTimes(1);
     });
 
     it('commitLogUnitContext sends the signed amount the person typed', async () => {
