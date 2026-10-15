@@ -17,6 +17,25 @@ import React from 'react';
 import DatePicker from '../DatePicker';
 
 describe('DatePicker quick-select bounds (BUG-FE-UI-107)', () => {
+  test('names three separate date buttons and preserves each selected local day', () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-14T12:00:00'));
+    try {
+      const onChange = jest.fn();
+      const { getByRole } = render(<DatePicker value="" onChange={onChange} />);
+      for (const [name, expected] of [
+        ['Select today', '2026-10-14'],
+        ['Select next Monday', '2026-10-19'],
+        ['Select first of next month', '2026-11-01'],
+      ]) {
+        fireEvent.press(getByRole('button', { name }));
+        expect(onChange).toHaveBeenLastCalledWith(expected);
+      }
+      expect(onChange).toHaveBeenCalledTimes(3);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('today button is disabled when minDate is in the future', () => {
     const onChange = jest.fn();
     // Forcing minDate one year ahead ensures "today" is out of range
