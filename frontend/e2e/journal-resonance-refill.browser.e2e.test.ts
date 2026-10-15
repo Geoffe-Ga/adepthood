@@ -33,6 +33,7 @@ async function serveUsage(page: Page, overrides: UsageOverrides): Promise<void> 
         monthly_reset_date: '2026-10-01T00:00:00Z',
         offering_balance: overrides.offering_balance,
         resonance_route: overrides.resonance_route ?? 'vault_bound',
+        resonance_demo_available: false,
       }),
     });
   });
@@ -66,6 +67,7 @@ async function holdUsage(page: Page): Promise<{
           monthly_reset_date: '2026-10-01T00:00:00Z',
           offering_balance: 0,
           resonance_route: 'vault_bound',
+          resonance_demo_available: false,
         }),
       });
     },
@@ -124,19 +126,26 @@ test('a keyless app-provider route offers Settings and returns to the same journ
   await page.getByRole('link', { name: 'Go back' }).click();
   await expectDraft(page);
 
+  let asks = 0;
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && /\/resonance$/u.test(new URL(request.url()).pathname))
+      asks += 1;
+  });
   await expect(page.getByRole('button', { name: 'Get resonance' })).toBeEnabled();
   await page.getByRole('button', { name: 'Get resonance' }).click();
-  const refill = page.getByTestId('journal-resonance-refill');
+  const refill = page.getByTestId('resonance-explainer');
   await expect(refill).toBeVisible();
   await expect(refill).toContainText('This needs your own API key');
   await expect(refill).not.toContainText('BotMason');
-  await expect(page.getByTestId('resonance-explainer')).toHaveCount(0);
+  await expect(page.getByTestId('journal-resonance-refill')).toHaveCount(0);
   await expect(refill.getByText(/Don.t show this again/u)).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Add your API key', exact: true }).click();
+  expect(asks).toBe(0);
+  await page.getByTestId('resonance-explainer-open-settings').click();
   await expect(page.getByTestId('api-key-settings-screen')).toBeVisible();
   await page.getByRole('link', { name: 'Go back' }).click();
   await expectDraft(page);
+  expect(asks).toBe(0);
 });
 
 test('a stale wallet read that receives a 402 replaces the spend dialog with refill', async ({

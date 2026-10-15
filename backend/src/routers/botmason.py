@@ -32,6 +32,7 @@ from schemas.botmason import (
     UsageResponse,
 )
 from services import wallet as wallet_service
+from services.botmason import server_generation_available
 from services.reflection_boundary import ReflectionBoundary
 from services.usage import get_monthly_cap
 from services.wallet import require_user_fresh, reset_monthly_usage_if_due
@@ -77,6 +78,9 @@ async def get_usage(
         offering_balance=user.offering_balance,
         resonance_route=(
             "vault_bound" if boundary is ReflectionBoundary.VAULT_BOUND else "app_provider"
+        ),
+        resonance_demo_available=(
+            boundary is ReflectionBoundary.APP_PROVIDER and server_generation_available()
         ),
     )
 

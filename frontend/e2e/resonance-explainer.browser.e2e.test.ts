@@ -9,18 +9,18 @@ import { readLaneState } from './laneState';
  * `resonance.e2e.test.ts` already proves a pass reaches the server and keeps
  * anchored notes, but it drives the API client directly and cannot press a
  * button. The claim this journey makes is the one only a rendered screen can
- * settle: no request is sent until the reader sees who will pay, and changing
- * from the shared allowance to a device-stored key changes that answer before
- * the pass leaves the browser.
+ * settle: controlled production app-provider admission requires a device key,
+ * and saving one changes the disclosure before the pass leaves the browser.
  *
  * The assertions are therefore counted requests and server state, not visible
  * text alone. A spec that only checked the dialog was on screen would pass just
  * as happily against a build that charged behind it, which is exactly the
  * failure this gate exists to prevent.
  *
- * The lane runs the backend's default (stub) BotMason provider, so the pass here
- * is the real route, the real wallet deduction and the real anchoring, with only
- * the model's sentences canned.
+ * The lane explicitly permits keyless demos. This spec controls only that
+ * advertised capability to false for the browser's usage read; the route and
+ * wallet fields remain server-derived. The later own-key request reaches the
+ * real loopback provider's spent-key response without spending wallet credits.
  */
 
 /** A page with sentences the stub provider is willing to quote back. */
@@ -51,6 +51,7 @@ interface Usage {
   monthly_messages_used: number;
   offering_balance: number;
   monthly_cap: number;
+  resonance_route: 'vault_bound' | 'app_provider';
 }
 
 /** The two wallet buckets a pass could draw from. */
@@ -88,21 +89,35 @@ test('the payer is disclosed before a resonance pass is ever sent', async ({ pag
   });
   expect(finished.ok()).toBe(true);
 
+  const beforeKey = await usage(page, token);
+  expect(beforeKey.resonance_route).toBe('app_provider');
+  await page.route('**/user/usage', async (route) => {
+    const actual = await route.fetch();
+    const served = await actual.json();
+    expect(served.resonance_route).toBe('app_provider');
+    await route.fulfill({
+      response: actual,
+      json: { ...served, resonance_demo_available: false },
+    });
+  });
   const passes = recordPasses(page, entryId);
   await page.reload();
   await page.getByTestId(`journal-shelf-open-${String(entryId)}`).click();
 
-  // 1. The real non-owner app-provider route needs a key, even with wallet
+  // 1. Controlled production app-provider admission needs a key, even with
   // credits remaining. The invitation sends no generation request.
   await page.getByRole('button', { name: 'Get resonance' }).click();
-  const keyRequired = page.getByTestId('journal-resonance-refill');
+  const keyRequired = page.getByTestId('resonance-explainer');
   await expect(keyRequired).toContainText('This needs your own API key');
   await expect(keyRequired).not.toContainText('BotMason');
   expect(passes.length).toBe(0);
-  await page.getByTestId('journal-resonance-refill-cancel').click();
+  await expect(page.getByTestId('resonance-explainer-open-settings')).toBeVisible();
+  await expect(page.getByTestId('resonance-explainer-continue')).toHaveCount(0);
+  await page.getByTestId('resonance-explainer-cancel').click();
   await expect(keyRequired).toHaveCount(0);
   expect(passes.length).toBe(0);
   expect(await keptNotes(page, token, entryId)).toEqual([]);
+  expect(await usage(page, token)).toEqual(beforeKey);
 
   // 3. Saving a caller-owned key through Settings changes the same disclosure.
   //    Cancelling still sends nothing, so this proves the payer is selected

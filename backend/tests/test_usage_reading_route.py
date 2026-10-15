@@ -21,8 +21,9 @@ _VAULT_KEY = "private-route-test-credential"  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("seam", [None, "false", "yes", "true"])
 @pytest.mark.parametrize(
-    ("binding", "expected"),
+    "route",
     [
         ("none", "app_provider"),
         ("per_user", "vault_bound"),
@@ -35,12 +36,17 @@ async def test_usage_reports_only_local_route_eligibility(
     async_client: AsyncClient,
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
-    binding: str,
-    expected: str,
+    route: tuple[str, str],
+    seam: str | None,
 ) -> None:
     """A binding is routing, never a claim that a remote vault is reachable or answers."""
+    binding, expected = route
     monkeypatch.delenv("CREEK_VAULT_URL", raising=False)
     monkeypatch.delenv(OWNER_ENV_VAR, raising=False)
+    if seam is None:
+        monkeypatch.delenv("BOTMASON_STUB_SEAM", raising=False)
+    else:
+        monkeypatch.setenv("BOTMASON_STUB_SEAM", seam)
 
     async def no_lookup(_host: str) -> tuple[str, ...]:
         raise AssertionError("a price snapshot must never dial or resolve the vault")
@@ -70,6 +76,7 @@ async def test_usage_reports_only_local_route_eligibility(
     assert response.status_code == HTTPStatus.OK
     payload = response.json()
     assert payload["resonance_route"] == expected
+    assert payload["resonance_demo_available"] is (expected == "app_provider" and seam == "true")
     assert set(payload) == {
         "monthly_messages_used",
         "monthly_messages_remaining",
@@ -77,6 +84,7 @@ async def test_usage_reports_only_local_route_eligibility(
         "monthly_reset_date",
         "offering_balance",
         "resonance_route",
+        "resonance_demo_available",
     }
     assert payload["monthly_messages_used"] == 0
     assert payload["offering_balance"] == 0

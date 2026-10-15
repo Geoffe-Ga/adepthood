@@ -8623,6 +8623,11 @@
             "title": "Offering Balance",
             "type": "integer"
           },
+          "resonance_demo_available": {
+            "default": false,
+            "title": "Resonance Demo Available",
+            "type": "boolean"
+          },
           "resonance_route": {
             "enum": [
               "vault_bound",

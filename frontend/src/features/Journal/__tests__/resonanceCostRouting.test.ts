@@ -20,6 +20,65 @@ beforeEach(() => {
 });
 
 describe('server-reported reading payment route (#3262/#3281)', () => {
+  it.each(['reading', 'letter'])(
+    'offers the explicitly available keyless demo %s without a wallet price',
+    async (noun) => {
+      mockUsage.mockResolvedValue({
+        ...USAGE,
+        resonance_route: 'app_provider',
+        resonance_demo_available: true,
+      });
+      const result = await loadCostState(false, noun);
+      expect(result.copy).toBe('Demo — not a real reflection. No Adepthood wallet charge.');
+      expect(result.canContinue).toBe(true);
+      expect(result.keyNeeded).toBe(false);
+      expect(result.fundingRequired).toBeNull();
+      expect(result.copy).not.toMatch(/spends|your vault|BotMason/u);
+    },
+  );
+  it('admits a demo reservation from offerings when monthly messages are exhausted', async () => {
+    mockUsage.mockResolvedValue({
+      ...USAGE,
+      resonance_route: 'app_provider',
+      resonance_demo_available: true,
+      monthly_messages_remaining: 0,
+      offering_balance: 1,
+    });
+    expect((await loadCostState(false)).canContinue).toBe(true);
+  });
+  it('still offers only Settings when the demo reservation cannot be admitted', async () => {
+    mockUsage.mockResolvedValue({
+      ...USAGE,
+      resonance_route: 'app_provider',
+      resonance_demo_available: true,
+      monthly_messages_remaining: 0,
+      offering_balance: 0,
+    });
+    const result = await loadCostState(false);
+    expect(result.canContinue).toBe(false);
+    expect(result.fundingRequired).toBe('key_required');
+    expect(result.copy).not.toMatch(/demo|offering|BotMason/iu);
+  });
+  it('keeps the own key as payer even while a keyless demo is available', async () => {
+    mockUsage.mockResolvedValue({
+      ...USAGE,
+      resonance_route: 'app_provider',
+      resonance_demo_available: true,
+    });
+    const result = await loadCostState(true);
+    expect(result.copy).toMatch(/^Your own API key pays/u);
+    expect(result.copy).not.toMatch(/demo/iu);
+  });
+  it('never applies the demo capability to a vault-bound route', async () => {
+    mockUsage.mockResolvedValue({
+      ...USAGE,
+      resonance_route: 'vault_bound',
+      resonance_demo_available: true,
+    });
+    expect((await loadCostState(false)).copy).toBe(
+      'This reading spends one of your 20 BotMason messages for the month.',
+    );
+  });
   it('keeps the own-key app-provider copy, after checking the actual route', async () => {
     mockUsage.mockResolvedValue({ ...USAGE, resonance_route: 'app_provider' });
     const result = await loadCostState(true);

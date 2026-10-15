@@ -256,7 +256,113 @@ function wallet(): { monthly_messages_used: number; offering_balance: number; ro
 }
 
 for (const width of WIDTHS) {
-  test(`real app-provider keyless reading and letter open Settings without sending an ask at ${width}`, async ({
+  test(`real armed demo reading and first letter stay free at ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const email = await signUp(page, `money-demo-${width}`);
+    const token = await tokenFor(page.request, email);
+    await page.goto(`${frontendUrl()}/api-key-settings`);
+    await expect(page.getByTestId('no-key-hint')).toBeVisible();
+    await expect(page.getByTestId('stored-key-card')).toHaveCount(0);
+    const id = await createPage(page, token);
+    const usage = () => page.request.get(`${backendUrl()}/user/usage`, { headers: bearer(token) });
+    const beforeResponse = await usage();
+    expect(beforeResponse.status()).toBe(200);
+    const before = await beforeResponse.json();
+    expect(before.resonance_route).toBe('app_provider');
+    expect(before.resonance_demo_available).toBe(true);
+    expect(before.monthly_messages_remaining > 0 || before.offering_balance > 0).toBe(true);
+    const providerBefore = await (
+      await page.request.get(`${lane().providerUrl}/__lane/attempts`)
+    ).json();
+    await openPage(page, id);
+    await page.getByRole('button', { name: 'Get resonance' }).click();
+    const cost = page.getByTestId('resonance-explainer-cost');
+    await expect(cost).toHaveText('Demo — not a real reflection. No Adepthood wallet charge.');
+    await doubleText(page);
+    await completeCopy(cost);
+    await capture(page, `demo-reading-${width}-200-percent-cost`);
+    await reachable(page.getByTestId('resonance-explainer-cancel'));
+    const proceed = page.getByTestId('resonance-explainer-continue');
+    await reachable(proceed);
+    await capture(page, `demo-reading-${width}-200-percent-actions`);
+    expect(await (await usage()).json()).toEqual(before);
+    const settled = page.waitForResponse(
+      (reply) =>
+        reply.request().method() === 'POST' && reply.url().endsWith(`/journal/${id}/resonance`),
+    );
+    const invitationRead = page.waitForResponse(
+      (reply) =>
+        reply.request().method() === 'GET' &&
+        new URL(reply.url()).pathname === '/corpus/invitation',
+    );
+    await proceed.click();
+    const response = await settled;
+    expect(response.status()).toBe(200);
+    expect(response.request().headers()['x-llm-api-key']).toBeUndefined();
+    const pass = await response.json();
+    expect(pass.provenance.paid_by).toBe('free');
+    expect(pass.provenance.notes).toMatchObject({ source: 'demo', provider: 'stub' });
+    const invitation = await invitationRead;
+    expect(invitation.status()).toBe(200);
+    if ((await invitation.json()).offer) {
+      const dismissed = page.waitForResponse(
+        (reply) =>
+          reply.request().method() === 'PUT' &&
+          new URL(reply.url()).pathname === '/corpus/invitation',
+      );
+      await page.getByTestId('journal-corpus-invitation-dismiss').click();
+      expect((await dismissed).status()).toBe(200);
+      await expect(page.getByTestId('journal-corpus-invitation')).toHaveCount(0);
+    }
+    await expect(page.getByTestId('resonance-pass-source')).toContainText('Demo');
+    expect(await (await usage()).json()).toEqual(before);
+    const note = pass.marginalia[0] as { id: number } | undefined;
+    expect(note).toBeDefined();
+    await page.getByTestId(`margin-note-open-${note!.id}`).click();
+    const letterCost = page.getByTestId('essay-ask-cost');
+    await expect(letterCost).toHaveText(
+      'Demo — not a real reflection. No Adepthood wallet charge.',
+    );
+    await doubleText(page);
+    await completeCopy(letterCost);
+    await capture(page, `demo-letter-${width}-200-percent-cost`);
+    await reachable(page.getByTestId('essay-not-now'));
+    const ask = page.getByTestId('essay-ask');
+    await reachable(ask);
+    await capture(page, `demo-letter-${width}-200-percent-actions`);
+    expect(await (await usage()).json()).toEqual(before);
+    const letterResponse = page.waitForResponse(
+      (reply) =>
+        reply.request().method() === 'POST' &&
+        reply.url().endsWith(`/marginalia/${note!.id}/essay`),
+    );
+    await ask.click();
+    const written = await letterResponse;
+    expect(written.status()).toBe(200);
+    expect(written.request().headers()['x-llm-api-key']).toBeUndefined();
+    expect(written.request().postDataJSON()).toEqual({ price_acknowledged: true });
+    expect((await written.json()).essay_source).toBe('demo');
+    await expect(page.getByTestId('essay-source')).toHaveText('Demo — not a real reflection');
+    await expect(page.getByTestId('essay-text')).toBeVisible();
+    const letterText = await page.getByTestId('essay-text').innerText();
+    await page.getByTestId('essay-close').click();
+    await page.reload();
+    await openPage(page, id);
+    await expect(page.getByTestId(`margin-note-source-${note!.id}`)).toHaveText(
+      'Demo — not a real reflection',
+    );
+    await page.getByTestId(`margin-note-open-${note!.id}`).click();
+    await expect(page.getByTestId('essay-source')).toHaveText('Demo — not a real reflection');
+    await expect(page.getByTestId('essay-text')).toHaveText(letterText);
+    expect(await (await usage()).json()).toEqual(before);
+    expect(await (await page.request.get(`${lane().providerUrl}/__lane/attempts`)).json()).toEqual(
+      providerBefore,
+    );
+  });
+}
+
+for (const width of WIDTHS) {
+  test(`controlled production app-provider keyless reading and letter open Settings without an ask at ${width}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 844 });
@@ -269,6 +375,17 @@ for (const width of WIDTHS) {
     expect(usageResponse.status()).toBe(200);
     const before = await usageResponse.json();
     expect(before.resonance_route).toBe('app_provider');
+    // The lane allows demos. Control only that capability to exercise the
+    // production key-required admission; the real backend is not claimed keyless.
+    await page.route('**/user/usage', async (route) => {
+      const actual = await route.fetch();
+      const usage = await actual.json();
+      expect(usage.resonance_route).toBe('app_provider');
+      await route.fulfill({
+        response: actual,
+        json: { ...usage, resonance_demo_available: false },
+      });
+    });
     let asks = 0;
     page.on('request', (request) => {
       if (request.method() === 'POST' && /\/resonance$|\/essay$/u.test(request.url())) asks += 1;

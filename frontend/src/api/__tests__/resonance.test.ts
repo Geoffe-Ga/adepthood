@@ -88,6 +88,40 @@ describe('server-reported resonance route (#3262)', () => {
     monthly_reset_date: '2026-11-01T00:00:00Z',
     offering_balance: 0,
   };
+  test.each([false, true])('preserves the explicit demo boolean %s', async (available) => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({
+        ...usage,
+        resonance_route: 'app_provider',
+        resonance_demo_available: available,
+      }),
+    );
+    expect((await botmasonUsage.get('tok')).resonance_demo_available).toBe(available);
+  });
+  test.each(['true', 1, null])('rejects a nonboolean demo capability %s', (available) => {
+    expect(
+      botmasonUsageSchema.safeParse({
+        ...usage,
+        resonance_route: 'app_provider',
+        resonance_demo_available: available,
+      }).success,
+    ).toBe(false);
+  });
+  test('keeps a legacy app-provider response without the capability key-required', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...usage, resonance_route: 'app_provider' }));
+    const result = await loadCostState(false, 'reading', 'tok');
+    expect(result.canContinue).toBe(false);
+    expect(result.keyNeeded).toBe(true);
+  });
+  test.each([undefined, 'future_route'])(
+    'an explicit demo capability cannot admit the invalid route %s',
+    async (route) => {
+      mockFetch.mockReturnValueOnce(
+        jsonResponse({ ...usage, resonance_route: route, resonance_demo_available: true }),
+      );
+      expect(await loadCostState(false, 'reading', 'tok')).toEqual(unknownCostState());
+    },
+  );
   test.each(['vault_bound', 'app_provider'] as const)(
     'preserves %s through the usage client',
     async (route) => {

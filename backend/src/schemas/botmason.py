@@ -52,3 +52,5 @@ class UsageResponse(BaseModel):
     offering_balance: int
     # Local routing eligibility only; a bound vault may be unavailable or unable to answer.
     resonance_route: Literal["vault_bound", "app_provider"]
+    # Only the explicitly armed test seam can generate a keyless app-provider demo.
+    resonance_demo_available: bool = False

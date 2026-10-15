@@ -1,5 +1,6 @@
 /** Payment copy follows the server's reading route, never key presence alone. */
 import { resonanceExplainerCanContinue, resonanceExplainerCost } from './resonanceExplainerCopy';
+import { SOURCE_LABEL_COPY } from './sourceLabel';
 
 import { botmasonUsage } from '@/api';
 
@@ -45,7 +46,7 @@ function ownKeyCost(hasKey: boolean, noun: string): ResonanceCostState {
 }
 
 function costStateFromUsage(usage: Usage, hasKey: boolean, noun: string): ResonanceCostState {
-  if (usage.resonance_route === 'app_provider') return ownKeyCost(hasKey, noun);
+  if (usage.resonance_route === 'app_provider') return appProviderCost(usage, hasKey, noun);
   if (usage.resonance_route !== 'vault_bound') return unknownCostState(noun);
   // Vault readings and first letters spend credits even with an own key (#3281/#3346).
   const canContinue = resonanceExplainerCanContinue(
@@ -68,6 +69,23 @@ function costStateFromUsage(usage: Usage, hasKey: boolean, noun: string): Resona
     loading: false,
     monthlyResetDate: usage.monthly_reset_date,
     monthlyCap: usage.monthly_cap,
+  };
+}
+
+/** A demo still reserves a wallet unit before the server refunds its labelled result. */
+function appProviderCost(usage: Usage, hasKey: boolean, noun: string): ResonanceCostState {
+  const demoCanContinue =
+    usage.resonance_demo_available === true &&
+    resonanceExplainerCanContinue(false, usage.monthly_messages_remaining, usage.offering_balance);
+  if (hasKey || !demoCanContinue) return ownKeyCost(hasKey, noun);
+  return {
+    copy: `${SOURCE_LABEL_COPY.demo}. No Adepthood wallet charge.`,
+    keyNeeded: false,
+    canContinue: true,
+    fundingRequired: null,
+    loading: false,
+    monthlyResetDate: null,
+    monthlyCap: null,
   };
 }
 
