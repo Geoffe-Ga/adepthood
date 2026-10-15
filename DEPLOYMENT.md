@@ -289,6 +289,7 @@ In the frontend service's **Variables** tab, add:
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | `https://help.gumroad.com/article/76-license-keys` | Optional. License-key help article linked from signup; defaults to this value |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | *(the Google **Web** client ID)* | Only for Google sign-in on web. Baked in at build time — see the note below |
 | `EXPO_PUBLIC_SANGHA_INVITE_URL` | `https://discord.gg/<your-permanent-invite>` | Optional. Digital Sangha invite; unset means Settings shows neither the Sangha door nor its switch |
+| `EXPO_PUBLIC_CREDIT_PACK_URL` | `https://<your-store>/l/<credit-pack>` | Optional. BotMason credit pack page; unset means the app neither links to it nor offers credits |
 | `PORT` | `80` | nginx listens on 80 |
 
 > **Important:** every `EXPO_PUBLIC_*` variable is baked into the JavaScript
@@ -1041,6 +1042,7 @@ length of its Creek round trip. Budget PostgreSQL `max_connections` at
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS` | For Google sign-in on iOS | Google **iOS** client ID. Consumed by EAS native builds, not the web Dockerfile. |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID` | For Google sign-in on Android | Google **Android** client ID. Consumed by EAS native builds, not the web Dockerfile. |
 | `EXPO_PUBLIC_SANGHA_INVITE_URL` | No | Permanent, never-expiring Discord invite for the Digital Sangha, opened from Settings in the platform browser. Must be `https`; anything else resolves to nothing. There is deliberately no default — unset means the app never mentions the Sangha, which is an absent invitation rather than a dead link inside a shipped binary. |
+| `EXPO_PUBLIC_CREDIT_PACK_URL` | No | Page where BotMason credits are bought, linked from the vault-reading "balance has run out" remedy with a note to buy with the same email address as the Adepthood account. Must be `https`; anything else resolves to nothing. No default — unset means the app neither links to it nor says credits can be bought. |
 | `EXPO_PUBLIC_SENTRY_DSN` | No (recommended in prod) | Sentry DSN that crashes caught by the error boundaries are reported to. Baked in at build time like every other `EXPO_PUBLIC_*` value, so it is public — use a client DSN, never a server one. Unset means crashes go to the console only. |
 | `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | No | Sentry environment for client reports. Defaults to `development` in dev builds and `production` otherwise. |
 | `EXPO_PUBLIC_SENTRY_RELEASE` | No | Version string client reports are tagged with. Defaults to `unknown`. |

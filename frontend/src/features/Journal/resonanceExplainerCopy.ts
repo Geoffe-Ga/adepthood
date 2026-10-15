@@ -57,9 +57,11 @@ const READING = 'reading';
  * The price, derived from who pays and the allowance this deployment serves.
  *
  * ``noun`` names the charged thing — a ``reading`` (the pass, and the default,
- * so the pass's copy is unchanged) or a ``letter`` (a note's first essay, via
- * {@link essayExplainerCost}). One function, so the two prices can never be
- * worded differently for the same wallet.
+ * so the pass's copy is unchanged) or a ``letter`` (a note's first essay). One
+ * function, so the two prices can never be worded differently for the same
+ * wallet. With no key it is shown only where credits can pay: a reading a
+ * vault may answer (and, in a development build, anything its stub seam can
+ * answer); everywhere else the line is {@link keyNeededCost}.
  */
 export function resonanceExplainerCost(
   hasKey: boolean,
@@ -86,15 +88,25 @@ export function resonanceExplainerCost(
 /** What a note's first letter is called in its price line. */
 export const ESSAY_NOUN = 'letter';
 
-/** The price of a note's first letter: the same wallet and wording as a reading. */
-export function essayExplainerCost(
-  hasKey: boolean,
-  monthlyCap: number | null,
-  monthlyRemaining: number | null = null,
-  offeringBalance: number | null = null,
-): string {
-  return resonanceExplainerCost(hasKey, monthlyCap, monthlyRemaining, offeringBalance, ESSAY_NOUN);
+/**
+ * What leads every keyless line where credits cannot pay (#3262).
+ *
+ * Since ADR 0009 phase (a) (#3067) BotMason credits pay only for a reading the
+ * writer's own vault answers. A letter, and a reading with no vault to answer
+ * it, can be paid for only by the writer's own key -- so that is what the line
+ * says first, with no price beside it, and the surface's own action opens
+ * Settings.
+ */
+export const KEY_NEEDED_LEAD = 'This needs your own API key.';
+
+/** The keyless line for a thing only the writer's own key can pay for. */
+export function keyNeededCost(noun: string = READING): string {
+  return `${KEY_NEEDED_LEAD} Add one in Settings to ask for this ${noun}.`;
 }
+
+/** The action that replaces the charged arm while only a key can pay. */
+export const KEY_NEEDED_SETTINGS = 'Open Settings';
+export const KEY_NEEDED_SETTINGS_A11Y = 'Open Settings to add your own API key';
 
 /** Whether the known payer snapshot can fund a pass; unknown reads stay retryable. */
 export function resonanceExplainerCanContinue(

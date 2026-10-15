@@ -86,6 +86,22 @@ function apiError(status: number, detail: string): Error & { status: number; det
   return Object.assign(new Error(detail), { status, detail });
 }
 
+// A development build's stub seam answers keyless requests, so it keeps the
+// shipped price lines; the specs below run as one unless they say otherwise
+// (#3262). A production build is switched on per spec.
+let mockKeylessReachesServer = true;
+jest.mock('@/config', () => {
+  const actual = jest.requireActual<Record<string, unknown>>('@/config');
+  // `defineProperty` so each access reads the current value, not the first.
+  return Object.defineProperty({ ...actual }, 'KEYLESS_GENERATION_REACHES_SERVER', {
+    enumerable: true,
+    get: (): boolean => mockKeylessReachesServer,
+  });
+});
+const mockVaultConnection = jest.fn() as jest.MockedFunction<
+  () => Promise<{ connected: boolean; vault_url: string | null }>
+>;
+
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 jest.mock('@/context/ApiKeyContext', () => ({
   useApiKey: () => mockApiKeyState,
@@ -111,6 +127,9 @@ jest.mock('@/api', () => ({
   },
   botmasonUsage: {
     get: (...a: unknown[]) => (mockUsage as unknown as (...x: unknown[]) => unknown)(...a),
+  },
+  vault: {
+    connection: () => mockVaultConnection(),
   },
   promotions: {
     create: jest.fn(),
@@ -212,6 +231,9 @@ beforeEach(() => {
   mockApiKeyState.apiKey = null;
   mockApiKeyState.isLoading = false;
   mockUsage.mockResolvedValue(usageSnapshot());
+  mockKeylessReachesServer = true;
+  mockVaultConnection.mockReset();
+  mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
 });
 
 describe('JournalEntryScreen — nothing is charged before the cost is disclosed', () => {
@@ -886,5 +908,96 @@ describe('JournalEntryScreen — a guardrail refusal is honest and costs nothing
     expect(line.props.accessibilityLiveRegion).toBe('polite');
     expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
     expect(mockGenerate).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * With no key, a production build prices only what credits can pay for
+ * (#3262): a reading the writer's own vault answers. A letter, and a reading
+ * with no vault, lead with "This needs your own API key" and send the writer to
+ * Settings instead of to a request the server can only refuse.
+ */
+describe('JournalEntryScreen — with no key, only a vault-answered reading has a price', () => {
+  const KEY_NEEDED_READING =
+    'This needs your own API key. Add one in Settings to ask for this reading.';
+
+  beforeEach(() => {
+    mockKeylessReachesServer = false;
+  });
+
+  it('leads a vaultless reading with the key, names no price, and sends nothing', async () => {
+    const view = await openEntryAndAsk();
+
+    const cost = await view.findByTestId('resonance-explainer-cost');
+    await waitFor(() => expect(cost).toHaveTextContent(KEY_NEEDED_READING));
+    expect(cost).not.toHaveTextContent(/BotMason/u);
+    expect(view.queryByTestId('resonance-explainer-continue')).toBeNull();
+    expect(view.queryByTestId('resonance-explainer-dont-show')).toBeNull();
+    expect(mockUsage).not.toHaveBeenCalled();
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it('takes the writer to API-key settings from the reading', async () => {
+    const view = await openEntryAndAsk();
+
+    fireEvent.press(await view.findByTestId('resonance-explainer-open-settings'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
+    expect(view.queryByTestId('resonance-explainer')).toBeNull();
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it('still says so to a writer who dismissed the cost note, rather than sending', async () => {
+    mockLoadDismissed.mockResolvedValue(true);
+    const view = await openEntryAndAsk();
+
+    expect(await view.findByTestId('resonance-explainer-cost')).toHaveTextContent(
+      KEY_NEEDED_READING,
+    );
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it('keeps the shipped price for a reading a connected vault answers', async () => {
+    mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://vault.example' });
+    const view = await openEntryAndAsk();
+
+    const cost = await view.findByTestId('resonance-explainer-cost');
+    await waitFor(() =>
+      expect(cost).toHaveTextContent(
+        'This reading spends one of your 7 BotMason messages for the month. Add your own API key in Settings and it pays instead.',
+      ),
+    );
+    expect(view.getByTestId('resonance-explainer-continue')).toBeTruthy();
+  });
+
+  it('keeps the key-pays line unchanged once a key is saved', async () => {
+    mockApiKeyState.apiKey = 'sk-saved-own-key'; // pragma: allowlist secret
+    const view = await openEntryAndAsk();
+
+    expect(await view.findByTestId('resonance-explainer-cost')).toHaveTextContent(
+      'Your own API key pays for this reading. Nothing is drawn from your BotMason messages.',
+    );
+    expect(mockVaultConnection).not.toHaveBeenCalled();
+  });
+
+  it('leads a letter with the key, even with a vault, and sends the writer to Settings', async () => {
+    mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://vault.example' });
+    mockList.mockResolvedValue({ items: [ESSAY_NOTE] });
+    const view = renderScreen();
+    fireEvent.press(await view.findByTestId(`margin-note-${ESSAY_NOTE.id}`));
+
+    const cost = await view.findByTestId('essay-ask-cost');
+    expect(cost).toHaveTextContent(
+      'This needs your own API key. Add one in Settings to ask for this letter.',
+    );
+    expect(cost).not.toHaveTextContent(/BotMason/u);
+    expect(view.queryByTestId('essay-ask')).toBeNull();
+
+    fireEvent.press(view.getByTestId('essay-open-settings'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
+    await waitFor(() => expect(view.queryByTestId('essay-offer')).toBeNull());
+    expect(mockEssay).not.toHaveBeenCalled();
+    expect(mockUsage).not.toHaveBeenCalled();
   });
 });
