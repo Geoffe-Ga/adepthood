@@ -171,6 +171,29 @@ function copyOrigin(command: 'mark-unrecorded' | 'show', id: number) {
 async function readableHint(page: Page, testId: string, blockerId: string): Promise<void> {
   const hint = page.getByTestId(testId);
   await hint.scrollIntoViewIfNeeded();
+  // Browser auto-scroll sees the scroller, not the floating timer. A writer
+  // can wheel the disclosure above it using the page's existing end padding.
+  const hintBox = await hint.boundingBox();
+  const blockerBox = await page.getByTestId(blockerId).boundingBox();
+  expect(hintBox).not.toBeNull();
+  expect(blockerBox).not.toBeNull();
+  if (
+    hintBox!.y < blockerBox!.y + blockerBox!.height &&
+    hintBox!.y + hintBox!.height > blockerBox!.y
+  ) {
+    const scroll = page.getByTestId(
+      blockerId === 'bottom-fade' ? 'journal-shelf-list' : 'journal-page-scroll',
+    );
+    await scroll.hover({ position: { x: 4, y: 4 } });
+    await page.mouse.wheel(0, hintBox!.y + hintBox!.height - blockerBox!.y + 4);
+    await expect
+      .poll(async () => {
+        const moved = await hint.boundingBox();
+        const band = await page.getByTestId(blockerId).boundingBox();
+        return moved !== null && band !== null && moved.y + moved.height <= band.y;
+      })
+      .toBe(true);
+  }
   await expect(hint).toBeInViewport({ ratio: 0.99 });
   const geometry = await hint.evaluate((node) => {
     const range = document.createRange();

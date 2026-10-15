@@ -3811,10 +3811,7 @@ function JournalPage({
       >
         <ScrollView
           ref={focus.scrollRef}
-          // Content padding makes the last control reachable, but does not keep
-          // scroll-to-view from placing a recovery hint behind the floating band.
-          // Reserve its measured height in the viewport as well while writing.
-          style={[styles.pageScroll, ctl.editGate.editMode && { marginBottom: writingClearance }]}
+          style={styles.pageScroll}
           contentContainerStyle={styles.pageScrollContent}
           keyboardShouldPersistTaps="handled"
           // The formatting toolbar trails a growing body (#3002): iOS must inset the
