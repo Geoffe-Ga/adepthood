@@ -2610,5 +2610,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/practice-habit-link.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.writing-timer-presets-in-reach",
+    "description": "A writer on a short phone page -- 200% browser zoom on a 390px phone, 195x422 CSS px at device scale 2 -- opens a new page and meets every length the idle writing timer offers (#3403). The presets wrap to a second row there, and the floating band used to keep its resonance-sized lift and hide 30, 45 and the unit behind an inner scroll nobody could see. The band now gives up that lift when its content cannot fit above it, and keeps it everywhere it can. The real browser reads each preset's box and the unit's against the band's visible area and the viewport with the band unscrolled, hit-tests each one's centre, keeps every preset at the 44px floor, then taps 30 where it is drawn and walks 10, 20, 30, 45 by Tab, each in view as it takes focus, choosing 45 with Enter (the readout says 30:00, then 45:00). The same checks run at 1280x720, at 390x844, and at 390x844 with the timer's text doubled. Jest pins the lowering, its no-flip re-measure, and the page clearance it reserves in WritingSessionSurface.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["auth", "journal"],
+      "routes": ["POST /auth/signup", "GET /journal/"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/writing-timer-presets-fit.browser.e2e.test.ts"
   }
 ]
