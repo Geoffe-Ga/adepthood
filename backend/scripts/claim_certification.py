@@ -233,7 +233,60 @@ class Reason(enum.StrEnum):
     SIGNOFF_BEFORE_EVIDENCE = "SIGNOFF_BEFORE_EVIDENCE"
 
 
-INVALID_REASONS: Final = frozenset(list(Reason)[: list(Reason).index(Reason.WITHHELD)])
+#: Exit 2: the record is malformed, unsafe, or contradicts the tree. Declared
+#: explicitly, so a member's position in :class:`Reason` never decides its tier.
+INVALID_REASONS: Final[frozenset[Reason]] = frozenset(
+    {
+        Reason.MALFORMED,
+        Reason.UNKNOWN_KEY,
+        Reason.BAD_LOGIN,
+        Reason.BAD_TESTED_COMMIT,
+        Reason.BAD_DATE,
+        Reason.BAD_DIGEST,
+        Reason.UNSAFE_REFERENCE,
+        Reason.UNKNOWN_LIMITATION_CODE,
+        Reason.UNKNOWN_EXCLUSION_CODE,
+        Reason.CLAIM_MISMATCH,
+        Reason.GATE_SET_MISMATCH,
+        Reason.DANGLING_PYTEST_NODE,
+        Reason.DANGLING_JEST_FILE,
+        Reason.UNKNOWN_JOURNEY,
+        Reason.ISSUED_IN_FUTURE,
+        Reason.OBSERVED_IN_FUTURE,
+        Reason.VALIDITY_TOO_LONG,
+        Reason.LIMITATIONS_REQUIRED,
+    }
+)
+#: Exit 1: well formed, but not (or no longer) a certificate. Every
+#: :class:`Reason` is in exactly one of the two tiers (tested for totality).
+INCOMPLETE_REASONS: Final[frozenset[Reason]] = frozenset(
+    {
+        Reason.WITHHELD,
+        Reason.IMPLEMENTERS_MISSING,
+        Reason.REVIEWER_MISSING,
+        Reason.REVIEWER_IS_AGENT,
+        Reason.REVIEWER_IS_IMPLEMENTER,
+        Reason.TESTED_COMMIT_MISSING,
+        Reason.RECEIPT_MISSING,
+        Reason.RECEIPT_SCHEMA_UNSUPPORTED,
+        Reason.BACKEND_RELEASE_DRIFT,
+        Reason.FRONTEND_RELEASE_DRIFT,
+        Reason.AUTOMATED_EVIDENCE_MISSING,
+        Reason.UNVERIFIABLE_PYTEST_EVIDENCE,
+        Reason.NON_RUNNING_EVIDENCE,
+        Reason.UNCOVERED_JOURNEY,
+        Reason.LIVE_JOURNEY_MISSING,
+        Reason.GATE_EVIDENCE_MISSING,
+        Reason.GATE_UNMET,
+        Reason.SIGNOFF_MISSING,
+        Reason.SIGNOFF_BY_AGENT,
+        Reason.SIGNOFF_SENTENCE_DRIFT,
+        Reason.VALIDITY_MISSING,
+        Reason.EXPIRED,
+        Reason.EVIDENCE_OUTSIDE_WINDOW,
+        Reason.SIGNOFF_BEFORE_EVIDENCE,
+    }
+)
 
 Verdict = tuple[int, tuple[Reason, ...]]
 Checker = Callable[[object], list[Reason]]
@@ -481,9 +534,22 @@ def _claim_matches(ctx: _Context) -> list[Reason]:
     return [] if ctx.record["claim_id"] == ctx.claim.id else [Reason.CLAIM_MISMATCH]
 
 
+def _group_items(group: Sequence[str]) -> frozenset[str] | None:
+    """An any-of group's items as a set, or ``None`` when an item repeats."""
+    items = frozenset(group)
+    return items if len(items) == len(group) else None
+
+
 def _gate_set(ctx: _Context) -> list[Reason]:
-    groups = tuple(tuple(gate["item"] for gate in group) for group in ctx.record["required_gates"])
-    return [] if groups == ctx.claim.required_gates else [Reason.GATE_SET_MISMATCH]
+    """Groups pair with the ledger's by position; items within a group in any order.
+
+    A repeated item is a mismatch outright, so the set comparison cannot hide it.
+    """
+    record = [
+        _group_items([gate["item"] for gate in group]) for group in ctx.record["required_gates"]
+    ]
+    ledger = [frozenset(group) for group in ctx.claim.required_gates]
+    return [] if None not in record and record == ledger else [Reason.GATE_SET_MISMATCH]
 
 
 def _issued_in_past(ctx: _Context) -> list[Reason]:

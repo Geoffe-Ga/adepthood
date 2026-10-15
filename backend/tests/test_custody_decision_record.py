@@ -42,7 +42,7 @@ from services.encryption_inventory import (
     raw_table,
 )
 from services.journal_encryption import EncryptedString
-from tests.support.encrypted_rows import insert_row
+from tests.support.encrypted_rows import insert_row, stored_plaintext
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ADR_DIR = _REPO_ROOT / "docs" / "adr"
@@ -747,7 +747,7 @@ async def test_server_env_keys_alone_recover_every_in_scope_journal_column(
 
         assert isinstance(stored, str)
         assert canary not in stored
-        assert je.decrypt(stored) == canary
+        assert je.decrypt(stored) == stored_plaintext(target, canary)
     finally:
         je.reset_cache()
 
@@ -1153,27 +1153,86 @@ def test_adr_0007_amendment_adds_no_condition_for_lifting_intimate_skip_only() -
     assert "INTIMATE-DEVICE" in questions
 
 
-def test_removal_inventory_names_the_real_derived_plaintext() -> None:
-    """The derived-plaintext inventory is the registry's members, not a paraphrase.
-
-    ``DERIVED_FROM_PROSE`` holds no "detected facts"; completion detection
-    output (``completionsuggestion.completed_units`` and ``completed_on``) is a
-    separate, non-textual derived store and must be listed on its own.
-    """
+def _removal_section() -> str:
+    """The flattened ``## Primary-copy and derivative removal`` section."""
     text = _flat(_adr_text())
     removal = text[text.index("## Primary-copy and derivative removal") :]
-    removal = removal[: removal.index("## Migration of existing")]
+    return removal[: removal.index("## Migration of existing")]
+
+
+def _removal_item(removal: str, start: str, end: str) -> str:
+    """The slice of the removal section from ``start`` up to ``end``."""
+    item = removal[removal.index(start) :]
+    return item[: item.index(end)]
+
+
+def _named_columns(text: str) -> set[str]:
+    """Every backticked ``table.column`` (or ``table.*``) in ``text``, file names aside."""
+    names = re.findall(r"`([a-z_]+\.(?:[a-z_]+|\*))`", text)
+    return {name for name in names if not name.endswith(".py")}
+
+
+def _derived_from_prose_registry() -> set[str]:
+    """The ``DERIVED_FROM_PROSE`` members of ``_PLAINTEXT_COLUMNS``, read from source."""
     registry = (_REPO_ROOT / "backend" / "tests" / "test_column_classification.py").read_text(
         encoding="utf-8"
     )
     group = registry[registry.index('"DERIVED_FROM_PROSE": frozenset(') :]
-    members = re.findall(r'"([a-z_]+\.[a-z_]+)"', group[: group.index(")")])
+    return set(re.findall(r'"([a-z_]+\.[a-z_]+)"', group[: group.index(")")]))
+
+
+def _covered(column: str, names: set[str]) -> bool:
+    """True when ``column`` is named exactly or by its table's ``table.*`` wildcard."""
+    return column in names or f"{column.partition('.')[0]}.*" in names
+
+
+def test_removal_inventory_names_the_real_derived_plaintext() -> None:
+    """The derived-plaintext inventory is exactly the registry's members, not a paraphrase.
+
+    Two-way: every ``DERIVED_FROM_PROSE`` member is listed in item 2, and item 2
+    lists nothing that has left the registry (as the embedding and vault tags
+    did when #3263 encrypted them). ``DERIVED_FROM_PROSE`` holds no "detected
+    facts"; completion detection output (``completionsuggestion.completed_units``
+    and ``completed_on``) is a separate, non-textual derived store and must be
+    listed on its own.
+    """
+    removal = _removal_section()
+    item_two = _removal_item(
+        removal, "2. **`DERIVED_FROM_PROSE` plaintext**", "3. **Completion detection output.**"
+    )
+    members = _derived_from_prose_registry()
+    named = _named_columns(item_two)
 
     assert members
-    assert "detected facts" not in text
-    assert [member for member in members if f"`{member}`" not in removal] == []
+    assert "detected facts" not in _flat(_adr_text())
+    assert sorted(members - named) == []
+    assert sorted(named - members) == []
     assert "`completionsuggestion.completed_units`" in removal
     assert "`completionsuggestion.completed_on`" in removal
+
+
+def test_removal_inventory_counts_the_real_encrypted_columns() -> None:
+    """Item 1's "N ``EncryptedString`` columns" is the size of B02's inventory."""
+    counts = re.findall(r"The (\d+) `EncryptedString` columns", _removal_section())
+
+    assert counts == [str(len(encrypted_columns()))]
+
+
+def test_removal_scope_bullets_match_the_scorecard_scope_split() -> None:
+    """Item 1's in-scope and out-of-scope bullets name the scorecard's split, both ways."""
+    removal = _removal_section()
+    in_bullet = _named_columns(
+        _removal_item(removal, "**Journal content, in scope:**", "**Out of scope:**")
+    )
+    out_bullet = _named_columns(
+        _removal_item(removal, "**Out of scope:**", "2. **`DERIVED_FROM_PROSE` plaintext**")
+    )
+    in_scope, out_of_scope = _journal_scope()
+
+    assert sorted(column for column in in_scope if not _covered(column, in_bullet)) == []
+    assert sorted(column for column in out_of_scope if not _covered(column, out_bullet)) == []
+    assert sorted(column for column in out_of_scope if _covered(column, in_bullet)) == []
+    assert sorted(column for column in in_scope if _covered(column, out_bullet)) == []
 
 
 def test_selected_primary_copy_removal_matches_the_scope_split() -> None:

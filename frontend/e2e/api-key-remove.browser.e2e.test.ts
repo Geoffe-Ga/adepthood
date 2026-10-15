@@ -214,8 +214,8 @@ test('a removed key stops travelling and the shared allowance pays', async ({ pa
   //    comes from the getter alone -- and it no longer carries the key. A first
   //    letter is priced (#623), so opening the note only offers it, at the
   //    shared allowance's price; the explicit ask is what sends the request.
-  const note = page.locator('[data-testid^="margin-note-"]:not([data-testid*="stale"])').first();
-  await note.click();
+  const openNote = page.locator('[data-testid^="margin-note-open-"]').first();
+  await openNote.click();
   await expect(page.getByTestId('essay-ask-cost')).toContainText(
     `one of your ${String(walletBefore.monthly_cap)} BotMason messages`,
   );

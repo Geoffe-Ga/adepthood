@@ -46,7 +46,7 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
 
   Both are built to fail when B13 phase (c) moves a journal column to
   client-held ciphertext.
-- **That covers 18 columns across 10 tables.** The count comes from
+- **That covers 20 columns across 10 tables.** The count comes from
   `services/encryption_inventory.py::encrypted_columns()`. The comment in
   `models/_prose_repr.py`, "13 across 8 tables", is stale. B02's raw canary
   `test_every_encrypted_column_stores_ciphertext` proves that the env keys
@@ -54,18 +54,21 @@ Measured on branch `w34/B12` (main plus wave 34d), 2026-10-07:
   and `test_every_encrypted_table_has_a_row_factory` keep that parametrization
   from shrinking. The columns are:
   `completionsuggestion.anchor_text`, `completionsuggestion.label`,
-  `corpusfragment.content`, `feedbacknote.body`, `feedbackreport.actual`,
-  `feedbackreport.expected`, `feedbackreport.intent`,
+  `corpusfragment.content`, `corpusfragment.embedding`, `feedbacknote.body`,
+  `feedbackreport.actual`, `feedbackreport.expected`, `feedbackreport.intent`,
   `feedbackreport.summary`, `journalentry.message`, `journalentry.title`,
-  `marginalia.anchor_text`, `marginalia.essay`, `marginalia.note`,
-  `practicesession.insight`, `practicesession.reflection`,
+  `journalentry.vault_tags`, `marginalia.anchor_text`, `marginalia.essay`,
+  `marginalia.note`, `practicesession.insight`, `practicesession.reflection`,
   `promotedquote.anchor_text`, `promptresponse.response`,
   `uservaultconfig.api_key`.
 - **Content-derived plaintext sits beside them.** The `DERIVED_FROM_PROSE`
   group of `_PLAINTEXT_COLUMNS` in `backend/tests/test_column_classification.py`
-  lists the columns that hold it. Among them are the corpus embedding and
-  frequency weights, and the entry's tier, classification, tag, vault tags and
-  reflection scope. Completion detection output is a separate, non-textual
+  lists the columns that hold it. Among them are the corpus frequency
+  weights, and the entry's tier, classification, tag and reflection scope. The
+  corpus embedding and the entry's vault tags were among them until #3263
+  encrypted both (as `EncryptedJSONList`, ciphertext of their JSON under the
+  same codec); they are now in the inventory above and in the scorecard's
+  in-scope set. Completion detection output is a separate, non-textual
   derived store (`completionsuggestion.completed_units` and `completed_on`).
 - **Server AI reads plaintext.** `services/botmason.py::resolve_chat_api_key`
   used the person's own key (BYOK) when one was sent, and otherwise **the
@@ -270,7 +273,7 @@ history and future content stand or fall together.
 - **Inference location:** Pre-phase-(a) baseline: server-side cloud calls paid by the app's own LLM_API_KEY unless the person supplies a key; Creek reflection when a vault is bound. Phase (a)'s first slice (#3067) removed the app-key payer. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Supported platforms:** Web only ships; native is configured but unshipped. (`repo:DEPLOYMENT.md`)
 - **Client delivery and update trust:** Operator-served web bundle with an enforced CSP and SRI; a modified bundle is undetectable to the person, because both are served by us. (`repo:frontend/nginx.conf`)
-- **Primary-copy and derivative removal:** Nothing removed: 18 EncryptedString columns across 10 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
+- **Primary-copy and derivative removal:** Nothing removed: 20 EncryptedString columns across 10 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defends a database or backup thief only while the env keys stay separate; nothing against operator, host, compelled update, subpoena or support pressure. (`repo:backend/tests/test_journal_text_at_rest.py::test_every_encrypted_column_stores_ciphertext`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
@@ -372,7 +375,7 @@ history and future content stand or fall together.
 - **Inference location:** Device first; then the person's vault-local model or a managed no-retention runtime we run (paid by credits, labelled on each use, not operator-blind while it runs); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
 - **Supported platforms:** Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later. (`owner:2026-10-07#B12-web`)
 - **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now (live since phase (b)'s first slice), signed builds later; CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
-- **Primary-copy and derivative removal:** The 12 in-scope EncryptedString columns of journal_scope_proposal (of the 18; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
+- **Primary-copy and derivative removal:** The 14 in-scope EncryptedString columns of journal_scope_proposal (of the 20; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
 - **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
@@ -434,27 +437,29 @@ certifies that claim for that platform.
 Every server-readable store that must reach "ciphertext under a user-held
 key, withdrawn, or expired" before an account may be labelled protected:
 
-1. **The 18 `EncryptedString` columns.** These are held by B02's inventory
+1. **The 20 `EncryptedString` columns.** These are held by B02's inventory
    (`encrypted_columns()`) and pinned by
    `test_every_encrypted_column_stores_ciphertext`. The default proposal,
-   per the owner's scope split (Decision item 9):
+   per the owner's scope split (Decision item 9), puts 14 in scope:
    - **Journal content, in scope:** `journalentry.*`, `marginalia.*`,
      `promotedquote.anchor_text`, `corpusfragment.content`,
-     `completionsuggestion.*`, `promptresponse.response`,
-     `practicesession.insight` and `practicesession.reflection`.
+     `corpusfragment.embedding`, `completionsuggestion.*`,
+     `promptresponse.response`, `practicesession.insight` and
+     `practicesession.reflection`.
    - **Out of scope:** `feedbacknote.body` and `feedbackreport.*`,
      which are written *to* the operator to be read, and
      `uservaultconfig.api_key`, a credential the server must present on the
      person's behalf.
 2. **`DERIVED_FROM_PROSE` plaintext** (`_PLAINTEXT_COLUMNS` in
    `backend/tests/test_column_classification.py`). The members are
-   `corpusfragment.embedding`, `corpusfragment.frequency_weights`,
-   `corpusfragment.tier`, `journalentry.classification`,
-   `journalentry.reflection_scope_key`, `journalentry.tag` and
-   `journalentry.vault_tags`. For a protected account these are recomputed on
-   the device or in the vault, dropped, or kept only where the owner decides
-   they may stay readable (B02 owner decision: disclose, do not encrypt,
-   embeddings, frequency weights and vault tags).
+   `corpusfragment.frequency_weights`, `corpusfragment.tier`,
+   `journalentry.classification`, `journalentry.reflection_scope_key` and
+   `journalentry.tag`. For a protected account these are recomputed on the
+   device or in the vault, dropped, or kept only where the owner decides they
+   may stay readable (B02 owner decision: disclose, do not encrypt, the
+   frequency weights). The corpus embedding and the entry's vault tags were
+   in this group until #3263 encrypted them; they are now among item 1's
+   columns.
 3. **Completion detection output.** `completionsuggestion.completed_units` and
    `completionsuggestion.completed_on` are non-textual values derived from
    prose by detection. They follow the same rule as item 2.

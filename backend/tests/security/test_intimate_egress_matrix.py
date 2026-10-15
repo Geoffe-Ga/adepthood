@@ -490,6 +490,16 @@ ROWS: Final[tuple[Row, ...]] = (
         # falls after the write, so only that draft can satisfy the vault column.
         {Recorder.PROVIDER: Expect.CARRIES, Recorder.VAULT: Expect.CARRIES},
     ),
+    Row(
+        ("POST", "/journal/marginalia/{marginalia_id}/essay"),
+        "vault bound",
+        _act_essay,
+        # The vault writes the letter itself (#3203): the entry reaches the vault
+        # and only the vault, and the letter it keeps is the draft a
+        # reclassification must withdraw.
+        {Recorder.VAULT: Expect.CARRIES},
+        boundary=ReflectionBoundary.VAULT_BOUND,
+    ),
     Row(("POST", "/corpus/import"), "", _act_import, {Recorder.VAULT: Expect.FIRES}),
     Row(
         ("PUT", "/corpus/consent/{source}"),

@@ -95,6 +95,7 @@ _PASSWORD: Final = "secret12345"  # pragma: allowlist secret
 _BODY: Final = "I meditated for twenty minutes by the river and the willow bent without breaking."
 _QUOTE: Final = "the willow bent without breaking"
 _VAULT_NOTE: Final = "The vault reads: you bend and return."
+_VAULT_LETTER: Final = "The vault writes: you bent, and you came back."
 _BYOK_HEADER: Final = "X-LLM-API-Key"
 _VAULT_KEY: Final = "creek-vault-matrix-key"  # pragma: allowlist secret
 
@@ -112,6 +113,7 @@ _PROVIDER_HOSTS: Final = frozenset({_OPENAI_HOST, _ANTHROPIC_HOST})
 _CAPABILITIES_PATH: Final = "/v1/capabilities"
 _JOURNAL_PATH: Final = "/v1/journal-entries/"
 _REFLECTIONS_PATH: Final = "/v1/reflections"
+_LETTERS_PATH: Final = "/v1/letters/"
 _MINOR_COMPONENTS: Final = 2
 _CONTRACT_MINOR: Final = ".".join(CONTRACT_VERSION.split(".")[:_MINOR_COMPONENTS])
 _FIXTURES: Final = Path(__file__).resolve().parents[1] / "fixtures" / "creek_v1" / "examples"
@@ -126,7 +128,7 @@ def _fixture(capability: str, state: str) -> dict[str, object]:
 
 _HANDSHAKE: Final[dict[str, object]] = {
     "vault": {"available": True},
-    "capabilities": ["journal-upsert", "reflections"],
+    "capabilities": ["journal-upsert", "reflections", "voice-drafts", "letters"],
     "contract_version": CONTRACT_VERSION,
     "contract_minor": _CONTRACT_MINOR,
     "supported_contract_minors": [_CONTRACT_MINOR],
@@ -150,8 +152,19 @@ _SERVED: Final[tuple[tuple[str, dict[str, object]], ...]] = (
 )
 
 
+def _vault_letter_at(path: str) -> dict[str, object]:
+    """The published letter success cell, re-addressed to the id the request named."""
+    return {
+        **_fixture("letters", "success"),
+        "external_id": path.removeprefix(_LETTERS_PATH),
+        "letter": _VAULT_LETTER,
+    }
+
+
 def _served(path: str) -> dict[str, object] | None:
     """The healthy vault's answer at ``path``, or ``None`` for a path it does not serve."""
+    if path.startswith(_LETTERS_PATH):
+        return _vault_letter_at(path)
     return next((body for prefix, body in _SERVED if path.startswith(prefix)), None)
 
 
@@ -561,7 +574,14 @@ _OPERATIONS: Final = (
         vault_answer=_VAULT_NOTE,
     ),
     Operation("standalone_detect", _arrange_entry_with_candidate, _detect, relays_key=True),
-    Operation("essay", _arrange_note, _essay, relays_key=True, fails_closed=True),
+    Operation(
+        "essay",
+        _arrange_note,
+        _essay,
+        relays_key=True,
+        asks_vault=True,
+        vault_answer=_VAULT_LETTER,
+    ),
     Operation(
         "corpus_classification",
         _arrange_corpus_consent,

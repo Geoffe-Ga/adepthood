@@ -772,6 +772,8 @@ export const styles = StyleSheet.create({
   // ===== Start Date =====
   startDateContainer: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.md,
     alignItems: 'center',
     justifyContent: 'center',
     marginVertical: SPACING.lg,
@@ -782,7 +784,6 @@ export const styles = StyleSheet.create({
   startDateLabel: {
     fontSize: 16,
     fontWeight: '600',
-    marginRight: SPACING.md,
     color: COLORS.text.primary,
   },
 

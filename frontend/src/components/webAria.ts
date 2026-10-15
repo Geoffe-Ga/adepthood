@@ -54,3 +54,9 @@ export function webDisabledState<P>(disabled: boolean): Partial<P> {
   if (Platform.OS !== 'web') return {};
   return { 'aria-disabled': disabled } as unknown as Partial<P>;
 }
+
+/** The current item in a navigation set; valid for command buttons as well as links. */
+export function webCurrentState<P>(current: boolean): Partial<P> {
+  if (Platform.OS !== 'web') return {};
+  return { 'aria-current': current ? 'true' : undefined } as unknown as Partial<P>;
+}

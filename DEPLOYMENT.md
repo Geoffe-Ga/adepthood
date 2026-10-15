@@ -289,6 +289,7 @@ In the frontend service's **Variables** tab, add:
 | `EXPO_PUBLIC_GUMROAD_HELP_URL` | `https://help.gumroad.com/article/76-license-keys` | Optional. License-key help article linked from signup; defaults to this value |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB` | *(the Google **Web** client ID)* | Only for Google sign-in on web. Baked in at build time — see the note below |
 | `EXPO_PUBLIC_SANGHA_INVITE_URL` | `https://discord.gg/<your-permanent-invite>` | Optional. Digital Sangha invite; unset means Settings shows neither the Sangha door nor its switch |
+| `EXPO_PUBLIC_CREDIT_PACK_URL` | `https://<your-store>/l/<credit-pack>` | Optional. BotMason credit pack page; unset means the app neither links to it nor offers credits |
 | `PORT` | `80` | nginx listens on 80 |
 
 > **Important:** every `EXPO_PUBLIC_*` variable is baked into the JavaScript
@@ -767,7 +768,10 @@ keys — the body and title on `journalentry`, the anchored passage on
 `promotedquote`, the passage plus the note and essay on `marginalia`, the
 passage plus its label on `completionsuggestion`, the weekly answer on
 `promptresponse` (mirrored into an entry byte-for-byte), and the ontologized
-copy on `corpusfragment`. A single plaintext copy beside the ciphertext would be
+copy on `corpusfragment`. Two values derived from the writing are encrypted
+with the same keys too: the passage's `embedding` on `corpusfragment` and the
+vault's `vault_tags` on `journalentry`, each stored as the ciphertext of its
+JSON list. A single plaintext copy beside the ciphertext would be
 the copy a stolen dump yields, so the set is pinned by a test rather than by this
 list. **Key presence is the switch**: with no key configured the columns are
 plaintext, which is the right default on a laptop and unacceptable on a server.
@@ -1041,6 +1045,7 @@ length of its Creek round trip. Budget PostgreSQL `max_connections` at
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS` | For Google sign-in on iOS | Google **iOS** client ID. Consumed by EAS native builds, not the web Dockerfile. |
 | `EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID` | For Google sign-in on Android | Google **Android** client ID. Consumed by EAS native builds, not the web Dockerfile. |
 | `EXPO_PUBLIC_SANGHA_INVITE_URL` | No | Permanent, never-expiring Discord invite for the Digital Sangha, opened from Settings in the platform browser. Must be `https`; anything else resolves to nothing. There is deliberately no default — unset means the app never mentions the Sangha, which is an absent invitation rather than a dead link inside a shipped binary. |
+| `EXPO_PUBLIC_CREDIT_PACK_URL` | No | Page where BotMason credits are bought, linked from the vault-reading "balance has run out" remedy with a note to buy with the same email address as the Adepthood account. Must be `https`; anything else resolves to nothing. No default — unset means the app neither links to it nor says credits can be bought. |
 | `EXPO_PUBLIC_SENTRY_DSN` | No (recommended in prod) | Sentry DSN that crashes caught by the error boundaries are reported to. Baked in at build time like every other `EXPO_PUBLIC_*` value, so it is public — use a client DSN, never a server one. Unset means crashes go to the console only. |
 | `EXPO_PUBLIC_SENTRY_ENVIRONMENT` | No | Sentry environment for client reports. Defaults to `development` in dev builds and `production` otherwise. |
 | `EXPO_PUBLIC_SENTRY_RELEASE` | No | Version string client reports are tagged with. Defaults to `unknown`. |
@@ -1311,6 +1316,118 @@ IPv4 address, but it is a change from per-address keying.  If such a
 site is your traffic and you see spurious `429`s, setting `128`
 restores exact per-address keying, at the cost of reopening the
 address-rotation bypass this setting exists to close.
+
+---
+
+## Nightly retention sweep (Railway cron)
+
+Every retention period the owner ratified (the decision record is
+`docs/privacy/retention-proposal.md`) is applied by one script,
+`backend/scripts/retention_sweep.py`. It removes, in one run, everything that
+has passed its period: energy plans, feedback reports, soft-deleted journal
+pages, confirmed withdrawal and retraction receipts, erasure receipts,
+anonymised sales, sign-in attempts, AI metering rows, expired deny-list
+tokens, dead share links, confirmed teardown receipts and finished restore
+markers. Open obligations, unconfirmed teardowns, unfinished or still-named
+restores and still-claimed sales are never removed. The periods live in
+`backend/src/domain/retention.py`; the script restates none of them.
+
+**Nothing is deleted until you create the cron service below.** It is a second
+Railway service that runs the backend's own image, executes the script once,
+and exits. It does not serve traffic and makes no backup.
+
+### Create the cron service
+
+1. In the Railway project, click **"+ New"** → **"GitHub Repo"** and pick the
+   same `adepthood` repository as the backend. Leave the root directory unset,
+   exactly as for the backend (the build context is the repository root).
+2. Rename the service **`retention-sweep`**.
+3. **Settings → Build:** builder **Dockerfile**, Dockerfile path
+   `backend/Dockerfile` (the same image as the backend).
+4. **Settings → Config-as-code:** leave the config file path **empty**. If
+   Railway picked up `backend/railway.toml`, clear it: that file sets the
+   backend's `/health` healthcheck, which a job that exits never answers.
+5. **Settings → Deploy → Custom Start Command:**
+   ```
+   python -m scripts.retention_sweep
+   ```
+   The image's working directory is `/app` and it presets
+   `PYTHONPATH=/app/src`, so no other prefix is needed. Do **not** add
+   `alembic upgrade head`: the backend service owns migrations.
+6. **Settings → Deploy → Cron Schedule:** `17 3 * * *`. Railway reads cron
+   schedules in **UTC**, so this is 03:17 UTC every night. Any off-peak
+   minute works; avoid the top of the hour, when shared infrastructure is
+   busiest.
+7. **Settings → Deploy → Restart Policy:** **Never**. A failed sweep should
+   show as a failed run, not loop; the next night's run retries every store.
+
+### Reference the backend's variables
+
+In the `retention-sweep` service's **Variables** tab, click **"+ New
+Variable"** → **"Add Reference"**, and reference these from the **backend**
+service, so the two can never drift:
+
+| Variable | Reference | Why |
+|----------|-----------|-----|
+| `DATABASE_URL` | `${{backend.DATABASE_URL}}` | The database to sweep. Required. |
+| `RESTORE_ID` | `${{backend.RESTORE_ID}}` | Only if the backend sets it: the sweep then keeps the restore marker the startup gate names. |
+
+That is all. No sweep decrypts anything, so **do not** reference
+`JOURNAL_ENCRYPTION_KEYS`; nor `SECRET_KEY`, any provider key, or any
+managed-vault variable. The fewer secrets the job holds, the less a leak of it
+exposes.
+
+### First run: dry run, then apply
+
+Before the first scheduled run, look at what it would do:
+
+1. Temporarily set the Custom Start Command to
+   `python -m scripts.retention_sweep --dry-run`.
+2. Deploy the service (**Deploy** button, or wait for the schedule). A dry run
+   counts and changes nothing.
+3. Read the counts (below). Large first-night numbers are expected: every
+   period starts applying at once, to rows that may be years old.
+4. Restore the start command to `python -m scripts.retention_sweep`. From then
+   on, the schedule runs it every night.
+
+To run it by hand from a checkout instead, from `backend/`, with
+`DATABASE_URL` set to the database's **public** URL (Postgres service →
+Variables → `DATABASE_PUBLIC_URL`; paste it, do not persist it):
+
+```bash
+PYTHONPATH=src python -m scripts.retention_sweep --dry-run
+```
+
+### Reading the counts
+
+Each run's logs (service → **Deployments** → the run → **Logs**) carry one line
+per store and a closing line, and nothing else: no id, email, IP, token or
+content.
+
+```
+retention_sweep_store store=loginattempt mode=apply eligible=412 deleted=412 blocked=0 duration_ms=38
+retention_sweep_store store=journalwithdrawalobligation mode=apply eligible=3 deleted=3 blocked=1 duration_ms=12
+retention_sweep_store_failed store=gumroadsale mode=apply error=OperationalError duration_ms=5003
+retention_sweep_done mode=apply stores=13 failed=1
+```
+
+- `eligible`: rows past their period now. On a dry run, what would go.
+- `deleted`: rows removed (always `0` on `--dry-run`). Equal to `eligible`
+  unless a row changed between the count and the delete.
+- `blocked`: rows past the period that the rules hold anyway: an open vault
+  withdrawal, an unconfirmed teardown, an unfinished or still-named restore, a
+  sale a course grant or licence binding still names, a soft-deleted page
+  whose essay withdrawal is unsettled, or a share link that was used up but
+  never expired or revoked (no column records when it ran out). A blocked
+  count that grows night after night means something is stuck upstream.
+- `duration_ms`: how long the store took.
+- `retention_sweep_store_failed`: that store's transaction was rolled back
+  and the error is named by class only. The other stores still ran, and the
+  run exits `1`, so Railway marks it failed. Fix the cause; the next run picks
+  up everything that store missed.
+
+A second run straight after a successful one reports `eligible=0 deleted=0`
+for every store.
 
 ---
 

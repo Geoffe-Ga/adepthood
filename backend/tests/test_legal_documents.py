@@ -73,7 +73,7 @@ from domain.data_export import MANIFEST, Included, Omitted
 from domain.feedback_triage import DRAFT_METADATA_FIELDS, FORBIDDEN_DRAFT_FIELDS, DraftSource
 from domain.frequencies import Frequency
 from domain.resonance import PRIOR_DRAFT_LIMIT
-from domain.retention import REDACT_INSTEAD_OF_DELETE
+from domain.retention import DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS, REDACT_INSTEAD_OF_DELETE
 from main import validate_journal_encryption_config
 from models.corpus_fragment import CorpusSource
 from models.feedback import FEEDBACK_RETENTION_DAYS
@@ -107,7 +107,7 @@ from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_upload import UploadedDocument
 from services.creek_vault_write import VaultWriteStatus, store_and_classify
 from services.higher_self_grounding import GROUNDING_LIMIT, GroundingSource
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import is_encrypted_type
 from services.reflection_boundary import ReflectionBoundary
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -141,6 +141,7 @@ _ENCRYPTED_COLUMNS = frozenset(
         "completionsuggestion.anchor_text",
         "completionsuggestion.label",
         "corpusfragment.content",
+        "corpusfragment.embedding",
         "feedbacknote.body",
         "feedbackreport.actual",
         "feedbackreport.expected",
@@ -148,6 +149,7 @@ _ENCRYPTED_COLUMNS = frozenset(
         "feedbackreport.summary",
         "journalentry.message",
         "journalentry.title",
+        "journalentry.vault_tags",
         "marginalia.anchor_text",
         "marginalia.essay",
         "marginalia.note",
@@ -213,7 +215,7 @@ def _encrypted_columns() -> frozenset[str]:
         f"{table.name}.{column.name}"
         for table in SQLModel.metadata.tables.values()
         for column in table.columns
-        if isinstance(column.type, EncryptedString)
+        if is_encrypted_type(column.type)
     )
 
 
@@ -281,10 +283,8 @@ def test_exactly_the_pinned_columns_are_encrypted() -> None:
 # has added here.
 _DERIVED_PLAINTEXT_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "corpusfragment.embedding": "**embeddings**",
         "corpusfragment.frequency_weights": "**frequency weights**",
         "corpusfragment.overall_confidence": "overall confidence",
-        "journalentry.vault_tags": "**vault tags**",
         "completionsuggestion.completed_units": "**detected amounts and dates**",
         "completionsuggestion.completed_on": "**detected amounts and dates**",
         "completionsuggestion.anchor_start": "where in the entry",
@@ -294,6 +294,18 @@ _DERIVED_PLAINTEXT_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
         "journalentry.tag": "**an entry's tag**",
         "journalentry.reflection_scope_key": "**an entry's reflection scope**",
         "corpusfragment.tier": "**a corpus passage's tier**",
+    }
+)
+
+# Columns derived from a person's writing that the owner chose to encrypt
+# rather than keep disclosing (#3263), each mapped to the words the policy
+# names it under among the encrypted values. Held to the schema (encrypted) and
+# to the policy (named before the unencrypted list begins), so neither the
+# encryption nor the promise can lapse alone.
+_ENCRYPTED_DERIVED_DISCLOSURES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "corpusfragment.embedding": "**the embedding of each passage in the corpus**",
+        "journalentry.vault_tags": "**the vault tags on an entry**",
     }
 )
 
@@ -331,6 +343,27 @@ def test_the_policy_discloses_the_derived_data_it_stores_unencrypted() -> None:
     assert "stored unencrypted" in prose
     restated = [claim for claim in _RETIRED_DERIVED_CLAIMS if claim in prose]
     assert not restated, f"the policy still claims all derived data is encrypted: {restated}"
+
+
+def test_the_policy_names_the_encrypted_derived_data_as_encrypted() -> None:
+    """Embeddings and vault tags are ciphertext, and the policy says so before its plaintext list.
+
+    The policy once named both among the derived values "stored unencrypted".
+    Now that the schema encrypts them, naming them there would understate the
+    protection, and dropping them altogether would leave a reader who read the
+    old copy with no word on where they went.
+    """
+    prose = _prose(_PRIVACY_POLICY)
+    encrypted = _encrypted_columns()
+    plaintext_list_starts = prose.index("stored unencrypted")
+
+    not_encrypted = sorted(set(_ENCRYPTED_DERIVED_DISCLOSURES) - encrypted)
+    assert not not_encrypted, f"no longer encrypted; restore the disclosure: {not_encrypted}"
+    for column, name in _ENCRYPTED_DERIVED_DISCLOSURES.items():
+        assert name in prose, f"the policy does not name {column} as encrypted"
+        assert prose.index(name) < plaintext_list_starts, f"{column} is named as unencrypted"
+    for retired in ("**embeddings**", "**vault tags**"):
+        assert retired not in prose[plaintext_list_starts:], f"still disclosed: {retired}"
 
 
 # The one sentence in the policy that lists what is *not* encrypted, identified
@@ -1147,6 +1180,23 @@ def test_the_policy_describes_deleting_one_page_without_overstating_it() -> None
     overstated = sorted(claim for claim in _OVERSTATED_ERASURE if claim in section)
     assert not overstated, f"the single-page section promises {overstated}: {section!r}"
     assert "corpus" in section, "the section does not say the corpus copy goes with the page"
+
+
+def test_the_policy_discloses_the_detached_withdrawal_note() -> None:
+    """Account deletion keeps a note for an unconfirmed vault copy; the policy says so (#3267).
+
+    The note outlives the account on purpose, so the account section must say
+    what it holds, that it names nobody, and the bound the purge enforces --
+    read from the constant, so changing the bound reopens this sentence.
+    """
+    section = _section(_PRIVACY_POLICY, "## deleting your account")
+
+    assert "an opaque vault identifier and an entry number, not linked to you" in section
+    assert (
+        f"until the vault confirms the copy is gone or for "
+        f"{DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS} days at most"
+    ) in section
+    assert POLICY["journalwithdrawalnote"].disposition is Disposition.RETAIN
 
 
 @pytest.mark.asyncio

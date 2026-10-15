@@ -52,6 +52,7 @@ import { isTierLooser, type RetryFailure, type SaveState } from './journalSaveRe
 import LinkHabitNudge from './LinkHabitNudge';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import { buildMarginItems, drawnNoteIds, type MarginItem } from './marginLayout';
+import { MarginNavigationProvider } from './marginNavigation';
 import MarginNote from './MarginNote';
 import PassReceiptNotice from './PassReceiptNotice';
 import PrivacyTierControl, { DEFAULT_TIER, tierLabel } from './PrivacyTierControl';
@@ -3779,10 +3780,19 @@ function JournalPageSurface({
       ]}
       testID="journal-page"
     >
-      <FocusScrollProvider value={focus.value}>
-        <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
-      </FocusScrollProvider>
-      <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
+      <MarginNavigationProvider
+        enabled={!ctl.editGate.editMode}
+        body={ctl.autosave.body}
+        notes={ctl.resonance.marginalia}
+        quotes={ctl.quote.quotes}
+        pageRef={focus.pageRef}
+        scrollRef={focus.scrollRef}
+      >
+        <FocusScrollProvider value={focus.value}>
+          <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+        </FocusScrollProvider>
+        <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
+      </MarginNavigationProvider>
     </View>
   );
 }
@@ -4372,6 +4382,11 @@ function ResonanceOverlays({
     explainer.onCancelRefill();
     onOpenApiKey();
   }, [explainer, onOpenApiKey]);
+  // Only a key could pay (#3262): close the note, then go and add one.
+  const openSettingsFromExplainer = useCallback(() => {
+    explainer.onCancel();
+    onOpenApiKey();
+  }, [explainer, onOpenApiKey]);
   return (
     <>
       <ResonanceExplainerDialog
@@ -4382,6 +4397,8 @@ function ResonanceOverlays({
         onToggleDontShowAgain={explainer.onToggleDontShowAgain}
         onContinue={explainer.onContinue}
         onCancel={explainer.onCancel}
+        keyNeeded={explainer.keyNeeded}
+        onOpenSettings={openSettingsFromExplainer}
       />
       <ResonanceRefillDialog
         visible={explainer.refillVisible}
@@ -4413,6 +4430,42 @@ function useEssayFundingRequired(
   );
 }
 
+/** A keyless letter can be paid for only by a key (#3262): close the note, then go add one. */
+function useOpenSettingsFromEssay(onCloseNote: () => void, onOpenApiKey: () => void): () => void {
+  return useCallback(() => {
+    onCloseNote();
+    onOpenApiKey();
+  }, [onCloseNote, onOpenApiKey]);
+}
+
+/** A note's letter, priced for whoever pays, with the pass's own refill remedy. */
+function EssayOverlay({
+  modal,
+  explainer,
+  onOpenApiKey,
+}: {
+  modal: Controller['modal'];
+  explainer: Controller['explainer'];
+  onOpenApiKey: () => void;
+}): React.JSX.Element {
+  const { apiKey } = useApiKey();
+  const onEssayFundingRequired = useEssayFundingRequired(
+    modal.onCloseNote,
+    explainer.showRefillFor,
+  );
+  const openSettingsFromEssay = useOpenSettingsFromEssay(modal.onCloseNote, onOpenApiKey);
+  return (
+    <ResonanceEssayModal
+      note={modal.openNote}
+      onClose={modal.onCloseNote}
+      onEssayLoaded={modal.onEssayLoaded}
+      hasOwnKey={apiKey !== null}
+      onFundingRequired={onEssayFundingRequired}
+      onOpenSettings={openSettingsFromEssay}
+    />
+  );
+}
+
 /** The screen's floating layers: the essay modal, the edit-confirm dialog, and
  *  the header drawer — grouped so the screen component stays under the line cap. */
 function EntryOverlays({
@@ -4430,21 +4483,10 @@ function EntryOverlays({
   currentEntryId: number | null;
   onOpenApiKey: () => void;
 }): React.JSX.Element {
-  const { apiKey } = useApiKey();
-  const onEssayFundingRequired = useEssayFundingRequired(
-    modal.onCloseNote,
-    explainer.showRefillFor,
-  );
   return (
     <>
       <ResonanceOverlays explainer={explainer} onOpenApiKey={onOpenApiKey} />
-      <ResonanceEssayModal
-        note={modal.openNote}
-        onClose={modal.onCloseNote}
-        onEssayLoaded={modal.onEssayLoaded}
-        hasOwnKey={apiKey !== null}
-        onFundingRequired={onEssayFundingRequired}
-      />
+      <EssayOverlay modal={modal} explainer={explainer} onOpenApiKey={onOpenApiKey} />
       <EditConfirmDialog
         visible={editGate.confirmOpen}
         carriedWords={editGate.carriedWords}

@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test';
 
 import { computeMarginSlots } from '../src/features/Journal/computeMarginSlots';
 
@@ -24,9 +24,9 @@ import {
  * below the end of the writing, so the column has to grow for the page's one
  * scroll surface to reach it.
  *
- * Not claimed here: native alignment (native keeps the flow layout; its
- * onTextLayout measurement is a follow-up) and body-to-margin scroll sync or
- * tap-to-scroll, which belong to #2893.
+ * Explicit web passage/note navigation is covered below (#2893), including
+ * off-screen phone targets, reduced motion, readable notes and stale edits.
+ * Native alignment and navigation remain separate follow-up work (#2985).
  */
 
 /** Bounding boxes are sub-pixel; a pixel either way is layout rounding. */
@@ -286,4 +286,203 @@ test('a banner above the margin notes leaves each note beside its passage', asyn
   // held at the stream's top for, rather than lifted over the banner.
   expect(after.anchor).toBeLessThan(after.stream);
   expect(after.slot).toBeGreaterThanOrEqual(bannerBox.y + bannerBox.height - LAYOUT_SLACK_PX);
+});
+
+/** The first note's passage is at the beginning, far above the stacked phone margin. */
+async function seedSeparatedPassage(page: Page, token: string): Promise<[number, number]> {
+  const response = await page.request.post(`${backendUrl()}/journal/`, {
+    headers: bearer(token),
+    data: { title: 'A passage and its note', message: FIRST_PASSAGE },
+  });
+  expect(response.ok()).toBe(true);
+  const entryId = ((await response.json()) as { id: number }).id;
+  const [note] = await resonate(page.request, token, entryId);
+  if (!note) throw new Error('the real resonance pass returned no anchored note');
+  await patchEntry(page.request, token, entryId, {
+    message: `${FIRST_PASSAGE}\n\n${FILLER}\n\n${SECOND_PASSAGE}`,
+    status: 'finished',
+  });
+  return [entryId, note.id];
+}
+
+for (const motion of ['reduce', 'no-preference'] as const) {
+  test(`a reader follows a margin note to its passage and back (${motion}, #2893)`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize(NARROW_VIEWPORT);
+    await page.emulateMedia({ reducedMotion: motion });
+    const email = await signUp(page, 'passage-margin-sync');
+    const token = await tokenFor(page.request, email);
+    const [entryId, noteId] = await seedSeparatedPassage(page, token);
+    await openEntry(page, entryId);
+    const scroll = page.getByTestId('journal-page-scroll');
+    const note = page.getByTestId(`margin-note-${String(noteId)}`);
+    const passage = page.getByTestId(`highlight-${String(noteId)}`);
+    await note.scrollIntoViewIfNeeded();
+    expect(await scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(1000);
+    await note.click();
+    // Selecting the note navigates; opening its essay remains a separate choice.
+    await expect(page.getByTestId('essay-close')).toHaveCount(0);
+    await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeLessThan(100);
+    await expect(passage).toHaveCSS('text-decoration-line', 'underline');
+    await page.screenshot({ path: testInfo.outputPath('selected-passage-390.png') });
+    await expect(note).toHaveAttribute('aria-current', 'true');
+    await passage.click();
+    await expect(page.getByTestId('essay-close')).toBeVisible();
+    await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(1000);
+    await page.getByTestId('essay-close').click();
+    const box = await note.boundingBox();
+    if (!box) throw new Error('the selected margin note has no laid-out box');
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(NARROW_VIEWPORT.height);
+  });
+}
+
+/** Scale the actual note, its action and the linked passage; no OS-wide zoom claim. */
+async function noteTextScale(page: Page, noteId: number, scale: number): Promise<void> {
+  await page.evaluate(
+    ({ id, factor }) => {
+      const roots = [`margin-note-${id}`, `margin-note-open-${id}`, `highlight-${id}`].map(
+        (testID) => document.querySelector<HTMLElement>(`[data-testid="${testID}"]`),
+      );
+      const texts = new Set<HTMLElement>();
+      roots.forEach((root) => {
+        if (!root) return;
+        if (
+          root.getAttribute('dir') === 'auto' ||
+          root.getAttribute('data-testid')?.startsWith('highlight-')
+        )
+          texts.add(root);
+        root.querySelectorAll<HTMLElement>('[dir="auto"]').forEach((text) => texts.add(text));
+      });
+      const bases = Array.from(texts).map(
+        (text) => text.dataset.noteBaseFont ?? getComputedStyle(text).fontSize,
+      );
+      Array.from(texts).forEach((text, index) => {
+        const base = bases[index];
+        if (!base) throw new Error('the note text has no font size');
+        text.dataset.noteBaseFont = base;
+        text.style.fontSize = `${parseFloat(base) * factor}px`;
+        text.style.lineHeight = 'normal';
+      });
+    },
+    { id: noteId, factor: scale },
+  );
+}
+async function noteFrame(
+  page: Page,
+  info: TestInfo,
+  noteId: number,
+  width: number,
+  scale: number,
+): Promise<void> {
+  const note = page.getByTestId(`margin-note-${noteId}`);
+  await note.scrollIntoViewIfNeeded();
+  const fits = await note.evaluate((element) =>
+    Array.from(element.querySelectorAll<HTMLElement>('[dir="auto"]')).every((text) => {
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const glyph = range.getBoundingClientRect();
+      const box = element.getBoundingClientRect();
+      return glyph.left >= box.left - 1 && glyph.right <= box.right + 1;
+    }),
+  );
+  expect(fits, 'every note glyph remains inside its card').toBe(true);
+  await page.screenshot({ path: info.outputPath(`note-${width}-${scale}x.png`) });
+  const open = page.getByTestId(`margin-note-open-${noteId}`);
+  await open.scrollIntoViewIfNeeded();
+  const box = await open.boundingBox();
+  if (!box) throw new Error('Open note has no real box');
+  expect(box.width).toBeGreaterThanOrEqual(44);
+  expect(box.height).toBeGreaterThanOrEqual(44);
+  const kind = await note.locator('[dir="auto"]').first().boundingBox();
+  const action = await open.locator('[dir="auto"]').first().boundingBox();
+  if (!kind || !action) throw new Error('the note and its Open label need actual text boxes');
+  expect(
+    Math.abs(kind.x - action.x),
+    'the note and its action share one text edge',
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: info.outputPath(`open-note-${width}-${scale}x.png`) });
+}
+
+async function passageFrame(
+  page: Page,
+  info: TestInfo,
+  noteId: number,
+  width: number,
+  scale: number,
+): Promise<void> {
+  const passage = page.getByTestId(`highlight-${noteId}`);
+  await passage.scrollIntoViewIfNeeded();
+  const metrics = await passage.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const glyph = range.getBoundingClientRect();
+    const body = element.closest('[data-testid="journal-body-read"]');
+    if (!body) throw new Error('the passage has no journal body');
+    const box = body.getBoundingClientRect();
+    return {
+      font: parseFloat(getComputedStyle(element).fontSize),
+      base: parseFloat(element.dataset.noteBaseFont ?? 'NaN'),
+      fits: glyph.left >= box.left - 1 && glyph.right <= box.right + 1,
+    };
+  });
+  expect(metrics.font, 'the linked passage really uses the requested rendered size').toBe(
+    metrics.base * scale,
+  );
+  expect(metrics.fits, 'the complete passage stays inside the body width').toBe(true);
+  await page.screenshot({ path: info.outputPath(`passage-${width}-${scale}x.png`) });
+}
+
+async function editingKeepsOpen(page: Page, entryId: number, noteId: number): Promise<void> {
+  await page.getByTestId('journal-edit-button').click();
+  await page.getByTestId('edit-confirm-edit').click();
+  await expect(page.getByTestId('journal-body-input')).toBeVisible();
+  await expect(page.getByTestId(`highlight-${noteId}`)).toHaveCount(0);
+  const note = page.getByTestId(`margin-note-${noteId}`);
+  await expect(note).toHaveAttribute('aria-label', /^Open .+ note$/);
+  await expect(page.getByTestId(`margin-note-open-${noteId}`)).toHaveCount(0);
+  await note.scrollIntoViewIfNeeded();
+  await note.click();
+  await expect(page.getByTestId('essay-close')).toBeVisible();
+  await page.getByTestId('essay-close').click();
+  await openEntry(page, entryId);
+}
+
+test('passage navigation remains readable and broken anchors stay visibly stale (#2893)', async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize(WIDE_VIEWPORT);
+  const email = await signUp(page, 'passage-margin-visual');
+  const token = await tokenFor(page.request, email);
+  const [entryId, noteId] = await seedSeparatedPassage(page, token);
+  await openEntry(page, entryId);
+  const note = page.getByTestId(`margin-note-${noteId}`);
+  const passage = page.getByTestId(`highlight-${noteId}`);
+  await note.click();
+  await expect(passage).toHaveCSS('text-decoration-line', 'underline');
+  await expect(note).toHaveAttribute('aria-current', 'true');
+  const open = page.getByTestId(`margin-note-open-${noteId}`);
+  await open.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('essay-close')).toBeVisible();
+  await page.getByTestId('essay-close').click();
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    for (const scale of [1, 2]) {
+      await noteTextScale(page, noteId, scale);
+      await passageFrame(page, testInfo, noteId, width, scale);
+      await noteFrame(page, testInfo, noteId, width, scale);
+    }
+  }
+  await editingKeepsOpen(page, entryId, noteId);
+  await patchEntry(page.request, token, entryId, { message: `The water was empty.\n\n${FILLER}` });
+  await openEntry(page, entryId);
+  await expect(page.getByTestId(`margin-note-stale-${noteId}`)).toBeVisible();
+  await expect(page.getByTestId(`highlight-${noteId}`)).toHaveCount(0);
+  await expect(note).not.toHaveAttribute('aria-current', 'true');
+  await note.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('stale-note-390.png') });
+  await note.click();
+  await expect(page.getByTestId('essay-close')).toBeVisible();
 });

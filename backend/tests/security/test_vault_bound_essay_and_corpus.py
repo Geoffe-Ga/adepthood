@@ -4,9 +4,11 @@ Wave 34b (#3085) bound reflection and completion detection to the writer's
 vault. Three operations still dialled the app provider whatever the boundary:
 essay expansion built the adapter directly, and corpus classification and page
 transcription call the provider's ``generate_response`` without the adapter at
-all. Each now answers a vault-bound writer from the vault or not at all -- no
-vault advertises an essay, a classification adepthood may call, or a
-transcription today, so each fails closed.
+all. Each now answers a vault-bound writer from the vault or not at all. No
+vault advertises a classification adepthood may call or a transcription today,
+so those fail closed; a letter is written by a vault that advertises
+``letters`` (#3203, ``tests/test_vault_written_letters.py``) and fails closed
+here, where the writer's vault cannot be reached.
 
 Every forbidden-effect assertion here is made at the route, with a recording
 spy on the module binding the operation actually dials through, and each spy
@@ -200,7 +202,12 @@ async def test_vault_bound_essay_never_dials_and_fails_closed_uncharged(
     caplog: pytest.LogCaptureFixture,
     headers_extra: dict[str, str],
 ) -> None:
-    """503 ``reflection_source_unavailable``, zero dials, ``essay IS NULL``, wallet untouched."""
+    """503 ``reflection_source_unavailable``, zero dials, ``essay IS NULL``, wallet untouched.
+
+    The writer is bound to a vault this server cannot reach (no stored client
+    resolves), so the refusal names ``unavailable``; a reachable vault that does
+    not advertise ``letters`` names ``capability_missing`` instead (#3203).
+    """
     headers, user_id = await _signup(async_client, f"vault_essay_{len(headers_extra)}")
     note_id = await _seed_note(db_session, user_id)
     _bind(ReflectionBoundary.VAULT_BOUND)
@@ -226,7 +233,7 @@ async def test_vault_bound_essay_never_dials_and_fails_closed_uncharged(
     assert refusals[0].__dict__["user_id"] == user_id
     assert refusals[0].__dict__["id"] == note_id
     assert refusals[0].__dict__["operation"] == "essay"
-    assert refusals[0].__dict__["reason"] == "capability_missing"
+    assert refusals[0].__dict__["reason"] == "unavailable"
     _assert_logs_carry_no_content(caplog)
 
 

@@ -120,7 +120,7 @@ for (const width of [390, 1280]) {
     await note.scrollIntoViewIfNeeded();
     await frame(page, `real-demo-${width}-reload`);
 
-    await note.click();
+    await page.getByTestId(`margin-note-open-${noteId}`).click();
     const essayWrite = page.waitForResponse(
       (r) =>
         r.request().method() === 'POST' &&
@@ -435,7 +435,7 @@ for (const width of [390, 1280]) {
       await expect(page.getByTestId('resonance-pass-receipt')).toHaveCount(0);
       await note.scrollIntoViewIfNeeded();
       await frame(page, `${scenario.name}-${width}-reload`);
-      await note.click();
+      await page.getByTestId(`margin-note-open-${noteId}`).click();
       await expect(page.getByTestId('essay-source')).toHaveText(DEMO);
       await expect(page.getByTestId('essay-text')).toHaveText('The letter has its own source.');
       await page.getByTestId('essay-close').click();

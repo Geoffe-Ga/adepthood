@@ -40,11 +40,14 @@ from sqlmodel import SQLModel
 # genuine account rather than a synthetic one. ``accountdeletionaudit`` is the
 # deletion's own output — pre-seeding it would make the receipt assertions
 # meaningless. ``revokedtoken`` carries no reference to any account, so a row in
-# it proves nothing either way.
+# it proves nothing either way. ``journalwithdrawalnote`` is the deletion's own
+# output too -- written from the account's open obligations -- and names no
+# account either.
 UNSEEDED_TABLES = frozenset(
     {
         "user",
         "accountdeletionaudit",
+        "journalwithdrawalnote",
         "revokedtoken",
         "vaultteardownreceipt",
     }
