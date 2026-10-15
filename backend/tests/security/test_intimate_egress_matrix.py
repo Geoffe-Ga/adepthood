@@ -25,6 +25,12 @@ entry after a restart replays durable work. Every cell runs: none is skipped
 reclassify cells reclassify the row the create already committed -- after it
 answered, or while its own outward dial is held open.
 
+Every (row, step) cell runs once per payer (:class:`Payer`): the app seam, with
+no key, and a writer's own ``X-LLM-API-Key`` (BYOK) on every request the flow
+sends. A key pays for a call; it never consents to one, so an Intimate cell
+builds no provider client for it, while a BYOK row's Personal twin shows the
+client *is* built, with the twin's words, on that same flow.
+
 Every cell runs its flow twice, on two accounts sharing the recorders. The
 Intimate run asserts the canary is absent at every recorder outside the primary
 boundary; then the **Personal twin** runs the identical flow with canaries of
@@ -37,9 +43,9 @@ the remote commit, then Intimate, then a restart).
 
 What a cell asserts for an Intimate entry:
 
-* no provider dial, vault call or classifier input carried the canary (from the
-  step's mark on: a Personal->Intimate reclassification legitimately sent the
-  words *before* it);
+* no provider client was built for the writer's key, and no provider dial,
+  vault call or classifier input carried the canary (from the step's mark on: a
+  Personal->Intimate reclassification legitimately sent the words *before* it);
 * no corpus fragment holds it, and the modelled remote vault holds no copy --
   state, read after the flow, so a copy sent before the reclassification and
   never withdrawn still fails;
@@ -94,6 +100,7 @@ from tests.support.egress_recorders import (
     carries,
     corpus_fragments,
     record_classifier_inputs,
+    record_provider_constructions,
     record_provider_dials,
     recording_telemetry,
 )
@@ -104,6 +111,10 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _PASSWORD: Final = "secret12345"  # pragma: allowlist secret
+#: A well-formed OpenAI-shaped key a BYOK cell sends. Never valid: no client is
+#: really built for it (:func:`record_provider_constructions`).
+_BYOK_KEY: Final = "sk-matrix-byok-not-a-real-key"  # pragma: allowlist secret
+_BYOK_HEADER: Final = "X-LLM-API-Key"
 
 #: A reply the classifier's parser accepts, placing the fragment on the ontology,
 #: so a Personal twin's entry really becomes a corpus fragment.
@@ -139,6 +150,15 @@ class Step(enum.StrEnum):
     RESTART = "restart"
 
 
+class Payer(enum.StrEnum):
+    """Who a cell's requests say pays for a generation."""
+
+    #: No key of the writer's own: only the armed stub test seam answers.
+    APP_SEAM = "app-seam"
+    #: The writer's own key, on every request the flow sends.
+    BYOK = "byok"
+
+
 class Expect(enum.Enum):
     """What a Personal twin must show at one recorder."""
 
@@ -170,6 +190,7 @@ class Harness:
     ledger: Ledger
     vault: RecordingVault
     telemetry: TelemetryRecorder
+    payer: Payer = Payer.APP_SEAM
     headers: dict[str, str] = field(default_factory=dict)
     user_id: int = 0
     canary: str = ""
@@ -181,7 +202,9 @@ class Harness:
 
     async def another(self) -> Harness:
         """A second account on the same recorders, with canaries of its own."""
-        other = Harness(self.client, self.factory, self.ledger, self.vault, self.telemetry)
+        other = Harness(
+            self.client, self.factory, self.ledger, self.vault, self.telemetry, self.payer
+        )
         await other.signup()
         return other
 
@@ -198,6 +221,14 @@ class Harness:
         payload = response.json()
         self.headers = {"Authorization": f"Bearer {payload['token']}"}
         self.user_id = int(payload["user_id"])
+        self.pay_with(self.payer)
+
+    def pay_with(self, payer: Payer) -> None:
+        """Send every later request -- and a twin's, from :meth:`another` -- as ``payer``."""
+        self.payer = payer
+        self.headers.pop(_BYOK_HEADER, None)
+        if payer is Payer.BYOK:
+            self.headers[_BYOK_HEADER] = _BYOK_KEY
 
     async def consent(self, *, granted: bool = True) -> Response:
         """Agree (or not) to ontologizing this account's journal."""
@@ -423,6 +454,9 @@ class Row:
     preconsent: bool = True
     #: The act removes the page, so owner read-back is not expected after it.
     removes_page: bool = False
+    #: The act's route reads ``X-LLM-API-Key`` and the app provider answers it,
+    #: so a BYOK Personal twin must show a client built for the key.
+    byok: bool = False
     prepare: Callable[[Harness], Awaitable[None]] | None = None
 
     @property
@@ -466,6 +500,7 @@ ROWS: Final[tuple[Row, ...]] = (
         "app provider",
         _act_resonance,
         {Recorder.PROVIDER: Expect.CARRIES},
+        byok=True,
     ),
     Row(
         ("POST", "/journal/{entry_id}/resonance"),
@@ -480,6 +515,7 @@ ROWS: Final[tuple[Row, ...]] = (
         _act_detect,
         {Recorder.PROVIDER: Expect.CARRIES},
         prepare=_seed_habit,
+        byok=True,
     ),
     Row(
         ("POST", "/journal/marginalia/{marginalia_id}/essay"),
@@ -489,6 +525,7 @@ ROWS: Final[tuple[Row, ...]] = (
         # the canary to the vault as a Voice Draft. In the reclassify cells the mark
         # falls after the write, so only that draft can satisfy the vault column.
         {Recorder.PROVIDER: Expect.CARRIES, Recorder.VAULT: Expect.CARRIES},
+        byok=True,
     ),
     Row(
         ("POST", "/journal/marginalia/{marginalia_id}/essay"),
@@ -535,10 +572,15 @@ def missing_rows(
     return frozenset[_Door](barriered | detached) - covered
 
 
-#: Every (row, step) cell. None carries a mark: a skipped cell is a silent gap in
-#: the claim (#3200), so a cell that cannot run must be argued out of the matrix
-#: in ``docs/privacy/claim-coverage.md``, not skipped in it.
-CELLS: Final = [pytest.param(row, step, id=f"{row.id}-{step}") for row in ROWS for step in Step]
+#: Every (row, step, payer) cell. None carries a mark: a skipped cell is a silent
+#: gap in the claim (#3200), so a cell that cannot run must be argued out of the
+#: matrix in ``docs/privacy/claim-coverage.md``, not skipped in it.
+CELLS: Final = [
+    pytest.param(row, step, payer, id=f"{row.id}-{step}-{payer}")
+    for row in ROWS
+    for step in Step
+    for payer in Payer
+]
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -570,6 +612,9 @@ async def harness(
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
     assert record_provider_dials(monkeypatch, ledger, classifier_reply=_CLASSIFIED_REPLY), (
         "no module binds the provider dial: the provider recorder would watch nothing"
+    )
+    assert record_provider_constructions(monkeypatch, ledger), (
+        "no provider is registered: the construction recorder would watch nothing"
     )
     record_classifier_inputs(monkeypatch, ledger)
     with (
@@ -683,7 +728,9 @@ def _leaks(h: Harness, canary: str, mark: int) -> list[str]:
 
 
 async def _assert_absent(h: Harness, row: Row, step: Step, entry_id: int, mark: int) -> None:
-    """The Intimate half: no canary at any recorder outside the primary boundary."""
+    """The Intimate half: no client built, no canary at any recorder outside the boundary."""
+    built = [e.verb for e in h.ledger.since(mark, Recorder.PROVIDER_CLIENT)]
+    assert built == [], f"a provider client was built for an Intimate entry: {built}"
     fragments = await corpus_fragments(h.factory)
     for canary in (h.canary, h.title_canary):
         assert _leaks(h, canary, mark) == []
@@ -695,9 +742,16 @@ async def _assert_absent(h: Harness, row: Row, step: Step, entry_id: int, mark: 
         assert h.canary in page.json()["message"]
 
 
+def _expects(h: Harness, row: Row) -> Mapping[Recorder, Expect]:
+    """What this twin must show: the row's recorders, plus the key's client on a BYOK row."""
+    if row.byok and h.payer is Payer.BYOK:
+        return {**row.expects, Recorder.PROVIDER_CLIENT: Expect.CARRIES}
+    return row.expects
+
+
 async def _assert_reached(h: Harness, row: Row, mark: int) -> None:
     """The Personal twin: every recorder this row relies on really fires, or carries."""
-    for recorder, expect in row.expects.items():
+    for recorder, expect in _expects(h, row).items():
         if recorder is Recorder.CORPUS:
             fragments = await corpus_fragments(h.factory)
             assert [f for f in fragments if carries(f, h.canary)], (
@@ -717,18 +771,22 @@ async def _assert_reached(h: Harness, row: Row, mark: int) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("row", "step"), CELLS)
+@pytest.mark.parametrize(("row", "step", "payer"), CELLS)
 async def test_intimate_canary_reaches_no_forbidden_sink(
-    harness: Harness, row: Row, step: Step
+    harness: Harness, row: Row, step: Step, payer: Payer
 ) -> None:
     """Zero Intimate canaries outside the primary boundary; the Personal twin reaches each recorder.
 
     The Intimate flow runs first, on one account; then its Personal twin, the
     identical flow on a second account with canaries of its own, shows every
     recorder the row relies on is live -- so the first half's absence is a
-    finding, not a silence.
+    finding, not a silence. Under :attr:`Payer.BYOK` every request both flows
+    send carries the writer's own key, and a BYOK row's twin must build a client
+    for it -- so the Intimate flow's zero constructions are a refusal, not a key
+    the route never read.
     """
     app.dependency_overrides[get_reflection_boundary] = lambda: row.boundary
+    harness.pay_with(payer)
     entry_id, mark = await _drive(harness, row, step, _INTIMATE)
     await _assert_absent(harness, row, step, entry_id, mark)
 
@@ -771,8 +829,13 @@ def test_every_cell_runs() -> None:
     """Every door meets every step, and no cell is skipped or expected to fail (#3200)."""
     marked = [cell.id for cell in CELLS if cell.marks]
 
-    assert len(CELLS) == len(ROWS) * len(Step)
+    assert len(CELLS) == len(ROWS) * len(Step) * len(Payer)
     assert marked == []
+
+
+def test_a_byok_row_reaches_the_keyed_client() -> None:
+    """The BYOK leg's positive control exists: some row's BYOK twin must build a client."""
+    assert [row.id for row in ROWS if row.byok]
 
 
 def test_every_content_recorder_has_a_carrying_twin() -> None:
