@@ -22,8 +22,8 @@ That is the whole of the state needed to finish: once the page and its account
 are gone, ``pending_delete`` and ``unconfirmed`` mean the same thing -- the copy
 at ``destination`` is owed a withdrawal -- so no state column is kept. A
 confirmed withdrawal deletes the note outright, and
-:func:`services.journal_withdrawal_note.purge_expired_withdrawal_notes` removes
-any note older than the ratified 97 days, confirmed or not.
+the nightly retention sweep (:mod:`services.retention_sweep`) removes any note
+older than the ratified 97 days, confirmed or not.
 
 No body, title, URL, credential, content hash or account reference is stored.
 """

@@ -370,6 +370,44 @@ def test_gate_set_must_mirror_the_ledger() -> None:
     assert _validate(record) == _invalid(Reason.GATE_SET_MISMATCH)
 
 
+def test_reordered_any_of_group_still_certifies() -> None:
+    """#3287: order inside an any-of group carries no meaning."""
+    record = _certified()
+    record["required_gates"][2].reverse()
+    assert [gate["item"] for gate in record["required_gates"][2]] == ["B14", "B13"]
+    assert _validate(record) == (cert.EXIT_CERTIFIED, ())
+
+
+def _pending(item: str) -> dict[str, object]:
+    return {"item": item, "status": "pending", "evidence_ref": None}
+
+
+@pytest.mark.parametrize(
+    "custody_group",
+    [
+        pytest.param([_passed("B13")], id="missing-item"),
+        pytest.param([_passed("B13"), _pending("B14"), _pending("B15")], id="extra-item"),
+        pytest.param([_passed("B13"), _pending("B14"), _pending("B14")], id="duplicate-item"),
+        pytest.param([_passed("B13"), _passed("B13"), _pending("B14")], id="duplicate-met-item"),
+    ],
+)
+def test_any_of_group_must_hold_exactly_the_ledger_items(
+    custody_group: list[dict[str, object]],
+) -> None:
+    """#3287: a set comparison must not hide a missing, extra or repeated item."""
+    record = _certified()
+    record["required_gates"][2] = custody_group
+    assert _validate(record) == _invalid(Reason.GATE_SET_MISMATCH)
+
+
+def test_gate_groups_follow_the_ledger_order() -> None:
+    """#3287: groups pair with the ledger's groups by position (the documented contract)."""
+    record = _certified()
+    first, second, custody = record["required_gates"]
+    record["required_gates"] = [second, first, custody]
+    assert _validate(record) == _invalid(Reason.GATE_SET_MISMATCH)
+
+
 def test_any_of_custody_group_needs_only_selected_branch() -> None:
     record = _certified()
     assert _validate(record) == (cert.EXIT_CERTIFIED, ())
@@ -829,3 +867,81 @@ def test_cli_unhashable_claim_id_is_invalid_without_traceback(
     out += capsys.readouterr().out
     assert "an unknown claim id in the certifications" in out
     assert SENTINEL not in out
+
+
+# ── Reason tiers (#3288) ──────────────────────────────────────────────────────
+
+
+def _tier_violations(
+    members: frozenset[Reason], invalid: frozenset[Reason], incomplete: frozenset[Reason]
+) -> dict[Reason, int]:
+    """Each member mapped to how many tiers hold it, when that is not exactly one."""
+    counts = {member: (member in invalid) + (member in incomplete) for member in members}
+    return {member: count for member, count in counts.items() if count != 1}
+
+
+def test_every_reason_is_in_exactly_one_tier() -> None:
+    """A new :class:`Reason` with no tier, or with both, fails CI."""
+    assert cert.INVALID_REASONS
+    assert cert.INCOMPLETE_REASONS
+    assert _tier_violations(frozenset(Reason), cert.INVALID_REASONS, cert.INCOMPLETE_REASONS) == {}
+
+
+@pytest.mark.parametrize(
+    ("invalid", "incomplete", "expected"),
+    [
+        pytest.param(
+            frozenset({Reason.MALFORMED}),
+            frozenset({Reason.WITHHELD}),
+            {Reason.EXPIRED: 0},
+            id="in-neither",
+        ),
+        pytest.param(
+            frozenset({Reason.MALFORMED, Reason.EXPIRED}),
+            frozenset({Reason.WITHHELD, Reason.EXPIRED}),
+            {Reason.EXPIRED: 2},
+            id="in-both",
+        ),
+    ],
+)
+def test_tier_totality_check_catches_a_misfiled_reason(
+    invalid: frozenset[Reason], incomplete: frozenset[Reason], expected: dict[Reason, int]
+) -> None:
+    """Non-vacuity: the totality check rejects a member in neither tier or in both."""
+    members = frozenset({Reason.MALFORMED, Reason.WITHHELD, Reason.EXPIRED})
+    assert _tier_violations(members, invalid, incomplete) == expected
+
+
+def _tier_literal(name: str) -> ast.expr:
+    tree = ast.parse(_MODULE_PATH.read_text(encoding="utf-8"))
+    values = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == name
+        and node.value is not None
+    ]
+    assert len(values) == 1, name
+    return values[0]
+
+
+@pytest.mark.parametrize("name", ["INVALID_REASONS", "INCOMPLETE_REASONS"])
+def test_reason_tiers_are_explicit_literals(name: str) -> None:
+    """A tier is a literal set of named members, never a slice of declaration order."""
+    value = _tier_literal(name)
+    assert isinstance(value, ast.Call)
+    assert isinstance(value.func, ast.Name)
+    assert value.func.id == "frozenset"
+    assert len(value.args) == 1
+    literal = value.args[0]
+    assert isinstance(literal, ast.Set)
+    named = [
+        element.attr
+        for element in literal.elts
+        if isinstance(element, ast.Attribute)
+        and isinstance(element.value, ast.Name)
+        and element.value.id == "Reason"
+    ]
+    assert len(named) == len(literal.elts)
+    assert {Reason[attr] for attr in named} == getattr(cert, name)

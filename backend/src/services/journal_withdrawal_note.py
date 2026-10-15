@@ -28,9 +28,9 @@ vault credential are gone, per kind of vault:
 * **A copy that predates destination binding** names no vault (#3095), so no
   vault can confirm it; the 97-day purge is its only end.
 
-:func:`purge_expired_withdrawal_notes` deletes any note older than
+:mod:`services.retention_sweep` deletes any note older than
 :data:`~domain.retention.DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS`, confirmed or
-not. It is a service function for the nightly retention sweep (#3266) to call.
+not, every night (#3266).
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, Final, cast
 
 from sqlalchemy import CursorResult, delete
@@ -46,7 +46,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col, select
 
 from domain.creek_vault import CreekVaultClient
-from domain.retention import DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS
 from models.journal_withdrawal_note import JournalWithdrawalNote
 from models.journal_withdrawal_obligation import OPEN_STATES, JournalWithdrawalObligation
 from services.creek_vault_voice_drafts import JournalRetrySchedule
@@ -55,10 +54,9 @@ from services.creek_vault_withdraw import withdraw_journal_from_vault
 _LOGGER = logging.getLogger(__name__)
 
 NOTE_SETTLED_EVENT: Final = "journal withdrawal note settled"
-NOTES_PURGED_EVENT: Final = "journal withdrawal notes purged"
 
-#: The only ``extra`` keys a record from this module may carry: an id and a count.
-NOTE_LOG_EXTRAS: Final = frozenset({"entry_id", "purged_count"})
+#: The only ``extra`` key a record from this module may carry: an entry id.
+NOTE_LOG_EXTRAS: Final = frozenset({"entry_id"})
 
 #: How many notes one background pass works, so one slow vault cannot hold it.
 _RESUME_BATCH: Final = 50
@@ -139,29 +137,6 @@ async def settle_detached_note(session: AsyncSession, *, entry_id: int, destinat
     if settled:
         _LOGGER.info(NOTE_SETTLED_EVENT, extra={"entry_id": entry_id})
     return settled
-
-
-async def purge_expired_withdrawal_notes(
-    session: AsyncSession, *, now: datetime | None = None
-) -> int:
-    """Delete every note older than the ratified 97 days, confirmed or not. Commits.
-
-    A note exactly 97 days old is kept; one a moment older goes. Returns how
-    many were purged.
-    """
-    moment = now if now is not None else _utcnow()
-    cutoff = moment - timedelta(days=DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS)
-    result = cast(
-        "CursorResult[Any]",
-        await session.execute(
-            delete(JournalWithdrawalNote).where(col(JournalWithdrawalNote.created_at) < cutoff)
-        ),
-    )
-    await session.commit()
-    purged = result.rowcount or 0
-    if purged:
-        _LOGGER.info(NOTES_PURGED_EVENT, extra={"purged_count": purged})
-    return purged
 
 
 async def _due_notes(

@@ -72,8 +72,10 @@ import {
   loadUserTimezone,
   clearUserTimezone,
 } from '@/storage/authStorage';
+import * as declineOwnership from '@/storage/declineOwnership';
 import { isUserTimezonePending } from '@/storage/userCalendar';
 import { getActiveUser } from '@/storage/userScope';
+import * as userScope from '@/storage/userScope';
 import { isTokenExpired, shouldRefreshToken } from '@/utils/token';
 import type * as tokenModule from '@/utils/token';
 
@@ -1629,5 +1631,25 @@ describe('AuthContext', () => {
       expect(mockMarkLogoutPending).not.toHaveBeenCalled();
       warnSpy.mockRestore();
     });
+  });
+});
+
+describe('decline migration provenance before owner replacement', () => {
+  it('authenticates without stamping when legacy provenance cannot be recorded', async () => {
+    const provenance = jest
+      .spyOn(declineOwnership, 'preserveLegacyDeclineOwner')
+      .mockResolvedValueOnce(false);
+    const stamp = jest.spyOn(userScope, 'saveDeviceOwner');
+    mockAuth.login.mockResolvedValue({ token: 'new-jwt', user_id: 7 });
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    await waitFor(() => expect(result.current.authStatus).not.toBe('loading'));
+    await act(async () => {
+      await result.current.login('owner@test.com', 'password123');
+    });
+    expect(result.current.token).toBe('new-jwt');
+    expect(getActiveUser()).toBe(7);
+    expect(stamp).not.toHaveBeenCalled();
+    provenance.mockRestore();
+    stamp.mockRestore();
   });
 });

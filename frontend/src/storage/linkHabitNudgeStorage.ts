@@ -1,4 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { readOwnedDecline, writeOwnedDeclineKey } from './declineOwnership';
+import { scopedKey } from './userScope';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
 /**
@@ -25,7 +26,7 @@ const FLAG_FALSE = 'false';
 /** Whether the writer has asked never to see the note again on this device. */
 export async function loadLinkHabitNudgeDeclined(): Promise<boolean> {
   try {
-    const raw = await AsyncStorage.getItem(LINK_HABIT_NUDGE_NEVER_OFFER_KEY);
+    const raw = await readOwnedDecline(LINK_HABIT_NUDGE_NEVER_OFFER_KEY);
     return raw === FLAG_TRUE;
   } catch {
     reportDiagnostic('storage_read_failed', { storage: 'link_habit_nudge' });
@@ -42,7 +43,7 @@ export async function loadLinkHabitNudgeDeclined(): Promise<boolean> {
  */
 export async function saveLinkHabitNudgeDeclined(): Promise<boolean> {
   try {
-    await AsyncStorage.setItem(LINK_HABIT_NUDGE_NEVER_OFFER_KEY, FLAG_TRUE);
+    await writeOwnedDeclineKey(scopedKey(LINK_HABIT_NUDGE_NEVER_OFFER_KEY), FLAG_TRUE);
     return true;
   } catch {
     reportDiagnostic('storage_write_failed', { storage: 'link_habit_nudge' });
@@ -53,7 +54,7 @@ export async function saveLinkHabitNudgeDeclined(): Promise<boolean> {
 /** Settings → the "Show the habit note" switch, turned on. Resolves whether it was saved. */
 export async function restoreLinkHabitNudge(): Promise<boolean> {
   try {
-    await AsyncStorage.setItem(LINK_HABIT_NUDGE_NEVER_OFFER_KEY, FLAG_FALSE);
+    await writeOwnedDeclineKey(scopedKey(LINK_HABIT_NUDGE_NEVER_OFFER_KEY), FLAG_FALSE);
     return true;
   } catch {
     reportDiagnostic('storage_clear_failed', { storage: 'link_habit_nudge' });

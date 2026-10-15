@@ -5,7 +5,7 @@ import type { DepthPreferences, DepthPreferencesUpdate } from '../api';
 
 import { registerStoreReset } from './registry';
 
-import { getActiveUser } from '@/storage/userScope';
+import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
 
 /**
  * Depth-preferences store — the client-side mirror of the "you choose your
@@ -41,6 +41,20 @@ const INITIAL_STATE = {
 type Field = keyof DepthPreferences;
 type Revisions = Partial<Record<Field, number>>;
 const FIELDS = Object.keys(INITIAL_STATE) as Field[];
+/** Ordering invariants (all counters are process-local, never server versions):
+ * - generation plus the account epoch invalidates every response after reset or
+ *   account replacement, including A -> B -> A. requestSequence orders starts.
+ * - written records the latest issued PATCH for each field; pendingWrites counts
+ *   unsettled PATCHes. GET publishes only if no write was pending at its start
+ *   or completion, no write was issued meanwhile, and no newer GET confirmed it.
+ * - confirmedWrites orders successful PATCHes per field, so a late older echo
+ *   cannot undo a newer confirmation. Each echo owns only its submitted fields,
+ *   plus never-read/never-written fields recovered from an initial GET failure.
+ * - confirmedReads prevents backwards GET publication and records recovered
+ *   unknown fields. A failed write publishes nothing and only releases its
+ *   pending count; its issued revision still fences pre-write GET snapshots.
+ * Reset clears the four maps and advances generation, never reusing old fences.
+ */
 let generation = 0;
 let requestSequence = 0;
 let written: Revisions = {};
@@ -51,7 +65,9 @@ let confirmedReads: Revisions = {};
 function sessionGuard(): () => boolean {
   const owner = getActiveUser();
   const epoch = generation;
-  return () => getActiveUser() === owner && generation === epoch;
+  const ownerEpoch = getActiveUserGeneration();
+  return () =>
+    getActiveUser() === owner && getActiveUserGeneration() === ownerEpoch && generation === epoch;
 }
 
 /** A read cannot know a field while its write is unsettled, or undo a later write. */
@@ -87,6 +103,15 @@ function writeResponse(partial: DepthPreferencesUpdate) {
     apply: (prefs: DepthPreferences): DepthPreferencesUpdate => {
       if (!current()) return {};
       const result: DepthPreferencesUpdate = {};
+      // A PATCH is also the first authoritative snapshot when initial GETs
+      // failed. Recover only fields never read or written; independent writes
+      // and previously confirmed snapshots retain their existing fences.
+      for (const field of FIELDS) {
+        if (written[field] === undefined && confirmedReads[field] === undefined) {
+          confirmedReads[field] = sequence;
+          result[field] = prefs[field];
+        }
+      }
       for (const field of fields) {
         if (sequence < (confirmedWrites[field] ?? 0)) continue;
         confirmedWrites[field] = sequence;

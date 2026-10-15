@@ -31,6 +31,9 @@ test('“Don’t show this again” retires the morning-pages tip until Settings
 }) => {
   const email = await signUp(page, 'morning-pages-never');
   const { timezone } = await sessionFor(page.request, email);
+  const owner = await page.evaluate(() => localStorage.getItem('@adepthood/device_owner'));
+  expect(owner).toMatch(/^[1-9]\d*$/);
+  const neverOfferKey = `${NEVER_OFFER_KEY}#u${owner}`;
   const band = page.getByTestId('journal-morning-pages-band');
   await expect(band).toBeVisible();
 
@@ -39,7 +42,7 @@ test('“Don’t show this again” retires the morning-pages tip until Settings
   await page.keyboard.press('Enter');
   await expect(band).toHaveCount(0);
   await expect(page.getByTestId('journal-review-early')).toBeFocused();
-  expect(await page.evaluate((key) => localStorage.getItem(key), NEVER_OFFER_KEY)).toBe('true');
+  expect(await page.evaluate((key) => localStorage.getItem(key), neverOfferKey)).toBe('true');
 
   // 2. Still gone after a reload the same day...
   await page.reload();
@@ -75,7 +78,7 @@ test('“Don’t show this again” retires the morning-pages tip until Settings
   await expect(offerSwitch).not.toBeChecked();
   await offerSwitch.click();
   await expect(offerSwitch).toBeChecked();
-  expect(await page.evaluate((key) => localStorage.getItem(key), NEVER_OFFER_KEY)).toBe('false');
+  expect(await page.evaluate((key) => localStorage.getItem(key), neverOfferKey)).toBe('false');
 
   // 5. And the shelf offers it again.
   await page.goto(`${frontendUrl()}/journal`);

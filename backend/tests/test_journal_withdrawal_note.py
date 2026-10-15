@@ -37,9 +37,9 @@ from services.creek_vault_client import CREEK_VAULT_URL_ENV_VAR
 from services.creek_vault_voice_drafts import JournalRetrySchedule
 from services.journal_withdrawal_note import (
     DetachedVault,
-    purge_expired_withdrawal_notes,
     resume_detached_withdrawal_notes,
 )
+from services.retention_sweep import sweep_for
 from tests.helpers.feedback_triage import make_account
 from tests.test_voice_draft_retraction_recovery import _DraftVault as DraftVault
 
@@ -282,9 +282,9 @@ async def test_a_98_day_old_note_is_purged_and_a_96_day_old_one_kept(
     await _note_at(db_session, _ENTRY_ID, _T0 - timedelta(days=_RATIFIED_DAYS + 1))
     await _note_at(db_session, _ENTRY_ID + 1, _T0 - timedelta(days=_RATIFIED_DAYS - 1))
 
-    purged = await purge_expired_withdrawal_notes(db_session, now=_T0)
+    counts = await sweep_for("journalwithdrawalnote").run(db_session, _T0, dry_run=False)
 
-    assert purged == 1
+    assert counts.deleted == 1
     assert [note.journal_entry_id for note in await _notes(db_session)] == [_ENTRY_ID + 1]
 
 
@@ -293,5 +293,6 @@ async def test_the_purge_keeps_a_note_on_its_97th_day(db_session: AsyncSession) 
     await _note_at(db_session, _ENTRY_ID, _T0 - timedelta(days=_RATIFIED_DAYS))
     await _note_at(db_session, _ENTRY_ID + 1, _T0 - timedelta(days=_RATIFIED_DAYS) - _ONE_DAY)
 
-    assert await purge_expired_withdrawal_notes(db_session, now=_T0) == 1
+    counts = await sweep_for("journalwithdrawalnote").run(db_session, _T0, dry_run=False)
+    assert counts.deleted == 1
     assert [note.journal_entry_id for note in await _notes(db_session)] == [_ENTRY_ID]

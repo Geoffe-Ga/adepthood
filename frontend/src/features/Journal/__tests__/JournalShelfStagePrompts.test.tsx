@@ -15,6 +15,7 @@ import type {
 import { decorativeHidden } from '@/components/a11yHidden';
 import { editorialType, ink, touchTarget, uiType } from '@/design/tokens';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
+import { setActiveUser } from '@/storage/userScope';
 
 const mockList = jest.fn() as jest.MockedFunction<() => Promise<JournalListResponse>>;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
@@ -29,6 +30,11 @@ const mockPromptBringBack = jest.fn() as jest.MockedFunction<
   (_stage: number, _ordinal: number) => Promise<StagePromptsResponse>
 >;
 const mockNavigate = jest.fn();
+
+// The shelf is authenticated: its namespace and decoded credential agree.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y', userTimezone: 'UTC' }),
+}));
 
 jest.mock('@/api', () => ({
   // The shelf's primary invitation asks what review is due; answer "none" so
@@ -165,6 +171,7 @@ function history(items: PromptDetail[]): PromptListResponse {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   mockList.mockReset();
   mockNavigate.mockReset();
   mockPromptCurrent.mockReset();
