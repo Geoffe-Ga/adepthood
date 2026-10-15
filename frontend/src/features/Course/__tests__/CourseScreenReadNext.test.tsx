@@ -77,6 +77,8 @@ const mockMarkResourceRead = jest.fn<(_slug: string) => Promise<ResourceCompleti
 const mockSetParams = jest.fn<(_params: CourseParams) => void>();
 let mockRouteParams: CourseParams | undefined;
 
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('../../../api', () => ({
   captureSessionToken: () => 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature',
   uiFlags: { get: () => Promise.resolve({ course_last_stage: 1 }) },
