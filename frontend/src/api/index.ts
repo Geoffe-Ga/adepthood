@@ -129,7 +129,11 @@ import {
   type FeedbackTriageDetailT,
   type FeedbackTriageSummaryT,
 } from './schemas';
-import { captureSessionToken, installSessionTokenGetter } from './sessionToken';
+import {
+  captureAnonymousScope,
+  captureSessionToken,
+  installSessionTokenGetter,
+} from './sessionToken';
 import { createTokenRotation, type RecoveryMode } from './tokenRotation';
 import { classifyTranscription } from './transcriptionContract';
 
@@ -1002,6 +1006,12 @@ interface RefreshRetryContext<T> {
    * refresh path keys on it (#3034).
    */
   sentToken: string | null;
+  /**
+   * Whether a 401 on the latest attempt, if it carried no token, may still
+   * report "no session": false once the attempt was sent during an account
+   * transition or the scope it was sent under has moved on (#3366).
+   */
+  anonymousScopeCurrent: () => boolean;
 }
 
 /**
@@ -1074,8 +1084,12 @@ async function retryWithRefresh<T>(
       return retryOnce(ctx, recovery.token);
     case 'no-session':
       // An anonymous caller hitting a protected endpoint is
-      // ``not_authenticated``, not session-expired (BUG-API-018).
-      onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, false));
+      // ``not_authenticated``, not session-expired (BUG-API-018) — but only
+      // when its anonymity was real: one a transition imposed must not tear
+      // down the account adopted meanwhile (#3366).
+      if (ctx.anonymousScopeCurrent()) {
+        onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, false));
+      }
       return null;
     case 'expired':
       onUnauthorizedCallback?.(reasonForUnauthorized(ctx.initialDetail, true));
@@ -1119,6 +1133,7 @@ async function attemptRequest<T>(
   ctx: RefreshRetryContext<T>,
   token: string | undefined,
 ): Promise<{ kind: 'ok'; value: T } | { kind: 'transient'; error: ApiError }> {
+  ctx.anonymousScopeCurrent = captureAnonymousScope();
   const resolved = resolveToken(token);
   ctx.sentToken = resolved;
   const headers = buildHeaders(resolved, ctx.body, ctx.extraHeaders);
@@ -1205,6 +1220,7 @@ async function request<T>(
     initialDetail: null,
     canRetry,
     sentToken: null,
+    anonymousScopeCurrent: () => true,
   };
 
   // Fast-fail when the network layer already knows we're offline: retrying
