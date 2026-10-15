@@ -226,6 +226,7 @@
       "backend/tests/test_voice_draft_mirroring.py::test_intimate_essay_never_attempts_a_mirror",
       "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
       "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart",
+      "backend/tests/security/test_voice_draft_lost_ack_withdrawal.py::test_a_voice_draft_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart",
       "backend/tests/test_journal_vault_write.py::test_failed_intimate_withdrawal_is_visible_and_retryable_from_persisted_state",
       "backend/tests/integration/test_privacy_orderings_multiprocess.py::test_no_mirror_lands_after_an_intimate_reclassification_in_another_process",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[admits_egress-C11]",
@@ -240,11 +241,12 @@
     "by_sink": {
       "net.creek_vault_connected": [
         "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
-        "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
+        "backend/tests/security/test_intimate_egress_matrix.py::test_a_copy_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart",
+        "backend/tests/security/test_voice_draft_lost_ack_withdrawal.py::test_a_voice_draft_whose_acknowledgment_was_lost_is_withdrawn_after_intimate_and_restart"
       ]
     },
     "issue": 3060,
-    "gap": "a lost acknowledgment is driven for the journal copy, not for a Voice Draft; vault-side snapshots and backups (C21) are not reached"
+    "gap": "vault-side snapshots and backups (C21) are not reached"
   },
   "C12": {
     "status": "partial",
