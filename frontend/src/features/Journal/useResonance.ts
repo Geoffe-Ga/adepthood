@@ -383,9 +383,10 @@ interface LatestPassState {
   receive: (_result: ResonanceResponse) => void;
 }
 
-/** A care/private answer carries no model billing; missing metadata stays explicitly unrecorded. */
+/** Care can accompany inference; only an explicit supplied receipt records its identity and payer. */
 function receivedPassProvenance(result: ResonanceResponse): ResonanceResponse['provenance'] {
-  if (result.private === true || result.care != null) return undefined;
+  if (result.private === true || (result.care != null && result.provenance == null))
+    return undefined;
   const parsed = readPassProvenance(result.provenance);
   return parsed.success ? parsed.data : null;
 }

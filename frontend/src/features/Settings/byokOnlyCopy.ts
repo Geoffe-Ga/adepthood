@@ -1,10 +1,9 @@
 /**
  * What a writer loses without a key of their own (ADR 0009 phase (a), #3067).
  *
- * DRAFT for owner review: the wording is an agent's draft, listed for the owner
- * in the lane report. It replaces copy that promised a fallback to the
- * operator's own credential, which phase (a) removed: it no longer pays for
- * any request carrying a person's writing. It states the feature loss plainly
+ * Owner-approved wording (#3262). It replaces copy that promised a fallback to
+ * the operator's own credential, which phase (a) removed: it no longer pays
+ * for any request carrying a person's writing. It states the feature loss plainly
  * and makes no new privacy promise -- public privacy claims wait for B24
  * (#3076).
  */

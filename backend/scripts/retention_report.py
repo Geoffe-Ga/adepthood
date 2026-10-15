@@ -6,8 +6,8 @@ published retention schedule -- publishing one is the owner's decision
 ratified with the lifetime proposed for each, and lists the non-database
 stores with their deadlines and their ratified periods (or proposals). The
 owner ratified every open lifetime on 2026-10-13; the decision record is
-``docs/privacy/retention-proposal.md``. A ratified period that no sweep
-applies yet is flagged as such.
+``docs/privacy/retention-proposal.md``. Each bounded period names the
+scheduled sweep that applies it, and one that nothing applies is flagged.
 
 Usage, from ``backend/``::
 

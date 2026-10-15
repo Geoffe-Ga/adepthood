@@ -105,6 +105,8 @@ import { useRingEnabled } from '@/features/Depth/depthRings';
 import type { Habit } from '@/features/Habits/Habits.types';
 import { habitManager } from '@/features/Habits/services/habitManager';
 import { clampPosition, insertAt, stagePreview } from '@/features/Habits/services/habitOrdering';
+import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
+import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
 import { loadWritingOfferAnswered, saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { useHabitStore } from '@/store/useHabitStore';
 import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
@@ -187,19 +189,28 @@ function PreviewList({
  * asking again would nag and, if taken up, file a second one beside it.
  */
 function useOfferGate(): { answered: boolean | null; settle: () => void } {
-  const [answered, setAnswered] = useState<boolean | null>(null);
+  const owner = useActiveUser();
+  const epoch = useActiveUserGeneration();
+  const [answer, setAnswer] = useState<{
+    owner: number | null;
+    epoch: number;
+    value: boolean;
+  } | null>(null);
+  const answered = answer?.epoch === epoch ? answer.value : null;
   useEffect(() => {
     let mounted = true;
     void loadWritingOfferAnswered().then((stored) => {
-      if (mounted) setAnswered(stored);
+      if (mounted && getActiveUser() === owner && getActiveUserGeneration() === epoch)
+        setAnswer({ owner, epoch, value: stored });
     });
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [owner, epoch]);
   const settle = useCallback(() => {
+    if (getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
     void saveWritingOfferAnswered(true);
-  }, []);
+  }, [owner, epoch]);
   return { answered, settle };
 }
 

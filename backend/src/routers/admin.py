@@ -496,8 +496,9 @@ async def purge_journal_entries(
     live backup copy (retention plus one backup interval), so -- provided
     backups are expired as DEPLOYMENT.md says -- no live backup holds a purged
     entry undeleted. The default window is the lifetime the owner ratified for
-    a soft-deleted page (#3063 AC15, 2026-10-13), which is that floor; nothing
-    schedules this route (AC18).
+    a soft-deleted page (#3063 AC15, 2026-10-13), which is that floor. The
+    nightly retention sweep runs the same purge on that window (#3266); this
+    route stays for an operator's ad hoc run.
     """
     try:
         result = await purge_soft_deleted_entries(session, older_than_days=older_than_days)

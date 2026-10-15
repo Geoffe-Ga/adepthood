@@ -15,6 +15,19 @@ import {
 } from '../errorMessages';
 import { ApiError } from '../index';
 
+describe('withdrawal errors preserve their operation context (#3275)', () => {
+  it.each([
+    'vault_withdrawal_pending',
+    'vault_withdrawal_previous_vault',
+    'vault_withdrawal_disconnected_vault',
+    'vault_withdrawal_unrecorded_vault',
+  ])('does not turn an Intimate withdrawal into deletion or editing lock: %s', (code) => {
+    const copy = messageForCode(code);
+    expect(copy).not.toMatch(/set to be deleted|can't be edited|delete the page here only/i);
+    expect(copy).toMatch(/not.*confirmed|cannot.*confirm|can't.*confirm/i);
+  });
+});
+
 describe('USER_FACING_ERROR_MESSAGES', () => {
   it('covers every backend error code the backend emits', () => {
     // This set is the source of truth for what backend codes ship to clients.

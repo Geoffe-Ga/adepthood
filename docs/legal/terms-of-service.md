@@ -88,7 +88,7 @@ a stranger to read.
 Purchases are handled by **Gumroad**, which is the seller and takes the
 payment. Adepthood verifies what you bought and credits it to your account:
 a licence, or a pack of tokens that pays for model calls. Card details are
-Gumroad's to handle and never reach Adepthood.
+Gumroad's to handle and are not sent to Adepthood.
 
 Refunds follow Gumroad's process. A refunded or revoked sale removes the
 entitlement it granted.

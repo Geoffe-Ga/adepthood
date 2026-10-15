@@ -47,6 +47,8 @@ import {
   loadLinkHabitNudgeDeclined,
   saveLinkHabitNudgeDeclined,
 } from '@/storage/linkHabitNudgeStorage';
+import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
+import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
 import { loadWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { selectKnownUnlinked, useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 
@@ -66,19 +68,27 @@ const NO_OFFER_TO_WAIT_FOR = Promise.resolve(true);
  * nothing renders until both flags have landed.
  */
 function useNudgeGate(waitForAnsweredOffer: boolean): boolean | null {
-  const [open, setOpen] = useState<boolean | null>(null);
+  const owner = useActiveUser();
+  const epoch = useActiveUserGeneration();
+  const [answer, setAnswer] = useState<{
+    owner: number | null;
+    epoch: number;
+    value: boolean;
+  } | null>(null);
+  const open = answer?.epoch === epoch ? answer.value : null;
   useEffect(() => {
     let mounted = true;
     const offerAnswered = waitForAnsweredOffer ? loadWritingOfferAnswered() : NO_OFFER_TO_WAIT_FOR;
     void Promise.all([loadLinkHabitNudgeDeclined(), offerAnswered]).then(([declined, answered]) => {
-      if (mounted) setOpen(!declined && answered);
+      if (mounted && getActiveUser() === owner && getActiveUserGeneration() === epoch)
+        setAnswer({ owner, epoch, value: !declined && answered });
     });
     return () => {
       mounted = false;
     };
     // Each page passes a fixed ``waitForAnsweredOffer``, so this reads once, at
     // mount: the arbitration with the offer is committed then.
-  }, [waitForAnsweredOffer]);
+  }, [waitForAnsweredOffer, owner, epoch]);
   return open;
 }
 
@@ -87,15 +97,19 @@ function LinkHabitNudge({
 }: LinkHabitNudgeProps): React.JSX.Element | null {
   const unlinked = useWritingHabitLinkStore(selectKnownUnlinked);
   const open = useNudgeGate(waitForAnsweredOffer);
-  const [dismissed, setDismissed] = useState(false);
+  const owner = useActiveUser();
+  const epoch = useActiveUserGeneration();
+  const [dismissedOwner, setDismissedOwner] = useState<{ epoch: number } | null>(null);
+  const dismissed = dismissedOwner !== null && dismissedOwner.epoch === epoch;
   // The decline unmounts the button the writer is on, so focus is handed to
   // the note's Close (still mounted) rather than dropped with it.
   const focusClose = useFocusBannerClose();
   const dismiss = useCallback(() => {
-    setDismissed(true);
+    if (getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
+    setDismissedOwner({ epoch });
     void saveLinkHabitNudgeDeclined();
     focusClose();
-  }, [focusClose]);
+  }, [focusClose, owner, epoch]);
 
   if (open !== true || !unlinked || dismissed) return null;
   return <LinkHabitNudgeNote onDismiss={dismiss} />;

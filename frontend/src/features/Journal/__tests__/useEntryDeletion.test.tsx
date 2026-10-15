@@ -57,6 +57,25 @@ beforeEach(() => {
 });
 
 describe('useEntryDeletion', () => {
+  it.each(['vault_withdrawal_pending', 'vault_withdrawal_unrecorded_vault'])(
+    'adds recorded-deletion context only when DELETE returns %s',
+    async (detail) => {
+      mockDelete.mockRejectedValue({ status: 503, detail });
+      const h = harness([NEWEST]);
+      act(() => h.result.current.request(NEWEST));
+      await act(async () => {
+        h.result.current.confirm();
+      });
+      await waitFor(() =>
+        expect(h.result.current.error).toMatch(/set to be deleted and cannot be edited/),
+      );
+      expect(h.result.current.error).not.toMatch(/we could not delete it/i);
+      expect(h.state.items).toEqual([NEWEST]);
+      expect(h.result.current.unreachable?.location).toBe(
+        detail === 'vault_withdrawal_pending' ? 'connected_vault' : 'unrecorded_vault',
+      );
+    },
+  );
   it('drops the row and pulls the reported total down with it', async () => {
     const h = harness([NEWEST, MIDDLE, OLDEST]);
 

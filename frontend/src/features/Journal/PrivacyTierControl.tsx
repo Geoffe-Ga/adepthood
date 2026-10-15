@@ -26,7 +26,7 @@ export const DEFAULT_TIER: PrivacyTier = 'personal';
 
 /** One-line copy shown under the control when ``intimate`` is selected. */
 const INTIMATE_EXPLAINER =
-  'Intimate entries are never sent to AI, and any copy already in your vault is pulled back. If your vault can’t be reached right now, keep Intimate chosen — once it’s back, choose Intimate again so the copy comes out.';
+  'Intimate pages stay in your Adepthood journal and are not shared with AI for new readings or copied to Creek. Earlier vault copies are requested for removal; they may remain until that vault confirms. Adepthood retries pending removal when it can reach that vault.';
 
 interface TierOption {
   tier: PrivacyTier;
@@ -37,9 +37,13 @@ interface TierOption {
 
 /** The three tiers, ordered most-open → most-private. */
 const TIER_OPTIONS: readonly TierOption[] = [
-  { tier: 'public', label: 'Public', hint: 'Most open — shareable with the Sangha.' },
-  { tier: 'personal', label: 'Personal', hint: 'Private to you; resonance may read it.' },
-  { tier: 'intimate', label: 'Intimate', hint: 'Never sent to AI; resonance is paused.' },
+  { tier: 'public', label: 'Public', hint: 'Most open privacy tier.' },
+  { tier: 'personal', label: 'Personal', hint: 'For readings and reflections you request.' },
+  {
+    tier: 'intimate',
+    label: 'Intimate',
+    hint: 'Not used for new AI readings; resonance is paused.',
+  },
 ];
 
 /** The visible name of a tier, as the control labels it. */

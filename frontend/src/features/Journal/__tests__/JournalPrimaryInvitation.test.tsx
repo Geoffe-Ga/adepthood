@@ -18,6 +18,7 @@ import { morningPageTitle } from '../morningPagesCopy';
 
 import type { ReflectionCurrentScope, ReflectionDue, ReflectionLevel, Stage } from '@/api';
 import { uiType } from '@/design/tokens';
+import { setActiveUser } from '@/storage/userScope';
 import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
 import { todayInUserTZ } from '@/utils/dateUtils';
 
@@ -73,7 +74,10 @@ jest.mock('@/storage/morningPagesTipStorage', () => ({
 }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ userTimezone: 'America/New_York' }),
+  useAuth: () => ({
+    userTimezone: 'America/New_York',
+    token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y',
+  }),
 }));
 
 // Focus fires once on mount, as a first visit does. `fireFocus` replays it for
@@ -148,6 +152,7 @@ async function settle(): Promise<void> {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   for (const mock of [
     mockDue,
     mockCurrent,

@@ -63,6 +63,13 @@ vault address or journal excerpt can be pasted into it.
 A gate group is any-of. C03 and C23 need `B13` **or** `B14`, the custody
 branch that was selected (B12), and never both.
 
+The record's `required_gates` must mirror the ledger's. Groups pair with the
+ledger's groups by position: the same number of groups, in the ledger's
+order. Within a group, order carries no meaning, so `["B14", "B13"]` matches
+a ledger group of `["B13", "B14"]`. Each group must name exactly the ledger
+group's items, each once. A missing, extra or repeated item, or a group out
+of position, is `GATE_SET_MISMATCH`, and the record is invalid.
+
 ## What `certified` requires
 
 The validator (`backend/scripts/claim_certification.py`) returns

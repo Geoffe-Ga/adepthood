@@ -11,6 +11,7 @@ import type {
   JournalMessage,
   PromptDetail,
 } from '@/api';
+import { setActiveUser } from '@/storage/userScope';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -21,6 +22,11 @@ const mockEraseLocally = jest.fn() as jest.MockedFunction<
 >;
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockNavigate = jest.fn();
+
+// The shelf is authenticated: its namespace and decoded credential agree.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y', userTimezone: 'UTC' }),
+}));
 
 jest.mock('@/api', () => ({
   // The shelf's primary invitation asks what review is due; answer "none" so
@@ -106,6 +112,7 @@ function page(items: JournalMessage[]): JournalListResponse {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   mockList.mockReset();
   mockDelete.mockReset();
   mockEraseLocally.mockReset();
@@ -141,7 +148,7 @@ describe('deleting one journal entry from the shelf', () => {
     expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
   });
 
-  it('says the page goes from the app and that its corpus copy goes with it', async () => {
+  it('describes requested removal, retained copies and the real pending-deletion lock', async () => {
     const { getByTestId } = await shelfWithDeleteRequested();
 
     const body = getByTestId('journal-delete-dialog-body').props.children as string;
@@ -149,8 +156,11 @@ describe('deleting one journal entry from the shelf', () => {
     expect(body).toMatch(/no way back to it from inside the app/i);
     // The withdrawal from the ontologized corpus is a promise about where the writing goes.
     expect(body).toMatch(/reflections draw on/i);
-    expect(body).toMatch(/connected Creek vault.*removed/i);
-    expect(body).toMatch(/offline.*shelf.*try again/i);
+    expect(body).toMatch(/removal.*Creek vault copies.*requested/i);
+    expect(body).toMatch(/may remain until the vault confirms/i);
+    expect(body).toMatch(/pending.*stays on your shelf.*cannot be edited/i);
+    expect(body).toMatch(/automatically retries.*recorded vault.*reachable/i);
+    expect(body).not.toMatch(/is removed too|so you can try again/i);
     // Never scold somebody for unwriting their own page.
     expect(body).not.toMatch(/permanent|forever|warning|sure\?/i);
   });
@@ -205,8 +215,9 @@ describe('deleting one journal entry from the shelf', () => {
     // notice may not say it could not delete, nor ask for another delete.
     const notice = (await findByTestId('journal-delete-error')).props.children as string;
     expect(notice).toMatch(/set to be deleted/i);
-    expect(notice).toMatch(/finishes once your Creek vault confirms its copy is gone/i);
-    expect(notice).toMatch(/can't be edited/i);
+    expect(notice).toMatch(/cannot be edited/i);
+    expect(notice).toMatch(/removal.*your Creek vault.*not been confirmed/i);
+    expect(notice).toMatch(/Adepthood retries while that vault is reachable/i);
     expect(notice).not.toMatch(/could not delete|delete this page again|still on your shelf/i);
     expect(getByTestId('journal-shelf-card-2')).toBeTruthy();
   });
@@ -242,8 +253,10 @@ describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
 
     const notice = getByTestId('journal-delete-error').props.children as string;
     expect(notice).toMatch(/set to be deleted/i);
-    expect(notice).toMatch(/vault you were connected to before/i);
-    expect(notice).toMatch(/finishes once you reconnect that vault/i);
+    expect(notice).toMatch(/not been confirmed.*previous Creek vault/i);
+    expect(notice).toMatch(/reconnect that vault in Settings to allow retry/i);
+    expect(notice).toMatch(/cannot be edited/i);
+    expect(notice).not.toMatch(/finishes once you reconnect/i);
     expect(notice).not.toMatch(/could not delete/i);
     expect(getByTestId('journal-unreachable-reconnect')).toBeTruthy();
     expect(getByTestId('journal-unreachable-erase')).toBeTruthy();
@@ -262,11 +275,15 @@ describe('a page whose vault copy cannot be confirmed gone (#3094)', () => {
   });
 
   it('tells the person a pre-binding copy may remain in an earlier vault (#3095)', async () => {
-    const { getByTestId } = await refusedWith('vault_withdrawal_unrecorded_vault');
+    const { getByTestId, queryByTestId } = await refusedWith('vault_withdrawal_unrecorded_vault');
 
     const notice = getByTestId('journal-delete-error').props.children as string;
-    expect(notice).toMatch(/before October 7, 2026/);
-    expect(notice).toMatch(/may still be in a Creek vault you connected earlier/i);
+    expect(queryByTestId('journal-unreachable-reconnect')).toBeNull();
+    expect(notice).toMatch(/cannot identify the vault.*older copy/i);
+    expect(notice).toMatch(/removal cannot be confirmed/i);
+    expect(notice).toMatch(/may remain in a vault you connected earlier/i);
+    expect(notice).toMatch(/set to be deleted.*cannot be edited/i);
+    expect(notice).not.toMatch(/reconnect that vault/i);
     expect(notice).not.toMatch(/withdrawn|is gone/i);
     expect(getByTestId('journal-unreachable-erase')).toBeTruthy();
   });

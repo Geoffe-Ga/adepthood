@@ -1,5 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { readOwnedDecline, writeOwnedDeclineKey } from './declineOwnership';
+import { getActiveUser, scopedKey } from './userScope';
+
 import { reportDiagnostic } from '@/observability/diagnostics';
 /**
  * Persists the writer's two ways of declining the morning-pages tip (#3005).
@@ -10,8 +13,7 @@ import { reportDiagnostic } from '@/observability/diagnostics';
  *   permanent flag, which only the Settings → Journal "Offer morning pages"
  *   switch clears (and can set).
  *
- * Both live on THIS device (AsyncStorage), unscoped per account, exactly as
- * the single flag before them did. A read error fails open — the tip is an
+ * Both live on THIS device (AsyncStorage), in the active account namespace. A read error fails open — the tip is an
  * invitation, so being offered it once too often beats losing it silently.
  *
  * The tip once had a single "set aside" flag that retired it for good
@@ -42,18 +44,27 @@ export const MORNING_PAGES_TIP_OPEN: MorningPagesTipState = Object.freeze({
 });
 
 /** Carry a legacy permanent decline over to the never-offer flag, once. */
-async function migrateLegacyDismissal(): Promise<void> {
-  const legacy = await AsyncStorage.getItem(LEGACY_DISMISSED_KEY);
+async function migrateLegacyDismissal(
+  legacyKey: string,
+  neverOfferKey: string,
+  owner: number | null,
+): Promise<void> {
+  const legacy = await readOwnedDecline(LEGACY_DISMISSED_KEY, owner);
   if (legacy !== FLAG_TRUE) return;
-  await AsyncStorage.setItem(NEVER_OFFER_KEY, FLAG_TRUE);
-  await AsyncStorage.removeItem(LEGACY_DISMISSED_KEY);
+  if ((await readOwnedDecline(NEVER_OFFER_KEY, owner)) === null) {
+    await writeOwnedDeclineKey(neverOfferKey, FLAG_TRUE, true);
+  }
+  await AsyncStorage.removeItem(legacyKey);
 }
 
 export async function loadMorningPagesTipState(): Promise<MorningPagesTipState> {
+  const owner = getActiveUser();
+  const legacyKey = scopedKey(LEGACY_DISMISSED_KEY);
+  const neverOfferKey = scopedKey(NEVER_OFFER_KEY);
   try {
-    await migrateLegacyDismissal();
-    const setAsideOn = await AsyncStorage.getItem(SET_ASIDE_ON_KEY);
-    const neverOffer = await AsyncStorage.getItem(NEVER_OFFER_KEY);
+    await migrateLegacyDismissal(legacyKey, neverOfferKey, owner);
+    const setAsideOn = await readOwnedDecline(SET_ASIDE_ON_KEY, owner);
+    const neverOffer = await readOwnedDecline(NEVER_OFFER_KEY, owner);
     return { setAsideOn, neverOffer: neverOffer === FLAG_TRUE };
   } catch {
     reportDiagnostic('storage_read_failed', { storage: 'morning_pages' });
@@ -71,7 +82,7 @@ export async function loadMorningPagesTipState(): Promise<MorningPagesTipState> 
  */
 async function saveDecline(key: string, value: string): Promise<boolean> {
   try {
-    await AsyncStorage.setItem(key, value);
+    await writeOwnedDeclineKey(key, value);
     return true;
   } catch {
     reportDiagnostic('storage_write_failed', { storage: 'morning_pages' });
@@ -81,12 +92,12 @@ async function saveDecline(key: string, value: string): Promise<boolean> {
 
 /** The corner X: set the tip aside for ``day`` (the writer's today) only. */
 export async function saveMorningPagesTipSetAside(day: string): Promise<void> {
-  await saveDecline(SET_ASIDE_ON_KEY, day);
+  await saveDecline(scopedKey(SET_ASIDE_ON_KEY), day);
 }
 
 /** "Don't show this again" (true), or its undoing (false). Resolves whether it saved. */
 export async function saveMorningPagesTipNeverOffer(value: boolean): Promise<boolean> {
-  return saveDecline(NEVER_OFFER_KEY, value ? FLAG_TRUE : FLAG_FALSE);
+  return saveDecline(scopedKey(NEVER_OFFER_KEY), value ? FLAG_TRUE : FLAG_FALSE);
 }
 
 /**
@@ -102,10 +113,13 @@ export async function saveMorningPagesTipNeverOffer(value: boolean): Promise<boo
  * (never rejects), so Settings only says the tip is back when it is.
  */
 export async function restoreMorningPagesTip(): Promise<boolean> {
+  const legacyKey = scopedKey(LEGACY_DISMISSED_KEY);
+  const dayKey = scopedKey(SET_ASIDE_ON_KEY);
+  const neverOfferKey = scopedKey(NEVER_OFFER_KEY);
   try {
-    await AsyncStorage.removeItem(LEGACY_DISMISSED_KEY);
-    await AsyncStorage.setItem(NEVER_OFFER_KEY, FLAG_FALSE);
-    await AsyncStorage.removeItem(SET_ASIDE_ON_KEY);
+    await AsyncStorage.removeItem(legacyKey);
+    await writeOwnedDeclineKey(neverOfferKey, FLAG_FALSE);
+    await AsyncStorage.removeItem(dayKey);
     return true;
   } catch {
     reportDiagnostic('storage_clear_failed', { storage: 'morning_pages' });

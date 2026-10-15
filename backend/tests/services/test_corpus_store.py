@@ -600,6 +600,62 @@ async def test_content_is_encrypted_at_rest(
         je.reset_cache()
 
 
+# A seeded embedding corpus at one frequency, so similarity alone orders it: the
+# names are the expected ranking against ``_EAST``, nearest first.
+_RANKED_CORPUS: tuple[tuple[str, tuple[float, ...]], ...] = (
+    ("first", (1.0, 0.05)),
+    ("second", (1.0, 0.4)),
+    ("third", (1.0, 1.0)),
+    ("fourth", (0.3, 1.0)),
+)
+
+
+async def _ranking(session: AsyncSession) -> list[str]:
+    for content, vector in reversed(_RANKED_CORPUS):
+        await _store(session, content, embedding=vector, F5=0.5)
+    session.expunge_all()
+    found = await retrieve_fragments(
+        session,
+        user_id=_OWNER,
+        query=RetrievalQuery(query_embedding=_EAST, frequency_bias=Frequency.F5),
+    )
+    return [fragment.content for fragment in found]
+
+
+@pytest.mark.asyncio
+async def test_an_encrypted_embedding_ranks_exactly_as_a_plaintext_one(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ciphertext at rest changes nothing about retrieval order (#3263).
+
+    Similarity is computed in Python on the decrypted list, so the same seeded
+    corpus must come back in the same order with a key as without one. The raw
+    column is checked too, so the ranking is known to have run over ciphertext.
+    """
+    monkeypatch.delenv("JOURNAL_ENCRYPTION_KEYS", raising=False)
+    je.reset_cache()
+    plaintext_order = await _ranking(db_session)
+    await db_session.execute(sa.delete(CorpusFragment))
+    await db_session.commit()
+
+    monkeypatch.setenv("JOURNAL_ENCRYPTION_KEYS", Fernet.generate_key().decode())
+    je.reset_cache()
+    try:
+        encrypted_order = await _ranking(db_session)
+        on_disk = (
+            (await db_session.execute(sa.text("SELECT embedding FROM corpusfragment")))
+            .scalars()
+            .all()
+        )
+    finally:
+        je.reset_cache()
+
+    assert plaintext_order == [content for content, _ in _RANKED_CORPUS]
+    assert encrypted_order == plaintext_order
+    assert on_disk
+    assert all(value.startswith("enc::v1::") for value in on_disk)
+
+
 # ---------------------------------------------------------------------------
 # The colour join
 # ---------------------------------------------------------------------------

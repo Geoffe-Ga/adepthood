@@ -8,12 +8,18 @@ sets *every* encrypted column of that table, as the schema-derived inventory
 lists them, so a column added to an existing table is written by these tests
 the day it lands without anybody editing a factory.
 
+A list column (``EncryptedJSONList``) is written the chosen text as a
+one-element list, and :func:`stored_plaintext` says what its ciphertext then
+decrypts to -- the JSON of that list -- so a caller comparing decrypted bytes
+compares against the right thing for either kind of column.
+
 A table with no factory fails ``test_every_encrypted_table_has_a_row_factory``
 by name, which is the point at which a new encrypted table must add one.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, date, datetime
 from typing import Protocol
@@ -37,7 +43,8 @@ from models.prompt_response import PromptResponse
 from models.user import User
 from models.user_practice import UserPractice
 from models.user_vault_config import UserVaultConfig
-from services.encryption_inventory import encrypted_columns
+from services.encryption_inventory import EncryptedColumn, encrypted_columns
+from services.journal_encryption import EncryptedJSONList
 
 # Placeholder text for required encrypted fields; insert_row overwrites it.
 _FILL = "placeholder"
@@ -224,6 +231,22 @@ ROW_FACTORIES: Mapping[str, RowFactory] = {
 }
 
 
+def is_list_column(target: EncryptedColumn) -> bool:
+    """Whether ``target`` is an ``EncryptedJSONList`` column rather than a text one."""
+    column_type = SQLModel.metadata.tables[target.table].c[target.column].type
+    return isinstance(column_type, EncryptedJSONList)
+
+
+def orm_value(target: EncryptedColumn, text: str) -> str | list[str]:
+    """What the ORM is handed so ``target`` stores ``text``: itself, or ``[text]``."""
+    return [text] if is_list_column(target) else text
+
+
+def stored_plaintext(target: EncryptedColumn, text: str) -> str:
+    """What ``target``'s stored ciphertext decrypts to once ``orm_value`` was written."""
+    return json.dumps([text]) if is_list_column(target) else text
+
+
 async def insert_row(session: AsyncSession, table: str, text_for: Callable[[str], str]) -> int:
     """Insert one ``table`` row via the ORM with ``text_for(column)`` in each encrypted column.
 
@@ -233,7 +256,7 @@ async def insert_row(session: AsyncSession, table: str, text_for: Callable[[str]
     row = await ROW_FACTORIES[table](session)
     for target in encrypted_columns():
         if target.table == table:
-            setattr(row, target.column, text_for(target.column))
+            setattr(row, target.column, orm_value(target, text_for(target.column)))
     session.add(row)
     await session.flush()
     assert row.id is not None

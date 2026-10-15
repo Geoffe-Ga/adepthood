@@ -48,17 +48,17 @@ const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to contin
  *
  * Since ADR 0009 phase (a) (#3067) credits pay only when the writer's vault
  * answers, which is a resonance reading; letters and page reading always go to
- * the app's provider and need the writer's own key. DRAFT for owner review:
- * no privacy promise (B24, #3076 gates those).
+ * the app's provider and need the writer's own key. Owner-approved wording
+ * (#3262); it makes no privacy promise (B24, #3076 gates those).
  */
 export const INSUFFICIENT_OFFERINGS_COPY =
   "You're out of BotMason credits, so nothing was charged. Credits pay only for readings your vault answers; letters and page reading need your own OpenAI or Anthropic API key, which you can add in Settings.";
-// DRAFT for owner review (ADR 0009 phase (a), #3067): says plainly that credits
-// no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
+// Owner-approved wording (ADR 0009 phase (a), #3067; #3262): says plainly that
+// credits no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
 export const LLM_KEY_REQUIRED_COPY =
   "BotMason's cloud AI needs an API key of your own — credits don't pay for it — so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.";
-// DRAFT for owner review (#1938, B21 E1): a revoked entitlement -- a refund,
-// a dispute, a membership that ended, or an operator's revocation -- restricts
+// Owner-approved wording (#1938, B21 E1; #3262): a revoked entitlement -- a
+// refund, a dispute, a membership that ended, or an operator's revocation -- restricts
 // AI features only. Plain and non-pressuring under "you choose your depth": it
 // says what stopped and what did not, and offers no price, purchase or refill,
 // since credits are not what is missing.
@@ -195,20 +195,19 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   tag_slug_taken: 'You already have a tag by that name. Pick a different one.',
   habits_must_not_be_empty:
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
-  // DRAFT copy (#3094/#3098 review), pending owner review. A DELETE that
-  // answers one of these has recorded the deletion: the server finishes it once
-  // the vault holding the copy confirms, and refuses edits until then. So none
-  // of these says the delete failed, and none says the copy is gone.
+  // These codes also answer Intimate PATCHes, which keep the page editable.
+  // Only the deletion surface can add its recorded-delete/edit-lock context.
+  // Every shared message keeps remote removal explicitly unconfirmed.
   vault_withdrawal_pending:
-    "This page is set to be deleted. Deletion finishes once your Creek vault confirms its copy is gone; until then the page can't be edited.",
+    'Removal of a copy from your Creek vault has not been confirmed. Adepthood retries while that vault is reachable.',
   vault_withdrawal_previous_vault:
-    "This page is set to be deleted. Its copy is in the Creek vault you were connected to before, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
+    'Removal has not been confirmed by your previous Creek vault. Reconnect that vault in Settings to allow retry.',
   vault_withdrawal_disconnected_vault:
-    "This page is set to be deleted. Its copy is in the Creek vault you disconnected, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
+    'Removal has not been confirmed by the Creek vault you disconnected. Reconnect that vault in Settings to allow retry.',
   // A copy made before Adepthood recorded which vault received it (#3095). No
   // vault can confirm it, so this never promises the deletion finishes on its own.
   vault_withdrawal_unrecorded_vault:
-    "This page was copied to a Creek vault before October 7, 2026, before Adepthood recorded which vault received each copy. We can't confirm that copy was deleted: it may still be in a Creek vault you connected earlier. You can delete the page here only, then delete the copy in that vault yourself.",
+    'Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.',
   journal_entry_deletion_pending:
     "This page is set to be deleted, so it can't be edited. Deletion finishes once your Creek vault confirms its copy is gone.",
 

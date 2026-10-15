@@ -12,6 +12,7 @@ import type {
   StagePromptsResponse,
 } from '@/api';
 import { accent, surface } from '@/design/tokens';
+import { setActiveUser } from '@/storage/userScope';
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 
 const mockList = jest.fn() as jest.MockedFunction<
@@ -28,6 +29,11 @@ const mockNavigate = jest.fn();
 // Present so a display-only excerpt() regression that starts writing back to the
 // server (instead of only truncating the rendered preview) has something to trip.
 const mockUpdate = jest.fn();
+
+// The shelf is authenticated: its namespace and decoded credential agree.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y', userTimezone: 'UTC' }),
+}));
 
 jest.mock('@/api', () => ({
   // The shelf's primary invitation asks what review is due; answer "none" so
@@ -188,6 +194,7 @@ function stagePrompts(): StagePromptsResponse {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   mockList.mockReset();
   mockNavigate.mockReset();
   mockPromptCurrent.mockReset();

@@ -47,6 +47,77 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('useResonance — care field threading', () => {
+  const reportedProvenance: NonNullable<ResonanceResponse['provenance']> = {
+    notes: {
+      source: 'app_provider' as const,
+      provider: 'openai' as const,
+      model: 'reported-model',
+      receipt_version: 1,
+    },
+    detection: { source: 'none' as const, provider: null, model: null, receipt_version: 1 },
+    detection_checked: false,
+    paid_by: 'own_key' as const,
+  };
+
+  it('retains supplied live inference and payer receipts alongside care', async () => {
+    mockGenerate.mockResolvedValue(
+      resonancePayload({
+        care: carePayload(),
+        provenance: reportedProvenance,
+        marginalia: [note()],
+      }),
+    );
+    const { result } = renderHook(() =>
+      useResonance({
+        routeEntryId: null,
+        flush: async () => 42,
+        userTimezone: TEST_TIMEZONE,
+      }),
+    );
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+    expect(result.current.care).toEqual(carePayload());
+    expect(result.current.passProvenance).toEqual(reportedProvenance);
+    expect(result.current.marginalia).toHaveLength(1);
+  });
+
+  it.each([undefined, null])(
+    'does not invent a receipt for a care-only response: %p',
+    async (provenance) => {
+      mockGenerate.mockResolvedValue(resonancePayload({ care: carePayload(), provenance }));
+      const { result } = renderHook(() =>
+        useResonance({
+          routeEntryId: null,
+          flush: async () => 42,
+          userTimezone: TEST_TIMEZONE,
+        }),
+      );
+      await act(async () => {
+        await result.current.requestResonance();
+      });
+      expect(result.current.care).toEqual(carePayload());
+      expect(result.current.passProvenance).toBeUndefined();
+    },
+  );
+
+  it('never uses purported model receipts on a private care response', async () => {
+    mockGenerate.mockResolvedValue(
+      resonancePayload({ care: carePayload(), private: true, provenance: reportedProvenance }),
+    );
+    const { result } = renderHook(() =>
+      useResonance({
+        routeEntryId: null,
+        flush: async () => 42,
+        userTimezone: TEST_TIMEZONE,
+      }),
+    );
+    await act(async () => {
+      await result.current.requestResonance();
+    });
+    expect(result.current.care).toEqual(carePayload());
+    expect(result.current.passProvenance).toBeUndefined();
+  });
   it('exposes care on the hook result when the generate pass returns a care payload', async () => {
     const flush = jest.fn(async () => 42);
     mockGenerate.mockResolvedValue(resonancePayload({ care: carePayload() }));

@@ -201,6 +201,21 @@ describe("journal.transcribePage with the writer's own key (ADR 0009 phase (a), 
     expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ classification: 'intimate' });
   });
 
+  test('revoked admission is terminal before a device-direct vendor request', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'ai_access_revoked' }, 403));
+    const err = (await captureError(
+      journal.transcribePage(
+        { imageBase64: SENTINEL_PAYLOAD, mediaType: 'image/png', classification: 'personal' },
+        'tok',
+        OPENAI_KEY,
+      ),
+    )) as TranscriptionErrorInstance;
+    expect(err.kind).toBe('ai_access_revoked');
+    expect(err.status).toBe(403);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toBe(ADMISSION_URL);
+  });
+
   test('an unreachable admission stops the page too: it fails closed', async () => {
     mockFetch.mockRejectedValueOnce(new TypeError('Network request failed'));
 
@@ -349,6 +364,18 @@ describe('journal.transcribePage timeout', () => {
 
 describe('journal.transcribePage error mapping', () => {
   const cases: Array<{ name: string; status: number; body: unknown; kind: string }> = [
+    {
+      name: '403 ai_access_revoked is terminal',
+      status: 403,
+      body: { detail: 'ai_access_revoked' },
+      kind: 'ai_access_revoked',
+    },
+    {
+      name: 'another status with revoked detail is not the terminal contract',
+      status: 400,
+      body: { detail: 'ai_access_revoked' },
+      kind: 'unknown',
+    },
     {
       name: '422 invalid_image',
       status: 422,

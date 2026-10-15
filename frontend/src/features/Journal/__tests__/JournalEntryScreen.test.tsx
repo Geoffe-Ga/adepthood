@@ -159,8 +159,8 @@ const READ_ROW_CONTROLS = ['get-resonance-button', 'promote-quote-button', 'jour
 
 /** The edit-mode page's vertical stack, top to bottom, by host testID. */
 const WRITING_PAGE_STACK = [
-  'journal-body-input',
   'journal-format-toolbar',
+  'journal-body-input',
   'journal-save-hint',
   'journal-word-count',
   'journal-writing-controls',
@@ -444,17 +444,16 @@ describe('JournalEntryScreen', () => {
     expect(getByTestId('journal-body-input').props.scrollEnabled).toBe(false);
   });
 
-  // #3002: the page reads top to bottom as the text, then the tools that act on
-  // it — formatting, then the save footer, then the Finish rail.
-  it('stacks the page as body, formatting toolbar, save footer, then the Finish rail', () => {
+  // #3250: formatting leads the body; the save footer and Finish still follow it.
+  it('stacks the page as formatting toolbar, body, save footer, then the Finish rail', () => {
     const { getByTestId, UNSAFE_root } = renderScreen();
     fireEvent.changeText(getByTestId('journal-body-input'), 'A first line.');
     expect(hostTestIDOrder(UNSAFE_root, WRITING_PAGE_STACK)).toEqual(WRITING_PAGE_STACK);
   });
 
-  // #3002: the toolbar now trails a growing body, so on iOS the page must scroll
-  // its content out from under the soft keyboard (Android resizes by default).
-  it('insets the page scroll for the soft keyboard so the trailing toolbar stays reachable', () => {
+  // The growing body and its footer stay reachable above the iOS soft keyboard
+  // (Android resizes by default).
+  it('insets the page scroll for the soft keyboard so the body footer stays reachable', () => {
     const { getByTestId } = renderScreen();
     expect(getByTestId('journal-page-scroll').props.automaticallyAdjustKeyboardInsets).toBe(true);
   });

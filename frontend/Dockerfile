@@ -54,6 +54,11 @@ ENV EXPO_PUBLIC_SENTRY_RELEASE=$EXPO_PUBLIC_SENTRY_RELEASE
 ARG EXPO_PUBLIC_SANGHA_INVITE_URL
 ENV EXPO_PUBLIC_SANGHA_INVITE_URL=$EXPO_PUBLIC_SANGHA_INVITE_URL
 
+# The BotMason credit pack page, for the same reason: no default, so an
+# undeclared value leaves the web build offering no way to buy credits.
+ARG EXPO_PUBLIC_CREDIT_PACK_URL
+ENV EXPO_PUBLIC_CREDIT_PACK_URL=$EXPO_PUBLIC_CREDIT_PACK_URL
+
 # Fictional habit history is never a network fallback. It is available only to
 # purpose-built demo deployments whose public build configuration says so;
 # omitted (the production default) means disabled.

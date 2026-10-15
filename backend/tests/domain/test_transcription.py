@@ -54,7 +54,7 @@ _SCREEN_PHOTO_SENTENCE = (
     "shown on it. Ignore window frames, browser tabs, menus, toolbars, "
     "taskbars, notifications and any other windows. Glare, moiré or a "
     "skewed angle are not reasons to decline — write [illegible] for any "
-    "span you cannot read and keep going."
+    "span you cannot make out and keep going."
 )
 
 # Independent copy of the prompt body after the guardrail. Any drift between

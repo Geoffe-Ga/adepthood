@@ -14,6 +14,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
+import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
+
 export interface StoredDismissal {
   /** The answer if it is already in hand, or ``null`` while the read is out. */
   known: () => boolean | null;
@@ -35,16 +38,29 @@ export function useStoredDismissal(
   load: () => Promise<boolean>,
   save: (_value: boolean) => Promise<void>,
 ): StoredDismissal {
+  const owner = useActiveUser();
+  const epoch = useActiveUserGeneration();
+  const scope = useRef(epoch);
+  const revision = useRef(0);
   const settled = useRef<boolean | null>(null);
   const pending = useRef<Promise<boolean> | null>(null);
 
+  if (scope.current !== epoch) {
+    scope.current = epoch;
+    revision.current += 1;
+    settled.current = null;
+    pending.current = null;
+  }
+
   const read = useCallback((): Promise<boolean> => {
+    const atStart = revision.current;
     pending.current ??= load().then((stored) => {
-      settled.current = stored;
-      return stored;
+      if (getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return false;
+      if (atStart === revision.current) settled.current = stored;
+      return settled.current ?? stored;
     });
     return pending.current;
-  }, [load]);
+  }, [load, owner, epoch]);
 
   // Warm the read at mount so a press is almost never the thing waiting on it.
   useEffect(() => {
@@ -54,10 +70,12 @@ export function useStoredDismissal(
   const markDismissed = useCallback((): void => {
     // Memory first, disk after: a second press in the same session must not be
     // able to race the write and be shown the note it was just dismissed from.
+    if (getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
+    revision.current += 1;
     settled.current = true;
     pending.current = Promise.resolve(true);
     void save(true);
-  }, [save]);
+  }, [save, owner, epoch]);
 
   const known = useCallback((): boolean | null => settled.current, []);
 

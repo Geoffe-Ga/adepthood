@@ -171,7 +171,7 @@ test('a writer checks several promoted quotes and folds them into the review at 
 const PHONE = { width: 390, height: 844 } as const;
 /** Lines in the typed opening -- enough to grow the body past its blank-page minimum. */
 const OPENING_LINES = 30;
-/** A last word typed after the fold, then bolded from the trailing toolbar. */
+/** A last word typed after the fold, then bolded from the toolbar above the body. */
 const CLOSING_WORD = 'Onward';
 /** Layout boxes are fractional; this much is rounding, not overlap. */
 const SUBPIXEL_TOLERANCE_PX = 1;
@@ -223,9 +223,10 @@ test('folded quotes stay inside the body frame at phone width (#3001)', async ({
 
   // The field reaches the last folded line the mirror draws ...
   expect(field.bottom + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(lastQuoteLine.bottom);
-  // ... and the formatting toolbar, the save footer and the Finish rail start
-  // below it, not under its text (#3002 moved the toolbar under the body).
-  for (const below of [toolbar, footer, finish]) {
+  // The toolbar leads the body (#3250); the save footer and Finish still follow
+  // every folded line, never underneath the mirror's growing text.
+  expect(toolbar.bottom).toBeLessThanOrEqual(field.top + SUBPIXEL_TOLERANCE_PX);
+  for (const below of [footer, finish]) {
     expect(below.top + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(field.bottom);
     expect(below.top + SUBPIXEL_TOLERANCE_PX).toBeGreaterThanOrEqual(lastQuoteLine.bottom);
   }
@@ -234,8 +235,8 @@ test('folded quotes stay inside the body frame at phone width (#3001)', async ({
     page.getByTestId('journal-entry-exit-row').getByTestId('reflection-sources-toggle'),
   ).toBeVisible();
 
-  // The toolbar trails a body taller than the phone: scrolling brings it into
-  // reach, and it still formats what the writer selected at the end of the text.
+  // The toolbar is above a body taller than the phone: scrolling back to it
+  // still formats what the writer selected at the end of the text.
   await bodyField.click();
   await page.keyboard.press('Control+End');
   await page.keyboard.type(CLOSING_WORD);

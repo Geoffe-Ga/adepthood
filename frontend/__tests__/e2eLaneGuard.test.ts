@@ -53,6 +53,8 @@ const SHARED_BROWSER_SUPPORT = 'journalHabitsBrowserSupport.ts';
  * flake waiting for the first checkout that reads them the other way round.
  */
 const EXPECTED_BROWSER_JOURNEYS = [
+  'account-decline-choices.browser.e2e.test.ts',
+  'invitation-decline.browser.e2e.test.ts',
   'action-rows.browser.e2e.test.ts',
   'api-key-remove.browser.e2e.test.ts',
   AUTH_OVERFLOW_JOURNEY,
@@ -77,6 +79,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'habits-recovery.browser.e2e.test.ts',
   'habits-resumed-session.browser.e2e.test.ts',
   'journal-care-support.browser.e2e.test.ts',
+  'privacy-choices.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
   'journal-corpus-drawer.browser.e2e.test.ts',
   'journal-entry-controls.browser.e2e.test.ts',

@@ -44,6 +44,7 @@ from domain import retention, retention_stores
 from domain.retention import (
     ENTRY_PURGE_BLOCKERS,
     NEVER_ELIGIBLE_STATES,
+    NIGHTLY_RETENTION_SWEEP,
     REDACT_INSTEAD_OF_DELETE,
     RETENTION,
     ProposalClock,
@@ -93,8 +94,8 @@ _PROPOSAL_DOC = _REPO_ROOT / "docs" / "privacy" / "retention-proposal.md"
 
 # The owner's decision, as ratified on 2026-10-13: each row's kind and period.
 # A row an operator sweep already serves is ``swept_by`` with the ratified
-# window as its default; every other row is a ``fixed_days`` period that no
-# sweep applies yet (#3063 AC18).
+# window as its default; every other row is a ``fixed_days`` period. The
+# nightly retention sweep applies all of them (#3266).
 _RATIFIED_RULES: dict[str, tuple[RetentionKind, int]] = {
     "accountdeletionaudit": (RetentionKind.FIXED_DAYS, 365),
     "energyplan": (RetentionKind.SWEPT_BY, 7),
@@ -704,15 +705,24 @@ def test_the_journal_purge_defaults_to_the_ratified_window() -> None:
 
 
 def test_report_marks_ratified_rules_and_unswept_periods() -> None:
-    """The on-demand report shows each ratified period and that no sweep applies it yet."""
+    """The on-demand report shows each ratified period and the sweep that applies it."""
     lines = retention_report().splitlines()
     gumroad = next(line for line in lines if line.startswith("gumroadsale"))
     assert "fixed_days, 180 days" in gumroad
     assert "[ratified]" in gumroad
-    assert "no sweep applies it yet" in gumroad
+    assert f"applied by {NIGHTLY_RETENTION_SWEEP}" in gumroad
     assert not any("proposed" in line for line in lines)
     energy = next(line for line in lines if line.startswith("energyplan"))
-    assert "no sweep applies it yet" not in energy
+    assert f"applied by {NIGHTLY_RETENTION_SWEEP}" in energy
+    assert not any("no sweep applies it yet" in line for line in lines)
+
+
+def test_report_flags_a_bounded_period_nothing_applies(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ratified period no scheduled sweep names is called out, not passed over."""
+    _patch_rule(monkeypatch, "loginattempt", replace(RETENTION["loginattempt"], applied_by=None))
+    line = next(line for line in retention_report().splitlines() if line.startswith("loginattempt"))
+    assert "no sweep applies it yet" in line
+    assert NIGHTLY_RETENTION_SWEEP not in line
 
 
 # --------------------------------------------------------------------------

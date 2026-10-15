@@ -34,7 +34,7 @@ from domain.data_export import (
     omitted_rules,
 )
 from services.data_export import _SOFT_DELETE_COLUMN, _encode
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import is_encrypted_type
 
 # Columns that hold a live secret. None of them belongs in a plaintext archive
 # a user is invited to keep on their own device.
@@ -123,7 +123,7 @@ def test_every_omission_names_a_table_the_user_did_not_write() -> None:
     encrypted_text_tables = {
         table.name
         for table in SQLModel.metadata.tables.values()
-        if any(isinstance(column.type, EncryptedString) for column in table.columns)
+        if any(is_encrypted_type(column.type) for column in table.columns)
     }
     # ``uservaultconfig`` is the one encrypted column that is a credential
     # rather than writing, and it is omitted for exactly that reason.

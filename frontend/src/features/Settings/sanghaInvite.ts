@@ -14,24 +14,15 @@
  * an absent invitation rather than a broken one.
  */
 
-/** The only scheme a door out of the app is allowed to use. */
-const HTTPS_PREFIX = 'https://';
+import { httpsLinkOrNull } from '@/utils/httpsLink';
 
 /**
  * Resolve the configured invite, or ``null`` when there is nothing safe to
- * open.
- *
- * Whitespace is trimmed because an env var reaches a build through shells and
- * CI secret stores that add it. Everything that is not a non-empty ``https``
- * URL resolves to ``null``: ``http`` is downgrade-prone and a custom scheme is
- * an app-hijack vector, and neither is worth rendering a row for.
+ * open. The rule is the one every configured door out of the app shares
+ * (``httpsLinkOrNull``): a non-empty ``https`` URL, trimmed, or nothing.
  */
 export function sanghaInviteUrl(configured: string): string | null {
-  const trimmed = configured.trim();
-  if (!trimmed.startsWith(HTTPS_PREFIX) || trimmed.length === HTTPS_PREFIX.length) {
-    return null;
-  }
-  return trimmed;
+  return httpsLinkOrNull(configured);
 }
 
 /** Section heading. Names the depth, promises nothing about it. */
