@@ -2,6 +2,7 @@
 import { jest, beforeEach, describe, it, expect } from '@jest/globals';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 const mockListAll = jest.fn() as jest.MockedFunction<() => Promise<ApiHabitWithGoals[]>>;
 jest.mock('@/api', () => ({
@@ -167,5 +168,14 @@ describe('ReturnLetGoCard', () => {
 
     fireEvent.press(getByTestId('return-letgo-skip'));
     expect(onSkip).toHaveBeenCalledTimes(1);
+  });
+
+  it('wraps its two actions onto a new line rather than clipping one at enlarged text', async () => {
+    mockListAll.mockResolvedValue([habit({ id: 1, revealed: true })]);
+    const { getByTestId } = render(<ReturnLetGoCard onRelease={jest.fn()} onSkip={jest.fn()} />);
+    await waitFor(() => expect(getByTestId('return-letgo-actions')).toBeTruthy());
+    expect(StyleSheet.flatten(getByTestId('return-letgo-actions').props.style).flexWrap).toBe(
+      'wrap',
+    );
   });
 });

@@ -40,6 +40,18 @@
     "coveredBy": "frontend/e2e/session-lifetime.e2e.test.ts"
   },
   {
+    "id": "auth.reauth-sheet-survives-anonymous-401",
+    "description": "A session whose credential expires while the user is on Habits opens the re-auth sheet over that screen: the stored token is refused and its /auth/refresh fails (#3396). The app now holds no token, so the still-mounted screen's next GET /ui-flags goes out anonymous and the real backend answers 401 not_authenticated. That 401 must not collapse the sheet to Get Started; the sheet stays open, the person signs back in from it through the real /auth/login, and lands on Habits with their seeded habit. Only the expired credential is faked in the browser; the anonymous 401 and the new session's requests reach the real server. Asserted at 390 and 1280, with the sheet's controls inside the viewport at normal and doubled text. Jest covers the controls: a genuinely anonymous session still lands on anonymous, signing out from the sheet still signs out, another account signing in from the sheet still wipes, and a not_authenticated 401 racing the expiry before the sheet renders still leaves it open.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/ReauthSheet.tsx",
+      "client": ["auth", "uiFlags", "setOnUnauthorized"],
+      "routes": ["POST /auth/login", "POST /auth/refresh", "GET /ui-flags", "GET /habits/"],
+      "tables": ["user", "habit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/reauth-sheet-survives-anonymous-401.browser.e2e.test.ts"
+  },
+  {
     "id": "auth.screens-remain-reachable-with-large-content",
     "description": "A signed-out reader sees the editorial auth layout vertically centred when it fits, then can reach both ends of the Get Started content when the available height shrinks to a keyboard-sized viewport. Every auth route -- Get Started, Login, Signup, Forgot Password, Reset Password and Cancel Reset -- exposes the same scroll surface, and the journey finishes by creating an account through the production client so the tested surface crosses its real seam. The browser half pins actual overflow and centring geometry; the native PR evidence separately exercises iOS 18.6 at accessibility-extra-extra-extra-large because a browser cannot emulate iOS Dynamic Type.",
     "crosses": {
@@ -1631,6 +1643,38 @@
     "coveredBy": "frontend/e2e/return-recover-habit.browser.e2e.test.ts"
   },
   {
+    "id": "return.let-go-survives-same-account-renewal",
+    "description": "A person begins a Return from the Journal shelf's offer card and is asked which habits to set down; while they are choosing, the app's own proactive timer renews the same account's token (#3374). Before the fix the let-go card's visibility reset on every credential rotation, because the Return hook mints a new staleness fence per token, so the renewal unmounted the card mid-choice and the active-arc card offered no way back. The covering spec reaches the offer honestly (eligibility via the program anchor, a contraction from a real resonance pass), chooses a habit, then jumps the page clock past the sliding-renewal deadline so the real AuthContext issues POST /auth/refresh against the live server, holding the response only while the clock is set back to the present. It asserts the card and the half-made choice survive the renewal (Release stays live), that the release then leaves with the renewed bearer and exactly the chosen habit id and is recorded on the server, and that Keep them all still closes the moment without a release. Account replacement (A to B, A to B to A) and session teardown still close the card and fence old callbacks; those halves are pinned in Jest (useMettaReturnOwnership.test.tsx, ReturnStackTokenRenewal.test.tsx). Frames at 390 and 1280 px, normal and doubled card text, are written to e2e/artifacts/return-letgo-renewal-3374.",
+    "crosses": {
+      "screen": "frontend/src/features/Return/ReturnLetGoCard.tsx",
+      "client": ["auth", "habits", "journal", "resonance", "stages", "mettaReturn"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /auth/refresh",
+        "GET /stages",
+        "POST /habits/",
+        "GET /habits/",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "GET /metta-return",
+        "POST /metta-return/arc",
+        "POST /metta-return/arc/release"
+      ],
+      "tables": [
+        "user",
+        "stageprogress",
+        "habit",
+        "journalentry",
+        "mettareturnarc",
+        "mettareturnhabitrelease"
+      ]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/return-letgo-token-renewal.browser.e2e.test.ts"
+  },
+  {
     "id": "return.begin-a-return-from-the-journal-entry",
     "description": "A journal entry whose resonance pass offers the Return is the card a person can begin one from: \"Begin the Return\" opens a confirmation naming the arc's five weekly foci as the server sent them, confirming opens an arc that lands on week one, and \"Not now\" persists the same decline the Journal shelf's offer card writes, so declining in the entry is honoured there. It runs in the browser lane because the journey is the card: the offer surfaces only while a resonance pass has just raised the in-memory contraction signal (src/store/useContractionSignalStore.ts) that useMettaReturn reads, and that store is fed by the screen's own pass -- the API lane cannot mount a screen at all, so a spec there could only call the two routes by hand. Both preconditions are arranged honestly: the contraction over the wire, from a habit whose foundation has been quiet past the detection window, and the Orange-stage eligibility by rewinding program_started_at through tests.e2e.program_anchor (no request schema accepts it) and then reading GET /stages, which is what records the entry -- eligibility is asserted false before and true after, so an arrange that did nothing fails rather than silently testing the simple_ease_off card. The double-tap latch is the one arm left to the Jest spec beside the component (src/features/Journal/__tests__/ContractionReflectionNote.test.tsx), which drives it deterministically; a browser cannot dispatch the second press without racing the first request. Verified to be a live gate: with confirmStart no longer calling start(), the spec fails on the arc POST that never leaves the browser. Return declines round-trip the opaque account-bound offer identity observed from the real server (#3299, a bounded child of #3073). The entry posts that exact identity and its observed browser credential. At 390 and 1280 pixels, targeted 200% Return-card text stays within the card and viewport, decline targets retain 44px geometry, and a focused keyboard Enter sets aside the card. Refusing only the real dismissal endpoint with 503 through all three normal transport attempts retains the exact account/episode local pending choice; after the interceptor is removed, returning to the shelf retries that same episode to a real 200, and the following real reload honors its confirmed choice without opening an arc. A held real POST reaches the normal server after the isolated database calendar advances and GET /stages records the later eligible stage; it receives 409, and the next real consumer mount observes the new episode undismissed and offers it through a fresh journal resonance pass. The entry decline unmounts its own hook, so this browser case does not claim an immediate refresh from that removed lifecycle. Real A/B/A/B sign-out and sign-in preserve A's confirmed episode choice while B remains offered its distinct episode. Eligibility is arranged only through the existing isolated program-anchor helper and verified through the real API, while contraction is produced by real habit/journal/resonance handlers. Backend controls cover stale, missing, cross-account, idempotent and commit-boundary progress changes; normal frontend controls cover unknown old global bytes, failed storage, captured identities, A-to-B-to-A late completions, retained callbacks and mounted-consumer 409 refresh. Those delayed-promise controls are not represented as browser-held account-response coverage. Existing server history, eligibility and cadence remain unchanged.",
     "crosses": {
@@ -2550,6 +2594,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/date-picker-reflow.browser.e2e.test.ts"
+  },
+  {
+    "id": "shared.date-shortcuts-follow-the-local-day",
+    "description": "A user leaves the shared date picker open across local midnight and the quick choices answer for the day it now is, not the day the picker mounted (#3381). The covering spec signs up through the real client in America/Los_Angeles, seeds one habit, moves the page clock to 23:59 on the next Sunday and opens the Energy Scaffolding date step, then moves the wall clock past midnight with setSystemTime so no timer fires and nothing re-renders the picker. Pressing next monday commits the following week's Monday, today commits Monday, and first of next month commits the first of the month after Monday's, at 390px and 1280px. Unmounted-clock edge cases stay in Jest (src/components/__tests__/DatePicker.test.tsx): the month boundary, maxDate/minDate/disabledDate re-evaluated on the next render, a stale-rendered enabled button that now falls outside maxDate committing nothing, and first of next month anchored to local midnight so a maxDate on that day keeps it enabled. Date selection here is a local draft, not a saved program-date mutation.",
+    "crosses": {
+      "screen": "frontend/src/components/DatePicker.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "GET /habits/"],
+      "tables": ["user", "habit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/date-picker-day-change.browser.e2e.test.ts"
   },
   {
     "id": "practice.completed-sitting-links-and-logs-a-habit",
