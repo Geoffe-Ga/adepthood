@@ -19,7 +19,7 @@ import {
 } from '../../../api';
 import type { ApiHabit, CheckInResult, GoalUnitsPayload, GoalUpdatePayload } from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
-import { captureSessionToken } from '../../../api/sessionToken';
+import { captureSessionToken, getAuthSession } from '../../../api/sessionToken';
 import type { ToastConfig } from '../../../components/Toast';
 import { HABIT_DEMO_MODE } from '../../../config';
 import { colors } from '../../../design/tokens';
@@ -1008,13 +1008,23 @@ interface HabitMutationScope {
   authorized: boolean;
 }
 
+/**
+ * Pin a mutation to the account AND the authentication session that started
+ * it. The account generation alone misses an in-place reauthentication: a 401
+ * keeps the active account, and the same account signing back in is a no-op
+ * for the generation, so an old create/log could roll back or confirm over the
+ * rows the new session hydrated (#3326). The auth session moves at
+ * reauthentication entry and on every sign-in, but not on a token refresh, so
+ * a renewed credential keeps its in-flight work.
+ */
 const captureHabitMutationScope = (): HabitMutationScope => {
   const generation = getActiveUserGeneration();
+  const session = getAuthSession();
   const token = captureSessionToken();
   const owner = getActiveUser();
   return {
     credentials: token === undefined ? [] : [token],
-    current: () => generation === getActiveUserGeneration(),
+    current: () => generation === getActiveUserGeneration() && session === getAuthSession(),
     authorized:
       !isActiveUserTransitioning() &&
       (owner === null
