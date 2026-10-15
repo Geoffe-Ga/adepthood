@@ -100,14 +100,6 @@ for (const width of [390, 1280]) {
     await page.getByTestId('add-habit-close').click();
     await expect(sheet).toHaveCount(0);
 
-    // While the sheet is up the app re-reads its UI flags with no credential,
-    // and that anonymous 401 currently collapses 'reauth-required' straight to
-    // the welcome screen, a separate defect this spec does not cover. Failing
-    // only that anonymous read at the network keeps the real re-auth sheet up.
-    await page.route('**/ui-flags**', async (route) => {
-      if (route.request().headers().authorization === undefined) await route.abort('failed');
-      else await route.continue();
-    });
     // End the held create's session for real: rotating its token revokes it.
     const rotated = await page.request.post(`${backendUrl()}/auth/refresh`, {
       headers: { authorization: heldCredential },
