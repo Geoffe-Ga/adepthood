@@ -27,7 +27,7 @@ import {
   saveUserTimezone,
 } from '@/storage/authStorage';
 import { clearCheckInReplayState } from '@/storage/checkInReplayState';
-import { preserveLegacyDeclineOwner } from '@/storage/declineOwnership';
+import { readDeviceOwner, stampDeviceOwner } from '@/storage/deviceOwnerStamp';
 import { clearFeedbackDraft } from '@/storage/feedbackDraftStorage';
 import { clearDroppedCheckIns, clearHabits, clearPendingCheckIns } from '@/storage/habitStorage';
 import { clearLlmApiKey } from '@/storage/llmKeyStorage';
@@ -36,9 +36,7 @@ import { setUserTimezonePending } from '@/storage/userCalendar';
 import {
   getActiveUser,
   beginActiveUserTransition,
-  loadDeviceOwner,
   parseUserId,
-  saveDeviceOwner,
   setActiveUser,
 } from '@/storage/userScope';
 import { resetAllStores } from '@/store/registry';
@@ -345,8 +343,9 @@ async function wipeUserState(): Promise<void> {
  * re-authentication must keep that user's pending check-in queue: it is unsent
  * work, and discarding it would lose check-ins the user believes they logged.
  * The comparison is therefore deliberately one-sided — we wipe unless the
- * stored stamp *positively* names the incoming user, so an unstamped device or
- * a failed read errs toward the wipe rather than toward the leak.
+ * live owner (the stamp, or the account this process could not stamp yet)
+ * *positively* names the incoming user, so an unstamped device or a failed
+ * read errs toward the wipe rather than toward the leak.
  *
  * The wipe runs against the OUTGOING owner's namespace (hence the
  * ``setActiveUser(previousOwner)`` before it), then the scope moves to the
@@ -354,42 +353,18 @@ async function wipeUserState(): Promise<void> {
  * new session's first render cannot see the old session's rows.
  *
  * Recording the stamp is deliberately NOT part of this function — see
- * {@link commitDeviceOwner} for why the two writes must not be adjacent.
+ * ``stampDeviceOwner`` for why the two writes must not be adjacent.
  */
 async function adoptDeviceOwner(userId: number): Promise<boolean> {
-  const previousOwner = await loadDeviceOwner();
-  const provenanceSaved = await preserveLegacyDeclineOwner(previousOwner);
+  // #3333: the live owner, not merely the stamp — a stamp a provenance failure
+  // held back still names the account before the one signed in now.
+  const { liveOwner: previousOwner, provenanceSaved } = await readDeviceOwner();
   if (previousOwner !== userId) {
     setActiveUser(previousOwner);
     await wipeUserState();
   }
   setActiveUser(userId);
   return provenanceSaved;
-}
-
-/**
- * Record ``userId`` as the owner of this device's caches — and never before
- * that user's token is on disk.
- *
- * A sign-in persists two things, and nothing makes the pair atomic. Stamping
- * first meant a kill (or a rejected write) between them left the device
- * holding one account's JWT under another account's stamp, and because the
- * stamp is what the *next* sign-in compares against, that sign-in then took
- * the "same owner, nothing to wipe" branch. The divergence cemented itself
- * rather than healing. Ordering the token write first makes every torn
- * interleaving safe: the stamp may lag the token, and a lagging stamp costs
- * at worst a wipe aimed at an already-clean namespace.
- *
- * Failure is swallowed for the same reason: with the ordering right, a stamp
- * that never lands cannot mis-scope anyone, because no session takes its
- * namespace from the stamp.
- */
-async function commitDeviceOwner(userId: number): Promise<void> {
-  try {
-    await saveDeviceOwner(userId);
-  } catch {
-    reportDiagnostic('auth_storage_failed');
-  }
 }
 
 /**
@@ -562,10 +537,9 @@ async function scopeResumedSession(token: string): Promise<void> {
   const owner = parseUserId(decodeJwtPayload(token)?.sub);
   setActiveUser(owner);
   if (owner === null) return;
-  const previousOwner = await loadDeviceOwner();
-  if (!(await preserveLegacyDeclineOwner(previousOwner))) return;
-  if (previousOwner === owner) return;
-  await commitDeviceOwner(owner);
+  const { stamp, provenanceSaved } = await readDeviceOwner();
+  if (provenanceSaved && stamp === owner) return;
+  await stampDeviceOwner(owner, provenanceSaved);
 }
 
 /**
@@ -662,7 +636,7 @@ async function applyAuthResponse(response: AuthResponse, mutators: AuthMutators)
   const provenanceSaved = await adoptDeviceOwner(response.user_id);
   await saveToken(response.token);
   // Only now: the stamp must never name an account whose token failed to land.
-  if (provenanceSaved) await commitDeviceOwner(response.user_id);
+  await stampDeviceOwner(response.user_id, provenanceSaved);
   // BUG-FE-STATE-001: a fresh auth supersedes any stale pending-logout marker;
   // a clear failure here must not break login / signup / password-reset.
   try {
