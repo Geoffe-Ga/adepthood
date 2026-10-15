@@ -52,6 +52,7 @@ import { isTierLooser, type RetryFailure, type SaveState } from './journalSaveRe
 import LinkHabitNudge from './LinkHabitNudge';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import { buildMarginItems, drawnNoteIds, type MarginItem } from './marginLayout';
+import { MarginNavigationProvider } from './marginNavigation';
 import MarginNote from './MarginNote';
 import PassReceiptNotice from './PassReceiptNotice';
 import PrivacyTierControl, { DEFAULT_TIER, tierLabel } from './PrivacyTierControl';
@@ -93,7 +94,7 @@ import {
 } from './useSaveRetry';
 import { useTierWriteQueue, type TierWriteKind } from './useTierWriteQueue';
 import { countWords, wordCountLabel } from './wordCount';
-import type { WritingSessionResult } from './writingSession';
+import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
 import WritingSessionSurface from './WritingSessionSurface';
 
@@ -3779,10 +3780,19 @@ function JournalPageSurface({
       ]}
       testID="journal-page"
     >
-      <FocusScrollProvider value={focus.value}>
-        <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
-      </FocusScrollProvider>
-      <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
+      <MarginNavigationProvider
+        enabled={!ctl.editGate.editMode}
+        body={ctl.autosave.body}
+        notes={ctl.resonance.marginalia}
+        quotes={ctl.quote.quotes}
+        pageRef={focus.pageRef}
+        scrollRef={focus.scrollRef}
+      >
+        <FocusScrollProvider value={focus.value}>
+          <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+        </FocusScrollProvider>
+        <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
+      </MarginNavigationProvider>
     </View>
   );
 }
@@ -4596,7 +4606,8 @@ function EntryWritingSurfaces({
   // Above the edit-mode return, beside the practice hook it wraps: both kinds
   // of page finish through this one handler, so a linked habit is checked off
   // on either (#2861).
-  const onSession = useLinkedHabitCheckOff(session.onSession);
+  const [loggedSession, setLoggedSession] = useState<LoggedWritingSession>();
+  const onSession = useLinkedHabitCheckOff(session.onSession, setLoggedSession);
   if (!ctl.editGate.editMode) return null;
   return (
     <WritingSessionSurface
@@ -4604,6 +4615,7 @@ function EntryWritingSurfaces({
       initialMinutes={session.initialMinutes}
       autoStart={session.autoStart}
       onSession={onSession}
+      loggedSession={loggedSession}
       onClearanceChange={onWritingClearanceChange}
       renderOffer={session.launched ? renderLaunchedSessionNote : renderSessionOffer}
     />

@@ -134,7 +134,7 @@ import { createTokenRotation, type RecoveryMode } from './tokenRotation';
 import { classifyTranscription } from './transcriptionContract';
 
 import { API_BASE_URL, KEYLESS_PAGE_READ_REACHES_SERVER } from '@/config';
-import type { Habit as LocalHabit } from '@/features/Habits/Habits.types';
+import type { Habit as LocalHabit, HabitGoalSetup } from '@/features/Habits/Habits.types';
 import { aiAccessRevoked } from '@/features/Journal/aiAccessRevoked';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 import {
@@ -1309,6 +1309,8 @@ export interface ApiHabitStats {
 }
 
 export interface HabitCreatePayload {
+  /** Atomic initial ladder; omit on ordinary habit edits. */
+  goals?: HabitGoalSetup;
   name: string;
   icon: string;
   start_date: string;
@@ -1488,6 +1490,8 @@ export const habits = {
 
 // Goal completion types and client
 export interface GoalCompletionPayload {
+  /** True only for units measured by a timer. */
+  via_timer?: boolean;
   goal_id: number;
   did_complete?: boolean;
   /** Signed unit delta. Omit for the legacy full-target/idempotent behavior. */
@@ -2893,6 +2897,8 @@ export interface SiteResource {
   title: string;
   description: string;
   url: string;
+  order: number;
+  is_read: boolean;
 }
 
 /** Metadata for a stage's course introduction (body fetched separately). */
@@ -2909,6 +2915,25 @@ export type NextUnread = NextUnreadT;
 
 const nextUnreadResponseSchema =
   nextUnreadSchema.nullable() as unknown as z.ZodType<NextUnread | null>;
+
+const siteResourcesSchema = z.array(
+  z.object({
+    slug: z.string().min(1),
+    title: z.string(),
+    description: z.string(),
+    url: z.string(),
+    order: z.number().int().positive(),
+    is_read: z.boolean(),
+  }),
+);
+const startHereProgressSchema = z
+  .object({
+    total_items: z.number().int().nonnegative(),
+    read_items: z.number().int().nonnegative(),
+    progress_percent: z.number().min(0).max(100),
+    next_unlock_day: z.number().int().nullable(),
+  })
+  .refine((progress) => progress.read_items <= progress.total_items);
 
 export const course = {
   /** Whole stage-content list via the ``Page`` envelope. */
@@ -2945,7 +2970,16 @@ export const course = {
     return request<ContentBody>(`/course/content/${contentId}/body`, { token });
   },
   siteResources(token?: string): Promise<SiteResource[]> {
-    return request<SiteResource[]>('/course/site-resources', { token });
+    return request<SiteResource[]>('/course/site-resources', {
+      token,
+      schema: siteResourcesSchema,
+    });
+  },
+  startHereProgress(token?: string): Promise<CourseProgress> {
+    return request<CourseProgress>('/course/start-here/progress', {
+      token,
+      schema: startHereProgressSchema,
+    });
   },
   /** Mark a Start Here resource read; idempotent on the backend (#3148). */
   markResourceRead(slug: string, token?: string): Promise<ResourceCompletion> {

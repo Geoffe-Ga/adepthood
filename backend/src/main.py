@@ -4,7 +4,7 @@ import asyncio
 import ipaddress
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Annotated, Final
 from urllib.parse import urlparse
@@ -28,7 +28,11 @@ from client_ip import (
 from database import async_session_factory, get_session
 from database import engine as database_engine
 from database_schema import require_database_schema_current
-from dependencies.creek_vault import resolve_creek_vault_client, resolved_vault_destination
+from dependencies.creek_vault import (
+    detached_vaults,
+    resolve_creek_vault_client,
+    resolved_vault_destination,
+)
 from error_responses import refusal_responses
 from errors import install_exception_handlers
 from middleware import (
@@ -114,6 +118,7 @@ from services.creek_vault_pipeline import (
     resume_vault_pipeline_runs,
 )
 from services.creek_vault_voice_drafts import resume_voice_draft_retractions
+from services.journal_withdrawal_note import resume_detached_withdrawal_notes
 from services.managed_vault_rollout import (
     ManagedVaultRolloutState,
     load_managed_vault_rollout,
@@ -141,26 +146,38 @@ DEV_ORIGINS = [
 ]
 
 
+async def _recover_step(step: Awaitable[object], warning: str) -> None:
+    """Run one recovery step; a fault reading its durable state is logged, never raised."""
+    try:
+        await step
+    except (OSError, RuntimeError, SQLAlchemyError):
+        logger.warning(warning)
+
+
 async def _recover_provisioning_until_shutdown() -> None:
     """Reconcile optional Creek work without ever delaying application startup."""
     client = get_creek_provisioning_client()
     while True:
-        try:
-            await resume_vault_activations(async_session_factory, client)
-        except (OSError, RuntimeError, SQLAlchemyError):
-            logger.warning("creek activation recovery could not read its durable state")
-        try:
-            await reconcile_vault_teardowns(async_session_factory, client)
-        except (OSError, RuntimeError, SQLAlchemyError):
-            logger.warning("creek teardown recovery could not read its durable state")
-        try:
-            await resume_voice_draft_retractions(
+        await _recover_step(
+            resume_vault_activations(async_session_factory, client),
+            "creek activation recovery could not read its durable state",
+        )
+        await _recover_step(
+            reconcile_vault_teardowns(async_session_factory, client),
+            "creek teardown recovery could not read its durable state",
+        )
+        await _recover_step(
+            resume_voice_draft_retractions(
                 async_session_factory,
                 resolve_creek_vault_client,
                 resolved_vault_destination,
-            )
-        except (OSError, RuntimeError, SQLAlchemyError):
-            logger.warning("voice draft withdrawal recovery could not read its durable state")
+            ),
+            "voice draft withdrawal recovery could not read its durable state",
+        )
+        await _recover_step(
+            resume_detached_withdrawal_notes(async_session_factory, detached_vaults()),
+            "detached withdrawal note recovery could not read its durable state",
+        )
         await asyncio.sleep(_PROVISIONING_RECOVERY_INTERVAL_SECONDS)
 
 

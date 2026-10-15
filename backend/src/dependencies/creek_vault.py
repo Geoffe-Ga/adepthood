@@ -98,6 +98,7 @@ from services.creek_vault_url_resolution import (
     classify_resolved_user_vault_url_off_the_pool,
 )
 from services.creek_vault_url_user import vault_url_host
+from services.journal_withdrawal_note import DetachedVault
 from services.reflection_boundary import ReflectionBoundary
 from services.user_vault_config import has_vault_config, load_vault_config
 
@@ -507,3 +508,24 @@ async def resolved_vault_destination(session: AsyncSession, current_user: int) -
     if captured is not None and captured[0] == current_user:
         return captured[1]
     return await vault_destination_fingerprint(session, current_user)
+
+
+def detached_vaults() -> tuple[DetachedVault, ...]:
+    """Every vault a detached withdrawal note can still be confirmed by, with no account (#3267).
+
+    Only the deployment-wide vault qualifies: its URL and credential are this
+    deployment's configuration, not the erased account's data, so they survive
+    the account. Its fingerprint is the one its bound owner's copies were
+    recorded under -- the digest :func:`vault_destination_fingerprint` gave
+    that owner while the account lived -- so only notes that owner left behind
+    match it. A vault the writer connected, or a managed one, had its
+    credential erased with the account and cannot be dialled, so nothing is
+    returned for it. Never dials; the client is built only when a matching note
+    is worked.
+    """
+    owner = resolve_vault_owner(os.getenv(OWNER_ENV_VAR))
+    if owner is None or not deployment_vault_belongs_to(owner):
+        return ()
+    deployment_url = os.getenv(_VAULT_URL_ENV_VAR, "")
+    destination = _destination_digest(owner, _SOURCE_DEPLOYMENT, deployment_url)
+    return (DetachedVault(destination=destination, connect=lambda: deployment_vault_client(owner)),)

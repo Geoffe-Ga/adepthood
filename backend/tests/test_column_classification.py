@@ -79,6 +79,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultactivation.creek_job_id",
             "vaultpipelinerun.job_id",
             "vaultpipelinerun.resume_claim_id",
+            "journalwithdrawalnote.destination",
             "journalwithdrawalobligation.destination",
             "vaultteardownreceipt.creek_job_id",
             "voicedraftretraction.destination",

@@ -51,10 +51,11 @@ from domain.account_deletion import (
     policy_gaps,
 )
 from domain.ownership import OwnedBy, owner_predicate
-from domain.retention import REDACT_INSTEAD_OF_DELETE
+from domain.retention import DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS, REDACT_INSTEAD_OF_DELETE
 from models.account_deletion_audit import AccountDeletionAudit
 from models.feedback import FeedbackReport
 from services.feedback_triage import detach_from_doomed_reports
+from services.journal_withdrawal_note import detach_open_obligations
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,12 @@ VAULT_GUIDANCE_TEARDOWN_PENDING = (
 )
 VAULT_GUIDANCE_TEARDOWN_COMPLETE = (
     "Creek confirmed that the provisioned managed-vault allocation was deleted."
+)
+VAULT_GUIDANCE_DETACHED_NOTES = (
+    "Some journal pages still had a copy in a vault that had not confirmed it "
+    "deleted. For each, Adepthood keeps a note holding only an opaque vault "
+    "identifier and an entry number, not linked to you, until the vault confirms "
+    f"or for {DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS} days at most."
 )
 
 
@@ -137,6 +144,7 @@ class DeletionReceipt:
     vault_configured: bool
     vault_disposition: str
     vault_guidance: str
+    withdrawal_notes_kept: int = 0
 
 
 def _policy_parent(name: str) -> tuple[Table, OwnedBy]:
@@ -255,8 +263,17 @@ def _build_receipt(
     account: Account,
     counts: dict[str, int],
     vault_disposition: AccountVaultDisposition,
+    *,
+    withdrawal_notes_kept: int = 0,
 ) -> DeletionReceipt:
-    """Turn raw row counts into the receipt returned to the caller and stored."""
+    """Turn raw row counts into the receipt returned to the caller and stored.
+
+    When an unconfirmed vault copy left a detached note, the guidance says so:
+    the writer is told what is kept, that it names nobody, and for how long.
+    """
+    guidance = _vault_guidance(vault_disposition)
+    if withdrawal_notes_kept:
+        guidance = f"{guidance} {VAULT_GUIDANCE_DETACHED_NOTES}"
     return DeletionReceipt(
         user_id=account.user_id,
         rows_erased=sum(counts.values()),
@@ -266,7 +283,8 @@ def _build_receipt(
         retained=_tables_with(Disposition.RETAIN),
         vault_configured=vault_disposition.configured,
         vault_disposition=vault_disposition.audit_state,
-        vault_guidance=_vault_guidance(vault_disposition),
+        vault_guidance=guidance,
+        withdrawal_notes_kept=withdrawal_notes_kept,
     )
 
 
@@ -305,8 +323,11 @@ async def delete_account(
         select(FeedbackReport.id).where(col(FeedbackReport.user_id) == account.user_id),
     )
     await _anonymise_linked_sales(session, account)
+    # Before the sweep erases the obligations: each open one becomes a detached,
+    # content-free note in the same commit (owner decision 2026-10-14, #3267).
+    notes_kept = await detach_open_obligations(session, user_id=account.user_id)
     counts = await _sweep(session, account)
-    receipt = _build_receipt(account, counts, vault_disposition)
+    receipt = _build_receipt(account, counts, vault_disposition, withdrawal_notes_kept=notes_kept)
     session.add(
         AccountDeletionAudit(
             user_id=receipt.user_id,

@@ -5,7 +5,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 
 import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from '../JournalEntry.styles';
-import { DEFAULT_WRITING_MINUTES } from '../writingSession';
+import { DEFAULT_WRITING_MINUTES, type WritingSessionResult } from '../writingSession';
 import WritingSessionSurface from '../WritingSessionSurface';
 
 import { SPACING } from '@/design/tokens';
@@ -189,6 +189,45 @@ describe('WritingSessionSurface', () => {
     });
     fireEvent.press(getByTestId('writing-session-banner-dismiss'));
     expect(queryByTestId('writing-session-banner')).toBeNull();
+  });
+
+  it('shows a confirmed early-stop log without offering to keep a full session', () => {
+    const onSession = jest.fn<(_result: WritingSessionResult) => void>();
+    const renderOffer = jest.fn(() => null);
+    const screen = render(
+      <WritingSessionSurface onSession={onSession} renderOffer={renderOffer} />,
+    );
+    fireEvent.press(screen.getByTestId('writing-timer-start'));
+    jest.setSystemTime(T0 + 5 * MS_PER_MINUTE);
+    fireEvent.press(screen.getByTestId('writing-timer-stop'));
+    expect(screen.queryByTestId('writing-session-banner')).toBeNull();
+    const result = onSession.mock.calls[0]![0];
+    screen.rerender(
+      <WritingSessionSurface
+        onSession={onSession}
+        renderOffer={renderOffer}
+        loggedSession={{ result, message: 'Logged 5 minutes to Journaling' }}
+      />,
+    );
+    expect(screen.getByText('You wrote for 5 minutes.')).toBeTruthy();
+    expect(screen.getByText('Logged 5 minutes to Journaling')).toBeTruthy();
+    expect(renderOffer).not.toHaveBeenCalled();
+  });
+
+  it('does not reopen a dismissed full-session note when its log confirms later', () => {
+    const onSession = jest.fn<(_result: WritingSessionResult) => void>();
+    const screen = render(<WritingSessionSurface onSession={onSession} />);
+    fireEvent.press(screen.getByTestId('writing-timer-start'));
+    tickTo(T0 + DEFAULT_WRITING_MINUTES * MS_PER_MINUTE);
+    const result = onSession.mock.calls[0]![0];
+    fireEvent.press(screen.getByTestId('writing-session-banner-dismiss'));
+    screen.rerender(
+      <WritingSessionSurface
+        onSession={onSession}
+        loggedSession={{ result, message: 'Logged 20 minutes to Journaling' }}
+      />,
+    );
+    expect(screen.queryByTestId('writing-session-banner')).toBeNull();
   });
 
   it('replaces an earlier note rather than stacking a second one', () => {

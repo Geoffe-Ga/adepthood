@@ -6,12 +6,16 @@ import { colors } from '../../design/tokens';
 
 import ChapterReader from './ChapterReader';
 import styles from './Course.styles';
+import { captureCourseSession } from './courseSession';
+import { useStartHereStore } from './startHereStore';
 
 import { useMountedRef } from '@/hooks/useMountedRef';
 import { reportDiagnostic } from '@/observability/diagnostics';
+import { getActiveUserGeneration } from '@/storage/userScope';
 
 /** The two keys a Start Here reader needs: which page, and what to call it. */
-export type ResourceTarget = Pick<SiteResource, 'slug' | 'title'>;
+export type ResourceTarget = Pick<SiteResource, 'slug' | 'title'> &
+  Partial<Pick<SiteResource, 'is_read'>>;
 
 export const MARK_RESOURCE_READ_LABEL = 'Mark as Read';
 export const RESOURCE_READ_LABEL = '✓ Read';
@@ -19,33 +23,42 @@ export const RESOURCE_READ_LABEL = '✓ Read';
 /**
  * Mark the on-screen Start Here resource read (#3234).
  *
- * The backend mark is idempotent, so the button starts unread rather than
- * waiting on a separate read-state lookup: a second mark of an already-read
- * page is a no-op, never an error. A request that resolves after the reader has
- * moved to another resource (or left) does not label what is now on screen.
+ * Known read marks reopen as read. Otherwise the idempotent backend mark
+ * establishes completion. A response from an old authenticated reading session
+ * cannot label or refresh the replacement account's reader.
  */
 function useResourceMarkRead(
   slug: string,
   onMarkedRead: () => void,
+  knownRead: boolean,
 ): { marking: boolean; isRead: boolean; handleMarkRead: () => Promise<void> } {
   const [marking, setMarking] = useState(false);
-  const [isRead, setIsRead] = useState(false);
+  const [isRead, setIsRead] = useState(knownRead);
+  const epoch = useStartHereStore((state) => state.epoch);
+  const ownerGeneration = getActiveUserGeneration();
   const currentSlugRef = useRef(slug);
   const isMountedRef = useMountedRef();
 
   useEffect(() => {
     currentSlugRef.current = slug;
-    setIsRead(false);
+    setIsRead(knownRead);
     setMarking(false);
-  }, [slug]);
+  }, [slug, knownRead, epoch, ownerGeneration]);
 
   const handleMarkRead = useCallback(async () => {
     if (isRead || marking) return;
     const requestedSlug = slug;
+    const session = captureCourseSession();
+    if (!session) return;
+    const requestEpoch = useStartHereStore.getState().epoch;
+    const current = () =>
+      isMountedRef.current &&
+      session.current() &&
+      requestEpoch === useStartHereStore.getState().epoch;
     setMarking(true);
     try {
-      await courseApi.markResourceRead(requestedSlug);
-      if (!isMountedRef.current) return;
+      await courseApi.markResourceRead(requestedSlug, session.token);
+      if (!current()) return;
       // The mark persisted server-side whichever page is showing now, so the
       // reading position is re-asked regardless.
       onMarkedRead();
@@ -53,7 +66,7 @@ function useResourceMarkRead(
     } catch {
       reportDiagnostic('course_read_failed');
     } finally {
-      if (isMountedRef.current && currentSlugRef.current === requestedSlug) setMarking(false);
+      if (current() && currentSlugRef.current === requestedSlug) setMarking(false);
     }
   }, [isRead, marking, slug, onMarkedRead, isMountedRef]);
 
@@ -115,7 +128,11 @@ const ResourceViewer = ({
   onBack,
   onMarkedRead,
 }: ResourceViewerProps): React.JSX.Element => {
-  const { marking, isRead, handleMarkRead } = useResourceMarkRead(resource.slug, onMarkedRead);
+  const { marking, isRead, handleMarkRead } = useResourceMarkRead(
+    resource.slug,
+    onMarkedRead,
+    resource.is_read ?? false,
+  );
   return (
     <ChapterReader
       source={{ kind: 'resource', slug: resource.slug }}

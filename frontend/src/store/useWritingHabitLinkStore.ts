@@ -57,8 +57,10 @@ const INITIAL_STATE = { habitId: null as number | null, hydrated: false };
 /** The hydrate already on the wire, so concurrent mounts share one request. */
 let inFlight: Promise<void> | null = null;
 
-/** Bumped by every ``reset``; a read that began under an older one is stale. */
+/** Link changes and resets invalidate work started under an earlier link. */
 let generation = 0;
+
+export const getWritingHabitLinkGeneration = (): number => generation;
 
 export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get) => ({
   ...INITIAL_STATE,
@@ -107,6 +109,10 @@ export const useWritingHabitLinkStore = create<WritingHabitLinkState>((set, get)
     set({ ...INITIAL_STATE });
   },
 }));
+
+useWritingHabitLinkStore.subscribe((state, previous) => {
+  if (state.habitId !== previous.habitId) generation += 1;
+});
 
 registerStoreReset(() => {
   useWritingHabitLinkStore.getState().reset();

@@ -31,7 +31,13 @@ import {
 } from '@/store/useDepthPreferencesStore';
 
 export type RootTabParamList = {
-  Habits: undefined;
+  Habits:
+    | {
+        onboardingIntent?: 'energy-scaffolding';
+        onboardingOwner?: number;
+        onboardingGeneration?: number;
+      }
+    | undefined;
   Practice: { stageNumber?: number } | undefined;
   // contentId/scrollOffset are optional restore hints from a Back-to-reading return.
   Course: { stageNumber?: number; contentId?: number; scrollOffset?: number } | undefined;

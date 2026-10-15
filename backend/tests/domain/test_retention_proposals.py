@@ -101,6 +101,7 @@ _RATIFIED_RULES: dict[str, tuple[RetentionKind, int]] = {
     "energyplan": (RetentionKind.SWEPT_BY, 7),
     "gumroadsale": (RetentionKind.FIXED_DAYS, 180),
     "journalentry (soft-deleted)": (RetentionKind.SWEPT_BY, 97),
+    "journalwithdrawalnote": (RetentionKind.FIXED_DAYS, 97),
     "journalwithdrawalobligation": (RetentionKind.FIXED_DAYS, 30),
     "llmusagelog": (RetentionKind.FIXED_DAYS, 90),
     "loginattempt": (RetentionKind.FIXED_DAYS, 30),
@@ -110,6 +111,10 @@ _RATIFIED_RULES: dict[str, tuple[RetentionKind, int]] = {
     "vaultteardownreceipt": (RetentionKind.FIXED_DAYS, 90),
     "voicedraftretraction": (RetentionKind.FIXED_DAYS, 30),
 }
+
+# The one row the owner ratified as longer than before, on purpose: a detached
+# note outlives the account its obligation died with (2026-10-14, #3267).
+_RATIFIED_LONGER = frozenset({"journalwithdrawalnote"})
 
 # The store periods ratified the same day; ``None`` is "no fixed period".
 _RATIFIED_STORES: dict[str, Days | None] = {
@@ -793,6 +798,9 @@ def test_the_owner_doc_records_every_ratified_row_with_the_codes_values() -> Non
     for name, cells in rows.items():
         comparison = cells[_COMPARISON_CELL]
         assert comparison in {c.value for c in TodayComparison}, name
+        if name in _RATIFIED_LONGER:
+            assert comparison == TodayComparison.LONGER.value, f"{name}: ratified as longer"
+            continue
         assert comparison != TodayComparison.LONGER.value, f"{name}: ratified longer than before"
 
 

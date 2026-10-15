@@ -76,7 +76,7 @@ const ladder = (): Goal[] =>
     title: tier,
     tier,
     target: index + 1,
-    target_unit: 'pages',
+    target_unit: 'minutes',
     frequency: 1,
     frequency_unit: 'per_day',
     is_additive: true,

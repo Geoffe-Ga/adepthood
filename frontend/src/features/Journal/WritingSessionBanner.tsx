@@ -64,6 +64,8 @@ export function useFocusBannerClose(): () => void {
 }
 
 export interface WritingSessionBannerProps {
+  /** Confirmed measured amount, shown independently of the optional offer. */
+  loggedMessage?: string;
   result: WritingSessionResult;
   onDismiss: () => void;
   children?: React.ReactNode;
@@ -72,6 +74,7 @@ export interface WritingSessionBannerProps {
 }
 
 function WritingSessionBanner({
+  loggedMessage,
   result,
   onDismiss,
   children,
@@ -86,6 +89,11 @@ function WritingSessionBanner({
       testID="writing-session-banner"
     >
       <Text style={styles.summary}>{writingSessionSummary(result.elapsedMinutes)}</Text>
+      {loggedMessage ? (
+        <Text style={styles.summary} testID="writing-session-log-notice">
+          {loggedMessage}
+        </Text>
+      ) : null}
       <ScrollView
         style={[styles.offerScroll, scrollWholeSurface && styles.unboundedOffers]}
         scrollEnabled={!scrollWholeSurface}

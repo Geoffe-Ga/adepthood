@@ -60,6 +60,7 @@ const mockProgramCalendar = jest.fn(() =>
   }),
 );
 jest.mock('../../../api', () => ({
+  captureSessionToken: () => 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature',
   uiFlags: { get: () => Promise.resolve({ course_last_stage: null }) },
   stages: {
     listAll: (...a: unknown[]) => mockStagesList(...a),
@@ -71,6 +72,13 @@ jest.mock('../../../api', () => ({
     stageProgress: (...a: unknown[]) => mockStageProgress(...a),
     markRead: jest.fn(),
     contentBody: jest.fn(),
+    startHereProgress: () =>
+      Promise.resolve({
+        total_items: 0,
+        read_items: 0,
+        progress_percent: 0,
+        next_unlock_day: null,
+      }),
     siteResources: () => Promise.resolve([]),
     siteResourceBody: jest.fn(),
     // No intro in these error-state scenarios — keep the card hidden.
@@ -191,4 +199,9 @@ describe('CourseScreen error + retry states', () => {
     await waitFor(() => expect(view.getByText('No Content Yet')).toBeTruthy());
     expect(view.queryByTestId('course-error')).toBeNull();
   });
+});
+
+beforeEach(() => {
+  require('@/storage/userScope').setActiveUser(1);
+  require('../startHereStore').useStartHereStore.getState().reset();
 });

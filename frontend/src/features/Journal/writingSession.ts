@@ -37,6 +37,12 @@ export interface WritingSessionResult {
   readonly reachedFullDuration: boolean;
 }
 
+/** A confirmed habit log belonging to one exact timer result. */
+export interface LoggedWritingSession {
+  result: WritingSessionResult;
+  message: string;
+}
+
 /** What the engine hands over when a session ends, either way it ends. */
 export interface WritingSessionInput {
   readonly plannedMinutes: number;

@@ -721,6 +721,18 @@ def _sanitize_essay(text: str) -> str:
         return sanitize_user_text(truncated[: ESSAY_MAX // 2], max_len=ESSAY_MAX)
 
 
+def accept_vault_letter(letter: str) -> str | None:
+    """Return a vault-written letter as the essay column may hold it, or ``None``.
+
+    The vault's half of :func:`generate_essay`'s gate (#3203): the same
+    sanitization and ``ESSAY_MAX`` cap, so a letter from either source is
+    stored under one invariant. A letter that sanitizes away to nothing is not
+    a letter. There is no prompt-echo check: adepthood sent the vault no
+    prompt, so there is nothing of ours it could echo.
+    """
+    return _sanitize_essay(letter) or None
+
+
 async def generate_essay(
     *,
     llm: ResonanceLLM,

@@ -468,11 +468,15 @@ const styles = StyleSheet.create({
   },
   privacyTierRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: SPACING.xs,
   },
   /** Each tier option; both min dims hold the touch target at the 44dp floor. */
   privacyTierOption: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 0,
+    flexBasis: 'auto',
+    maxWidth: '100%',
     minHeight: touchTarget.minimum,
     minWidth: touchTarget.minimum,
     justifyContent: 'center',
@@ -489,6 +493,9 @@ const styles = StyleSheet.create({
   privacyTierLabel: {
     ...editorialType.action,
     color: colors.paper.inkSoft,
+    flexShrink: 1,
+    maxWidth: '100%',
+    textAlign: 'center',
   },
   privacyTierLabelSelected: {
     color: colors.paper.ink,

@@ -114,12 +114,14 @@ def _nulls(db_url: str) -> list[object]:
 
 
 def test_the_migration_chains_from_the_current_head(migration_config: Config) -> None:
-    """This revision keeps its authored parent and leaves the chain with a single head."""
+    """This revision keeps its authored parent on the single linear chain."""
     script = ScriptDirectory.from_config(migration_config)
     revision = script.get_revision(_REVISION)
     assert revision is not None
     assert revision.down_revision == _BASE_REVISION
-    assert script.get_heads() == [_REVISION]
+    heads = script.get_heads()
+    assert len(heads) == 1
+    assert _REVISION in {rev.revision for rev in script.iterate_revisions(heads[0], "base")}
 
 
 def test_upgrade_encrypts_each_list_and_downgrade_restores_its_json(

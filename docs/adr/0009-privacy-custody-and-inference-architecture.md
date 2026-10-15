@@ -437,27 +437,29 @@ certifies that claim for that platform.
 Every server-readable store that must reach "ciphertext under a user-held
 key, withdrawn, or expired" before an account may be labelled protected:
 
-1. **The 18 `EncryptedString` columns.** These are held by B02's inventory
+1. **The 20 `EncryptedString` columns.** These are held by B02's inventory
    (`encrypted_columns()`) and pinned by
    `test_every_encrypted_column_stores_ciphertext`. The default proposal,
-   per the owner's scope split (Decision item 9):
+   per the owner's scope split (Decision item 9), puts 14 in scope:
    - **Journal content, in scope:** `journalentry.*`, `marginalia.*`,
      `promotedquote.anchor_text`, `corpusfragment.content`,
-     `completionsuggestion.*`, `promptresponse.response`,
-     `practicesession.insight` and `practicesession.reflection`.
+     `corpusfragment.embedding`, `completionsuggestion.*`,
+     `promptresponse.response`, `practicesession.insight` and
+     `practicesession.reflection`.
    - **Out of scope:** `feedbacknote.body` and `feedbackreport.*`,
      which are written *to* the operator to be read, and
      `uservaultconfig.api_key`, a credential the server must present on the
      person's behalf.
 2. **`DERIVED_FROM_PROSE` plaintext** (`_PLAINTEXT_COLUMNS` in
    `backend/tests/test_column_classification.py`). The members are
-   `corpusfragment.embedding`, `corpusfragment.frequency_weights`,
-   `corpusfragment.tier`, `journalentry.classification`,
-   `journalentry.reflection_scope_key`, `journalentry.tag` and
-   `journalentry.vault_tags`. For a protected account these are recomputed on
-   the device or in the vault, dropped, or kept only where the owner decides
-   they may stay readable (B02 owner decision: disclose, do not encrypt,
-   embeddings, frequency weights and vault tags).
+   `corpusfragment.frequency_weights`, `corpusfragment.tier`,
+   `journalentry.classification`, `journalentry.reflection_scope_key` and
+   `journalentry.tag`. For a protected account these are recomputed on the
+   device or in the vault, dropped, or kept only where the owner decides they
+   may stay readable (B02 owner decision: disclose, do not encrypt, the
+   frequency weights). The corpus embedding and the entry's vault tags were
+   in this group until #3263 encrypted them; they are now among item 1's
+   columns.
 3. **Completion detection output.** `completionsuggestion.completed_units` and
    `completionsuggestion.completed_on` are non-textual values derived from
    prose by detection. They follow the same rule as item 2.

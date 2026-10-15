@@ -50,23 +50,16 @@ export function stagePreviewLabel(name: string, stage: string): string {
   return `${name} — ${stage}`;
 }
 
-/**
- * What happened, once it has happened. It names the lock because every new
- * habit here starts locked, and a writer who went looking for a tile that
- * appeared unlocked would not find one.
- */
+/** Confirm only the habit creation that the server kept. */
 export function savedHabitConfirmation(): string {
-  return `${JOURNALING_HABIT_NAME} is on your habits list, locked until you open it.`;
+  return `${JOURNALING_HABIT_NAME} is on your habits list.`;
 }
 
-/**
- * What a finished writing session says once it has checked off the habit the
- * writer linked it to (#2861). The habit's own name and nothing else: no
- * count, no run of days, no tier reached — the Habits screen is where those
- * live, for anyone who goes looking.
- */
-export function checkedOffToast(habitName: string): string {
-  return `${habitName} checked off`;
+/** Name the writer's own measured amount, without a score or milestone. */
+export function loggedToast(amount: number, unit: string, habitName: string): string {
+  const measured =
+    unit === 'sessions' ? 'a session' : `${amount} ${amount === 1 ? 'minute' : 'minutes'}`;
+  return `Logged ${measured} to ${habitName}`;
 }
 
 /**
@@ -75,37 +68,32 @@ export function checkedOffToast(habitName: string): string {
  * which one is "the writing one" — with a new Journaling habit last.
  */
 export const WRITING_HABIT_PICKER_TITLE = 'Which habit?';
-/**
- * Strictly true for both kinds of choice: the picker lists only open habits,
- * and a new Journaling habit starts locked, so "once it is open" is the
- * condition every check-off actually waits on.
- */
 export const WRITING_HABIT_PICKER_HELP =
-  'Pick one you already keep, or start a new one. Once it is open, a finished writing timer checks it off.';
+  'Pick an open habit that counts minutes or sessions, or set up a new one.';
 
 /** A habit row's screen-reader label: what choosing it will do. */
 export function writingHabitChooseA11y(habitName: string): string {
-  return `Check off ${habitName} when a writing timer ends`;
+  return `Log writing timer activity to ${habitName}`;
 }
 
 export const WRITING_HABIT_NEW = `New habit: ${JOURNALING_HABIT_NAME}`;
 export const WRITING_HABIT_NEW_A11Y = `Start a new habit called ${JOURNALING_HABIT_NAME}`;
 
 export const WRITING_HABIT_CLEAR = 'Clear link';
-export const WRITING_HABIT_CLEAR_A11Y = 'Stop checking off a habit when a writing timer ends';
+export const WRITING_HABIT_CLEAR_A11Y = 'Stop logging writing timer activity to a habit';
 
 export const WRITING_HABIT_CANCEL = 'Cancel';
 export const WRITING_HABIT_CANCEL_A11Y = 'Close without choosing a habit';
 
 /** Once linked: what will happen from now on, said once. */
 export function linkedHabitConfirmation(habitName: string): string {
-  return `${habitName} will be checked off when a timer ends.`;
+  return `${habitName} will receive your timer’s minutes or completed sessions.`;
 }
 
 /** Settings: the group, and the row naming the current link. */
 export const JOURNAL_SETTINGS_TITLE = 'Journal';
 export const WRITING_TIMER_ROW_DESCRIPTION =
-  'The habit a finished writing timer checks off. Change it or clear it here.';
+  'The habit that receives your timer’s minutes or completed sessions. Change or clear the link here.';
 export const WRITING_TIMER_ROW_UNLINKED = 'Writing timer → not linked';
 /** A link the server holds whose habit has not been read yet — never "not linked". */
 export const WRITING_TIMER_ROW_LINKED_PENDING = 'Writing timer → a habit';
@@ -134,14 +122,9 @@ export const OFFER_SWITCH_LABEL = 'Offer to keep a session';
 export const OFFER_SWITCH_DESCRIPTION =
   'Offers to keep a finished writing session as a habit or a practice. Answering it turns this off. Kept on this device.';
 
-/**
- * The new Journaling habit, kept AND linked to the timer. It starts locked like
- * every new habit, and nothing is logged against a locked habit — so the
- * sentence says the check-off begins once it is open, and does not open it on
- * the writer's behalf.
- */
+/** The new habit is ready for the unit and goals the writer just chose. */
 export function savedAndLinkedConfirmation(): string {
-  return `${savedHabitConfirmation()} Once it is open, a finished writing timer checks it off.`;
+  return `${savedHabitConfirmation()} The timer will log your chosen minutes or completed sessions.`;
 }
 
 /**
@@ -184,7 +167,7 @@ export const SAVE_AS_HABIT_COPY_ENTRIES: readonly string[] = [
   SAVE_AS_HABIT_SAVING,
   savedHabitConfirmation(),
   stagePreviewLabel(JOURNALING_HABIT_NAME, 'Beige'),
-  checkedOffToast(JOURNALING_HABIT_NAME),
+  loggedToast(10, 'minutes', JOURNALING_HABIT_NAME),
   savedAndLinkedConfirmation(),
   WRITING_HABIT_PICKER_TITLE,
   WRITING_HABIT_PICKER_HELP,

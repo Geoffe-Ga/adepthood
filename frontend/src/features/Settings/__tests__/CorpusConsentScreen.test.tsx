@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, test, expect, beforeEach, jest */
+/* global describe, test, expect, afterEach, beforeEach, jest */
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
@@ -13,7 +13,8 @@ import {
 } from '../corpusConsentCopy';
 import CorpusConsentScreen from '../CorpusConsentScreen';
 
-import { corpusConsent, type CorpusConsent } from '@/api';
+import { corpusConsent, setTokenGetter, type CorpusConsent } from '@/api';
+import { setActiveUser } from '@/storage/userScope';
 import { settle } from '@/testing/asyncSettle';
 
 /**
@@ -65,7 +66,16 @@ async function renderLoaded(...sources: CorpusConsent[]) {
   return view;
 }
 
+const consentToken = `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ sub: '1', exp: 4102444800 })).toString('base64url')}.signature`;
+
+afterEach(() => {
+  setActiveUser(null);
+  setTokenGetter(null);
+});
+
 beforeEach(() => {
+  setActiveUser(1);
+  setTokenGetter(() => consentToken);
   jest.clearAllMocks();
 });
 
@@ -120,7 +130,7 @@ describe('CorpusConsentScreen — agreeing', () => {
     fireEvent(getByTestId('corpus-consent-switch-journal'), 'valueChange', true);
 
     await settle();
-    expect(mockSet).toHaveBeenCalledWith('journal', true);
+    expect(mockSet).toHaveBeenCalledWith('journal', true, consentToken);
   });
 
   test('shows the state the server reported back, not the one that was tapped', async () => {
@@ -176,7 +186,7 @@ describe('CorpusConsentScreen — withdrawing', () => {
     fireEvent.press(getByTestId('corpus-consent-revoke-confirm-journal'));
 
     await settle();
-    expect(mockSet).toHaveBeenCalledWith('journal', false);
+    expect(mockSet).toHaveBeenCalledWith('journal', false, consentToken);
     await settle();
     expect(getByTestId('corpus-consent-switch-journal').props.value).toBe(false);
     expect(queryByTestId('corpus-consent-revoke-journal')).toBeNull();

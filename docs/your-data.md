@@ -253,6 +253,11 @@ everything it holds. An unreachable vault never delays or blocks deletion of
 your Adepthood data; the deletion receipt states whether managed teardown is
 pending, confirmed, or manual action remains.
 
+If a page of yours still had a copy in a vault that had not confirmed it
+deleted, Adepthood keeps a note for each such copy: an opaque vault identifier
+and an entry number, not linked to you, and nothing you wrote. The note is
+deleted when that vault confirms the copy gone, or after 97 days at most.
+
 ## For maintainers
 
 The export manifest is total by construction: every table in the ORM metadata

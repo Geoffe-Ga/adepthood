@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
-import { Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+import { SPACING, accent, editorialType, touchTarget } from '@/design/tokens';
 
 let DateTimePickerModal: ComponentType<Record<string, unknown>> = () => null;
 if (Platform.OS !== 'web') {
@@ -122,8 +124,21 @@ const getFirstOfNextMonth = (): Date => {
   return d;
 };
 
-const QUICK_BUTTON_STYLE = { marginLeft: 12 };
-const ROW_STYLE = { flexDirection: 'row' as const, marginTop: 8 };
+const quickStyles = StyleSheet.create({
+  picker: { maxWidth: '100%', minWidth: 0, flexShrink: 1 },
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginTop: SPACING.sm },
+  button: {
+    minWidth: touchTarget.minimum,
+    minHeight: touchTarget.minimum,
+    maxWidth: '100%',
+    flexShrink: 1,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    justifyContent: 'center',
+  },
+  disabled: { opacity: 0.5 },
+  label: { ...editorialType.action, color: accent.primary, flexShrink: 1 },
+});
 
 interface QuickDateButtonsProps {
   onSelectDate: (_date: Date) => void;
@@ -160,7 +175,6 @@ interface QuickButtonProps {
   // helpers that find the inner TouchableOpacity by its
   // ``accessibilityLabel`` prop do not also match this wrapper.
   a11yLabel: string;
-  style?: { marginLeft: number };
   onSelectDate: (_date: Date) => void;
   minDate?: string;
   maxDate?: string;
@@ -171,7 +185,6 @@ const QuickButton: React.FC<QuickButtonProps> = ({
   candidate,
   label,
   a11yLabel,
-  style,
   onSelectDate,
   minDate,
   maxDate,
@@ -182,11 +195,12 @@ const QuickButton: React.FC<QuickButtonProps> = ({
     <TouchableOpacity
       onPress={() => onSelectDate(candidate)}
       disabled={!allowed}
-      style={style}
+      style={[quickStyles.button, !allowed && quickStyles.disabled]}
+      accessibilityRole="button"
       accessibilityLabel={a11yLabel}
       accessibilityState={{ disabled: !allowed }}
     >
-      <Text>{label}</Text>
+      <Text style={quickStyles.label}>{label}</Text>
     </TouchableOpacity>
   );
 };
@@ -218,14 +232,13 @@ const QuickDateButtons: React.FC<QuickDateButtonsProps> = ({
     [],
   );
   return (
-    <View style={ROW_STYLE}>
-      {options.map((option, idx) => (
+    <View style={quickStyles.row}>
+      {options.map((option) => (
         <QuickButton
           key={option.label}
           candidate={option.candidate}
           label={option.label}
           a11yLabel={option.a11yLabel}
-          style={idx === 0 ? undefined : QUICK_BUTTON_STYLE}
           onSelectDate={onSelectDate}
           minDate={minDate}
           maxDate={maxDate}
@@ -310,6 +323,7 @@ const DateInput: React.FC<DateInputProps> = ({
     <input
       aria-label="Date"
       type="date"
+      style={{ maxWidth: '100%', minWidth: 0, boxSizing: 'border-box' }}
       value={value}
       min={minDate}
       max={maxDate}
@@ -363,7 +377,7 @@ const DatePicker: React.FC<DatePickerProps> = ({
   const handleChangeText = makeHandleChangeText(setTextValue, setError, commitDate);
 
   return (
-    <View>
+    <View style={quickStyles.picker}>
       <DateInput
         value={value}
         minDate={minDate}

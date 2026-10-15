@@ -242,7 +242,19 @@ export interface ReorderHabitsModalProps {
   onSaveOrder: (_habits: Habit[]) => Promise<void>;
 }
 
+/** Atomic goal ladder supplied when a timer link creates a habit. */
+export interface HabitGoalSetup {
+  target_unit: string;
+  frequency: number;
+  frequency_unit: string;
+  low: number;
+  clear: number;
+  stretch: number;
+}
+
 export interface AddHabitInput {
+  goals?: HabitGoalSetup;
+  revealed?: boolean;
   name: string;
   icon: string;
   energy_cost?: number;

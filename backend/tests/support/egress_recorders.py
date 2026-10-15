@@ -58,6 +58,8 @@ from domain.creek_vault import (
     VaultIngestRequest,
     VaultIngestResult,
     VaultJournalWithdrawResult,
+    VaultLetter,
+    VaultLetterRequest,
     VaultLinkPass,
     VaultLinkStage,
     VaultPipelineJob,
@@ -178,6 +180,7 @@ FULL_VAULT_CAPABILITIES: Final = frozenset(
         CreekCapability.WHEEL,
         CreekCapability.PIPELINE,
         CreekCapability.VOICE_DRAFTS,
+        CreekCapability.LETTERS,
     }
 )
 
@@ -316,6 +319,22 @@ class RecordingVault:
         self.remote[f"draft:{request.external_id}"] = request.content
         return VaultVoiceDraftResult(
             stored=True, vault_ref=f"draft-{request.external_id}", action=VaultIngestAction.CREATED
+        )
+
+    async def write_letter(self, request: VaultLetterRequest, /) -> VaultLetter:
+        """Record the entry and note sent for a letter, and keep the letter as a draft.
+
+        The letter quotes the entry back, as a model's letter may, so it is a
+        derivative that carries the canary into the vault's draft store -- the
+        copy an Intimate reclassification must then withdraw.
+        """
+        await self._dial("write_letter", f"{request.tier} {request.content} {request.note}")
+        letter = f"A letter about: {request.content}"
+        self.remote[f"draft:{request.external_id}"] = letter
+        return VaultLetter(
+            letter=letter,
+            vault_ref=f"draft-{request.external_id}",
+            action=VaultIngestAction.CREATED,
         )
 
     async def delete_voice_draft(

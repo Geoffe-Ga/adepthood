@@ -62,9 +62,11 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'corpus-vault-first.browser.e2e.test.ts',
   BROWSER_JOURNEY,
   'course-reading-position.browser.e2e.test.ts',
+  'course-start-here.browser.e2e.test.ts',
   HABITS_VIEWPORT_JOURNEY,
   'course-reflect-return.browser.e2e.test.ts',
   'csp-enforced.browser.e2e.test.ts',
+  'date-picker-reflow.browser.e2e.test.ts',
   'feedback-composer.browser.e2e.test.ts',
   'feedback-resilience.browser.e2e.test.ts',
   'habit-add-cadence.browser.e2e.test.ts',
@@ -127,6 +129,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'resonance-explainer.browser.e2e.test.ts',
   'return-recover-habit.browser.e2e.test.ts',
   'screen-title-heading.browser.e2e.test.ts',
+  'settings-corpus-sharing.browser.e2e.test.ts',
   'text-order.browser.e2e.test.ts',
   'welcome.browser.e2e.test.ts',
   'writing-timer-habit-link.browser.e2e.test.ts',
@@ -600,17 +603,17 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     expect(setup).not.toContain('dependency_overrides');
   });
 
-  it('advertises only the six capabilities the two vault journeys exercise', () => {
+  it('advertises only the seven capabilities the two vault journeys exercise', () => {
     // The sharpest constraint on this boundary: every added word is a new class
     // of production traffic. The deployment owner is reserved for the upload
     // and withdrawal specs, while all other accounts stay on local fallback.
-    // `reflections` is the one deliberate addition (#3061): the owner is
-    // vault-bound, so the withdrawal journey's margin note can only come from
-    // this vault -- the app provider is never asked in its place.
+    // `reflections` and `letters` are the deliberate additions (#3061, #3203):
+    // the owner is vault-bound, so the withdrawal journey's margin note and its
+    // letter can only come from this vault -- the app provider is never asked.
     const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
 
     expect(fake).toContain(
-      "  'capabilities',\n  'upload',\n  'journal-upsert',\n  'journal-withdraw',\n  'voice-drafts',\n  'reflections',\n];",
+      "  'capabilities',\n  'upload',\n  'journal-upsert',\n  'journal-withdraw',\n  'voice-drafts',\n  'reflections',\n  'letters',\n];",
     );
     expect(fake).not.toContain("'wheel'");
     expect(fake).not.toContain("'pipeline'");
@@ -624,11 +627,20 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     expect(fake).toContain('ADMITTED_TIERS.includes(ceiling)');
   });
 
+  it('writes letters on the published request shape and holds no writer prose', () => {
+    const fake = read(FAKE_VAULT, 'The withdrawal journeys need a vault that writes letters.');
+
+    expect(fake).toContain("const LETTER_REQUEST_FIELDS = ['content', 'note', 'tier']");
+    expect(fake).toContain("const LETTER_NOTE_FIELDS = ['anchor_text', 'kind', 'note']");
+    // The stored draft is the lane's own sentinel letter, never the entry.
+    expect(fake).toContain("store('voice-draft', externalId, digestOf(LANE_LETTER))");
+  });
+
   it('requires the contract version on capability routes and admits no third tier', () => {
     const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
 
     expect(fake).toContain("const CONTRACT_HEADER = 'x-creek-contract-version'");
-    expect(fake).toContain("const CONTRACT_VERSION = '0.16.0'");
+    expect(fake).toContain("const CONTRACT_VERSION = '0.17.0'");
     expect(fake).toContain('incompatible_version');
     expect(fake).toContain("const ADMITTED_TIERS = ['open', 'personal']");
     // Declared *and* enforced: a constant nothing consults would leave the

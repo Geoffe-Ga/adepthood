@@ -22,7 +22,7 @@ import type {
   ViewStyle,
 } from 'react-native';
 
-import { webDescribedBy, webRadioState } from './webAria';
+import { webDescribedBy, webRadioState, webRadioSpace } from './webAria';
 
 export interface RadioOptionProps {
   label: string;
@@ -94,6 +94,7 @@ export function RadioOption({
       // same facts as aria-* props, plus the text that describes the option.
       {...webRadioState<TouchableOpacityProps>(selected, disabled)}
       {...webDescribedBy<TouchableOpacityProps>(describedBy)}
+      {...webRadioSpace<TouchableOpacityProps>(disabled, onPress)}
     >
       <Text style={[labelStyle, selected && selectedLabelStyle]}>{label}</Text>
       {hint === undefined ? null : (
