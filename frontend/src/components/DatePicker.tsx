@@ -118,8 +118,11 @@ export const getNextMonday = (): Date => {
   return local;
 };
 
+// Anchored to local midnight like the other quick candidates, so a
+// ``maxDate`` on the first of next month compares equal instead of the
+// current time-of-day pushing the candidate past it.
 const getFirstOfNextMonth = (): Date => {
-  const d = new Date();
+  const d = getLocalToday();
   d.setMonth(d.getMonth() + 1, 1);
   return d;
 };
@@ -169,7 +172,11 @@ const isQuickCandidateAllowed = (
 };
 
 interface QuickButtonProps {
-  candidate: Date;
+  // Factory rather than a precomputed Date: the candidate depends on the
+  // local calendar day, which can change while the picker stays mounted
+  // (#3381).  It is evaluated on every render for the disabled state and
+  // again at press time for the committed value.
+  factory: () => Date;
   label: string;
   // Internal prop name distinct from ``accessibilityLabel`` so test
   // helpers that find the inner TouchableOpacity by its
@@ -182,7 +189,7 @@ interface QuickButtonProps {
 }
 
 const QuickButton: React.FC<QuickButtonProps> = ({
-  candidate,
+  factory,
   label,
   a11yLabel,
   onSelectDate,
@@ -190,10 +197,13 @@ const QuickButton: React.FC<QuickButtonProps> = ({
   maxDate,
   disabledDate,
 }) => {
-  const allowed = isQuickCandidateAllowed(candidate, minDate, maxDate, disabledDate);
+  const allowed = isQuickCandidateAllowed(factory(), minDate, maxDate, disabledDate);
   return (
     <TouchableOpacity
-      onPress={() => onSelectDate(candidate)}
+      // Re-evaluate at press time: if local midnight passed since the last
+      // render, this commits the new day, and ``onSelectDate`` (commitDate)
+      // re-validates it against min/max/disabledDate.
+      onPress={() => onSelectDate(factory())}
       disabled={!allowed}
       style={[quickStyles.button, !allowed && quickStyles.disabled]}
       accessibilityRole="button"
@@ -225,18 +235,12 @@ const QuickDateButtons: React.FC<QuickDateButtonsProps> = ({
   maxDate,
   disabledDate,
 }) => {
-  // Build the candidate dates once per mount instead of allocating a fresh
-  // Date for every option on every render.
-  const options = React.useMemo(
-    () => QUICK_OPTIONS.map((option) => ({ ...option, candidate: option.factory() })),
-    [],
-  );
   return (
     <View style={quickStyles.row}>
-      {options.map((option) => (
+      {QUICK_OPTIONS.map((option) => (
         <QuickButton
           key={option.label}
-          candidate={option.candidate}
+          factory={option.factory}
           label={option.label}
           a11yLabel={option.a11yLabel}
           onSelectDate={onSelectDate}

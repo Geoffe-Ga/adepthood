@@ -165,3 +165,23 @@ it('a cancelled queued reservation never creates a success notice', async () => 
   expect(p.onNotice).not.toHaveBeenCalled();
   expect(p.manager.discardLogUnitContext).toHaveBeenCalledWith(ctx);
 });
+it('hands a failed attempt its context and resends that same context on retry', async () => {
+  const p = input();
+  const onFailed = jest.fn();
+  p.manager.commitLogUnitContext = jest.fn(async () => {
+    throw new Error('offline');
+  });
+  await logCompletedPracticeHabit({ ...p, onFailed });
+  expect(onFailed).toHaveBeenCalledWith(ctx);
+  const retry = input();
+  await expect(logCompletedPracticeHabit({ ...retry, prepared: ctx })).resolves.toBe('logged');
+  expect(retry.manager.prepareLogUnit).not.toHaveBeenCalled();
+  expect(retry.manager.commitLogUnitContext).toHaveBeenCalledWith(ctx, expect.anything());
+});
+it('never resends a prepared context to a different habit', async () => {
+  const p = input();
+  p.habit.id = 6;
+  await expect(logCompletedPracticeHabit({ ...p, prepared: ctx })).resolves.toBe('ignored');
+  expect(p.manager.reserveLogUnitContext).not.toHaveBeenCalled();
+  expect(p.manager.commitLogUnitContext).not.toHaveBeenCalled();
+});
