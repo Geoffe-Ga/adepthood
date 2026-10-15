@@ -11,6 +11,7 @@ still NULL.
 from __future__ import annotations
 
 import json
+import string
 from collections.abc import Iterator
 
 import pytest
@@ -26,6 +27,7 @@ from models.user import User
 from services import journal_encryption as je
 
 _MARKER = "enc::v1::"
+_FERNET_ALPHABET = frozenset(string.ascii_letters + string.digits + "-_=")
 _TAGS = ["F5", "phase:withdrawal"]
 _EMBEDDING = [0.125, -0.5, 3.0e-7, 1.0]
 
@@ -75,8 +77,11 @@ def _assert_ciphertext_of(stored: str, plaintext_list: list[object]) -> None:
     """The raw value is marked ciphertext, not the JSON, and decrypts to the list."""
     assert stored.startswith(_MARKER)
     assert json.dumps(plaintext_list) not in stored
-    for element in plaintext_list:
-        assert str(element) not in stored.removeprefix(_MARKER)
+    # Every byte after the marker is Fernet's base64url, so no JSON bracket, quote,
+    # comma, colon or decimal point of the plaintext survives. A per-element
+    # substring check would be wrong: a short tag like "F5" is itself base64url
+    # and occurs in random ciphertext by chance.
+    assert set(stored.removeprefix(_MARKER)) <= _FERNET_ALPHABET
     assert json.loads(je.decrypt(stored)) == plaintext_list
 
 
