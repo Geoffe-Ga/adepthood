@@ -66,6 +66,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   HABITS_VIEWPORT_JOURNEY,
   'course-reflect-return.browser.e2e.test.ts',
   'csp-enforced.browser.e2e.test.ts',
+  'date-picker-day-change.browser.e2e.test.ts',
   'date-picker-reflow.browser.e2e.test.ts',
   'feedback-composer.browser.e2e.test.ts',
   'feedback-resilience.browser.e2e.test.ts',
