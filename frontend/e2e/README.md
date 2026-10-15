@@ -61,6 +61,20 @@ with Playwright. A local machine that already has Google Chrome can avoid the
 separate Chromium download with `PLAYWRIGHT_BROWSER_CHANNEL=chrome`; CI always
 installs and runs the package-pinned Chromium build.
 
+CI splits browser specs across four isolated runners using Playwright's
+`--shard=N/4`. Each runner boots its own backend, database, fakes and Expo server,
+and runs one worker with file-level sharding. Keep `fullyParallel: false` and
+`workers: 1`: tests within a file share fixtures, and the checkout's lane state,
+frontend ports and fake-vault owner cannot be shared by concurrent workers.
+To reproduce one shard locally, append `-- --shard=1/4` to `npm run test:e2e:web`.
+
+Every run writes test and hook timings to `playwright-report/results.json`;
+CI publishes these as `browser-journey-report-N`, including failures. Trace
+artifacts also carry the shard number. The text census and action-row sweep
+retain their existing artifact names: each walk lives in a single spec file,
+so only its owning shard produces that folder. Other shards finish even if one
+fails, preserving their coverage and review artifacts.
+
 ## What is real, and the four external boundaries that are not
 
 Real: the routers, the middleware stack, CORS, session handling, the Pydantic

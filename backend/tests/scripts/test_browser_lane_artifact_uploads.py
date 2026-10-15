@@ -226,6 +226,34 @@ def test_the_browser_job_has_time_to_publish_every_screen() -> None:
     assert shortfall is None, shortfall
 
 
+def test_browser_shards_run_on_isolated_runners_without_cancelling_other_artifacts() -> None:
+    """Shared ports/state require runner isolation; every shard must finish its review."""
+    job = jobs(without_comment_lines(_E2E_WORKFLOW.read_text()))[_BROWSER_JOB]
+    assert "shard: [1, 2, 3, 4]" in job
+    assert "fail-fast: false" in job
+    command = "\n".join(step_body(job, "Run the real-browser journey"))
+    expected = "npm run test:e2e:web -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}"
+    assert expected in command
+    assert "continue-on-error" not in job
+    config = (_REPO_ROOT / "frontend" / "playwright.config.ts").read_text()
+    assert "fullyParallel: false" in config
+    assert "workers: 1" in config
+
+
+def test_browser_shards_keep_distinct_failure_traces_and_timing_reports() -> None:
+    """Artifact v4+ refuses two runners uploading to the same artifact name."""
+    job = jobs(without_comment_lines(_E2E_WORKFLOW.read_text()))[_BROWSER_JOB]
+    traces = step_inputs(job, "Upload failed-test traces")
+    assert traces["name"] == "browser-journey-test-results-${{ matrix.shard }}"
+    report_step = "Upload browser timing report"
+    assert _step_condition(job, report_step) == _ALWAYS
+    report = step_inputs(job, report_step)
+    assert report["name"] == "browser-journey-report-${{ matrix.shard }}"
+    assert report["path"] == "frontend/playwright-report/results.json"
+    config = (_REPO_ROOT / "frontend" / "playwright.config.ts").read_text()
+    assert "['json', { outputFile: 'playwright-report/results.json' }]" in config
+
+
 # --- Deliberately violating workflows --------------------------------------
 
 

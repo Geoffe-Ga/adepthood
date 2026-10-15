@@ -144,18 +144,17 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
     runs-on: ubuntu-latest
-    # Measured, not guessed: at 15 minutes this job was already at its cap on
-    # main -- run 36363745320 (56267069) was cancelled after 13m51s of
-    # Playwright, mid-way through the text census, and the run before it took
-    # 14m20s. The action-row sweep (#2860) adds 2.3 minutes of its own
-    # walk, so the lane then needed ~17, and 25 was its cap -- until run
-    # 36912604466 was cancelled at 25 just after all 87 specs passed: ~6
-    # minutes of setup plus 19.0 minutes of Playwright. Job 116104282882
-    # then reached the 35-minute cap just after all 175 tests passed in
-    # 33.7 minutes, before cleanup and review artifacts could finish. Give
-    # the complete job 60 minutes, including setup and artifact publication;
-    # individual Playwright test/action limits remain separately bounded.
-    # The minimum budget and artifact wiring are pinned by
+    # 175 tests took 33.7 minutes on one worker (run 38637231314).
+    # Shard by file across runners: ports, lane state files and the fake vault's
+    # owner are shared within a checkout, so extra workers there are unsafe.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    # Keep the existing safety budget until sharded CI timings establish a new
+    # bound. The former 35-minute cap cancelled a green suite during artifact
+    # publication; individual Playwright test/action limits still apply.
+    # The budget and artifact wiring are guarded by
     # backend/tests/scripts/test_browser_lane_artifact_uploads.py.
     timeout-minutes: 60
     services:
@@ -210,16 +209,25 @@ jobs:
         working-directory: frontend
         env:
           E2E_PYTHON: python
-        run: npm run test:e2e:web
+        run: npm run test:e2e:web -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+
+      - name: Upload browser timing report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: browser-journey-report-${{ matrix.shard }}
+          path: frontend/playwright-report/results.json
+          if-no-files-found: warn
+          retention-days: 14
 
       # playwright.config.ts retains a trace for every failed test. Without this
       # step those traces die with the runner, and a layout failure that does not
       # reproduce on a developer's Chromium build cannot be diagnosed at all.
       - name: Upload failed-test traces
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: browser-journey-test-results
+          name: browser-journey-test-results-${{ matrix.shard }}
           path: frontend/test-results
           if-no-files-found: warn
           retention-days: 14
@@ -228,9 +236,12 @@ jobs:
       # one: the per-route screenshots and JSON under e2e/artifacts/text-order
       # are what the epic's review step reads, so they are published whatever
       # the verdict, separately from the failure-only traces above.
+      # Each sweep is one test in one file, so only its owning shard has files
+      # to upload. Keep the review artifact names stable; no other shard writes
+      # either folder, even when that shard fails. Do not split files across workers.
       - name: Upload the text census
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: text-order-census
           path: frontend/e2e/artifacts/text-order/**
@@ -244,7 +255,7 @@ jobs:
       # backend/tests/scripts/test_browser_lane_artifact_uploads.py.
       - name: Upload the action-row sweep
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: action-row-sweep
           path: frontend/e2e/artifacts/action-rows/**
