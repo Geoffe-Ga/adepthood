@@ -178,6 +178,19 @@ export async function logInInPlace(page: Page, email: string): Promise<void> {
 }
 
 /**
+ * Answer the in-place re-auth sheet a 401 raised, signing the SAME account
+ * back in without leaving the running app (#3326).
+ */
+export async function reauthenticateInPlace(page: Page, email: string): Promise<void> {
+  const sheet = page.getByTestId('reauth-sheet');
+  await expect(sheet).toBeVisible();
+  await sheet.getByRole('textbox', { name: 'Email' }).fill(email);
+  await sheet.getByRole('textbox', { name: 'Password', exact: true }).fill(ACCOUNT_PHRASE);
+  await sheet.getByTestId('reauth-submit').click();
+  await expect(sheet).toHaveCount(0);
+}
+
+/**
  * A signed-in session for `email`: its bearer token and the IANA zone the
  * SERVER has on record for that account.
  *

@@ -2498,6 +2498,24 @@
     "coveredBy": "frontend/e2e/habit-owner-switch.browser.e2e.test.ts"
   },
   {
+    "id": "habits.pending-create-survives-same-owner-reauth",
+    "description": "A real habit POST is held while the account's token is revoked on the real server; the running app's next read is refused, its refresh is refused, and the same account signs back in through the re-auth sheet without its id changing. The new session hydrates the account's real rows, then the held create's lost reply (phone) or success (desktop) is delivered: the row the new session shows never vanishes, and the ended session sends nothing further under its revoked credential. A reload shows the same single row. AuthProvider integration covers append, insert and logging across a real onUnauthorized and same-owner sign-in, the pending re-auth window, and controls for an uninterrupted session and a legitimate token refresh.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/ReauthSheet.tsx",
+      "client": ["auth", "habits"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /auth/refresh",
+        "POST /habits/",
+        "GET /habits/"
+      ],
+      "tables": ["user", "habit", "goal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-same-owner-reauth.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.reflection-dismissal-account-ownership",
     "description": "Due-review reflection dismissals are account-scoped and Jest covers owner, credential and ABA transitions. The Settings-switch browser journey does not dismiss a due review; an actual reflection dismissal/reload/account-switch browser witness remains required under #3073.",
     "crosses": {

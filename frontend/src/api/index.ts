@@ -129,7 +129,7 @@ import {
   type FeedbackTriageDetailT,
   type FeedbackTriageSummaryT,
 } from './schemas';
-import { captureSessionToken, installSessionTokenGetter } from './sessionToken';
+import { beginAuthSession, captureSessionToken, installSessionTokenGetter } from './sessionToken';
 import { createTokenRotation, type RecoveryMode } from './tokenRotation';
 import { classifyTranscription } from './transcriptionContract';
 
@@ -941,6 +941,8 @@ const REFRESH_FAILED_DETAIL = 'refresh_failed';
  */
 export function resetTokenRotations(): void {
   rotation.reset();
+  // The same boundary ends every captured mutation of the old session (#3326).
+  beginAuthSession();
 }
 
 /**
