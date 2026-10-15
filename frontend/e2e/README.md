@@ -74,6 +74,8 @@ artifacts also carry the shard number. The text census and action-row sweep
 retain their existing artifact names: each walk lives in a single spec file,
 so only its owning shard produces that folder. Other shards finish even if one
 fails, preserving their coverage and review artifacts.
+The `browser-journey` aggregate check keeps the original required-check name
+and passes only when every selected shard succeeds.
 
 ## What is real, and the four external boundaries that are not
 

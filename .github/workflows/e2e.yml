@@ -140,7 +140,7 @@ jobs:
   # Native textarea selection and accessibility semantics do not exist in the
   # Node journey process. This lane drives the production Expo web bundle in a
   # real Chromium process against the same real FastAPI/Postgres boundary.
-  browser-journey:
+  browser-journey-shards:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
     runs-on: ubuntu-latest
@@ -261,3 +261,16 @@ jobs:
           path: frontend/e2e/artifacts/action-rows/**
           if-no-files-found: warn
           retention-days: 14
+
+  # Preserve the original required-check name. A matrix reports suffixed names,
+  # so this check must fail when any shard fails, is cancelled or never runs.
+  browser-journey:
+    needs: [changes, browser-journey-shards]
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every browser shard to pass
+        env:
+          SHARD_RESULT: ${{ needs.browser-journey-shards.result }}
+        run: test "$SHARD_RESULT" = success
