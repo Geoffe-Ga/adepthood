@@ -27,6 +27,8 @@ interface RowGeometry {
   date: Box;
   edit: Box;
   energy: Box;
+  /** Words of the name whose glyphs land on more than one line. */
+  splitWords: string[];
 }
 
 /** Drive the onboarding to the reorder step, where each habit is a draggable row. */
@@ -68,6 +70,19 @@ async function measure(row: Locator): Promise<RowGeometry> {
     const energyNode = texts.find((el) => el.textContent?.startsWith('Cost:'))!;
     const range = document.createRange();
     range.selectNodeContents(nameNode);
+    const walker = document.createTreeWalker(nameNode, NodeFilter.SHOW_TEXT);
+    let textNode = walker.nextNode();
+    while (textNode && !textNode.textContent?.includes(name)) textNode = walker.nextNode();
+    const splitWords: string[] = [];
+    let offset = textNode!.textContent!.indexOf(name);
+    for (const word of name.split(' ')) {
+      const wordRange = document.createRange();
+      wordRange.setStart(textNode!, offset);
+      wordRange.setEnd(textNode!, offset + word.length);
+      const tops = Array.from(wordRange.getClientRects()).map((r) => r.top);
+      if (Math.max(...tops) - Math.min(...tops) > 1) splitWords.push(word);
+      offset += word.length + 1;
+    }
     return {
       viewport: innerWidth,
       scrollWidth: document.documentElement.scrollWidth,
@@ -82,6 +97,7 @@ async function measure(row: Locator): Promise<RowGeometry> {
       date: box(dateNode),
       edit: box(editNode),
       energy: box(energyNode),
+      splitWords,
     };
   }, LONG_NAME);
 }
@@ -112,6 +128,8 @@ function assertRow(geometry: RowGeometry): void {
     expectInside(glyph, geometry.row);
     expectInside(glyph, viewport);
   }
+  // Lines break only at spaces: no word of the name is split across two lines.
+  expect(geometry.splitWords).toEqual([]);
   expectInside(geometry.name, geometry.row);
   expectInside(geometry.date, geometry.row);
   expectInside(geometry.edit, geometry.row);

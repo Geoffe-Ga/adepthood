@@ -163,15 +163,17 @@ const ReorderItem = ({ item, index, drag, isActive, onEditIcon }: ReorderItemPro
           <View accessibilityLabel={`Reorder ${item.name}`} style={styles.dragHandle}>
             <Text style={styles.dragHandleText}>≡</Text>
           </View>
-          <Text style={styles.habitListItemDate}>
-            {new Date(item.start_date).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-            })}
-          </Text>
-          <Text style={styles.habitListItemText}>
-            {item.icon} {item.name}
-          </Text>
+          <View style={styles.habitDragText}>
+            <Text style={styles.habitListItemDate}>
+              {new Date(item.start_date).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+              })}
+            </Text>
+            <Text style={styles.habitListItemText}>
+              {item.icon} {item.name}
+            </Text>
+          </View>
           <TouchableOpacity style={styles.iconEditButton} onPress={() => onEditIcon(index)}>
             <Text style={styles.iconEditButtonText}>📝</Text>
           </TouchableOpacity>
