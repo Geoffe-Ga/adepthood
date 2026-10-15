@@ -19,18 +19,19 @@ import { createServer } from 'node:http';
  * would prove the routing and assume the protocol, and the protocol is the half
  * only a live server can exercise.
  *
- * **It advertises six capabilities and no more.** The upload journey needs
+ * **It advertises seven capabilities and no more.** The upload journey needs
  * `capabilities` and `upload`; the withdrawal journey needs `journal-upsert`,
- * `journal-withdraw`, `voice-drafts`, and `reflections` -- the bound owner is
- * vault-bound (#3061), so its resonance pass is answered by this vault or not at
- * all, and a vault that never advertised reflect is a refunded 503, never a
- * quiet hand-off to the app's model provider. The deployment binding still keeps
+ * `journal-withdraw`, `voice-drafts`, `reflections` and `letters` -- the bound
+ * owner is vault-bound (#3061), so its resonance pass and its first letter are
+ * answered by this vault or not at all (#3203), and a vault that never
+ * advertised either is a refunded 503, never a quiet hand-off to the app's
+ * model provider. The deployment binding still keeps
  * every other lane account on Adepthood's local fallback, so only the two specs
  * that deliberately log in as the bound owner can send traffic here.
  *
  * Shapes come from the vendored bundle at `backend/tests/fixtures/creek_v1/`:
  * capability, upload, journal upsert/withdrawal, Voice Draft upsert/deletion,
- * reflection, and error envelopes. The refusals are real refusals -- a missing
+ * reflection, letter, and error envelopes. The refusals are real refusals -- a missing
  * contract-version header is a 409, an unrecognised bearer is a 401, a field
  * adepthood invented is a 400 -- so a mis-wired lane fails loudly instead of
  * quietly serving something that looks like success.
@@ -56,15 +57,15 @@ const HTTP_SERVICE_UNAVAILABLE = 503;
 const ADEPTHOOD_DELETE_ATTEMPTS = 3;
 
 /** The contract this vault serves, and the minor a caller must declare to use it. */
-const CONTRACT_VERSION = '0.16.0';
-const CONTRACT_MINOR = '0.16';
+const CONTRACT_VERSION = '0.17.0';
+const CONTRACT_MINOR = '0.17';
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
 
 /**
  * Everything this vault says it can do.
  *
- * Six names, and the shortness is the safety property rather than an economy:
+ * Seven names, and the shortness is the safety property rather than an economy:
  * adepthood consults this list before every capability call, so a name added
  * here is a new class of traffic aimed at this process from journeys that have
  * nothing to do with seeding.
@@ -76,6 +77,7 @@ const ADVERTISED_CAPABILITIES = [
   'journal-withdraw',
   'voice-drafts',
   'reflections',
+  'letters',
 ];
 
 /** The only two tiers `/v1` can express; anything else is not a tier, it is a leak. */
@@ -89,6 +91,13 @@ const VOICE_DRAFT_REQUEST_FIELDS = ['content', 'tier'];
 const REFLECTION_REQUEST_FIELDS = ['content', 'max_notes'];
 /** What this vault says about the writer's words; a lane sentinel, never real advice. */
 const LANE_REFLECTION_NOTE = 'The lane vault reads this line back to you.';
+/** `LetterRequest` as adepthood sends it: the entry, the note, and the tier -- no title. */
+const LETTER_REQUEST_FIELDS = ['content', 'note', 'tier'];
+const LETTER_NOTE_FIELDS = ['anchor_text', 'kind', 'note'];
+/** The letter this vault writes; a lane sentinel, so no writer prose is ever held here. */
+const LANE_LETTER = 'The lane vault wrote this letter back to you.';
+/** Creek's content-free placeholder title for a Voice Draft stored without one. */
+const VOICE_DRAFT_TITLE = 'Voice draft';
 
 const ONTOLOGY_VERSION = 'aptitude-wavelength/2026-05-23';
 
@@ -346,6 +355,64 @@ function voiceDraftDelete(request, response, externalId) {
   });
 }
 
+/** Whether a letter request's note is exactly the published `LetterNote` shape. */
+function malformedNote(note) {
+  if (note === null || typeof note !== 'object' || Array.isArray(note)) return true;
+  if (Object.keys(note).sort().join() !== LETTER_NOTE_FIELDS.join()) return true;
+  return [note.anchor_text, note.note].some(
+    (field) => typeof field !== 'string' || field.trim() === '',
+  );
+}
+
+/**
+ * Write a margin note's letter and keep it as a Voice Draft at the caller's id.
+ *
+ * First writer wins, as Creek's store does: a repeat at an id that already holds
+ * a draft is `unchanged` and returns what is stored. The letter is this lane's
+ * own sentinel, so the ledger still holds a digest of the entry and nothing of
+ * its prose.
+ */
+async function writeLetter(request, response, externalId) {
+  if (!hasContract(request, response)) return;
+  const body = await readJson(request);
+  const ceiling = request.headers[CEILING_HEADER] ?? null;
+  if (
+    malformed(body, LETTER_REQUEST_FIELDS) ||
+    malformedNote(body.note) ||
+    typeof body.content !== 'string' ||
+    body.content.trim() === '' ||
+    ceiling !== body.tier
+  ) {
+    refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
+    return;
+  }
+  const held = fragments.get(`voice-draft:${externalId}`);
+  const { fragment, action } =
+    held === undefined
+      ? store('voice-draft', externalId, digestOf(LANE_LETTER))
+      : { fragment: held, action: 'unchanged' };
+  received.push({
+    method: 'POST',
+    path: `/v1/letters/${externalId}`,
+    externalId,
+    tier: body.tier,
+    ceiling,
+    digest: createHash('sha256').update(body.content, 'utf8').digest('hex'),
+    action,
+  });
+  send(response, HTTP_OK, {
+    action,
+    attribution: { author: 'ai', author_slug: 'ai-as-user', voice_weight: 0 },
+    external_id: externalId,
+    fragment_id: fragment.fragmentId,
+    letter: LANE_LETTER,
+    status: 'ok',
+    tier: body.tier,
+    tier_ceiling: ceiling,
+    title: VOICE_DRAFT_TITLE,
+  });
+}
+
 /**
  * The writer's own first sentence, verbatim, so the note anchors for real.
  *
@@ -424,6 +491,11 @@ async function capability(request, response, pathname) {
   }
   if (draftMatch?.[1] !== undefined && request.method === 'DELETE') {
     voiceDraftDelete(request, response, decodeURIComponent(draftMatch[1]));
+    return;
+  }
+  const letterMatch = /^\/v1\/letters\/([^/]+)$/u.exec(pathname);
+  if (letterMatch?.[1] !== undefined && request.method === 'POST') {
+    await writeLetter(request, response, decodeURIComponent(letterMatch[1]));
     return;
   }
   received.push({ method: request.method, path: pathname, externalId: null, tier: null });

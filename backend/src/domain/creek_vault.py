@@ -47,7 +47,7 @@ from uuid import UUID
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.16.0"
+CONTRACT_VERSION = "0.17.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -76,6 +76,10 @@ class CreekCapability(enum.StrEnum):
     raises. ``VOICE_DRAFTS`` is different: contract 0.15 publishes the
     AI-attributed draft resource specifically for this consumer, so adepthood
     both names and calls it without routing model prose through ``UPLOAD``.
+    ``LETTERS`` (contract 0.17) is the vault writing a margin note's letter
+    itself and storing it as one of those Voice Drafts, so a vault-bound
+    writer's first letter is answered by their vault and never by the app's
+    provider (#3203).
     """
 
     HANDSHAKE = "creek.handshake"
@@ -89,6 +93,7 @@ class CreekCapability(enum.StrEnum):
     DRIVE_CONNECTOR = "creek.drive_connector"
     PIPELINE = "creek.pipeline"
     VOICE_DRAFTS = "creek.voice_drafts"
+    LETTERS = "creek.letters"
 
 
 class VaultTierCeiling(enum.StrEnum):
@@ -688,6 +693,48 @@ class VaultVoiceDraftDeleteResult:
 
 
 @dataclass(frozen=True)
+class VaultLetterRequest:
+    """Ask the vault to write one margin note's letter and keep it as a Voice Draft.
+
+    The vault-side twin of the app provider's essay call (contract 0.17,
+    ``POST /v1/letters/{external_id}``). ``external_id`` is the same stable id
+    :class:`VaultVoiceDraftRequest` addresses, so the letter the vault stores
+    is withdrawn by the same ``DELETE /v1/voice-drafts/{external_id}`` that
+    retracts a mirrored one. ``content`` is the source entry, ``note`` /
+    ``anchor_text`` / ``kind`` the margin note it expands, and ``tier`` the
+    entry's tier, which is both the stored draft's tier and the ceiling the
+    call is admitted at -- an intimate entry has no wire spelling and so cannot
+    ask at all.
+
+    Every prose field is omitted from ``repr()`` so an exception or a debug
+    statement cannot print the writer's entry or note merely by rendering this
+    request.
+    """
+
+    external_id: str
+    content: str = field(repr=False)
+    note: str = field(repr=False)
+    anchor_text: str = field(repr=False)
+    kind: str
+    tier: VaultTierCeiling
+
+
+@dataclass(frozen=True)
+class VaultLetter:
+    """The letter a vault wrote, verified to be the Voice Draft that was asked for.
+
+    Only ever constructed from a response whose identity, tier and fixed
+    ``ai-as-user`` / zero-weight attribution all verified, so holding one is
+    holding a durable vault write. ``letter`` is model prose and is kept out of
+    ``repr()`` for the reason :class:`VaultLetterRequest` gives.
+    """
+
+    letter: str = field(repr=False)
+    vault_ref: str
+    action: VaultIngestAction
+
+
+@dataclass(frozen=True)
 class VaultClassification:
     """Frequency/Wavelength-phase tags Creek assigns to a piece of content."""
 
@@ -1188,7 +1235,28 @@ class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
         """Retract one draft without sending any of its content."""
 
 
-class CreekVaultPipelineClient(CreekVaultVoiceDraftClient, Protocol):
+class CreekVaultLetterClient(CreekVaultVoiceDraftClient, Protocol):
+    """The client surface a vault-written letter needs: Voice Drafts plus ``letters``.
+
+    A letter is stored *as* a Voice Draft, so a client that can write one must
+    be able to retract it through the same resource; that is why this extends
+    :class:`CreekVaultVoiceDraftClient` rather than standing beside it.
+    """
+
+    async def write_letter(self, request: VaultLetterRequest, /) -> VaultLetter:
+        """Have the vault write and store one margin note's letter.
+
+        Fails as :meth:`CreekVaultClient.reflect` does: an unreadable answer as
+        :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError`, and an unadvertised capability as
+        :class:`CreekCapabilityUnsupportedError` before any request is built. A
+        care escalation raises :class:`CreekVaultCareEscalationError`, outside
+        that hierarchy, so it can never be degraded onto another source.
+        """
+
+
+class CreekVaultPipelineClient(CreekVaultLetterClient, Protocol):
     """The narrower extension required only by durable pipeline orchestration.
 
     Status polling is absent from :class:`CreekVaultClient` deliberately. Most

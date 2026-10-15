@@ -169,9 +169,10 @@ connect-your-own path cannot reach a stand-in vault beside the lane, and why
 this boundary is configured deployment-wide.
 
 Two things keep it from disturbing any other journey. The vault advertises only
-the five capabilities those two journeys exercise — capabilities, upload,
-journal upsert, journal withdrawal, and Voice Drafts — with the exact list
-ratcheted by `e2eLaneGuard.test.ts`. And `CREEK_VAULT_OWNER_USER_ID` binds the
+the seven capabilities those journeys exercise — capabilities, upload, journal
+upsert, journal withdrawal, Voice Drafts, reflections, and letters (the
+vault-bound owner's letter is written by the vault itself, #3203) — with the
+exact list ratcheted by `e2eLaneGuard.test.ts`. And `CREEK_VAULT_OWNER_USER_ID` binds the
 vault to exactly one pre-provisioned account used only by those specs: every
 other account in the lane is served the local fallback, which is byte-for-byte
 the behaviour it had before.

@@ -35,12 +35,12 @@ names, so "what a vault advertises" was a fact about the vault alone. Contract
 caller's declared minor, ``upload`` is published only at or above ``0.8``, and
 ``POST /v1/uploads`` refuses a caller below that threshold outright. The
 consequence for this suite is that ``examples/capabilities/success.json`` is the
-document a **0.16** caller receives, not a document every caller receives, and
-the counts in :mod:`tests.creek_bundle_facts` (nine capabilities, sixty-three
-cells, nine unreachable sentinels) are the 0.16 shape rather than a permanent
-one. 0.9.0 added ``drive-connector``, 0.10.0 added ``pipeline``, 0.15.0 added
-``voice-drafts``, and 0.16.0 added ``journal-withdraw``; treat every count here
-as a fact about one pinned commit.
+document a **0.17** caller receives, not a document every caller receives, and
+the counts in :mod:`tests.creek_bundle_facts` (ten capabilities, seventy cells,
+nine unreachable sentinels) are the 0.17 shape rather than a permanent one.
+0.9.0 added ``drive-connector``, 0.10.0 added ``pipeline``, 0.15.0 added
+``voice-drafts``, 0.16.0 added ``journal-withdraw``, and 0.17.0 added
+``letters``; treat every count here as a fact about one pinned commit.
 
 Naming a capability is not calling it
 -------------------------------------
@@ -178,6 +178,7 @@ _TIER_FIELDS = ("tier", "tier_ceiling", "routed_tier")
 _WRITE_REQUEST_SCHEMAS = (
     "schemas/JournalUpsertRequest.schema.json",
     "schemas/UploadRequest.schema.json",
+    "schemas/LetterRequest.schema.json",
 )
 _TIER_FIELD = "tier"
 _WIRE_TIER_CEILING_DEF = "WireTierCeiling"
@@ -356,7 +357,7 @@ def _is_unreachable(cell: _Cell) -> bool:
     Read from the payload's own ``unreachable`` marker, so the sentinel cells
     drop out of every client-driving parametrisation as data rather than as a
     skip. There is one per capability whose care guard does not run, which is
-    every capability except ``reflections``.
+    every capability except ``reflections`` and ``letters``.
     """
     return _read_json(cell.path).get("unreachable") is True
 
@@ -671,10 +672,11 @@ def test_the_parametrised_case_list_covers_every_capability() -> None:
 
 
 def test_only_published_impossible_branches_are_unreachable() -> None:
-    """Care is reflections-only, and journal withdrawal cannot reveal refusal."""
+    """Care runs only where a model writes, and journal withdrawal cannot reveal refusal."""
     pairs = {(cell.capability, cell.state) for cell in _UNREACHABLE}
+    cared_for = {"reflections", "letters"}
     assert pairs == {
-        *((capability, "care-escalation") for capability in _CAPABILITIES - {"reflections"}),
+        *((capability, "care-escalation") for capability in _CAPABILITIES - cared_for),
         ("journal-withdraw", "refusal"),
     }
     assert {cell.model for cell in _UNREACHABLE} == {"NotApplicableExample"}
@@ -699,7 +701,7 @@ def test_capability_translation_table_matches_the_manifest() -> None:
 
 
 def test_the_capability_document_advertises_exactly_the_published_matrix_axis() -> None:
-    """What a 0.16 caller is told and what the matrix documents are one list.
+    """What a 0.17 caller is told and what the matrix documents are one list.
 
     The advertised list and the example directory names are generated from the
     same upstream enum, so a bundle where they disagree is a bundle that was
@@ -737,6 +739,7 @@ async def test_no_advertised_capability_is_dropped_at_the_parse_boundary(
     assert client.supports(CreekCapability.PIPELINE) is True
     assert client.supports(CreekCapability.VOICE_DRAFTS) is True
     assert client.supports(CreekCapability.JOURNAL_WITHDRAW) is True
+    assert client.supports(CreekCapability.LETTERS) is True
 
 
 @pytest.mark.asyncio
@@ -767,14 +770,16 @@ async def test_an_advertised_pipeline_leaves_adepthoods_classify_refusing(
 
 
 def test_the_capabilities_added_since_0_8_are_named_and_carry_a_full_example_column() -> None:
-    """Creek's 0.9, 0.10 and 0.15 additions are translatable and fully documented.
+    """Creek's additions since 0.8 are translatable and fully documented.
 
     Named, because an untranslatable capability is dropped in silence; fully
     documented, because a capability that arrived with a partial example column
     would leave the matrix-driven privacy and prose tests below covering less
     than they appear to.
     """
-    added = frozenset({"drive-connector", "pipeline", "voice-drafts", "journal-withdraw"})
+    added = frozenset(
+        {"drive-connector", "pipeline", "voice-drafts", "journal-withdraw", "letters"}
+    )
 
     assert added <= frozenset(_CAPABILITY_BY_CREEK_NAME)
     assert added <= _CAPABILITIES

@@ -4,14 +4,15 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.16.0 (tracks Creek's published
+- **Pinned contract version:** 0.17.0 (tracks Creek's published
   constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
   of this document, moved to 0.8.0 with the 2026-08-19 note, which
   records why that move became a prerequisite rather than housekeeping,
   moved to 0.10.0 with the 2026-08-30 note, moved to 0.14.0 with
   the 2026-09-05 note, moved to 0.15.0 with the 2026-09-06 note,
-  which adopts the AI-attributed Voice Draft resource, and moved to 0.16.0
-  with the 2026-09-12 note, which adopts journal withdrawal)
+  which adopts the AI-attributed Voice Draft resource, moved to 0.16.0
+  with the 2026-09-12 note, which adopts journal withdrawal, and moved to
+  0.17.0 with the 2026-10-15 note, which adopts vault-written letters)
 
 ## Context
 
@@ -1525,3 +1526,28 @@ app-provider seams. It includes:
 - a reconnect and a disconnect made through `/vault/connection` mid-reflection.
 
 The no-vault guard proves the sink is live.
+
+## Note, 2026-10-15 — the pin moves to 0.17.0; the vault writes letters
+
+Creek-Vault #1865 publishes `letters` (#1862) and Adepthood #3203 adopts it.
+The vendored bundle is re-cut byte-for-byte from upstream `a9d682c0`: 112
+manifest entries, 114 vendored files, 41 schemas, and a 10 × 7 example matrix.
+The ontology version is unchanged.
+
+The new capability is `POST /v1/letters/{external_id}`: the vault expands one
+margin note into a letter with its own tier-routed generation and stores it as
+an AI-attributed Voice Draft (`ai-as-user`, zero voice weight) at the caller's
+external id, first writer wins (`unchanged` on a repeat). An acute-distress
+entry answers a 200 care escalation, as `POST /v1/reflections` does.
+
+A vault-bound writer (#3156) whose vault advertises both `letters` and
+`voice-drafts` now gets their first letter from the vault; one whose vault does
+not, or is unreachable, or answers with anything that is not a verified letter,
+keeps #3183's fail-closed 503 `reflection_source_unavailable`, and no answer is
+ever re-asked of the app provider — a BYOK key is not consent. The launch
+economy is unchanged: one unit, refunded on every ending that is not a cached
+letter, and a vault-answered letter is charged whatever key header rides along
+(#3258). The content-free Voice Draft intent row is committed before the call
+under the same external id a mirrored draft uses, so Intimate reclassification
+and deletion withdraw a vault-written letter through `DELETE
+/v1/voice-drafts/{external_id}` exactly as they withdraw a mirrored one.
