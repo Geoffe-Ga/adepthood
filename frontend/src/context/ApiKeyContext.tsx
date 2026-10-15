@@ -31,8 +31,8 @@ import { loadLocalModelPreferred, saveLocalModelPreferred } from '@/storage/loca
  * The future Adepthood-model choice stays release-gated until a real
  * Adepthood-operated backend provider exists. While unavailable, stored legacy
  * preferences are ignored and the registered getter keeps returning the BYOK
- * key; merely withholding it would fall back to the shared provider and would
- * not constitute a self-hosted model path.
+ * key; withholding it does not activate that planned provider. Admission, route
+ * and payer still depend on the requested operation and its vault boundary.
  */
 
 /**

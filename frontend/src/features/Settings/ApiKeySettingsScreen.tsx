@@ -58,8 +58,8 @@ import type { RootStackParamList } from '@/navigation/RootStack';
  *
  * Above the key sits a disabled preview of Adepthood's planned self-hosted
  * model. The release gate stays closed until that backend provider exists;
- * until then, the key area remains live and requests continue through the
- * person's key or the shared provider exactly as the disclosure says.
+ * until then, the key area remains live. Supported app-provider operations need
+ * the person's key; vault-bound readings follow their vault route and payer.
  */
 
 const MAX_KEY_LENGTH = 256;

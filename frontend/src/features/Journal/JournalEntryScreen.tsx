@@ -205,10 +205,10 @@ const VAULT_WITHDRAWAL_RECONNECT_HINT =
   'Intimate here. A copy of this page is in a Creek vault you’re no longer connected to — reconnect that vault in Settings so it can remove the copy.';
 const VAULT_WITHDRAWAL_UNRECORDED_HINT =
   'Intimate here. Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.';
-// DRAFT copy (#3098 review), pending owner review. A deletion is in progress:
-// the server refuses edits until the vault confirms and the deletion finishes.
+// A recorded DELETE locks edits. Its 409 omits the destination, so no known
+// vault or eventual confirmation can be promised for an older unrecorded copy.
 const DELETION_PENDING_HINT =
-  'This page is set to be deleted, so it can’t be edited. Deletion finishes once your Creek vault confirms its copy is gone.';
+  'This page is set to be deleted, so it can’t be edited. Deletion has not finished. Return to your journal to retry or delete it only here.';
 
 /**
  * The state the save hint should show while a quote is being folded in.
