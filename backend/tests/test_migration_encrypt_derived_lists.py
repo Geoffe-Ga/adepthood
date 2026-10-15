@@ -23,6 +23,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 from cryptography.fernet import Fernet
 from sqlalchemy import Connection, create_engine, text
+from sqlalchemy.dialects import sqlite
 
 from services import journal_encryption as je
 
@@ -144,6 +145,28 @@ def test_upgrade_encrypts_each_list_and_downgrade_restores_its_json(
     command.upgrade(migration_config, _REVISION)
     for name, stored in _stored(db_url).items():
         assert je.decrypt(stored) == _SEEDED[name]
+
+
+def test_a_json_null_row_the_old_column_wrote_still_reads_after_upgrade(
+    migration_config: Config,
+) -> None:
+    """The old ``JSON`` column wrote Python ``None`` as the text ``null``, not SQL NULL.
+
+    Every entry saved with no tags, and every withdrawal that cleared them, left
+    that text behind; the upgrade encrypts it like any non-NULL value, so the
+    model's type has to read it back as no list rather than refuse the row.
+    """
+    db_url = _url(migration_config)
+    with _connect(db_url) as conn:
+        conn.execute(text("INSERT INTO journalentry (id, vault_tags) VALUES (3, 'null')"))
+
+    command.upgrade(migration_config, _REVISION)
+
+    with _connect(db_url) as conn:
+        stored = conn.execute(text("SELECT vault_tags FROM journalentry WHERE id = 3")).scalar_one()
+    read = je.EncryptedJSONList().result_processor(sqlite.dialect(), None)
+    assert read is not None
+    assert read(stored) is None
 
 
 def test_upgrade_leaves_an_already_encrypted_value_alone(migration_config: Config) -> None:
