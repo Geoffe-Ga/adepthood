@@ -67,6 +67,7 @@ const mockProgramCalendar = jest.fn(() =>
   }),
 );
 jest.mock('../../../api', () => ({
+  captureSessionToken: () => 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature',
   uiFlags: { get: () => Promise.resolve({ course_last_stage: null }) },
   stages: {
     listAll: (...a: unknown[]) => mockStagesList(...a),
@@ -79,6 +80,13 @@ jest.mock('../../../api', () => ({
     markRead: jest.fn(),
     contentBody: () =>
       Promise.resolve({ title: 'Chapter', content_type: 'chapter', body_markdown: 'x\n' }),
+    startHereProgress: () =>
+      Promise.resolve({
+        total_items: 0,
+        read_items: 0,
+        progress_percent: 0,
+        next_unlock_day: null,
+      }),
     siteResources: () => Promise.resolve([]),
     siteResourceBody: jest.fn(),
     stageIntro: () => Promise.reject(new Error('content_not_found')),
@@ -320,4 +328,9 @@ describe('Course drawer while reading a chapter', () => {
 
     expect(queryByTestId('stage-selector')).toBeNull();
   });
+});
+
+beforeEach(() => {
+  require('@/storage/userScope').setActiveUser(1);
+  require('../startHereStore').useStartHereStore.getState().reset();
 });

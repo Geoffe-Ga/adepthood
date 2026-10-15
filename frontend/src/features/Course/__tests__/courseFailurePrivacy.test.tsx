@@ -6,7 +6,8 @@ import ReadNextButton, { useNextUnread } from '../ReadNextButton';
 import ResourceViewer from '../ResourceViewer';
 
 import type * as Api from '@/api';
-import { ApiError, course } from '@/api';
+import { ApiError, course, setTokenGetter } from '@/api';
+import { setActiveUser } from '@/storage/userScope';
 
 jest.mock('@/api', () => {
   const actual = jest.requireActual<typeof Api>('@/api');
@@ -43,6 +44,8 @@ function allText(value: unknown, seen = new Set<object>()): string {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
+  setTokenGetter(() => 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature');
   mockMark.mockReset();
   mockNext.mockReset();
   records = [];

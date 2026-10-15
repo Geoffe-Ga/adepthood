@@ -93,11 +93,9 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // at INTERACTIVE_TEXT_MIN); neither is itself pressable.
   'features/Course/Course.styles.ts::contentCardSubtitle',
   'features/Course/Course.styles.ts::introCardLabel',
-  // Read-only landing metadata: the stage progress count, the resources panel's
-  // heading (its chips use uiType.button) and the stage detail label/value rows.
+  // Read-only landing metadata: the stage progress count and stage detail rows.
   'features/Course/Course.styles.ts::progressBarLabel',
   'features/Course/Course.styles.ts::readerEyebrow',
-  'features/Course/Course.styles.ts::resourcesHeading',
   'features/Course/Course.styles.ts::sectionBandLabel',
   'features/Course/Course.styles.ts::stageCoverEyebrow',
   'features/Course/Course.styles.ts::stageCoverProgressLabel',
