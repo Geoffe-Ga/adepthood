@@ -432,8 +432,9 @@ async function armLogoutPending(_label: string): Promise<void> {
  * client.  ``'not_authenticated'`` means an anonymous request hit a
  * protected endpoint -- the user never had a session, so we collapse to
  * ``'anonymous'`` rather than showing the misleading "session expired"
- * re-auth sheet.  ``'session_expired'`` and ``'invalid_token'`` keep the
- * existing re-auth flow.
+ * re-auth sheet -- unless that sheet is already open (#3396, see
+ * {@link keepsReauth}).  ``'session_expired'`` and ``'invalid_token'`` keep
+ * the existing re-auth flow.
  */
 async function clearTokenForReauth(
   mutators: AuthMutators,
@@ -447,9 +448,26 @@ async function clearTokenForReauth(
   mutators.setToken(null);
   mutators.setAuthStatus((prev) => {
     if (prev === 'loading') return 'anonymous';
+    // #3396: the handler checked a rendered status; this is the committed one.
+    if (keepsReauth(prev, reason)) return prev;
     if (reason === 'not_authenticated') return 'anonymous';
     return 'reauth-required';
   });
+}
+
+/**
+ * #3396: whether a 401 leaves an open re-auth sheet exactly as it is.
+ *
+ * ``reauth-required`` holds no token, so every request a still-mounted screen
+ * sends meanwhile goes out anonymous and its 401 reports ``not_authenticated``.
+ * That says nothing the sheet does not already know (the session is over), and
+ * the same person is about to sign back in from it. Collapsing to
+ * ``'anonymous'`` would close the sheet onto Get Started and drop the session
+ * context it exists to keep. Only the user leaves the sheet: by signing in, or
+ * by dismissing it.
+ */
+function keepsReauth(status: AuthStatus, reason: UnauthorizedReason): boolean {
+  return status === 'reauth-required' && reason === 'not_authenticated';
 }
 
 /**
@@ -497,6 +515,7 @@ async function saveTokenThenApply(
 /** Register API-layer callbacks that bridge token state to the HTTP client. */
 function useApiCallbacks(
   tokenRef: React.MutableRefObject<string | null>,
+  authStatusRef: React.MutableRefObject<AuthStatus>,
   mutators: AuthMutators,
 ): void {
   // BUG-FRONTEND-INFRA-013: hold the getter in a ref that outlives the effect
@@ -508,6 +527,9 @@ function useApiCallbacks(
   useEffect(() => {
     setTokenGetter(stableGetter);
     setOnUnauthorized((reason: UnauthorizedReason) => {
+      // An open sheet has nothing left to tear down: no storage write that
+      // could race the sign-in it is waiting for (#3396).
+      if (keepsReauth(authStatusRef.current, reason)) return;
       void clearTokenForReauth(mutators, reason);
     });
     setOnTokenRefreshed((t: string, tz: string | undefined, prior: string) => {
@@ -518,7 +540,7 @@ function useApiCallbacks(
       setOnUnauthorized(null);
       setOnTokenRefreshed(null);
     };
-  }, [stableGetter, mutators, tokenRef]);
+  }, [stableGetter, mutators, tokenRef, authStatusRef]);
 }
 
 /**
@@ -967,6 +989,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const tokenRef = React.useRef<string | null>(null);
   tokenRef.current = token;
+  const authStatusRef = React.useRef<AuthStatus>(authStatus);
+  authStatusRef.current = authStatus;
 
   // Stable handle so effects depending on the mutators don't thrash.
   const mutators = useMemo<AuthMutators>(
@@ -978,7 +1002,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const adoptCorrectedTimezone = useCorrectedTimezone(mutators);
 
-  useApiCallbacks(tokenRef, mutators);
+  useApiCallbacks(tokenRef, authStatusRef, mutators);
   useProactiveRefresh(token, tokenRef, applyNewToken);
   useLoadStoredToken(mutators, tokenRef);
 

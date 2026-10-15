@@ -503,6 +503,24 @@ describe('AuthContext', () => {
       expect(result.current.token).toBeNull();
     });
 
+    // #3396: an anonymous 401 landing right behind the expiry, before the
+    // provider re-renders, still finds the sheet open in committed state.
+    it('keeps reauth-required when not_authenticated lands before the sheet renders', async () => {
+      mockLoadToken.mockResolvedValue('stored-jwt');
+      const { result } = renderHook(() => useAuth(), { wrapper });
+      await waitFor(() => expect(result.current.authStatus).toBe('authenticated'));
+
+      const unauthorized = mockSetOnUnauthorized.mock.calls.at(-1)?.[0];
+
+      await act(async () => {
+        unauthorized?.('session_expired');
+        unauthorized?.('not_authenticated');
+      });
+
+      await waitFor(() => expect(result.current.authStatus).toBe('reauth-required'));
+      expect(result.current.token).toBeNull();
+    });
+
     it('still transitions to reauth-required when clearToken rejects', async () => {
       mockLoadToken.mockResolvedValue('existing-jwt');
       mockClearToken.mockRejectedValueOnce(new Error('SecureStore unavailable'));
