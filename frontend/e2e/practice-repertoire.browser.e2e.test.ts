@@ -7,10 +7,13 @@ import type { ModeConfig } from '../src/features/Practice/engine/types';
 import {
   backendUrl,
   bearer,
+  dayKeyIn,
+  nextDayKey,
+  sessionFor,
   setProgramAnchorDaysAgo,
   signUp,
-  tokenFor,
 } from './journalHabitsBrowserSupport';
+import { instantAt } from './zonedClock';
 
 /** #3212 / #3072: actual UI and persisted sessions for every supported family.
  * Seven real catalog presets and four UI-authored defaults. This is an engine
@@ -57,6 +60,7 @@ interface Adoption {
   id: number;
   practice_id: number;
   stage_number: number;
+  start_date: string;
   end_date: string | null;
 }
 interface SavedSession {
@@ -205,10 +209,20 @@ async function tarotNameFits(page: Page, expectedName: string, scale: number): P
   expect(bounds.fits, `the full Tarot name must fit: ${JSON.stringify(bounds)}`).toBe(true);
 }
 /** A real later day selects a longer arcana name; no future session is submitted. */
-async function laterTarotCardFits(page: Page, testInfo: TestInfo, mode: Mode): Promise<void> {
+async function laterTarotCardFits(
+  page: Page,
+  testInfo: TestInfo,
+  mode: Mode,
+  adoption: Adoption,
+  timezone: string,
+): Promise<void> {
   if (mode === 'tarot') {
-    const now = await page.evaluate(() => Date.now());
-    await page.clock.setSystemTime(now + 2 * 24 * 60 * MINUTE);
+    // Adoption is dated by the server; the initially backdated browser clock
+    // can be on yesterday. Advance from that persisted account-calendar day.
+    const targetDay = nextDayKey(nextDayKey(adoption.start_date));
+    const later = instantAt(targetDay, '12:00', timezone);
+    expect(dayKeyIn(later.toISOString(), timezone)).toBe(targetDay);
+    await page.clock.setSystemTime(later);
     await page.reload();
     await openPractice(page);
     await expect(page.getByTestId('tarot-card-name')).toHaveText('The High Priestess');
@@ -598,7 +612,7 @@ for (const [mode, family] of Object.entries(FAMILIES) as Array<[Mode, Family]>) 
     test.setTimeout(180_000);
     await page.clock.install({ time: Date.now() - CLOCK_BEHIND });
     const email = await signUp(page, `repertoire-${mode}`);
-    const token = await tokenFor(page.request, email);
+    const { token, timezone } = await sessionFor(page.request, email);
     if (family.stage > 1) {
       const before = STAGE_DURATIONS_DAYS.slice(0, family.stage - 1).reduce(
         (n, days) => n + days,
@@ -669,7 +683,7 @@ for (const [mode, family] of Object.entries(FAMILIES) as Array<[Mode, Family]>) 
     );
     expect(history.ok()).toBe(true);
     expect(await history.json()).toEqual([session]);
-    await laterTarotCardFits(page, testInfo, mode);
+    await laterTarotCardFits(page, testInfo, mode, adoption, timezone);
     expect(posts).toHaveLength(1);
   });
 }
