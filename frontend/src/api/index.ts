@@ -1103,15 +1103,10 @@ async function handleUnauthorizedRetry<T>(
   if (ctx.initialDetail === 'invalid_credentials') return null;
 
   if (!token) return retryWithRefresh<T>(ctx, 'refresh');
-  // Caller passed an explicit token override. A foreign one (e.g. probing
-  // with a known-bad token from a settings screen) leaves the global session
-  // alone. The session's own token -- which many stores pass explicitly, read
-  // from the auth context -- is the session: it rides a refresh already in
-  // flight or a rotation already known, so a 401 that only means "this token
-  // was just rotated" is retried on the successor instead of signing the user
-  // out (#3034). It never starts a refresh of its own; with none underway the
-  // session's current token was refused, and that is a session expiration.
-  return isSessionLineage(token) ? retryWithRefresh<T>(ctx, 'join-only') : null;
+  // A captured credential from this session keeps automatic renewal. Foreign
+  // overrides never recover through the live session, and a changed session
+  // no longer contains the initiating token in its remembered rotation chain.
+  return isSessionLineage(token) ? retryWithRefresh<T>(ctx, 'refresh') : null;
 }
 
 /**

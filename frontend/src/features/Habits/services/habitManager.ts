@@ -700,16 +700,18 @@ const reconcileStoredHabitDay = (
  */
 const rescheduleQueue: Map<number, Promise<void>> = new Map();
 
-const rescheduleAndPersist = (habit: Habit): Promise<void> => {
+const rescheduleAndPersist = (habit: Habit, scope: HabitMutationScope): Promise<void> => {
   if (!habit.id) return Promise.resolve();
   const habitId = habit.id;
   const prior = rescheduleQueue.get(habitId) ?? Promise.resolve();
   const next = prior
     .catch(() => undefined)
     .then(async () => {
+      if (!scope.current()) return;
       const live = getHabits().find((h) => h.id === habitId);
       const target: Habit = live ?? habit;
       const ids = await updateHabitNotifications(target);
+      if (!scope.current()) return;
       const refreshed: Habit = { ...target, notificationIds: ids };
       setHabits(getHabits().map((h) => (h.id === habitId ? refreshed : h)));
       await persistHabits(getHabits());
@@ -1015,6 +1017,8 @@ const revertOnFailure = (
  * for the write to land on.
  */
 const syncRevealState = (next: Habit[], failureMessage: string, tz: string): void => {
+  const scope = captureHabitMutationScope();
+  if (!scope.authorized) return;
   const prev = getHabits();
   const revealedBefore = new Map(prev.map((h) => [h.id, h.revealed]));
   setHabits(next);
@@ -1025,10 +1029,10 @@ const syncRevealState = (next: Habit[], failureMessage: string, tz: string): voi
     // Only PUT rows whose unlock flag actually flipped, so a single unlock
     // does not rewrite every untouched row.
     if (habit.revealed === revealedBefore.get(habit.id)) continue;
-    updates.push(habitsApi.update(habit.id, toApiPayload(habit, tz)));
+    updates.push(habitsApi.update(habit.id, toApiPayload(habit, tz), ...scope.credentials));
   }
   if (updates.length === 0) return;
-  Promise.all(updates).catch(revertOnFailure(prev, failureMessage));
+  Promise.all(updates).catch(revertOnFailure(prev, failureMessage, scope));
 };
 
 /** Keep replay credentials and idempotency pinned to the initiating lifecycle. */
@@ -1551,6 +1555,24 @@ const settleFailedInsert = async (
   return true;
 };
 
+/** Preserve the server result while explaining a device-cache failure truthfully. */
+const persistCreatedHabitIds = async (
+  confirmed: Habit[],
+  scope: HabitMutationScope,
+): Promise<boolean> => {
+  try {
+    await persistHabits(confirmed);
+    return true;
+  } catch {
+    if (scope.current())
+      Alert.alert(
+        SYNC_FAILURE_TITLE,
+        "Your habit is saved on the server, but we couldn't save its confirmed details on this device. Try refreshing before closing the app.",
+      );
+    return false;
+  }
+};
+
 /** A create confirmation must not hydrate an old owner's cache into a new one. */
 const confirmCreatedHabits = async (zone: string, scope: HabitMutationScope): Promise<void> => {
   const rows = await habitsApi.listAll(...scope.credentials);
@@ -1558,8 +1580,12 @@ const confirmCreatedHabits = async (zone: string, scope: HabitMutationScope): Pr
   if (rows.length === 0) throw new Error('The created habit could not be confirmed.');
   const confirmed = mapApiHabits(rows, zone);
   setHabits(confirmed);
-  void persistHabits(confirmed);
+  setError(null);
+  if (!(await persistCreatedHabitIds(confirmed, scope))) return;
+  if (!scope.current()) return;
   syncProgramAnchorFromHabits(zone);
+  const { owner, calendar, replayReady } = prepareRefreshCalendar(zone, {});
+  await refreshReplayState(owner, calendar, replayReady, scope);
 };
 
 /** Report an unconfirmed create only to the account that started it. */
@@ -1658,6 +1684,8 @@ export const habitManager = {
   },
 
   updateGoal: (habitId: number, updatedGoal: Goal): void => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return;
     const prev = getHabits();
     const parent = prev.find((h) => h.id === habitId);
     const next = applyGoalUpdate(prev, habitId, updatedGoal);
@@ -1681,11 +1709,12 @@ export const habitManager = {
       days_of_week: updatedGoal.days_of_week ?? null,
     };
     goalsApi
-      .update(updatedGoal.id, payload)
+      .update(updatedGoal.id, payload, ...scope.credentials)
       .catch(
         revertOnFailure(
           prev,
           "We couldn't save that goal change, so it's back to what it was — check your connection and try again.",
+          scope,
         ),
       );
   },
@@ -1699,6 +1728,8 @@ export const habitManager = {
     habitId: number,
     changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>,
   ): void => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return;
     const prev = getHabits();
     const habit = prev.find((h) => h.id === habitId);
     const reference = habit?.goals[0];
@@ -1723,31 +1754,39 @@ export const habitManager = {
       frequency_unit: changes.frequency_unit ?? reference.frequency_unit,
     };
     habitsApi
-      .updateGoalUnits(habitId, payload)
+      .updateGoalUnits(habitId, payload, ...scope.credentials)
       .catch(
         revertOnFailure(
           prev,
           "We couldn't save those goal units. They're back to what they were — check your connection and try again.",
+          scope,
         ),
       );
   },
 
   updateHabit: (updatedHabit: Habit, tz?: string): void => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return;
     const prev = getHabits();
     const next = prev.map((h) => (h.id === updatedHabit.id ? updatedHabit : h));
     setHabits(next);
     // Serialize per-habit notification rescheduling and write the freshly
     // returned ids back onto the habit before persisting, so a rapid second
     // edit reschedules against fresh ``notificationIds`` instead of double-scheduling.
-    if (updatedHabit.id) void rescheduleAndPersist(updatedHabit);
+    if (updatedHabit.id) void rescheduleAndPersist(updatedHabit, scope);
     else void persistHabits(next);
     if (!isServerBackedHabit(updatedHabit)) return;
     habitsApi
-      .update(updatedHabit.id, toApiPayload(updatedHabit, tz ?? detectDeviceTimezone()))
+      .update(
+        updatedHabit.id,
+        toApiPayload(updatedHabit, tz ?? detectDeviceTimezone()),
+        ...scope.credentials,
+      )
       .catch(
         revertOnFailure(
           prev,
           "We couldn't save those changes, so the habit is back to how it was — check your connection and try again.",
+          scope,
         ),
       );
   },
@@ -1761,6 +1800,8 @@ export const habitManager = {
    * the user's own row of that number.
    */
   deleteHabit: (habitId: number): void => {
+    const scope = captureHabitMutationScope();
+    if (!scope.authorized) return;
     const prev = getHabits();
     const target = prev.find((h) => h.id === habitId);
     const next = prev.filter((h) => h.id !== habitId);
@@ -1769,11 +1810,13 @@ export const habitManager = {
     void cancelForHabit(habitId);
     if (!isServerBackedHabit(target)) return;
     habitsApi
-      .delete(habitId)
+      .delete(habitId, ...scope.credentials)
       // The server unlinks a deleted habit from the writing timer itself
       // (#2861); this keeps the on-device mirror from checking off a ghost.
-      .then(() => useWritingHabitLinkStore.getState().forgetHabit(habitId))
-      .catch(revertOnFailure(prev, DELETE_FAILED_COPY));
+      .then(() => {
+        if (scope.current()) useWritingHabitLinkStore.getState().forgetHabit(habitId);
+      })
+      .catch(revertOnFailure(prev, DELETE_FAILED_COPY, scope));
   },
 
   /**

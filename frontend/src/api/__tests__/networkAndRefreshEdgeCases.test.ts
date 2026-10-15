@@ -86,14 +86,15 @@ describe('malformed /auth/refresh response body', () => {
 });
 
 describe('explicit token override matching the live session', () => {
-  test('fires onUnauthorized when the override equals the live session token', async () => {
+  test('fires onUnauthorized after renewal of a current explicit token fails', async () => {
     setTokenGetter(() => 'shared-token');
     setOnUnauthorized(mockOnUnauthorized);
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'unauthorized' }, 401));
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'unauthorized' }, 401));
 
     await expect(habits.list('shared-token')).rejects.toMatchObject({ name: 'ApiError' });
 
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(mockOnUnauthorized).toHaveBeenCalledWith('session_expired');
   });
 });
