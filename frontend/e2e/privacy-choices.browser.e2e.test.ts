@@ -9,6 +9,7 @@ import {
 } from '../src/features/Settings/byokDisclosure';
 
 import { backendUrl, bearer, frontendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
+import { runBackendModule } from './laneDatabase';
 import { readLaneState } from './laneState';
 
 /** Real persistence/withdrawal observations are separate from explicitly controlled client refusals. */
@@ -82,13 +83,16 @@ async function finishReachable(page: Page): Promise<void> {
 /** Double rendered text from one computed snapshot; no compounded inheritance or OS zoom claim. */
 async function enlargeText(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const entries = [...document.querySelectorAll<HTMLElement>('[dir="auto"]')].map((node) => {
-      const style = getComputedStyle(node);
-      return { node, size: parseFloat(style.fontSize), line: parseFloat(style.lineHeight) };
-    });
+    const entries = [...document.querySelectorAll<HTMLElement>('[dir="auto"]')]
+      .filter((node) => node.dataset.e2eTextEnlarged !== 'true')
+      .map((node) => {
+        const style = getComputedStyle(node);
+        return { node, size: parseFloat(style.fontSize), line: parseFloat(style.lineHeight) };
+      });
     for (const { node, size, line } of entries) {
       node.style.fontSize = `${size * 2}px`;
       if (Number.isFinite(line)) node.style.lineHeight = `${line * 2}px`;
+      node.dataset.e2eTextEnlarged = 'true';
     }
   });
 }
@@ -142,6 +146,79 @@ async function editFinishedPage(page: Page): Promise<void> {
 
 function tier(page: Page) {
   return page.locator('[data-testid="privacy-tier-intimate"]:visible');
+}
+
+/** Arrange only the historical missing destination; request and withdrawal paths stay real. */
+function copyOrigin(command: 'mark-unrecorded' | 'show', id: number) {
+  return JSON.parse(
+    runBackendModule('tests.e2e.journal_copy_origin', [
+      command,
+      '--email',
+      lane().vaultOwnerEmail,
+      '--entry-id',
+      String(id),
+    ]),
+  ) as {
+    entry_id: number;
+    deleted_here: boolean;
+    destination: string | null;
+    obligation: string | null;
+    obligation_destination: string | null;
+  };
+}
+
+/** Measure actual clipping ancestors, not a Text inline box that permits glyph overhang. */
+async function readableHint(page: Page, testId: string, blockerId: string): Promise<void> {
+  const hint = page.getByTestId(testId);
+  await hint.scrollIntoViewIfNeeded();
+  await expect(hint).toBeInViewport({ ratio: 0.99 });
+  const geometry = await hint.evaluate((node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    let left = 0;
+    let right = innerWidth;
+    let top = 0;
+    let bottom = innerHeight;
+    for (let parent: Element | null = node; parent !== null; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      const box = parent.getBoundingClientRect();
+      if (/^(hidden|clip|auto|scroll)$/u.test(style.overflowX)) {
+        left = Math.max(left, box.left);
+        right = Math.min(right, box.right);
+      }
+      if (/^(hidden|clip|auto|scroll)$/u.test(style.overflowY)) {
+        top = Math.max(top, box.top);
+        bottom = Math.min(bottom, box.bottom);
+      }
+    }
+    return {
+      left,
+      right,
+      top,
+      bottom,
+      lines: [...range.getClientRects()].map(({ left, right, top, bottom }) => ({
+        left,
+        right,
+        top,
+        bottom,
+      })),
+    };
+  });
+  expect(geometry.lines.length).toBeGreaterThan(0);
+  const blocker = await page.getByTestId(blockerId).boundingBox();
+  expect(blocker).not.toBeNull();
+  await test.info().attach(`${testId}-geometry`, {
+    body: JSON.stringify({ geometry, blocker }),
+    contentType: 'application/json',
+  });
+  await frame(page, `diagnostic-${testId}-${String(page.viewportSize()?.width)}`);
+  for (const line of geometry.lines) {
+    expect(line.left).toBeGreaterThanOrEqual(geometry.left - 1);
+    expect(line.right).toBeLessThanOrEqual(geometry.right + 1);
+    expect(line.top).toBeGreaterThanOrEqual(geometry.top - 1);
+    expect(line.bottom).toBeLessThanOrEqual(geometry.bottom + 1);
+    expect(line.bottom <= blocker!.y || line.top >= blocker!.y + blocker!.height).toBe(true);
+  }
 }
 
 for (const width of [390, 1280]) {
@@ -207,6 +284,122 @@ for (const width of [390, 1280]) {
           row.method === 'DELETE' && row.externalId === String(id) && row.action === 'withdrawn',
       ),
     ).toBe(true);
+  });
+
+  test(`real unrecorded pending DELETE gives neutral save and Finish hints and reachable recovery at ${width}px`, async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width, height: 844 });
+    const token = await loginOwner(page);
+    const id = await createPage(page, token);
+    await expect.poll(async () => retains(await vaultLedger(page), id)).toBe(true);
+    for (let index = 0; index < 12; index += 1)
+      await createPage(page, token, `A later page ${index}.`);
+    await vaultControl(page, 'hold');
+    try {
+      expect(copyOrigin('mark-unrecorded', id).destination).toBeNull();
+      await openPage(page, id);
+      const deletion = await page.request.delete(`${backendUrl()}/journal/${id}`, {
+        headers: bearer(token),
+      });
+      expect(deletion.status()).toBe(503);
+      expect((await deletion.json()).detail).toBe('vault_withdrawal_unrecorded_vault');
+      expect(copyOrigin('show', id)).toMatchObject({
+        deleted_here: false,
+        obligation: 'pending_delete',
+        obligation_destination: null,
+      });
+      const save = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'PATCH' &&
+          new URL(response.url()).pathname === `/journal/${id}`,
+      );
+      await page.getByTestId('journal-body-input').fill(`${BODY} These words cannot be saved.`);
+      expect((await save).status()).toBe(409);
+      const hint = page.getByTestId('journal-save-hint');
+      await expect(hint).toContainText('Deletion has not finished');
+      await expect(hint).not.toContainText(/once|vault confirms|reconnect/iu);
+      await expect(page.getByTestId('journal-save-retry')).toHaveCount(0);
+      await enlargeText(page);
+      await readableHint(page, 'journal-save-hint', 'writing-session-band-content');
+      await frame(page, `unrecorded-delete-save-${width}-200-percent`);
+      await finishReachable(page);
+      const finish = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'PATCH' &&
+          new URL(response.url()).pathname === `/journal/${id}`,
+      );
+      await page.getByTestId('journal-finish-button').click();
+      expect((await finish).status()).toBe(409);
+      await expect(page.getByTestId('journal-finish-error')).toContainText(
+        'Deletion has not finished',
+      );
+      await expect(page.getByTestId('journal-finish-error')).not.toContainText(
+        /once|vault confirms|reconnect/iu,
+      );
+      // The failure mounts after the first text snapshot; enlarge its new glyphs too.
+      await enlargeText(page);
+      await readableHint(page, 'journal-finish-error', 'writing-session-band-content');
+      await frame(page, `unrecorded-delete-finish-${width}-200-percent`);
+      const stored = await page.request.get(`${backendUrl()}/journal/${id}`, {
+        headers: bearer(token),
+      });
+      expect(stored.status()).toBe(200);
+      expect((await stored.json()).message).toBe(BODY);
+
+      await page.goto(`${frontendUrl()}/journal`);
+      const shelf = page.getByTestId('journal-shelf-list');
+      const remove = page.getByTestId(`journal-shelf-delete-${id}`);
+      await remove.scrollIntoViewIfNeeded();
+      expect(await shelf.evaluate((node) => node.scrollTop)).toBeGreaterThan(500);
+      await remove.click();
+      await page.getByTestId('journal-delete-confirm').click();
+      await expect(page.getByTestId('journal-delete-error')).toContainText(
+        'cannot identify the vault',
+      );
+      await expect(page.getByTestId('journal-delete-error')).toBeInViewport();
+      await expect(page.getByTestId('journal-unreachable-reconnect')).toHaveCount(0);
+      await enlargeText(page);
+      // The long explanation is in the shelf's scrollable header; read it above
+      // the fixed action band just as a person scrolls the shelf.
+      await page.getByTestId('journal-unreachable-explainer').hover();
+      await page.mouse.wheel(0, 200);
+      await readableHint(page, 'journal-unreachable-explainer', 'bottom-fade');
+      const erase = page.getByTestId('journal-unreachable-erase');
+      await erase.scrollIntoViewIfNeeded();
+      await expect(erase).toBeInViewport();
+      const eraseBox = await erase.boundingBox();
+      expect(eraseBox).not.toBeNull();
+      expect(eraseBox!.height).toBeGreaterThanOrEqual(44);
+      expect(eraseBox!.width).toBeGreaterThanOrEqual(44);
+      await readableHint(page, 'journal-unreachable-erase', 'bottom-fade');
+      await erase.click({ trial: true });
+      await frame(page, `unrecorded-delete-recovery-${width}-200-percent`);
+      if (width === 1280) {
+        await erase.focus();
+        await expect(erase).toBeFocused();
+        await page.keyboard.press('Enter');
+      } else {
+        await erase.click();
+      }
+      await expect(page.getByTestId('journal-erasure-receipt')).toContainText(
+        'a copy may still be in a Creek vault you connected earlier',
+      );
+      expect(copyOrigin('show', id)).toMatchObject({
+        deleted_here: true,
+        obligation: 'unconfirmed',
+        obligation_destination: null,
+      });
+      expect(retains(await vaultLedger(page), id)).toBe(true);
+      expect(
+        (
+          await page.request.get(`${backendUrl()}/journal/${id}`, { headers: bearer(token) })
+        ).status(),
+      ).toBe(404);
+    } finally {
+      await vaultControl(page, 'release');
+    }
   });
 
   test(`real pending DELETE locks editing until recorded vault removal confirms at ${width}px`, async ({
