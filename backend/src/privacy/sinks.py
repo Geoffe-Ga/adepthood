@@ -130,6 +130,8 @@ class SinkId(enum.StrEnum):
     UVICORN_ACCESS_LOG = "telemetry.uvicorn_access_log"
     OUTBOUND_CLIENT_LOG = "telemetry.outbound_client_log"
     RATE_LIMIT_LOG = "telemetry.rate_limit_log"
+    MIGRATION_LOG = "telemetry.migration_log"
+    THREAD_EXCEPTHOOK = "telemetry.thread_excepthook"
     VAULT_TELEMETRY = "telemetry.vault_telemetry"
     # Database tables recorded as telemetry transports
     LLM_USAGE_LOG = "db.llmusagelog"
@@ -319,6 +321,8 @@ _ROWS: Final[tuple[Sink, ...]] = (
     _outside(SinkId.UVICORN_ACCESS_LOG, _TELEMETRY, NO_TIERS, _transport("uvicorn.access")),
     _outside(SinkId.OUTBOUND_CLIENT_LOG, _TELEMETRY, NO_TIERS, _transport("httpx / httpx2")),
     _outside(SinkId.RATE_LIMIT_LOG, _TELEMETRY, NO_TIERS, _transport("slowapi")),
+    _outside(SinkId.MIGRATION_LOG, _TELEMETRY, NO_TIERS, _transport("alembic upgrade head")),
+    _outside(SinkId.THREAD_EXCEPTHOOK, _TELEMETRY, NO_TIERS, _transport("threading.excepthook")),
     _outside(SinkId.VAULT_TELEMETRY, _TELEMETRY, NO_TIERS, _transport("Creek vault telemetry")),
     _inside(SinkId.LLM_USAGE_LOG, SinkKind.DB_TABLE, NO_TIERS, _transport("LLM metering")),
     _inside(

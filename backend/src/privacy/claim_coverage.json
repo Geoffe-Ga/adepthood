@@ -257,6 +257,11 @@
       "backend/tests/security/test_telemetry_sentinels.py::test_outbound_request_urls_stay_out_of_the_info_stream",
       "backend/tests/security/test_telemetry_sentinels.py::test_a_rate_limited_share_token_never_reaches_the_log",
       "backend/tests/security/test_telemetry_sentinels.py::test_a_search_query_string_reaches_no_log",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_failing_migration_prints_its_type_but_not_the_row",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_cli_hardening_formats_every_configured_handler_content_free",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_cli_hardening_makes_the_uncaught_traceback_content_free",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_thread_dying_uncaught_prints_its_type_but_not_its_message",
+      "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_thread_exiting_via_system_exit_prints_nothing",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_rejected_patch_carrying_an_intimate_body_ships_no_canary",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_driver_error_carrying_an_intimate_body_ships_no_canary",
       "backend/tests/security/test_intimate_telemetry_failure_paths.py::test_a_provider_error_echoing_the_prompt_ships_no_canary",
@@ -274,6 +279,8 @@
       "telemetry.uvicorn_access_log",
       "telemetry.outbound_client_log",
       "telemetry.rate_limit_log",
+      "telemetry.migration_log",
+      "telemetry.thread_excepthook",
       "telemetry.vault_telemetry",
       "db.llmusagelog"
     ],
@@ -322,6 +329,15 @@
       ],
       "telemetry.rate_limit_log": [
         "backend/tests/security/test_telemetry_sentinels.py::test_a_rate_limited_share_token_never_reaches_the_log"
+      ],
+      "telemetry.migration_log": [
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_failing_migration_prints_its_type_but_not_the_row",
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_cli_hardening_formats_every_configured_handler_content_free",
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_cli_hardening_makes_the_uncaught_traceback_content_free"
+      ],
+      "telemetry.thread_excepthook": [
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_thread_dying_uncaught_prints_its_type_but_not_its_message",
+        "backend/tests/security/test_cli_telemetry_sentinels.py::test_a_thread_exiting_via_system_exit_prints_nothing"
       ]
     },
     "issue": 3064,
