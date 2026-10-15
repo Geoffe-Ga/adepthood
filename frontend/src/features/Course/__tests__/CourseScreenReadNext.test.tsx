@@ -78,6 +78,7 @@ const mockSetParams = jest.fn<(_params: CourseParams) => void>();
 let mockRouteParams: CourseParams | undefined;
 
 jest.mock('../../../api', () => ({
+  captureSessionToken: () => 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature',
   uiFlags: { get: () => Promise.resolve({ course_last_stage: 1 }) },
   stages: {
     listAll: () => Promise.resolve([makeStage(1), makeStage(2)]),
@@ -95,6 +96,13 @@ jest.mock('../../../api', () => ({
       }),
     markRead: (contentId: number) => mockMarkRead(contentId),
     contentBody: (contentId: number) => mockContentBody(contentId),
+    startHereProgress: () =>
+      Promise.resolve({
+        total_items: 0,
+        read_items: 0,
+        progress_percent: 0,
+        next_unlock_day: null,
+      }),
     siteResources: () => Promise.resolve([]),
     siteResourceBody: (slug: string) => mockResourceBody(slug),
     markResourceRead: (slug: string) => mockMarkResourceRead(slug),
@@ -345,4 +353,9 @@ describe('Read next to a Start Here resource (#3234)', () => {
 
     expect(queryByTestId('resource-mark-read-button')).toBeNull();
   });
+});
+
+beforeEach(() => {
+  require('@/storage/userScope').setActiveUser(1);
+  require('../startHereStore').useStartHereStore.getState().reset();
 });

@@ -16,7 +16,7 @@ interface StageIntroCardProps {
  * "Start here" card for a stage's course introduction, shown above the chapter
  * list. Loads its own intro and refetches on stage change. A missing intro
  * (404 — no intro authored, or the stage is locked) is a NORMAL state, not an
- * error: the card simply renders nothing, mirroring ``SiteResourcesPanel``.
+ * error: a missing introduction simply renders no card.
  * Tapping opens the intro in the native ``ChapterReader`` via ``onOpen``.
  */
 const StageIntroCard = ({ stageNumber, onOpen }: StageIntroCardProps): React.JSX.Element | null => {

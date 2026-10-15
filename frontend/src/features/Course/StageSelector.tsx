@@ -10,6 +10,7 @@ import {
   getStageColor,
   isCompleted,
   isUnlocked,
+  START_HERE,
   STAGE_COMPLETED_GLYPH,
   STAGE_STATUS,
   stagePillFill,
@@ -78,6 +79,30 @@ const StagePill = ({
   );
 };
 
+function StartHerePill({
+  selectedStage,
+  onSelectStage,
+  color,
+}: Omit<StageSelectorProps, 'stages'> & { color: string }) {
+  return (
+    <TouchableOpacity
+      testID="start-here-pill"
+      accessibilityRole="button"
+      accessibilityLabel="Start Here"
+      accessibilityState={{ selected: selectedStage === START_HERE, disabled: false }}
+      onPress={() => onSelectStage(START_HERE)}
+      style={[
+        styles.stagePill,
+        styles.startHerePill,
+        { backgroundColor: color },
+        selectedStage === START_HERE && styles.stagePillActive,
+      ]}
+    >
+      <Text style={[styles.stagePillText, { color: readableGlyphOn(color) }]}>Start Here</Text>
+    </TouchableOpacity>
+  );
+}
+
 const StageSelector = ({
   stages: stagesList,
   selectedStage,
@@ -96,6 +121,11 @@ const StageSelector = ({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.stageSelectorContent}
       >
+        <StartHerePill
+          selectedStage={selectedStage}
+          onSelectStage={onSelectStage}
+          color={getStageColor(START_HERE, stageById)}
+        />
         {Array.from({ length: totalStageCount(stagesList) }, (_, i) => {
           const stageNumber = i + 1;
           return (

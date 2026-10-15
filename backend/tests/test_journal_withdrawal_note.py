@@ -9,6 +9,7 @@ account), its end on the vault's confirmation, and the 97-day purge.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -27,6 +28,7 @@ from models.journal_withdrawal_obligation import (
     JournalWithdrawalObligation,
     JournalWithdrawalState,
 )
+from services import journal_withdrawal_note as note_module
 from services.account_deletion import (
     VAULT_GUIDANCE_DETACHED_NOTES,
     Account,
@@ -36,6 +38,8 @@ from services.account_deletion import (
 from services.creek_vault_client import CREEK_VAULT_URL_ENV_VAR
 from services.creek_vault_voice_drafts import JournalRetrySchedule
 from services.journal_withdrawal_note import (
+    NOTE_LOG_EXTRAS,
+    NOTE_SETTLED_EVENT,
     DetachedVault,
     resume_detached_withdrawal_notes,
 )
@@ -50,6 +54,9 @@ _T0 = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
 _RATIFIED_DAYS = 97
 _ONE_DAY = timedelta(days=1)
 _DEPLOYMENT_URL = "https://deployment-vault.example.com"
+_STANDARD_RECORD_KEYS = frozenset(
+    logging.LogRecord("n", logging.INFO, "p", 1, "m", None, None).__dict__
+) | {"message", "asctime", "taskName", "trace_id"}
 
 
 @pytest.fixture(autouse=True)
@@ -296,3 +303,48 @@ async def test_the_purge_keeps_a_note_on_its_97th_day(db_session: AsyncSession) 
     counts = await sweep_for("journalwithdrawalnote").run(db_session, _T0, dry_run=False)
     assert counts.deleted == 1
     assert [note.journal_entry_id for note in await _notes(db_session)] == [_ENTRY_ID]
+
+
+# --------------------------------------------------------------------------
+# Telemetry
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_note_telemetry_carries_only_the_allowed_extras(
+    db_session: AsyncSession, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No record from the note module carries an extra beyond ``NOTE_LOG_EXTRAS`` (#3336).
+
+    Driven through a failed resume, a confirmed resume and the purge. No record
+    renders the vault fingerprint either.
+    """
+    await _note_at(db_session, _ENTRY_ID, _T0)
+    await _note_at(db_session, _ENTRY_ID + 1, _T0)
+    failing, confirming = DraftVault(fail=True), DraftVault()
+    caplog.set_level(logging.DEBUG, logger=note_module.__name__)
+
+    failed = await resume_detached_withdrawal_notes(
+        _factory(db_session),
+        (DetachedVault(destination=_VAULT_FINGERPRINT, connect=lambda: failing),),
+        now=_T0,
+        retries=JournalRetrySchedule(),
+    )
+    confirmed = await resume_detached_withdrawal_notes(
+        _factory(db_session),
+        (DetachedVault(destination=_VAULT_FINGERPRINT, connect=lambda: confirming),),
+        now=_T0,
+        retries=JournalRetrySchedule(),
+    )
+    await _note_at(db_session, _ENTRY_ID + 2, _T0 - timedelta(days=_RATIFIED_DAYS + 1))
+    purged = await sweep_for("journalwithdrawalnote").run(db_session, _T0, dry_run=False)
+
+    assert (failed, confirmed, purged.deleted) == (0, 2, 1)
+    records = [record for record in caplog.records if record.name == note_module.__name__]
+    settled = [record for record in records if record.getMessage() == NOTE_SETTLED_EVENT]
+    assert [record.__dict__["entry_id"] for record in settled] == [_ENTRY_ID, _ENTRY_ID + 1]
+    for record in records:
+        extras = set(record.__dict__) - _STANDARD_RECORD_KEYS
+        assert extras <= NOTE_LOG_EXTRAS, (record.getMessage(), extras)
+        rendered = f"{record.getMessage()} {[record.__dict__[key] for key in extras]}"
+        assert _VAULT_FINGERPRINT not in rendered, rendered

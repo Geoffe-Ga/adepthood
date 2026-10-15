@@ -10,6 +10,9 @@ import { STAGE_ORDER, mixColors, resolveStageColor, surface } from '../../design
 /** Progress value at which a stage counts as fully completed. */
 const COMPLETE_PROGRESS = 1;
 
+/** Local selector only: resources never name a backend stage. */
+export const START_HERE = 0;
+
 /** Fill weight for a locked pill — mixes 40% stage color into the canvas. */
 const LOCKED_FILL_WEIGHT = 0.4;
 
@@ -45,6 +48,7 @@ export function totalStageCount(stages: Stage[]): number {
 
 /** Resolve the Spiral-Dynamics color for a stage number (1-indexed). */
 export function getStageColor(stageNumber: number, stageById: Map<number, Stage>): string {
+  if (stageNumber === START_HERE) return surface.sunken;
   // Prefer the stage's own API color; fall back to its progression-order name
   // when the API omits that stage number. The shared resolver handles the
   // neutral fallback for missing or unrecognized names.

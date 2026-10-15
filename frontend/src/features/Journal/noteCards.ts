@@ -28,7 +28,7 @@ import {
 } from '@/design/tokens';
 
 /** The paper margin slip's left border width, in dp. */
-const PAPER_STRIPE_WIDTH = 3;
+export const PAPER_STRIPE_WIDTH = 3;
 
 /** The raised reflection card's warm left stripe width, in dp. */
 const ACCENT_STRIPE_WIDTH = 4;

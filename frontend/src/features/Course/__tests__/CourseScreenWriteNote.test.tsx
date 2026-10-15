@@ -103,6 +103,7 @@ const mockProgramCalendar = jest.fn(() =>
   }),
 );
 jest.mock('../../../api', () => ({
+  captureSessionToken: () => 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature',
   uiFlags: { get: () => Promise.resolve({ course_last_stage: null }) },
   stages: {
     listAll: (...args: unknown[]) => mockStagesList(...args),
@@ -114,6 +115,13 @@ jest.mock('../../../api', () => ({
     stageProgress: (...args: unknown[]) => mockStageProgress(...args),
     markRead: (...args: unknown[]) => mockMarkRead(...args),
     contentBody: (...args: unknown[]) => mockContentBody(...args),
+    startHereProgress: () =>
+      Promise.resolve({
+        total_items: 0,
+        read_items: 0,
+        progress_percent: 0,
+        next_unlock_day: null,
+      }),
     siteResources: (...args: unknown[]) => mockSiteResources(...args),
     siteResourceBody: (...args: unknown[]) => mockSiteResourceBody(...args),
     stageIntro: (...args: unknown[]) => mockStageIntro(...args),
@@ -317,4 +325,9 @@ describe('CourseScreen -- write a note on a passage', () => {
     expect(scrollView.props.contentOffset).not.toEqual({ x: 0, y: 777 });
     expect(mockContentBody).toHaveBeenCalledTimes(1);
   });
+});
+
+beforeEach(() => {
+  require('@/storage/userScope').setActiveUser(1);
+  require('../startHereStore').useStartHereStore.getState().reset();
 });
