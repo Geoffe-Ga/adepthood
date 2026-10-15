@@ -2431,6 +2431,7 @@ function GrowingTitle({
       value={title}
       onChangeText={(next) => onChangeTitle(singleLineTitle(next))}
       onContentSizeChange={growth.onContentSizeChange}
+      onLayout={growth.onLayout}
       onSubmitEditing={onSubmit}
       placeholder="Title"
       placeholderTextColor={colors.paper.inkSoft}

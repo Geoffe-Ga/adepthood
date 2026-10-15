@@ -28,12 +28,25 @@ export interface PracticeHabitLogInput {
   isOwnerCurrent: () => boolean;
   onNotice: (_message: string) => void;
   manager: TimerHabitLogService;
+  /** A retry passes the context its failed attempt prepared, so the operation id is kept. */
+  prepared?: LogUnitContext;
+  /** Receives the failed attempt's context; a retry hands it back as ``prepared``. */
+  onFailed?: (_ctx: LogUnitContext) => void;
 }
 
+function admitted({ session, payload, isCurrent }: PracticeHabitLogInput): boolean {
+  return (
+    isCurrent() &&
+    session.completed === true &&
+    payload.completed === true &&
+    session.id > 0 &&
+    session.user_practice_id === payload.user_practice_id
+  );
+}
 function prepare(input: PracticeHabitLogInput): LogUnitContext | null {
-  const { session, payload, habit, manager } = input;
-  if (!input.isCurrent() || !session.completed || !payload.completed) return null;
-  if (session.id <= 0 || session.user_practice_id !== payload.user_practice_id) return null;
+  const { payload, habit, manager } = input;
+  if (!admitted(input)) return null;
+  if (input.prepared) return input.prepared.habitId === habit.id ? input.prepared : null;
   const elapsed = Date.parse(payload.ended_at) - Date.parse(payload.started_at);
   const amount = practiceHabitAmount(habit.unit, elapsed);
   if (amount === null) return null;
@@ -66,6 +79,7 @@ export async function logCompletedPracticeHabit(
   } catch {
     console.warn('Could not log the completed practice to its linked habit.');
     if (input.isCurrent()) input.onNotice(`Couldn't log to ${input.habit.name}`);
+    input.onFailed?.(ctx);
     return 'failed';
   } finally {
     manager.discardLogUnitContext(ctx);

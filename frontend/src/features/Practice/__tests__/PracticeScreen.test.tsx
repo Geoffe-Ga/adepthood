@@ -2149,35 +2149,43 @@ describe('PracticeScreen manual log', () => {
       serverGoalId: 30,
       isDemoSeed: false,
     };
-    return {
-      options: [
-        {
-          habit: {
-            id: 25,
-            name: 'Breath habit',
-            stage: 'beige',
-            icon: 'activity',
-            streak: 0,
-            energy_cost: 1,
-            energy_return: 1,
-            start_date: new Date('2026-04-12T00:00:00Z'),
-            revealed: true,
-            goals: [
-              { id: 29, title: 'A short sitting', tier: 'low', target: 1 },
-              { id: 30, title: 'A sitting', tier: 'clear', target: 10 },
-              { id: 31, title: 'A longer sitting', tier: 'stretch', target: 25 },
-            ].map((goal) => ({
-              ...goal,
-              target_unit: 'minutes',
-              frequency: 1,
-              frequency_unit: 'day',
-              is_additive: true,
-              goal_group_id: 8,
-            })),
-          },
-          unit: 'minutes',
+    const options: any[] = [
+      {
+        habit: {
+          id: 25,
+          name: 'Breath habit',
+          stage: 'beige',
+          icon: 'activity',
+          streak: 0,
+          energy_cost: 1,
+          energy_return: 1,
+          start_date: new Date('2026-04-12T00:00:00Z'),
+          revealed: true,
+          goals: [
+            { id: 29, title: 'A short sitting', tier: 'low', target: 1 },
+            { id: 30, title: 'A sitting', tier: 'clear', target: 10 },
+            { id: 31, title: 'A longer sitting', tier: 'stretch', target: 25 },
+          ].map((goal) => ({
+            ...goal,
+            target_unit: 'minutes',
+            frequency: 1,
+            frequency_unit: 'day',
+            is_additive: true,
+            goal_group_id: 8,
+          })),
         },
-      ],
+        unit: 'minutes',
+      },
+    ];
+    let current: any[] = options;
+    return {
+      options,
+      /** The eligible habits the store holds once the next refresh lands. */
+      serve(next: any[]) {
+        current = next;
+      },
+      refresh: jest.fn(async () => true),
+      currentOptions: jest.fn(() => current),
       manager: {
         prepareLogUnit: jest.fn(() => ctx),
         reserveLogUnitContext: jest.fn(),
@@ -2372,6 +2380,230 @@ describe('PracticeScreen manual log', () => {
     expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
     expect(view.queryByTestId('log-session-save')).toBeNull();
     expect(view.getByTestId('ritual-start')).toBeTruthy();
+  });
+
+  const asUnit = (option: any, unit: 'minutes' | 'sessions') => ({
+    unit,
+    habit: {
+      ...option.habit,
+      goals: option.habit.goals.map((goal: any) => ({ ...goal, target_unit: unit })),
+    },
+  });
+
+  async function saveLinkedSitting(bindings: ReturnType<typeof habitBindings>) {
+    authenticateHabitOwner();
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: 25 })]);
+    const view = render(<PracticeScreenWithHeader habitBindings={bindings as any} />);
+    await openLogSheet(view.getByTestId, view.getByLabelText);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    return view;
+  }
+
+  describe('current habit unit before a sitting is logged (#3384)', () => {
+    it('refreshes the habit before preparing the log', async () => {
+      const bindings = habitBindings();
+      const order: string[] = [];
+      bindings.refresh.mockImplementation(async () => {
+        order.push('refresh');
+        return true;
+      });
+      bindings.manager.prepareLogUnit.mockImplementation((() => {
+        order.push('prepare');
+        return { operationId: 'op', habitId: 25, amount: 10, serverGoalId: 30, isDemoSeed: false };
+      }) as any);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(order).toEqual(['refresh', 'prepare']);
+      expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
+    });
+
+    it('logs to a linked habit whose first load had not finished when the sitting was saved', async () => {
+      const bindings = habitBindings();
+      const loaded = bindings.options[0];
+      bindings.options.length = 0;
+      bindings.serve([loaded]);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 10, 'UTC', expect.any(Date));
+      expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
+    });
+
+    it('posts one session, never 10 sessions, after another device changes minutes to sessions', async () => {
+      const bindings = habitBindings();
+      bindings.serve([asUnit(bindings.options[0], 'sessions')]);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 1, 'UTC', expect.any(Date));
+      expect(view.getByText('Logged a session to Breath habit')).toBeTruthy();
+    });
+
+    it('posts the measured minutes after another device changes sessions to minutes', async () => {
+      const bindings = habitBindings();
+      bindings.options[0] = asUnit(bindings.options[0], 'sessions');
+      bindings.serve([asUnit(bindings.options[0], 'minutes')]);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 10, 'UTC', expect.any(Date));
+      expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
+    });
+
+    it('does not log to a habit that was deleted or no longer counts minutes or sessions', async () => {
+      const bindings = habitBindings();
+      bindings.serve([]);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() =>
+        expect(
+          view.getByText(
+            "This sitting wasn't logged to Breath habit: it is no longer a habit that counts minutes or sessions. Your practice is saved.",
+          ),
+        ).toBeTruthy(),
+      );
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+      expect(bindings.manager.commitLogUnitContext).not.toHaveBeenCalled();
+      expect(view.queryByTestId('practice-habit-retry-log')).toBeNull();
+      expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it('says so when the habit cannot be read, then logs once on a current-owner retry', async () => {
+      const bindings = habitBindings();
+      bindings.refresh.mockResolvedValueOnce(false);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() =>
+        expect(
+          view.getByText(
+            "Couldn't confirm the current goal for Breath habit, so this sitting isn't logged there yet. Your practice is saved.",
+          ),
+        ).toBeTruthy(),
+      );
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+      expect(view.queryByText(/Logged/)).toBeNull();
+      bindings.serve([asUnit(bindings.options[0], 'sessions')]);
+      await act(async () => {
+        fireEvent.press(view.getByTestId('practice-habit-retry-log'));
+      });
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1));
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledWith(25, 1, 'UTC', expect.any(Date));
+      expect(view.getByText('Logged a session to Breath habit')).toBeTruthy();
+      expect(view.queryByTestId('practice-habit-retry-log')).toBeNull();
+      expect(mockPracticeSessionsCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it('treats a rejected refresh as unreadable rather than dropping the log silently', async () => {
+      const bindings = habitBindings();
+      bindings.refresh.mockRejectedValueOnce(new Error('offline'));
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(view.getByTestId('practice-habit-retry-log')).toBeTruthy());
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+    });
+
+    it('retries a failed habit write under its original operation identity', async () => {
+      const bindings = habitBindings();
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      bindings.manager.commitLogUnitContext.mockRejectedValueOnce(new Error('offline'));
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(view.getByTestId('practice-habit-retry-log')).toBeTruthy());
+      expect(view.getByText("Couldn't log to Breath habit")).toBeTruthy();
+      const firstCtx = bindings.manager.commitLogUnitContext.mock.calls[0]![0];
+      await act(async () => {
+        fireEvent.press(view.getByTestId('practice-habit-retry-log'));
+      });
+      await waitFor(() => expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(2));
+      expect(bindings.refresh).toHaveBeenCalledTimes(2);
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.commitLogUnitContext.mock.calls[1]![0]).toBe(firstCtx);
+      expect(view.getByText('Logged 10 minutes to Breath habit')).toBeTruthy();
+    });
+
+    it('does not resend a failed write whose habit unit has since changed', async () => {
+      const bindings = habitBindings();
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      bindings.manager.commitLogUnitContext.mockRejectedValueOnce(new Error('offline'));
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(view.getByTestId('practice-habit-retry-log')).toBeTruthy());
+      bindings.serve([asUnit(bindings.options[0], 'sessions')]);
+      await act(async () => {
+        fireEvent.press(view.getByTestId('practice-habit-retry-log'));
+      });
+      await waitFor(() =>
+        expect(
+          view.getByText(
+            "This sitting wasn't logged to Breath habit: its goal unit changed after the first try. Your practice is saved.",
+          ),
+        ).toBeTruthy(),
+      );
+      expect(bindings.manager.commitLogUnitContext).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.prepareLogUnit).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops held work and notices when the account switches during the refresh', async () => {
+      const bindings = habitBindings();
+      let answer!: (_fresh: boolean) => void;
+      bindings.refresh.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(bindings.refresh).toHaveBeenCalledTimes(1));
+      setActiveUser(2);
+      setActiveUser(1);
+      await act(async () => {
+        answer(true);
+      });
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+      expect(bindings.manager.commitLogUnitContext).not.toHaveBeenCalled();
+      expect(view.queryByText(/Logged|Couldn't|wasn't logged/)).toBeNull();
+    });
+
+    it('refuses a retry once the account has switched away and back', async () => {
+      const bindings = habitBindings();
+      bindings.refresh.mockResolvedValueOnce(false);
+      const view = await saveLinkedSitting(bindings);
+      await waitFor(() => expect(view.getByTestId('practice-habit-retry-log')).toBeTruthy());
+      const retry = view.getByTestId('practice-habit-retry-log');
+      setActiveUser(2);
+      setActiveUser(1);
+      await act(async () => {
+        fireEvent.press(retry);
+      });
+      expect(bindings.refresh).toHaveBeenCalledTimes(1);
+      expect(bindings.manager.prepareLogUnit).not.toHaveBeenCalled();
+    });
+  });
+
+  it('canonical habit binding posts the current server unit after a remote minutes to sessions change', async () => {
+    authenticateHabitOwner();
+    const row = habitBindings().options[0]!.habit as Habit;
+    row.goals.forEach((goal) => {
+      goal.frequency_unit = 'per_day';
+    });
+    useHabitStore.getState().setHabits([row]);
+    const load = jest.spyOn(habitManager, 'loadHabits').mockResolvedValue(undefined);
+    const refresh = jest.spyOn(habitManager, 'refreshHabits').mockImplementation(async () => {
+      useHabitStore
+        .getState()
+        .setHabits([
+          { ...row, goals: row.goals.map((goal) => ({ ...goal, target_unit: 'sessions' })) },
+        ]);
+      return true;
+    });
+    const prepare = jest.spyOn(habitManager, 'prepareLogUnit').mockReturnValue(null);
+    mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: row.id })]);
+    const view = render(<PracticeScreenWithHeader />);
+    await openLogSheet(view.getByTestId, view.getByLabelText);
+    await act(async () => {
+      fireEvent.press(view.getByTestId('log-session-save'));
+    });
+    await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+    expect(refresh).toHaveBeenCalledWith('UTC');
+    expect(prepare).toHaveBeenCalledWith(row.id, 1, 'UTC', expect.any(Date));
+    view.unmount();
+    for (const spy of [load, refresh, prepare]) spy.mockRestore();
   });
 
   it('mounted habit controller offers an unlinked saved sitting and confirms the chosen link', async () => {

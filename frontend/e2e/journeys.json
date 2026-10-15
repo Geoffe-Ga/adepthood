@@ -1580,6 +1580,18 @@
     "coveredBy": "frontend/e2e/journal-entry-controls.browser.e2e.test.ts"
   },
   {
+    "id": "journal.wrapped-title-shows-every-line",
+    "description": "A writer gives a page a title too long for one line and sees every line of it, at every width (#3325). The title is a growing field sized to its text, so a wrapped title belongs to the page flow, never to an inner scroll. The real browser lays the title's value out in a twin with the field's computed face, width and inset and proves every line box sits inside the field's visible padding box, nothing is left to scroll (scrollHeight within clientHeight, scrollTop 0), the field never runs under the hairline below it, and it holds no more than its lines and inset. The journey types the original report's title ('A page with steady controls') at 1280x720 and narrows to 390x844, where it now wraps to two visible lines instead of hiding the second; types a long title key by key at 390; widens to 1280 and sees the spare lines given back; edits the title in place at 390 and presses Enter to land in the body with the edited value kept; then closes, lets the real POST /journal/ save it, reopens it from the shelf and measures the loaded title at 390 and 1280. A second run at 200% browser zoom on a phone (195x422 CSS px at device scale 2) types and then sets a long title and measures it the same way. Jest pins the width-change and font-settlement re-measures in useGrowingFieldHeight and the twin measurement in webFieldMeasure.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/", "POST /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-title-wrap.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.read-past-prompts",
     "description": "Someone opens Past prompts from the journal shelf and reads the weekly questions they have already answered with what they wrote under each. Answering a prompt mirrors the response into the journal as an ordinary page, which keeps the writing and loses the question that drew it, so this route is the only one that returns the pair -- and nothing asked for it until this surface existed. What the seam has to prove is that a submitted response comes back joined to its own question, and that the limit and offset the modal sends actually slice the set rather than being ignored.",
     "crosses": {
@@ -2517,15 +2529,15 @@
   },
   {
     "id": "journal.reflection-dismissal-account-ownership",
-    "description": "Due-review reflection dismissals are account-scoped and Jest covers owner, credential and ABA transitions. The Settings-switch browser journey does not dismiss a due review; an actual reflection dismissal/reload/account-switch browser witness remains required under #3073.",
+    "description": "Due-review reflection dismissals are account-owned on this device (#3289), proved in a real browser (#3321). Two accounts are rewound in the lane database so GET /reflections/due names the same scope, c1:w1, for both: the collision an unscoped flag would turn into one account's decline hiding the other's card. Account A sets its mounted Weekly Review card aside with the real Not now control (keyboard on phone, pointer on desktop); the only record written is A's @adepthood/reflection_dismissed:c1:w1#u<A> in on-device storage, no reflection write request is sent, and after reload the server still names c1:w1 while the shelf offers the daily page instead. An unscoped legacy flag for the same scope with unknown ownership is then planted, A's next real due read is answered by the server and held from the app, and B signs in through Settings in the same running SPA: B's independently due card stays offered, the late A answer is delivered without hiding or re-deciding it, and the legacy flag stays unassigned rather than migrating to B. B's undeclined card survives B's own reload, and A, B, A returns A to its retained set-aside. The decline's keyboard reach, pointer actionability and viewport containment are asserted at normal and doubled text, at 390 and 1280. The held read lands after a logout that remounts the signed-in tree, so the hook's owner/generation guards are not the only line there; their mounted-replacement cases stay in useDueReviewOwnership.test.tsx. #3073's broader criteria are not claimed here.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
       "client": ["reflections"],
       "routes": ["GET /reflections/due"],
-      "tables": ["user", "journalentry"]
+      "tables": ["user", "stageprogress", "journalentry"]
     },
-    "status": "uncovered",
-    "issue": 3073
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-reflection-dismissal-owner.browser.e2e.test.ts"
   },
   {
     "id": "shared.date-shortcuts-reflow-and-keyboard",
@@ -2541,7 +2553,7 @@
   },
   {
     "id": "practice.completed-sitting-links-and-logs-a-habit",
-    "description": "A practitioner adopts Body Scan through the catalog and saves a real manual sitting before accepting the optional once-per-adoption habit invitation (#3153). The actual app uses the shared canonical habit manager and timer eligibility predicate. A new habit is created through the shared goal editor with one session per tier four times per week, explicitly revealed, then its server-confirmed ID is linked to the caller-owned adoption. The first link attempt is aborted by the harness; retry reuses the saved row, remains disabled during a held real PATCH, clears the prior failure claim while pending, and adopts only its confirmed response. Later completed timed and manual sittings add one session each; only the real timer marks via_timer. The link and additive total survive reload, clearing persists through the same adoption PATCH, and a previously answered offer does not reappear. A second real journey links an already-owned minutes habit arranged through the API, logs seven user-entered minutes without inventing timer origin and five real timer minutes additively, then aborts only the optional habit POST while the real practice POST still saves. Reload and authenticated verification-only GET /practice-sessions/ prove all four sittings persisted and the failed habit write added no units. Phone390 and desktop1280 original frames, normal and doubled rendered text, glyph bounds and 44px control geometry validate the new invitation, picker, shared goals and factual failure notice. Mounted controls additionally cover duplicate creation taps, reuse of an already saved habit after a refused link, account ABA and missing credential masking. Browser evidence does not certify native geometry or physical-device lifecycle.",
+    "description": "A practitioner adopts Body Scan through the catalog and saves a real manual sitting before accepting the optional once-per-adoption habit invitation (#3153). The actual app uses the shared canonical habit manager and timer eligibility predicate. A new habit is created through the shared goal editor with one session per tier four times per week, explicitly revealed, then its server-confirmed ID is linked to the caller-owned adoption. The first link attempt is aborted by the harness; retry reuses the saved row, remains disabled during a held real PATCH, clears the prior failure claim while pending, and adopts only its confirmed response. Later completed timed and manual sittings add one session each; only the real timer marks via_timer. The link and additive total survive reload, clearing persists through the same adoption PATCH, and a previously answered offer does not reappear. A second real journey links an already-owned minutes habit arranged through the API, logs seven user-entered minutes without inventing timer origin and five real timer minutes additively, then aborts only the optional habit POST while the real practice POST still saves. The factual failure notice offers Try logging again, which resends the refused write under its original Idempotency-Key once the route is restored. Every sitting re-reads GET /habits/ before preparing its habit write (#3384): after another device moves the habit to sessions through PUT /habits/{habit_id}/goals/units while the screen stays mounted, a nine-minute sitting posts completed_units 1, never 9; when that read is aborted, no goal completion is posted, a factual notice says the practice is saved, and its retry posts one current session. Reload and authenticated verification-only GET /practice-sessions/ prove all six sittings persisted and the habit holds exactly the confirmed units. Phone390 and desktop1280 original frames, normal and doubled rendered text, glyph bounds and 44px control geometry validate the new invitation, picker, shared goals and factual failure notice. Mounted controls additionally cover duplicate creation taps, reuse of an already saved habit after a refused link, account ABA and missing credential masking. Browser evidence does not certify native geometry or physical-device lifecycle.",
     "crosses": {
       "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
       "client": ["practices", "userPractices", "practiceSessions", "habits", "goalCompletions"],
@@ -2553,6 +2565,7 @@
         "POST /practice-sessions/",
         "GET /habits/",
         "POST /habits/",
+        "PUT /habits/{habit_id}/goals/units",
         "POST /goal_completions/"
       ],
       "tables": ["practice", "userpractice", "practicesession", "habit", "goal", "goalcompletion"]

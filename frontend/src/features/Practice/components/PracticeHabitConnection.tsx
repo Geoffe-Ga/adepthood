@@ -230,6 +230,8 @@ function CanonicalConnection(props: Omit<Props, 'bindings'>) {
       habit,
       unit: habit.goals[0]!.target_unit as 'minutes' | 'sessions',
     })),
+    refresh: () => habitManager.refreshHabits(props.timezone),
+    currentOptions: eligibleOptions,
     manager: habitManager,
     onNewHabit: creation.open,
   };

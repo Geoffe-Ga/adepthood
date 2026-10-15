@@ -5,13 +5,20 @@ import OfferAction from './PracticeHabitAction';
 import PracticeHabitOffer from './PracticeHabitOffer';
 import PracticeHabitPicker from './PracticeHabitPicker';
 
-import { captureSessionToken, type UserPractice } from '@/api';
+import {
+  captureSessionToken,
+  type PracticeSessionCreate,
+  type PracticeSessionResponse,
+  type UserPractice,
+} from '@/api';
 import { editorialType, onShowcase, SPACING } from '@/design/tokens';
 import type { Habit } from '@/features/Habits/Habits.types';
+import type { LogUnitContext } from '@/features/Habits/services/habitManager';
 import { usePracticeHabitLink } from '@/features/Practice/hooks/usePracticeHabitLink';
 import type { UseSaveSessionMutationParams } from '@/features/Practice/hooks/useSaveSessionMutation';
 import {
   logCompletedPracticeHabit,
+  type PracticeHabitLogInput,
   type TimerHabitLogService,
 } from '@/features/Practice/practiceHabitLogging';
 import { getActiveUser, getActiveUserGeneration, parseUserId } from '@/storage/userScope';
@@ -23,7 +30,12 @@ export interface PracticeHabitOption {
   unit: 'minutes' | 'sessions';
 }
 export interface PracticeHabitBindings {
+  /** The eligible habits as of this render, for the link facts and picker. */
   options: readonly PracticeHabitOption[];
+  /** Re-read the owner's habits from the server; false when the server could not answer. */
+  refresh: () => Promise<boolean>;
+  /** The eligible habits as held right now, which a refresh may have changed since render. */
+  currentOptions: () => readonly PracticeHabitOption[];
   manager: TimerHabitLogService;
   onNewHabit: (
     _name: string,
@@ -44,6 +56,8 @@ interface Controller {
   linked: PracticeHabitOption | null;
   completed: boolean;
   notice: string | null;
+  /** Re-attempt a sitting's habit log the current owner could not complete. */
+  retry: (() => void) | null;
   adoptionId: number;
   hasLink: boolean;
 }
@@ -89,45 +103,148 @@ function useControllerScope(props: Props): Scope {
   return { current, viewCurrent, ownerCurrent, latest: () => live.current.props };
 }
 
-function useCompletedHabit(props: Props, scope: Scope) {
-  const [completed, setCompleted] = useState(false);
+interface Sitting {
+  session: PracticeSessionResponse;
+  payload: PracticeSessionCreate;
+  viaTimer: boolean;
+  /** The habit's name as this screen last knew it, for a notice when it cannot be read now. */
+  name: string;
+  /** A failed attempt's prepared log, retried under its original operation id and unit. */
+  failed?: { ctx: LogUnitContext; unit: PracticeHabitOption['unit'] };
+}
+const SAVED = 'Your practice is saved.';
+const unavailableNotice = (name: string) =>
+  `Couldn't confirm the current goal for ${name}, so this sitting isn't logged there yet. ${SAVED}`;
+const ineligibleNotice = (name: string) =>
+  `This sitting wasn't logged to ${name}: it is no longer a habit that counts minutes or sessions. ${SAVED}`;
+const changedNotice = (name: string) =>
+  `This sitting wasn't logged to ${name}: its goal unit changed after the first try. ${SAVED}`;
+
+/** Read the owner's habits from the server now; a cached option never sets the posted unit. */
+async function refreshedOption(
+  bindings: PracticeHabitBindings,
+  habitId: number,
+): Promise<PracticeHabitOption | null | 'unavailable'> {
+  const fresh = await bindings.refresh().catch(() => false);
+  if (!fresh) return 'unavailable';
+  return bindings.currentOptions().find((item) => item.habit.id === habitId) ?? null;
+}
+
+type Tell = (_message: string, _again?: () => void) => void;
+type TimerHabit = PracticeHabitLogInput['habit'];
+
+/** The sitting the server saved for this adoption, as a completed one. */
+function ownsSitting(
+  session: PracticeSessionResponse,
+  payload: PracticeSessionCreate,
+  adoptionId: number,
+): boolean {
+  return (
+    session.completed === true &&
+    payload.completed === true &&
+    session.id > 0 &&
+    session.user_practice_id === adoptionId &&
+    payload.user_practice_id === adoptionId
+  );
+}
+
+/** A factual notice, with a retry only when the current owner can still make one. */
+function useHabitNotice(scope: Scope) {
   const [notice, setNotice] = useState<string | null>(null);
-  const adoptionId = props.userPractice.id;
+  const [retry, setRetry] = useState<(() => void) | null>(null);
+  const clear = (): void => {
+    setNotice(null);
+    setRetry(null);
+  };
+  const tell: Tell = (message, again) => {
+    if (!scope.current()) return;
+    setNotice(message);
+    setRetry(again ? () => again : null);
+  };
+  return { notice, retry, tell, clear };
+}
+
+function logInput(
+  props: Props,
+  scope: Scope,
+  sitting: Sitting,
+  habit: TimerHabit,
+): Omit<PracticeHabitLogInput, 'onNotice' | 'onFailed'> {
+  return {
+    session: sitting.session,
+    payload: sitting.payload,
+    habit,
+    timezone: props.timezone,
+    viaTimer: sitting.viaTimer,
+    manager: props.bindings.manager,
+    prepared: sitting.failed?.ctx,
+    // The commit waits its turn in the habit/day queue; the unit must still hold then.
+    isCurrent: () =>
+      scope.current() &&
+      scope
+        .latest()
+        .bindings.currentOptions()
+        .some((item) => item.habit.id === habit.id && item.unit === habit.unit),
+    isOwnerCurrent: scope.ownerCurrent,
+  };
+}
+
+/** Refresh, revalidate the current unit, then log; every unlogged outcome is said aloud. */
+function useSittingLog(
+  props: Props,
+  scope: Scope,
+  { tell, clear }: ReturnType<typeof useHabitNotice>,
+) {
   const habitId = props.userPractice.habit_id ?? null;
-  const onConfirmed: Controller['onConfirmed'] = async (session, payload, source = 'timer') => {
-    if (
-      !scope.current() ||
-      !session.completed ||
-      !payload.completed ||
-      session.id <= 0 ||
-      session.user_practice_id !== adoptionId ||
-      payload.user_practice_id !== adoptionId
-    )
-      return;
-    if (habitId === null) setCompleted(true);
-    const option = scope.latest().bindings.options.find((item) => item.habit.id === habitId);
-    if (!option) return;
+  const retryOnce = (sitting: Sitting): void => {
+    if (!scope.current() || habitId === null) return;
+    clear();
+    void attempt(sitting);
+  };
+  const attempt = async (sitting: Sitting): Promise<void> => {
+    if (habitId === null) return;
+    const option = await refreshedOption(scope.latest().bindings, habitId);
+    if (!scope.current()) return;
+    if (option === 'unavailable')
+      return tell(unavailableNotice(sitting.name), () => retryOnce(sitting));
+    if (!option) return tell(ineligibleNotice(sitting.name));
+    if (sitting.failed && sitting.failed.unit !== option.unit)
+      return tell(changedNotice(option.habit.name));
+    const habit = { id: option.habit.id, name: option.habit.name, unit: option.unit };
     await logCompletedPracticeHabit({
-      session,
-      payload,
-      habit: { id: option.habit.id, name: option.habit.name, unit: option.unit },
-      timezone: props.timezone,
-      viaTimer: source === 'timer',
-      manager: props.bindings.manager,
-      isCurrent: () =>
-        scope.current() &&
-        scope
-          .latest()
-          .bindings.options.some(
-            (item) => item.habit.id === option.habit.id && item.unit === option.unit,
-          ),
-      isOwnerCurrent: scope.ownerCurrent,
-      onNotice: (message) => {
-        if (scope.current()) setNotice(message);
+      ...logInput(props, scope, sitting, habit),
+      onNotice: (message) => tell(message),
+      onFailed: (ctx) => {
+        const again = { ...sitting, name: habit.name, failed: { ctx, unit: habit.unit } };
+        tell(`Couldn't log to ${habit.name}`, () => retryOnce(again));
       },
     });
   };
-  return { completed, notice, onConfirmed, clearNotice: () => setNotice(null) };
+  return attempt;
+}
+
+function useCompletedHabit(props: Props, scope: Scope) {
+  const [completed, setCompleted] = useState(false);
+  const notice = useHabitNotice(scope);
+  const attempt = useSittingLog(props, scope, notice);
+  const habitId = props.userPractice.habit_id ?? null;
+  const onConfirmed: Controller['onConfirmed'] = async (session, payload, source = 'timer') => {
+    if (!scope.current() || !ownsSitting(session, payload, props.userPractice.id)) return;
+    if (habitId === null) {
+      setCompleted(true);
+      return;
+    }
+    const known = scope.latest().bindings.options.find((item) => item.habit.id === habitId);
+    const name = known?.habit.name ?? 'your linked habit';
+    await attempt({ session, payload, viaTimer: source === 'timer', name });
+  };
+  return {
+    completed,
+    notice: notice.notice,
+    retry: notice.retry,
+    onConfirmed,
+    clearNotice: notice.clear,
+  };
 }
 
 type SetPicker = (_open: boolean) => void;
@@ -227,6 +344,14 @@ export function PracticeHabitSessionControls(): React.JSX.Element | null {
         <Text accessibilityLiveRegion="polite" style={styles.copy}>
           {controller.notice}
         </Text>
+      )}
+      {controller.retry && (
+        <OfferAction
+          label="Try logging again"
+          a11yLabel="Try logging this sitting to its linked habit again"
+          testID="practice-habit-retry-log"
+          onPress={controller.retry}
+        />
       )}
       {controller.linked && (
         <>
