@@ -23,6 +23,7 @@ import {
   type JournalMarkdownDocument,
   type JournalMarkdownLine,
 } from './journalMarkdown';
+import { useMarginNavigation } from './marginNavigation';
 import { bulletDecoration, renderMarkdownRun, webRole } from './ReadOnlyMarkdownText';
 import { lineSlice } from './renderedSpans';
 import StaleQuoteNotes from './StaleQuoteNotes';
@@ -180,6 +181,41 @@ interface RenderContext {
   focusedQuoteId: number | null;
 }
 
+/** A selected note's passage keeps its wash and gains the same quiet focus underline. */
+function NoteSpan({
+  note,
+  continuation,
+  onOpen,
+  children,
+}: {
+  note: Marginalia;
+  continuation: boolean;
+  onOpen: (_note: Marginalia) => void;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const navigation = useMarginNavigation();
+  if (navigation?.isStale(note)) return <>{children}</>;
+  return (
+    <Text
+      style={[
+        styles.highlight,
+        { color: colors.marginalia[note.kind] },
+        navigation?.selectedId === note.id && styles.focused,
+      ]}
+      onPress={(event) => {
+        event?.stopPropagation();
+        if (navigation) navigation.fromPassage(note, onOpen);
+        else onOpen(note);
+      }}
+      accessibilityRole="link"
+      accessibilityLabel={`Highlighted ${note.kind} passage`}
+      testID={continuation ? `highlight-${note.id}-continuation` : `highlight-${note.id}`}
+    >
+      {children}
+    </Text>
+  );
+}
+
 /** Render one body segment: a note anchor, a promoted-quote span, or plain text. */
 function renderAnchoredSlice(
   segment: AnchoredSegment,
@@ -196,19 +232,14 @@ function renderAnchoredSlice(
     const continuation = claimedAnchors.has(claim);
     claimedAnchors.add(claim);
     return (
-      <Text
+      <NoteSpan
         key={`${segment.start}-${start}`}
-        style={[styles.highlight, { color: colors.marginalia[note.kind] }]}
-        onPress={(event) => {
-          event?.stopPropagation();
-          onOpen(note);
-        }}
-        accessibilityRole="link"
-        accessibilityLabel={`Highlighted ${note.kind} passage`}
-        testID={continuation ? `highlight-${note.id}-continuation` : `highlight-${note.id}`}
+        note={note}
+        continuation={continuation}
+        onOpen={onOpen}
       >
         {content}
-      </Text>
+      </NoteSpan>
     );
   }
   if (quote != null) {
