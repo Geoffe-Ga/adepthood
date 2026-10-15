@@ -291,6 +291,7 @@ SWEEPS: Final[tuple[StoreSweep, ...]] = (
         store=SOFT_DELETED_ENTRIES, covers=(SOFT_DELETED_ENTRIES,), run=_soft_deleted_entries
     ),
     _table_sweep("journalwithdrawalobligation", _confirmed_before, _held_open_since("created_at")),
+    _table_sweep("journalwithdrawalnote", _created_before("created_at")),
     _table_sweep("voicedraftretraction", _confirmed_before, _held_open_since("created_at")),
     _table_sweep("accountdeletionaudit", _created_before("deleted_at")),
     _table_sweep("gumroadsale", _sale_eligible, _sale_blocked),

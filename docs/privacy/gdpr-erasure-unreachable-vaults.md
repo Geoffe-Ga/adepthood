@@ -142,14 +142,22 @@ The owner ratified the row's lifetime on 2026-10-13: a `confirmed` row is kept
 30 days after confirmation, and an open row is never eligible until confirmed
 (`domain/retention.py` now carries `fixed_days` with those exemptions, and the
 nightly retention sweep applies it, #3266). The decision is recorded in
-[retention-proposal.md](retention-proposal.md). Whether an `unconfirmed` row
-should outlive account deletion was not part of that decision and stays open.
+[retention-proposal.md](retention-proposal.md). On 2026-10-14 the owner
+decided that an open row outlives account deletion as a detached note (#3267):
+see the first known limit below.
 
 ## Known limits
 
-- **Account deletion drops the record.** An `unconfirmed` row is erased with
-  the account, so after account deletion nothing records that a copy may
-  remain. The account-deletion receipt's vault guidance is the only tell.
+- **Account deletion detaches the record.** An open row (`pending_delete` or
+  `unconfirmed`) is copied into a `journalwithdrawalnote` -- the vault
+  fingerprint and the entry id, no account link -- before the account's rows
+  are erased, and the receipt's vault guidance says so. The note is deleted
+  when that vault confirms the copy gone, or after 97 days at most
+  (`services/journal_withdrawal_note.py`). Only the deployment-wide vault can
+  still be dialled once the account is gone: a connected or managed vault's
+  credential is erased with it, and a fingerprint folds in the account id, so
+  a reconnect under a new account never matches. For those the 97-day purge is
+  the end.
 - **Backup restore.** A restore from a backup taken before the erase reapplies
   the page's deletion tombstone (B08 restore suppression) and, since #3214,
   re-records the open obligation too, bound to the same vault fingerprint, so
@@ -168,8 +176,9 @@ should outlive account deletion was not part of that decision and stays open.
 1. Final wording of the 503 notices, the choice, and the receipt (drafts above
    and in `frontend/src/features/Journal/deleteEntryCopy.ts` and
    `frontend/src/api/errorMessages.ts`).
-2. Retention values for `confirmed` and `unconfirmed` rows, and whether an
-   `unconfirmed` row should outlive account deletion.
+2. Retention values for `confirmed` and `unconfirmed` rows. (Whether an open
+   row outlives account deletion was decided on 2026-10-14: as a detached note,
+   for at most 97 days, #3267.)
 3. Whether to store a content-free, person-recognisable vault label at bind
    time, so the tell can name the old vault rather than describe it.
 4. Whether `docs/your-data.md` and the privacy policy should describe the
