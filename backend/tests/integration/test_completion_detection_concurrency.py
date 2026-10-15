@@ -28,7 +28,7 @@ from http import HTTPStatus
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlmodel import col
 
@@ -36,6 +36,7 @@ from database import get_session
 from domain.detection import CompletionDetected
 from main import app
 from models.completion_suggestion import CompletionSuggestion
+from models.goal import Goal, GoalTier
 from models.habit import Habit
 from models.user import User
 from routers.journal import _persist_detected_suggestions as persist_detected_suggestions
@@ -237,6 +238,16 @@ async def test_two_overlapping_persists_still_write_one_offer(
     mechanism that would still hold if a future caller reached the persistence
     without the barrier, and a property no test drives is a property nobody has.
     """
+    # A detector names a representative Goal, not its Habit. Separate these
+    # sequences so coincident ids cannot silently certify the wrong foreign key.
+    async with pg_engine.begin() as connection:
+        await connection.execute(
+            text(
+                "SELECT setval(pg_get_serial_sequence('goal', 'id'), "
+                "GREATEST((SELECT last_value FROM goal_id_seq), "
+                "(SELECT last_value FROM habit_id_seq)) + 1)"
+            )
+        )
     headers = await _signup(concurrent_pg_client, "persist-race")
     entry_id = await _seed_detectable_entry(concurrent_pg_client, headers)
     async with AsyncSession(pg_engine) as session:
@@ -245,12 +256,21 @@ async def test_two_overlapping_persists_still_write_one_offer(
         ).scalar_one()
         assert user.id is not None
         user_id = int(user.id)
-        habit_id = await _only_habit_id(session, user_id)
+        goal_id = await _only_clear_goal_id(session, user_id)
+        representative_goal = (
+            await session.execute(
+                select(Goal)
+                .join(Habit, col(Goal.habit_id) == col(Habit.id))
+                .where(col(Habit.user_id) == user_id, col(Goal.tier) == GoalTier.CLEAR)
+            )
+        ).scalar_one()
+        assert representative_goal.id != representative_goal.habit_id
+        assert goal_id == representative_goal.id, "detected habit targets name the owned clear goal"
 
     hits = [
         CompletionDetected(
             target_type="habit",
-            target_id=habit_id,
+            target_id=goal_id,
             label="Meditation",
             anchor_start=0,
             anchor_end=len("I meditated"),
@@ -278,8 +298,14 @@ async def test_two_overlapping_persists_still_write_one_offer(
     assert await _offer_count(pg_engine, entry_id) == 1
 
 
-async def _only_habit_id(session: AsyncSession, user_id: int) -> int:
-    """The id of the single habit the seeding request created for ``user_id``."""
-    habit = (await session.execute(select(Habit).where(col(Habit.user_id) == user_id))).scalar_one()
-    assert habit.id is not None
-    return int(habit.id)
+async def _only_clear_goal_id(session: AsyncSession, user_id: int) -> int:
+    """The owned clear-tier goal the detector uses to represent the seeded habit."""
+    goal = (
+        await session.execute(
+            select(Goal)
+            .join(Habit, col(Goal.habit_id) == col(Habit.id))
+            .where(col(Habit.user_id) == user_id, col(Goal.tier) == GoalTier.CLEAR)
+        )
+    ).scalar_one()
+    assert goal.id is not None
+    return int(goal.id)
