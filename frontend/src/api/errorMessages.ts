@@ -36,7 +36,7 @@ const PASSWORD_TOO_LONG =
 // ``needs_license`` so the two roads to "we need your key" read identically.
 const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to continue.';
 // One wallet (#623). Since ADR 0009 phase (a) (#3067) it pays only for a
-// reading the writer's vault answers; letters and page reading need the
+// reading or letter the writer's vault answers; page reading needs the
 // writer's own key. Shared by the ``payment_required`` code and the bare 402
 // fallback so a spent month reads the same whichever road reported it.
 /**
@@ -47,12 +47,12 @@ const ADD_LICENSE_KEY = 'Add the license key from your Gumroad receipt to contin
  * surface, which keeps its own closed taxonomy, renders the same words.
  *
  * Since ADR 0009 phase (a) (#3067) credits pay only when the writer's vault
- * answers, which is a resonance reading; letters and page reading always go to
- * the app's provider and need the writer's own key. Owner-approved wording
+ * answers a reading or letter; page reading goes to the app's provider and
+ * needs the writer's own key. Owner-approved wording
  * (#3262); it makes no privacy promise (B24, #3076 gates those).
  */
 export const INSUFFICIENT_OFFERINGS_COPY =
-  "You're out of BotMason credits, so nothing was charged. Credits pay only for readings your vault answers; letters and page reading need your own OpenAI or Anthropic API key, which you can add in Settings.";
+  "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your vault answers; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.";
 // Owner-approved wording (ADR 0009 phase (a), #3067; #3262): says plainly that
 // credits no longer pay for cloud AI. No privacy promise; B24 (#3076) gates those.
 export const LLM_KEY_REQUIRED_COPY =

@@ -1,10 +1,10 @@
 /**
  * The words of the resonance spend disclosure.
  *
- * A resonance pass costs money. The caller's own API key pays when present;
- * otherwise the backend deducts one message from the account's BotMason wallet
- * before it dials the model. Until this disclosure existed the first anyone
- * heard of that was the 402 that arrives once the allowance is gone.
+ * The server-owned route determines who pays. Supported app_provider readings
+ * require the caller's own API key. Successful vault_bound readings spend
+ * BotMason credits even when that key is present; a bound route alone does not
+ * mean the vault can answer.
  *
  * So the copy has one job, in this order: what the pass does, where the entry
  * goes, what it costs, and that declining is free. It is deliberately flat about
@@ -48,8 +48,6 @@ export const RESONANCE_EXPLAINER_TITLE = 'Before the reading';
 export const RESONANCE_EXPLAINER_WHAT =
   'Resonance reads this entry and leaves margin notes beside the passages it responds to. To do that, the text of this entry, up to three other pieces of your own writing, short excerpts of your earlier letters, and the names and units of your habits and practices are sent to an AI model.';
 
-const ADD_KEY = 'Add your own API key in Settings and it pays instead.';
-
 /** What a resonance pass is called in its price line. */
 const READING = 'reading';
 
@@ -57,11 +55,9 @@ const READING = 'reading';
  * The price, derived from who pays and the allowance this deployment serves.
  *
  * ``noun`` names the charged thing — a ``reading`` (the pass, and the default,
- * so the pass's copy is unchanged) or a ``letter`` (a note's first essay). One
- * function, so the two prices can never be worded differently for the same
- * wallet. With no key it is shown only where credits can pay: a reading a
- * vault may answer (and, in a development build, anything its stub seam can
- * answer); everywhere else the line is {@link keyNeededCost}.
+ * so the pass's copy is unchanged) or a ``letter`` (a note's first essay, via
+ * {@link essayExplainerCost}). A vault-bound first letter uses the same wallet
+ * price as a reading; its server negotiates support and refunds any unkept letter.
  */
 export function resonanceExplainerCost(
   hasKey: boolean,
@@ -69,34 +65,49 @@ export function resonanceExplainerCost(
   monthlyRemaining: number | null = null,
   offeringBalance: number | null = null,
   noun: string = READING,
+  vaultBound: boolean = false,
 ): string {
-  if (hasKey) {
+  if (hasKey && !vaultBound) {
     return `Your own API key pays for this ${noun}. Nothing is drawn from your BotMason messages.`;
   }
+  if (!vaultBound) return keyNeededCost(noun);
+  return vaultPrice(monthlyCap, monthlyRemaining, offeringBalance, noun);
+}
+
+function vaultPrice(
+  monthlyCap: number | null,
+  monthlyRemaining: number | null,
+  offeringBalance: number | null,
+  noun: string,
+): string {
   if (monthlyRemaining === 0 && offeringBalance === 0) {
-    return `You have no BotMason monthly messages or offerings available for this ${noun}. ${ADD_KEY}`;
+    return `You have no BotMason monthly messages or offerings available for this ${noun}.`;
   }
   if (monthlyCap === 0 || monthlyRemaining === 0) {
-    return `This ${noun} spends one BotMason offering. ${ADD_KEY}`;
+    return `This ${noun} spends one BotMason offering.`;
   }
   if (monthlyCap !== null) {
-    return `This ${noun} spends one of your ${monthlyCap} BotMason messages for the month. ${ADD_KEY}`;
+    return `This ${noun} spends one of your ${monthlyCap} BotMason messages for the month.`;
   }
-  return `This ${noun} spends one BotMason message from your account. ${ADD_KEY}`;
+  return `This ${noun} spends one BotMason message from your account.`;
 }
 
 /** What a note's first letter is called in its price line. */
 export const ESSAY_NOUN = 'letter';
 
 /**
- * What leads every keyless line where credits cannot pay (#3262).
- *
- * Since ADR 0009 phase (a) (#3067) BotMason credits pay only for a reading the
- * writer's own vault answers. A letter, and a reading with no vault to answer
- * it, can be paid for only by the writer's own key -- so that is what the line
- * says first, with no price beside it, and the surface's own action opens
- * Settings.
+ * A supported first app_provider letter uses the caller's own API key. First
+ * vault_bound letters spend one wallet unit; opening an already written letter is free.
  */
+export function essayExplainerCost(
+  hasKey: boolean,
+  monthlyCap: number | null,
+  monthlyRemaining: number | null = null,
+  offeringBalance: number | null = null,
+): string {
+  return resonanceExplainerCost(hasKey, monthlyCap, monthlyRemaining, offeringBalance, ESSAY_NOUN);
+}
+
 export const KEY_NEEDED_LEAD = 'This needs your own API key.';
 
 /** The keyless line for a thing only the writer's own key can pay for. */

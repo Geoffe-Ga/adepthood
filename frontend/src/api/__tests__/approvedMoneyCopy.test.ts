@@ -22,7 +22,7 @@ describe('owner-approved money copy (#3262)', () => {
     [
       'INSUFFICIENT_OFFERINGS_COPY',
       INSUFFICIENT_OFFERINGS_COPY,
-      "You're out of BotMason credits, so nothing was charged. Credits pay only for readings your vault answers; letters and page reading need your own OpenAI or Anthropic API key, which you can add in Settings.",
+      "You're out of BotMason credits, so nothing was charged. Credits pay for readings and letters your vault answers; page reading needs your own OpenAI or Anthropic API key, which you can add in Settings.",
     ],
     [
       'LLM_KEY_REQUIRED_COPY',
@@ -37,12 +37,12 @@ describe('owner-approved money copy (#3262)', () => {
     [
       'NO_KEY_HINT',
       NO_KEY_HINT,
-      "No key saved yet. BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — need a key of your own, and credits don't pay for them. Resonance notes can still come from your vault if you have one.",
+      "No key saved yet. BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — need a key of your own, and credits don't pay for them. Resonance notes and letters can still come from your vault if you have one.",
     ],
     [
       'REMOVE_KEY_DIALOG_BODY',
       REMOVE_KEY_DIALOG_BODY,
-      "Without your own key, BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — stop until you add one again. Resonance notes can still come from your vault if you have one. Your journal itself is unaffected.",
+      "Without your own key, BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — stop until you add one again. Resonance notes and letters can still come from your vault if you have one. Your journal itself is unaffected.",
     ],
   ])('%s reads exactly as approved', (_name, actual, expected) => {
     expect(actual).toBe(expected);

@@ -2610,5 +2610,21 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/practice-habit-link.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.money-copy-route-and-credit-pack",
+    "description": "An authenticated writer sees the payer before an ask. The browser checks real server-confirmed armed demo readings and first letters with Demo disclosure, persistence, no wallet charge and no provider calls, plus explicitly controlled production app-provider keyless reading/letter Settings paths without a UI ask, real deployment-owner vault readings charged to the wallet with and without a key, wallet-priced vault first letters with explicit price acknowledgment and free cached reopening, missing-capability refusal without charge or app-provider fallback, and app-provider own-key reading receipts without a wallet debit. A controlled rolling-server response omitting only route metadata proves unknown payment disables asking. A separate explicitly controlled empty-wallet response changes only affordability while preserving the real owner route: optional EXPO_PUBLIC_CREDIT_PACK_URL set/unset determines the exact link and same-email note, and no POST or wallet change follows opening or cancelling. Phone390 and desktop1280 computed text at200 percent are inspected with actual pointer hit testing.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["botmasonUsage", "resonance"],
+      "routes": [
+        "GET /user/usage",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["user", "journalentry", "marginalia", "walletaudit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/money-copy.browser.e2e.test.ts"
   }
 ]

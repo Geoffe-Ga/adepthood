@@ -17,6 +17,7 @@ jest.mock('@/storage/resonanceExplainerStorage', () => require('./resonanceExpla
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./readingRouteTestKit'),
   journal: {
     get: (...args: unknown[]) => (mockGet as unknown as (...values: unknown[]) => unknown)(...args),
     create: jest.fn(),

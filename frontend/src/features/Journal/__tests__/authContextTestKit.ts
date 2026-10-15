@@ -1,3 +1,8 @@
+import { setActiveUser } from '@/storage/userScope';
+
+// The authenticated fixture owns user 1's device namespace.
+setActiveUser(1);
+
 /**
  * The ``AuthContext`` stand-in for the ``JournalEntryScreen`` specs.
  *
@@ -13,6 +18,10 @@
 export const TEST_TIMEZONE = 'UTC';
 
 /** Just the slice the screen reads; the rest of the context is unused here. */
-export function useAuth(): { userTimezone: string } {
-  return { userTimezone: TEST_TIMEZONE };
+export function useAuth(): { userTimezone: string; token: string; authStatus: string } {
+  return {
+    userTimezone: TEST_TIMEZONE,
+    token: 'test.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test',
+    authStatus: 'authenticated',
+  };
 }

@@ -36,6 +36,7 @@ const mockUsage = jest.fn() as jest.MockedFunction<
     monthly_cap: number;
     monthly_reset_date: string;
     offering_balance: number;
+    resonance_route?: 'vault_bound' | 'app_provider';
   }>
 >;
 const mockApiKeyState: { apiKey: string | null; isLoading: boolean } = {
@@ -55,6 +56,7 @@ interface UsageSnapshot {
   monthly_cap: number;
   monthly_reset_date: string;
   offering_balance: number;
+  resonance_route?: 'vault_bound' | 'app_provider';
 }
 
 function usageSnapshot(overrides: Partial<UsageSnapshot> = {}): UsageSnapshot {
@@ -64,6 +66,7 @@ function usageSnapshot(overrides: Partial<UsageSnapshot> = {}): UsageSnapshot {
     monthly_cap: 7,
     monthly_reset_date: '2026-07-01T00:00:00Z',
     offering_balance: 0,
+    resonance_route: 'vault_bound',
     ...overrides,
   };
 }
@@ -268,6 +271,7 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
       monthly_cap: 7,
       monthly_reset_date: '2026-07-01T00:00:00Z',
       offering_balance: 0,
+      resonance_route: 'vault_bound',
     });
     const { findByTestId } = await openEntryAndAsk();
 
@@ -285,12 +289,13 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
       monthly_cap: 0,
       monthly_reset_date: '2026-07-01T00:00:00Z',
       offering_balance: 3,
+      resonance_route: 'vault_bound',
     });
     const { findByTestId } = await openEntryAndAsk();
 
     const body = await findByTestId('resonance-explainer-cost');
     await waitFor(() => expect(body).toHaveTextContent(/one BotMason offering/u));
-    expect(body).toHaveTextContent(/Add your own API key in Settings/u);
+    expect(body).not.toHaveTextContent(/key.*pays instead/u);
   });
 
   it('names an offering after a nonzero monthly allowance is exhausted', async () => {
@@ -300,6 +305,7 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
       monthly_cap: 7,
       monthly_reset_date: '2026-07-01T00:00:00Z',
       offering_balance: 3,
+      resonance_route: 'vault_bound',
     });
     const { findByTestId } = await openEntryAndAsk();
 
@@ -309,12 +315,13 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
 
   it('says a stored API key pays and no BotMason message is drawn', async () => {
     mockApiKeyState.apiKey = 'sk-stored-caller-key'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     const { findByTestId } = await openEntryAndAsk();
 
     const body = await findByTestId('resonance-explainer-cost');
     expect(body).toHaveTextContent(/Your own API key pays for this reading/u);
     expect(body).toHaveTextContent(/Nothing is drawn from your BotMason messages/u);
-    expect(mockUsage).not.toHaveBeenCalled();
+    expect(mockUsage).toHaveBeenCalledTimes(1);
   });
 
   it('opens a refill invitation instead of the spend explainer for an exhausted wallet', async () => {
@@ -329,7 +336,9 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
 
     const refill = await findByTestId('journal-resonance-refill');
     expect(refill).toHaveTextContent(/July 1, 2026/u);
-    expect(refill).toHaveTextContent(/Add your own API key/u);
+    expect(refill).toHaveTextContent(
+      /vault answers use BotMason credits, even when an API key is saved/u,
+    );
     expect(refill).not.toHaveTextContent(/Don.t show this again/u);
     expect(refill).not.toHaveTextContent(/Continue/u);
     expect(queryByTestId('resonance-explainer')).toBeNull();
@@ -347,13 +356,17 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     expect(refill).not.toHaveTextContent(/messages come back/u);
   });
 
-  it('takes the refill invitation directly to API-key settings', async () => {
+  it('takes the key-required invitation directly to API-key settings', async () => {
     mockUsage.mockResolvedValueOnce(
-      usageSnapshot({ monthly_messages_used: 7, monthly_messages_remaining: 0 }),
+      usageSnapshot({
+        resonance_route: 'app_provider',
+        monthly_messages_used: 7,
+        monthly_messages_remaining: 0,
+      }),
     );
     const { findByTestId, queryByTestId } = await openEntryAndAsk();
 
-    fireEvent.press(await findByTestId('journal-resonance-refill-add-key'));
+    fireEvent.press(await findByTestId('resonance-explainer-open-settings'));
 
     expect(queryByTestId('journal-resonance-refill')).toBeNull();
     expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
@@ -369,6 +382,7 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     expect(mockUsage).not.toHaveBeenCalled();
 
     mockApiKeyState.apiKey = 'sk-key-loaded-from-device'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     mockApiKeyState.isLoading = false;
     await act(async () => view.rerender(screenElement()));
 
@@ -391,6 +405,7 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
 
     mockApiKeyState.apiKey = 'sk-key-loaded-in-settings'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     mockApiKeyState.isLoading = false;
     await act(async () => view.rerender(screenElement()));
 
@@ -409,6 +424,7 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     );
 
     mockApiKeyState.apiKey = 'sk-key-added-after-open'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     await act(async () => view.rerender(screenElement()));
     await act(async () => {
       fireEvent.press(view.getByTestId('resonance-explainer-continue'));
@@ -444,6 +460,7 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
 
     fireEvent.press(view.getByTestId('journal-api-key-settings'));
     mockApiKeyState.apiKey = 'sk-key-saved-during-preflight'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     await act(async () => view.rerender(screenElement()));
     await act(async () => heldUsage.resolve(usageSnapshot({ monthly_messages_remaining: 0 })));
 
@@ -453,7 +470,7 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     expect(await view.findByTestId('resonance-explainer-cost')).toHaveTextContent(
       /Your own API key pays/u,
     );
-    expect(mockUsage).toHaveBeenCalledTimes(1);
+    expect(mockUsage).toHaveBeenCalledTimes(2);
   });
 
   it('ignores an older 402 refresh that resolves after a newer disclosure', async () => {
@@ -624,7 +641,9 @@ describe('JournalEntryScreen — a stale wallet read is corrected by the pass', 
   });
 
   it('uses coherent fallback copy when the reset date cannot be read', async () => {
-    mockUsage.mockRejectedValue(new Error('usage unavailable'));
+    mockUsage
+      .mockResolvedValueOnce(usageSnapshot())
+      .mockRejectedValue(new Error('usage unavailable'));
     mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
     const { findByTestId } = await openEntryAndAsk();
     fireEvent.press(await findByTestId('resonance-explainer-continue'));
@@ -670,8 +689,9 @@ describe('JournalEntryScreen — a stale wallet read is corrected by the pass', 
     mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
     const view = await openEntryAndAsk();
     fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
-    fireEvent.press(await view.findByTestId('journal-resonance-refill-add-key'));
+    fireEvent.press(await view.findByTestId('journal-api-key-settings'));
     mockApiKeyState.apiKey = 'sk-key-added-after-402'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     await act(async () => view.rerender(screenElement()));
 
     await act(async () => heldRefresh.resolve(usageSnapshot({ monthly_messages_remaining: 0 })));
@@ -688,6 +708,7 @@ describe('JournalEntryScreen — a stale wallet read is corrected by the pass', 
 
     fireEvent.press(view.getByTestId('journal-api-key-settings'));
     mockApiKeyState.apiKey = 'sk-key-added-during-pass'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     await act(async () => view.rerender(screenElement()));
     await act(async () => heldPass.reject(apiError(402, 'insufficient_offerings')));
 
@@ -721,8 +742,9 @@ describe('JournalEntryScreen — a stale wallet read is corrected by the pass', 
     mockGenerate.mockRejectedValueOnce(apiError(402, 'insufficient_offerings'));
     const view = await openEntryAndAsk();
     fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
-    fireEvent.press(await view.findByTestId('journal-resonance-refill-add-key'));
+    fireEvent.press(await view.findByTestId('journal-api-key-settings'));
     mockApiKeyState.apiKey = 'sk-retry-key'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     await act(async () => view.rerender(screenElement()));
 
     fireEvent.press(view.getByTestId('get-resonance-button'));
@@ -795,11 +817,16 @@ const ESSAY_NOTE = {
  * empty wallet on the letter must reach the same refill remedy — not a generic
  * error inside the essay card.
  */
+// A non-secret fixture: this test needs only opaque key presence.
+const TEST_OWN_CREDENTIAL = 'synthetic-test-only';
+
 describe('JournalEntryScreen — an essay 402 opens the same refill remedy', () => {
   it.each([
     ['insufficient_offerings', /BotMason balance has run out/u],
     ['llm_key_required', /needs an API key of your own/u],
   ])('closes the note and opens the refill dialog on a 402 %s', async (detail, copy) => {
+    mockApiKeyState.apiKey = TEST_OWN_CREDENTIAL;
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     mockList.mockResolvedValue({ items: [ESSAY_NOTE] });
     mockEssay.mockRejectedValueOnce(apiError(402, detail));
     const view = renderScreen();
@@ -826,6 +853,7 @@ describe('JournalEntryScreen — an essay 402 opens the same refill remedy', () 
 describe('JournalEntryScreen — the letter offer names who pays', () => {
   it('tells a writer with their own key that the key pays, without reading the wallet', async () => {
     mockApiKeyState.apiKey = 'sk-letter-own-key'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
     mockList.mockResolvedValue({ items: [ESSAY_NOTE] });
     const view = renderScreen();
     fireEvent.press(await view.findByTestId(`margin-note-${ESSAY_NOTE.id}`));
@@ -836,11 +864,11 @@ describe('JournalEntryScreen — the letter offer names who pays', () => {
         'Your own API key pays for this letter. Nothing is drawn from your BotMason messages.',
       ),
     );
-    expect(mockUsage).not.toHaveBeenCalled();
+    expect(mockUsage).toHaveBeenCalledTimes(1);
     expect(mockEssay).not.toHaveBeenCalled();
   });
 
-  it('tells a server-paid writer which wallet unit the letter spends', async () => {
+  it('offers a vault-bound letter at one wallet unit without asking automatically', async () => {
     mockUsage.mockResolvedValueOnce(
       usageSnapshot({ monthly_messages_remaining: 0, offering_balance: 3 }),
     );
@@ -850,9 +878,10 @@ describe('JournalEntryScreen — the letter offer names who pays', () => {
 
     const cost = await view.findByTestId('essay-ask-cost');
     await waitFor(() =>
-      expect(cost).toHaveTextContent(/This letter spends one BotMason offering/u),
+      expect(cost).toHaveTextContent('This letter spends one BotMason offering.'),
     );
     expect(mockUsage).toHaveBeenCalled();
+    expect(view.getByTestId('essay-ask')).toBeTruthy();
     expect(mockEssay).not.toHaveBeenCalled();
   });
 });
@@ -923,6 +952,7 @@ describe('JournalEntryScreen — with no key, only a vault-answered reading has 
 
   beforeEach(() => {
     mockKeylessReachesServer = false;
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'app_provider' }));
   });
 
   it('leads a vaultless reading with the key, names no price, and sends nothing', async () => {
@@ -933,7 +963,7 @@ describe('JournalEntryScreen — with no key, only a vault-answered reading has 
     expect(cost).not.toHaveTextContent(/BotMason/u);
     expect(view.queryByTestId('resonance-explainer-continue')).toBeNull();
     expect(view.queryByTestId('resonance-explainer-dont-show')).toBeNull();
-    expect(mockUsage).not.toHaveBeenCalled();
+    expect(mockUsage).toHaveBeenCalledTimes(1);
     expect(mockGenerate).not.toHaveBeenCalled();
   });
 
@@ -959,12 +989,13 @@ describe('JournalEntryScreen — with no key, only a vault-answered reading has 
 
   it('keeps the shipped price for a reading a connected vault answers', async () => {
     mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://vault.example' });
+    mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'vault_bound' }));
     const view = await openEntryAndAsk();
 
     const cost = await view.findByTestId('resonance-explainer-cost');
     await waitFor(() =>
       expect(cost).toHaveTextContent(
-        'This reading spends one of your 7 BotMason messages for the month. Add your own API key in Settings and it pays instead.',
+        'This reading spends one of your 7 BotMason messages for the month.',
       ),
     );
     expect(view.getByTestId('resonance-explainer-continue')).toBeTruthy();
@@ -987,8 +1018,10 @@ describe('JournalEntryScreen — with no key, only a vault-answered reading has 
     fireEvent.press(await view.findByTestId(`margin-note-${ESSAY_NOTE.id}`));
 
     const cost = await view.findByTestId('essay-ask-cost');
-    expect(cost).toHaveTextContent(
-      'This needs your own API key. Add one in Settings to ask for this letter.',
+    await waitFor(() =>
+      expect(cost).toHaveTextContent(
+        'This needs your own API key. Add one in Settings to ask for this letter.',
+      ),
     );
     expect(cost).not.toHaveTextContent(/BotMason/u);
     expect(view.queryByTestId('essay-ask')).toBeNull();
@@ -998,6 +1031,6 @@ describe('JournalEntryScreen — with no key, only a vault-answered reading has 
     expect(mockNavigate).toHaveBeenCalledWith('ApiKeySettings');
     await waitFor(() => expect(view.queryByTestId('essay-offer')).toBeNull());
     expect(mockEssay).not.toHaveBeenCalled();
-    expect(mockUsage).not.toHaveBeenCalled();
+    expect(mockUsage).toHaveBeenCalledTimes(1);
   });
 });
