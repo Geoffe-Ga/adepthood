@@ -274,6 +274,18 @@
     "coveredBy": "frontend/e2e/habit-reorder.browser.e2e.test.ts"
   },
   {
+    "id": "habits.onboarding-row-wraps-a-long-name",
+    "description": "A user with a long habit name opens Energy Scaffolding and reaches the reorder step, where each habit is a draggable row (#3398). The covering spec signs up through the real client, seeds one habit with an 85-character name through the real API, walks review, add, both energy steps and the count warning, then measures the row in Chromium at 390px and 1280px with normal and doubled name text. Every glyph box of the name sits inside the row and the viewport, no word of the name is split across lines (on a phone the name drops to its own line under the date rather than breaking mid-word), the page never scrolls sideways, the date, icon-edit control and energy line stay inside the row without overlapping the name or each other, the energy line hangs on the date's left edge, and doubling the name adds lines without moving the date or the edit control. Saved frames are inspected by hand. Targeted text doubling does not establish physical OS zoom or native geometry.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/components/OnboardingModal.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-onboarding-long-name.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.write-list-read-back",
     "description": "A user first tries to save a page made only of whitespace, a zero-width mark, and a control character; the production client receives the stable journal_message_empty refusal and the live journal remains empty. They then write legitimate Unicode prose, find it in the list, and read the body back unchanged. The backend boundary suite separately sweeps spaces, tabs/newlines, controls, and zero-width-only bodies across create and edit, proving those refusals happen before a journal row, Creek write, corpus classification, pipeline run, or wallet event.",
     "crosses": {
