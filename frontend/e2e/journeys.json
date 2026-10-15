@@ -40,6 +40,18 @@
     "coveredBy": "frontend/e2e/session-lifetime.e2e.test.ts"
   },
   {
+    "id": "auth.reauth-sheet-survives-anonymous-401",
+    "description": "A session whose credential expires while the user is on Habits opens the re-auth sheet over that screen: the stored token is refused and its /auth/refresh fails (#3396). The app now holds no token, so the still-mounted screen's next GET /ui-flags goes out anonymous and the real backend answers 401 not_authenticated. That 401 must not collapse the sheet to Get Started; the sheet stays open, the person signs back in from it through the real /auth/login, and lands on Habits with their seeded habit. Only the expired credential is faked in the browser; the anonymous 401 and the new session's requests reach the real server. Asserted at 390 and 1280, with the sheet's controls inside the viewport at normal and doubled text. Jest covers the controls: a genuinely anonymous session still lands on anonymous, signing out from the sheet still signs out, another account signing in from the sheet still wipes, and a not_authenticated 401 racing the expiry before the sheet renders still leaves it open.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/ReauthSheet.tsx",
+      "client": ["auth", "uiFlags", "setOnUnauthorized"],
+      "routes": ["POST /auth/login", "POST /auth/refresh", "GET /ui-flags", "GET /habits/"],
+      "tables": ["user", "habit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/reauth-sheet-survives-anonymous-401.browser.e2e.test.ts"
+  },
+  {
     "id": "auth.screens-remain-reachable-with-large-content",
     "description": "A signed-out reader sees the editorial auth layout vertically centred when it fits, then can reach both ends of the Get Started content when the available height shrinks to a keyboard-sized viewport. Every auth route -- Get Started, Login, Signup, Forgot Password, Reset Password and Cancel Reset -- exposes the same scroll surface, and the journey finishes by creating an account through the production client so the tested surface crosses its real seam. The browser half pins actual overflow and centring geometry; the native PR evidence separately exercises iOS 18.6 at accessibility-extra-extra-extra-large because a browser cannot emulate iOS Dynamic Type.",
     "crosses": {

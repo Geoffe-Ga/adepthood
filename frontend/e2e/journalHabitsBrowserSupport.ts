@@ -8,7 +8,8 @@ import { runBackendModule } from './laneDatabase';
 import { BACKEND_DIR, pythonExecutable, readLaneState } from './laneState';
 import { freshLicenseKey } from './licenseKey';
 
-const ACCOUNT_PHRASE = 'Journal-habits-browser-passphrase';
+/** The password every account this module signs up is created with. */
+export const ACCOUNT_PHRASE = 'Journal-habits-browser-passphrase';
 const START_DATE = '2026-01-01';
 /** The journal's drawer toggle: the landmark every signed-in arrival waits for. */
 const JOURNAL_MENU = 'Open Journal menu';
