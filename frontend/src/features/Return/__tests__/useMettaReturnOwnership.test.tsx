@@ -1,7 +1,7 @@
 import { jest, beforeEach, it, expect } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
-import type { MettaReturnState } from '@/api';
+import type { MettaReturnState, ReturnArc } from '@/api';
 import type * as UserScope from '@/storage/userScope';
 
 let mockOwner: number | null = 1;
@@ -17,7 +17,8 @@ const mockSave = jest.fn<(..._args: unknown[]) => Promise<unknown>>();
 jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: mockToken }) }));
 jest.mock('@/utils/token', () => ({
   decodeJwtPayload: (token: string) =>
-    token.startsWith('account-') ? { sub: token.slice('account-'.length) } : null,
+    // ``account-<id>`` or a renewed ``account-<id>:<renewal>`` for the same subject.
+    token.startsWith('account-') ? { sub: token.slice('account-'.length).split(':')[0] } : null,
 }));
 jest.mock('@/storage/userScope', () => ({
   ...jest.requireActual<typeof UserScope>('@/storage/userScope'),
@@ -208,4 +209,75 @@ it('does not hide the new account let-go moment through a retained skip callback
   expect(result.current.letGoVisible).toBe(true);
   act(() => oldSkip());
   expect(result.current.letGoVisible).toBe(true);
+});
+
+const ARC: ReturnArc = {
+  started_at: '2026-10-14T00:00:00Z',
+  paused: false,
+  week: 1,
+  focus: 'self',
+  complete: false,
+};
+
+async function renderStartedReturn() {
+  mockStart.mockResolvedValue(ARC);
+  const rendered = renderHook(() => useMettaReturn());
+  await waitFor(() => expect(rendered.result.current.offerVisible).toBe(true));
+  mockState.mockResolvedValue({ ...state(), arc: ARC });
+  await act(async () => rendered.result.current.start());
+  expect(rendered.result.current.letGoVisible).toBe(true);
+  return rendered;
+}
+
+it('keeps the let-go moment open across a same-account token renewal', async () => {
+  const { result, rerender } = await renderStartedReturn();
+  mockToken = 'account-1:renewed';
+  rerender({});
+  await waitFor(() => expect(mockState).toHaveBeenCalledWith('account-1:renewed'));
+  expect(result.current.arc).toEqual(ARC);
+  expect(result.current.letGoVisible).toBe(true);
+  await act(async () => result.current.release([9]));
+  expect(mockRelease).toHaveBeenCalledWith([9], 'account-1:renewed');
+  expect(result.current.letGoVisible).toBe(false);
+});
+
+it('still lets the person skip the let-go moment after a same-account renewal', async () => {
+  const { result, rerender } = await renderStartedReturn();
+  mockToken = 'account-1:renewed';
+  rerender({});
+  await waitFor(() => expect(mockState).toHaveBeenCalledWith('account-1:renewed'));
+  expect(result.current.letGoVisible).toBe(true);
+  act(() => result.current.skipLetGo());
+  expect(result.current.letGoVisible).toBe(false);
+  expect(mockRelease).not.toHaveBeenCalled();
+});
+
+it('closes the let-go moment when the session is torn down, even for a returning account', async () => {
+  const { result, rerender } = await renderStartedReturn();
+  mockToken = null;
+  mockOwner = null;
+  mockEpoch += 1;
+  rerender({});
+  expect(result.current.letGoVisible).toBe(false);
+  mockToken = 'account-1:next-session';
+  mockOwner = 1;
+  mockEpoch += 1;
+  rerender({});
+  await waitFor(() => expect(mockState).toHaveBeenCalledWith('account-1:next-session'));
+  await waitFor(() => expect(result.current.arc).toEqual(ARC));
+  expect(result.current.letGoVisible).toBe(false);
+});
+
+it('closes the let-go moment across A to B to A without an intermediate render', async () => {
+  const { result, rerender } = await renderStartedReturn();
+  const oldRelease = result.current.release;
+  mockOwner = 2;
+  mockEpoch += 1;
+  mockOwner = 1;
+  mockEpoch += 1;
+  rerender({});
+  await waitFor(() => expect(mockState).toHaveBeenCalledTimes(2));
+  expect(result.current.letGoVisible).toBe(false);
+  await act(async () => oldRelease([9]));
+  expect(mockRelease).not.toHaveBeenCalled();
 });

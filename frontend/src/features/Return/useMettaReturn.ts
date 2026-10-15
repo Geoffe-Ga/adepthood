@@ -44,14 +44,22 @@ interface LetGoActions {
   recommit: (_habitIds: number[]) => Promise<void>;
 }
 
-/** Own the let-go / re-commit moment: its visibility and the release/recommit calls. */
+/**
+ * Own the let-go / re-commit moment: its visibility and the release/recommit calls.
+ *
+ * Visibility resets with the owner ``session``, not with ``current``: a
+ * same-account token renewal mints a new ``current`` fence, and keying the
+ * reset to it closed the prompt mid-choice (#3374). Requests still capture the
+ * latest credential and stay fenced by ``current``.
+ */
 function useLetGoActions(
   current: () => boolean,
+  session: string | null,
   token: string | null,
   setReleasedHabits: (_habits: ReleasedHabit[]) => void,
 ): LetGoActions {
   const [letGoVisible, setLetGoVisible] = useState(false);
-  useEffect(() => setLetGoVisible(false), [current]);
+  useEffect(() => setLetGoVisible(false), [session]);
   const markStarted = useCallback((): void => setLetGoVisible(true), []);
   const skipLetGo = useCallback((): void => {
     if (current()) setLetGoVisible(false);
@@ -140,6 +148,7 @@ export function useMettaReturn(): UseMettaReturnResult {
   const contractionActive = useContractionSignalActive();
   const { letGoVisible, markStarted, skipLetGo, release, recommit } = useLetGoActions(
     loaded.current,
+    loaded.session,
     loaded.token,
     loaded.setReleasedHabits,
   );
