@@ -209,6 +209,38 @@ def test_without_a_key_the_stored_form_is_the_json_text() -> None:
     assert _result(json.dumps(_TAGS)) == _TAGS
 
 
+@pytest.mark.usefixtures("_keyed")
+def test_a_stored_json_null_reads_as_no_list() -> None:
+    """The old ``JSON`` column stored Python ``None`` as JSON ``null``; it still means none.
+
+    Migration ``e8a3c5f7b9d2`` encrypted every non-NULL value, ``'null'`` among
+    them, so those rows reach the reader as ciphertext of ``null`` (or as the
+    bare text where no key was configured).
+    """
+    assert _result(je.encrypt("null")) is None
+    assert _result("null") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+async def test_an_entry_whose_tags_were_stored_as_json_null_still_loads(
+    db_session: AsyncSession,
+) -> None:
+    """One such row must not fail every query that loads it (the journal list, reflections)."""
+    entry = JournalEntry(sender="user", user_id=await _user_id(db_session), message="m")
+    db_session.add(entry)
+    await db_session.commit()
+    await db_session.execute(
+        text("UPDATE journalentry SET vault_tags = :raw"), {"raw": je.encrypt("null")}
+    )
+    await db_session.commit()
+
+    db_session.expunge_all()
+    loaded = await db_session.get(JournalEntry, entry.id)
+    assert loaded is not None
+    assert loaded.vault_tags is None
+
+
 @pytest.mark.usefixtures("_unkeyed")
 def test_a_stored_value_that_is_not_a_json_list_is_refused() -> None:
     """A scalar or object where a list belongs is corruption, surfaced rather than returned."""
