@@ -1,17 +1,19 @@
 """Exactly-once reversal of a Gumroad purchase.
 
-Gumroad reports every way a sale can come undone as its own ping: ``refund``
-and ``dispute`` return the money, ``cancellation`` and ``subscription_ended``
-merely stop the renewals. All four are re-delivered until acknowledged, and
-the same purchase can legitimately attract more than one of them, so the
-reversal has to be idempotent per *sale* rather than per delivery.
+Gumroad reports the money coming back as two pings, ``refund`` and
+``dispute``. Both are re-delivered until acknowledged, and the same purchase
+can legitimately attract both, so the reversal has to be idempotent per
+*sale* rather than per delivery.
 
 The guard is ``GumroadSale.revocation_processed_at``, taken with a single
 conditional ``UPDATE ... WHERE revocation_processed_at IS NULL``. Only the
 writer whose ``rowcount`` comes back 1 reverses anything; every later event
-finds the claim spent and does nothing. One shared column across all four
-event types is deliberate — a subscription that is cancelled and then
-refunded must lose its access once, not twice.
+finds the claim spent and does nothing.
+
+The membership pings -- ``cancellation``, ``subscription_ended`` and
+``subscription_restarted`` -- live in :mod:`services.gumroad_subscriptions`
+and never take this claim (#3259): a cancelled or ended membership that is
+later refunded must still have its refund applied in full.
 
 Three rules keep the reversal honest:
 
@@ -31,13 +33,8 @@ Three rules keep the reversal honest:
   drift to a second account while the first lives. A sale nobody has bound
   reverses nothing and is logged ``sale_not_bound``.
 
-The two handlers are asymmetric about product class on purpose.
-``process_refund`` reverses whatever the sale delivered and claims every sale
-it resolves. ``process_cancellation`` acts only on an APTITUDE sale — a
-one-time token pack is not a subscription — and is otherwise wholly inert,
-taking no claim, because consuming the shared guard there would permanently
-disarm the refund that may follow and hand the buyer both their money and
-their credits.
+``process_refund`` reverses whatever the sale delivered and claims every
+sale it resolves.
 
 Lives in ``services`` rather than ``domain`` because it owns the transaction
 boundary: it commits.
@@ -54,7 +51,6 @@ from sqlalchemy import CursorResult, update
 from sqlmodel import col, select
 
 from domain.entitlements import (
-    REASON_CANCELLATION,
     REASON_REFUND,
     is_aptitude_product_id,
     is_token_pack_product_id,
@@ -68,7 +64,7 @@ from services.wallet import claw_back_purchase_credit
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-__all__ = ["process_cancellation", "process_refund"]
+__all__ = ["process_refund"]
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +73,6 @@ logger = logging.getLogger(__name__)
 # but deliberately moved less than a naive reading would expect.
 _REASON_UNKNOWN_SALE = "unknown_sale"
 _REASON_UNKNOWN_PRODUCT = "unknown_product"
-_REASON_NOT_APPLICABLE = "cancellation_not_applicable"
 _REASON_SALE_NOT_BOUND = "sale_not_bound"
 _REASON_NEVER_CREDITED = "token_pack_never_credited"
 _REASON_CREDITED_USER_MISSING = "credited_user_missing"
@@ -140,12 +135,7 @@ async def _resolve_stored_sale(
     )
 
 
-async def _take_revocation_claim(
-    session: AsyncSession,
-    sale_id: str,
-    *,
-    mark_refunded: bool,
-) -> bool:
+async def _take_revocation_claim(session: AsyncSession, sale_id: str) -> bool:
     """Stamp the sale's reversal claim, returning whether this caller won.
 
     Under READ COMMITTED two transactions issuing this UPDATE serialize on
@@ -155,10 +145,8 @@ async def _take_revocation_claim(
     ``resource_name`` predicate is the same one that resolved the row, so
     the statement targets exactly the purchase being reversed.
 
-    ``mark_refunded`` folds the money question into the same statement: a
-    refund flips ``refunded`` alongside the claim (which is also what stops
-    the signup sweep paying the pack out later), while a cancellation leaves
-    it alone because the seller kept the payment.
+    ``refunded`` is flipped in the same statement as the claim, which is
+    also what stops the signup sweep paying an unclaimed pack out later.
 
     ``synchronize_session=False`` is load-bearing, not decoration: the sale
     may already sit in the session's identity map, and SQLAlchemy's
@@ -166,9 +154,6 @@ async def _take_revocation_claim(
     value against an aware one and raise on SQLite. Issuing the UPDATE
     through SQL alone is exactly what the guard already guarantees.
     """
-    values: dict[str, Any] = {"revocation_processed_at": datetime.now(UTC)}
-    if mark_refunded:
-        values["refunded"] = True
     result = await session.execute(
         update(GumroadSale)
         .where(
@@ -176,7 +161,7 @@ async def _take_revocation_claim(
             col(GumroadSale.resource_name) == SALE_RESOURCE_NAME,
             col(GumroadSale.revocation_processed_at).is_(None),
         )
-        .values(**values)
+        .values(revocation_processed_at=datetime.now(UTC), refunded=True)
         .execution_options(synchronize_session=False)
     )
     return bool(cast("CursorResult[Any]", result).rowcount)
@@ -199,7 +184,7 @@ async def _revoke_course_access_for(
     if binding is None:
         logger.info(_SKIPPED_EVENT, extra={"reason_code": _REASON_SALE_NOT_BOUND})
         return
-    await revoke_course_access(session, binding.user_id, reason)
+    await revoke_course_access(session, binding.user_id, reason, sale_id=stored.sale_id)
 
 
 def _claw_back_amount(stored: _StoredSale) -> int | None:
@@ -284,36 +269,7 @@ async def process_refund(session: AsyncSession, payload: dict[str, str]) -> None
     stored = await _resolve_stored_sale(session, payload)
     if stored is None:
         return
-    if not await _take_revocation_claim(session, stored.sale_id, mark_refunded=True):
+    if not await _take_revocation_claim(session, stored.sale_id):
         return
     await _reverse_delivered_value(session, stored)
-    await session.commit()
-
-
-async def process_cancellation(session: AsyncSession, payload: dict[str, str]) -> None:
-    """End future access for a ``cancellation`` or ``subscription_ended`` ping.
-
-    Applies only to an APTITUDE sale: a subscription is the only thing there
-    is to cancel. ``refunded`` stays False because the seller kept the
-    payment, and the wallet is never touched.
-
-    For anything else the handler is wholly inert — it takes no claim. That
-    restraint is what protects the money: a one-time token pack cannot be
-    cancelled, and letting a stray cancellation consume the shared guard
-    would silently disarm the refund that may follow, leaving a refunded
-    buyer holding every credit.
-
-    Commits when it acts. A ping naming no stored purchase, or one that
-    loses the claim race to an earlier reversal, returns having written
-    nothing.
-    """
-    stored = await _resolve_stored_sale(session, payload)
-    if stored is None:
-        return
-    if not is_aptitude_product_id(stored.product_id):
-        logger.info(_SKIPPED_EVENT, extra={"reason_code": _REASON_NOT_APPLICABLE})
-        return
-    if not await _take_revocation_claim(session, stored.sale_id, mark_refunded=False):
-        return
-    await _revoke_course_access_for(session, stored, REASON_CANCELLATION)
     await session.commit()

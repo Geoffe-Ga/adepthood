@@ -162,6 +162,11 @@ export async function logIn(
   origin: string = frontendUrl(),
 ): Promise<void> {
   await page.goto(`${origin}/login`);
+  await logInInPlace(page, email);
+}
+
+/** Complete an already-open log-in screen without replacing the running app. */
+export async function logInInPlace(page: Page, email: string): Promise<void> {
   await page.getByRole('textbox', { name: 'Email' }).fill(email);
   await page.getByRole('textbox', { name: 'Password', exact: true }).fill(ACCOUNT_PHRASE);
   await page.getByRole('button', { name: 'Log in' }).click();

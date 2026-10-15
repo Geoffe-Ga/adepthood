@@ -1002,8 +1002,7 @@ const noteReceiptMetadataSchema = z
   })
   .refine((row) => {
     const identity = { source: row.source, provider: row.source_provider, model: row.source_model };
-    if (row.receipt_version == null && row.source_provider == null)
-      return supportsReportedModel(identity);
+    if (row.receipt_version == null) return row.source_provider == null && row.source_model == null;
     return consistentReceipt(identity);
   });
 

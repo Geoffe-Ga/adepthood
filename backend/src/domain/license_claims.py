@@ -37,7 +37,7 @@ from sqlmodel import col, select
 
 from domain.entitlements import REASON_LICENSE_ALREADY_BOUND, stage_course_access
 from models.entitlement import Entitlement
-from models.gumroad_sale import GumroadSale
+from models.gumroad_sale import GumroadSale, subscription_has_ended
 from models.license_binding import LicenseBinding
 
 if TYPE_CHECKING:
@@ -128,18 +128,22 @@ async def _stored_sale(session: AsyncSession, sale_id: str) -> GumroadSale | Non
 
 
 async def sale_reversed(session: AsyncSession, sale_id: str) -> bool:
-    """Return whether the stored sale's reversal claim is already spent.
+    """Return whether the stored sale may no longer fund access.
 
-    A refund, dispute, cancellation or subscription end is permanent for the
-    sale that funded the access (ADR 0008 Decision 4), and Gumroad's verify
-    keeps answering ``success`` for an ended subscription. The stamp on the
-    stored row is therefore the one thing standing between a lapsed key and a
-    fresh grant — including after the holder deletes their account and the
-    binding goes with it. A sale the webhook has not stored yet is not
-    reversed. Logs ``sale_previously_reversed`` when it answers ``True``.
+    True when its reversal claim is spent (a refund or dispute, permanent for
+    the sale that funded the access, ADR 0008 Decision 4) or when its
+    membership has ended and not been restarted since (#3259). Gumroad's
+    verify keeps answering ``success`` for an ended subscription, so the
+    stamps on the stored row are the one thing standing between a lapsed key
+    and a fresh grant — including after the holder deletes their account and
+    the binding goes with it. A restart lifts the second condition, never the
+    first. A sale the webhook has not stored yet is not reversed. Logs
+    ``sale_previously_reversed`` when it answers ``True``.
     """
     sale = await _stored_sale(session, sale_id)
-    if sale is None or sale.revocation_processed_at is None:
+    if sale is None:
+        return False
+    if sale.revocation_processed_at is None and not subscription_has_ended(sale):
         return False
     logger.info(_REJECTED_EVENT, extra={"reason_code": _REASON_PREVIOUSLY_REVERSED})
     return True

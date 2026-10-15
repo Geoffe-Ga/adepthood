@@ -195,20 +195,19 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   tag_slug_taken: 'You already have a tag by that name. Pick a different one.',
   habits_must_not_be_empty:
     'Add at least one habit before generating an energy plan. You can add habits from the Habits tab.',
-  // DRAFT copy (#3094/#3098 review), pending owner review. A DELETE that
-  // answers one of these has recorded the deletion: the server finishes it once
-  // the vault holding the copy confirms, and refuses edits until then. So none
-  // of these says the delete failed, and none says the copy is gone.
+  // These codes also answer Intimate PATCHes, which keep the page editable.
+  // Only the deletion surface can add its recorded-delete/edit-lock context.
+  // Every shared message keeps remote removal explicitly unconfirmed.
   vault_withdrawal_pending:
-    "This page is set to be deleted. Deletion finishes once your Creek vault confirms its copy is gone; until then the page can't be edited.",
+    'Removal of a copy from your Creek vault has not been confirmed. Adepthood retries while that vault is reachable.',
   vault_withdrawal_previous_vault:
-    "This page is set to be deleted. Its copy is in the Creek vault you were connected to before, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
+    'Removal has not been confirmed by your previous Creek vault. Reconnect that vault in Settings to allow retry.',
   vault_withdrawal_disconnected_vault:
-    "This page is set to be deleted. Its copy is in the Creek vault you disconnected, so deletion finishes once you reconnect that vault; until then the page can't be edited. If you can't reach that vault, you can delete the page here only.",
+    'Removal has not been confirmed by the Creek vault you disconnected. Reconnect that vault in Settings to allow retry.',
   // A copy made before Adepthood recorded which vault received it (#3095). No
   // vault can confirm it, so this never promises the deletion finishes on its own.
   vault_withdrawal_unrecorded_vault:
-    "This page was copied to a Creek vault before October 7, 2026, before Adepthood recorded which vault received each copy. We can't confirm that copy was deleted: it may still be in a Creek vault you connected earlier. You can delete the page here only, then delete the copy in that vault yourself.",
+    'Adepthood cannot identify the vault that received this older copy, so removal cannot be confirmed. It may remain in a vault you connected earlier.',
   journal_entry_deletion_pending:
     "This page is set to be deleted, so it can't be edited. Deletion finishes once your Creek vault confirms its copy is gone.",
 

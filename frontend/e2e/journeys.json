@@ -2419,5 +2419,48 @@
     },
     "status": "uncovered",
     "issue": 3073
+  },
+  {
+    "id": "journal.privacy-choice-truthfulness",
+    "description": "#3275, Refs #3057/#3260 item4: real UI Intimate PATCH and DELETE cross the live backend to an isolated recording Creek contract process. A held remote withdrawal retains its fragment while PATCH503 commits Intimate and keeps editing; reload confirms only tier/prose, independently retained remote copy stays explicit. Releasing the fault lets the actual background sweep remove the fragment; its ledger, not GET classification, proves confirmation. Real pending DELETE separately locks editing until confirmed. A genuine backend care+reflection pass with a loopback own-key provider records paid_by own_key and identities while preserving care, then reload clears live payer and preserves stored note identity (#3270). It proves hermetic routing and receipt handling, not a real vendor bill. Controlled previous/disconnected/unrecorded destination responses and photograph403 refusal cases prove only client disclosure/retry behavior; they do not certify real remote failure states or entitlement revocation. Settings discloses exact owner-approved direct page-reading versus relay destinations before key save, with desktop/phone and enlarged text inspection. Existing receipt matrix rejects unversioned model identities while retaining prose and independent essay source (#3271). No custody/local-model/attestation/production guarantee is claimed.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal", "resonance"],
+      "routes": [
+        "POST /journal/",
+        "GET /journal/{entry_id}",
+        "PATCH /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/transcribe-page/direct-admission"
+      ],
+      "tables": ["journalentry", "marginalia", "journalwithdrawalobligation"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/privacy-choices.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.pending-create-survives-account-switch",
+    "description": "A real outgoing-account habit POST is held while the user logs out and signs into another account in the same running app. Delivering its success or a controlled lost reply must not replace the incoming account habits or send old sibling updates. A real incoming-account create remains usable, and both incoming rows survive reload. Phone and desktop browser witnesses cover success and failure; real manager/store/scoped disk tests cover both create entrypoints, ABA, queued logs, missing credentials and compensation.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit", "goal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-owner-switch.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.reflection-dismissal-account-ownership",
+    "description": "Due-review reflection dismissals are account-scoped and Jest covers owner, credential and ABA transitions. The Settings-switch browser journey does not dismiss a due review; an actual reflection dismissal/reload/account-switch browser witness remains required under #3073.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalShelfScreen.tsx",
+      "client": ["reflections"],
+      "routes": ["GET /reflections/due"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "uncovered",
+    "issue": 3073
   }
 ]

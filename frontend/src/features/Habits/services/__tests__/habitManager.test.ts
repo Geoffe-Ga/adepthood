@@ -2503,8 +2503,8 @@ describe('habitManager', () => {
       // nor undo the habit.
       echoStore();
       useHabitStore.setState({ habits: [makeHabit({ id: 1, name: 'Meditate' })] });
-      (loadHabits as jest.Mock).mockImplementation(
-        () => Promise.reject(new Error('cache read failed')) as never,
+      (habitsApi.listAll as jest.Mock).mockImplementation(
+        () => Promise.reject(new Error('confirmation read failed')) as never,
       );
 
       const saved = await habitManager.insertHabitAt({ name: 'Journaling', icon: '\u{1F4D3}' }, 0);

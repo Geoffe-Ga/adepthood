@@ -71,6 +71,73 @@ test('the idle timer does not cover the entry body at 1280x720', async ({ page }
   );
 });
 
+for (const height of [720, 390]) {
+  test(`live clock stays readable in its 44px rail at 200% text in a 1280x${height} window`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 1280, height });
+    await page.clock.install();
+    await openWritingPage(page);
+    // Pause before Start so browser interaction time cannot consume seconds.
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 60_000));
+    await page.getByTestId('writing-timer-start').click();
+    const readout = page.getByTestId('writing-timer-readout');
+    await readout.evaluate((node) => {
+      node.style.fontSize = `${parseFloat(getComputedStyle(node).fontSize) * 2}px`;
+      node.style.lineHeight = 'normal';
+    });
+    await page.clock.fastForward(4_000);
+    await readout.scrollIntoViewIfNeeded();
+    await expect
+      .poll(() => readout.evaluate((node) => node.scrollWidth <= node.clientWidth))
+      .toBe(true);
+    expect((await boxOf(page.getByTestId('writing-timer-pill'), 'running rail')).width).toBe(44);
+    await expect(readout).toBeInViewport({ ratio: 1 });
+    const visibleBody = clippedTo(
+      await boxOf(page.getByTestId('journal-body-input'), 'body'),
+      await boxOf(page.getByTestId('journal-page-scroll'), 'page viewport'),
+    );
+    expect(
+      overlapArea(visibleBody, await boxOf(page.getByTestId('writing-timer-pill'), 'rail')),
+    ).toBe(0);
+    expect(
+      await readout.evaluate((node) => {
+        const frame = node.getBoundingClientRect();
+        const text = node.firstChild;
+        if (text === null) return false;
+        for (let index = 0; index < (text.textContent?.length ?? 0); index++) {
+          const range = document.createRange();
+          range.setStart(text, index);
+          range.setEnd(text, index + 1);
+          const glyph = range.getBoundingClientRect();
+          if (
+            glyph.left < frame.left - 0.5 ||
+            glyph.right > frame.right + 0.5 ||
+            glyph.top < frame.top - 0.5 ||
+            glyph.bottom > frame.bottom + 0.5
+          )
+            return false;
+        }
+        return true;
+      }),
+      'every enlarged clock glyph must fit its rail and measured height',
+    ).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath('live-clock-2x.png') });
+    await page.getByTestId('writing-timer-pause').scrollIntoViewIfNeeded();
+    await page.getByTestId('writing-timer-pause').click();
+    await expect(page.getByTestId('writing-timer-resume')).toBeVisible();
+    await page.getByTestId('writing-timer-resume').click();
+    await page.clock.fastForward(60_000);
+    await expect(readout).toContainText('18:56');
+    await page.getByTestId('writing-timer-stop').scrollIntoViewIfNeeded();
+    await page.getByTestId('writing-timer-stop').click();
+    await page.getByTestId('writing-timer-compact').click();
+    await expect(page.getByTestId('writing-timer-start')).toBeVisible();
+    await expectReachable(page, 'journal-finish-button');
+    await expectReachable(page, 'get-resonance-button');
+  });
+}
+
 /** Scroll the page to its true end, then hit-test both edges after layout settles. */
 async function expectReachable(page: Page, testId: string): Promise<void> {
   const control = page.getByTestId(testId);
@@ -115,6 +182,18 @@ for (const viewport of [
     await page.clock.install();
     const sheet = page.getByTestId('journal-sheet');
     const idleSheet = await boxOf(sheet, 'idle sheet');
+    const idleBand = await boxOf(page.getByTestId('writing-session-band'), 'idle band');
+    const idleContent = await boxOf(
+      page.getByTestId('writing-session-band-content'),
+      'idle content',
+    );
+    expect(idleContent.height, 'short content must keep its natural height').toBeLessThan(
+      idleBand.height,
+    );
+    expect(
+      idleContent.y + idleContent.height,
+      'short content stays anchored to the bottom of the band',
+    ).toBeCloseTo(idleBand.y + idleBand.height, 1);
     await page.clock.fastForward(4_000);
     await expectReachable(page, 'journal-finish-button');
     await expectReachable(page, 'get-resonance-button');
@@ -225,10 +304,15 @@ test('a long habit offer scrolls without covering the page actions on a short ph
   await page.clock.fastForward(20 * 60_000);
   await page.getByTestId('save-as-habit-accept').click();
   await expect(page.getByTestId('writing-habit-picker')).toBeVisible();
+  // Resize through the full-surface scrolling path without remounting the offer.
+  await page.setViewportSize({ width: 390, height: 390 });
+  await expect(page.getByTestId('writing-habit-picker')).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 640 });
+  await expect(page.getByTestId('writing-habit-picker')).toBeVisible();
   const band = await boxOf(page.getByTestId('writing-session-band'), 'floating band');
   expect(band.y, 'expanded habit offer extends above the screen').toBeGreaterThanOrEqual(64);
   expect(band.y + band.height).toBeLessThanOrEqual(640);
-  const offer = page.getByTestId('writing-session-offer-scroll');
+  const offer = page.getByTestId('writing-session-band-content');
   await expect
     .poll(() => offer.evaluate((node) => node.scrollHeight > node.clientHeight))
     .toBe(true);
@@ -287,3 +371,71 @@ test('a long habit offer scrolls without covering the page actions on a short ph
   await page.getByTestId('writing-session-banner-dismiss').click();
   await expect(page.getByTestId('writing-session-banner')).toHaveCount(0);
 });
+
+for (const width of [844, 1280]) {
+  for (const textScale of [1, 2]) {
+    for (const height of textScale === 2 ? [390, 560] : [390]) {
+      test(`finished session stays usable in a ${width}x${height} window at ${textScale}x text`, async ({
+        page,
+      }, testInfo) => {
+        await page.setViewportSize({ width, height });
+        await openWritingPage(page);
+        await page.clock.install();
+        await page.getByTestId('writing-timer-start').click();
+        await page.clock.fastForward(20 * 60_000);
+        const surface = page.getByTestId('writing-session-band-content');
+        await expect(page.getByTestId('writing-session-banner')).toBeVisible();
+        await surface.evaluate((node, scale) => {
+          for (const text of node.querySelectorAll<HTMLElement>('[dir="auto"]')) {
+            text.style.fontSize = `${parseFloat(getComputedStyle(text).fontSize) * scale}px`;
+            text.style.lineHeight = 'normal';
+          }
+        }, textScale);
+        // Let ResizeObserver/onLayout settle after finishing and enlarged text.
+        await page.clock.fastForward(4_000);
+        await expect
+          .poll(() =>
+            page.getByTestId('writing-session-offer-scroll').evaluate((node) => node.clientHeight),
+          )
+          .toBeGreaterThan(0);
+        await expect
+          .poll(() => surface.evaluate((node) => node.scrollHeight > node.clientHeight))
+          .toBe(true);
+        await expectReachable(page, 'journal-finish-button');
+        await expectReachable(page, 'get-resonance-button');
+        await surface.evaluate((node) => {
+          node.scrollTop = 0;
+        });
+        await expect(page.getByText('You wrote for 20 minutes.', { exact: true })).toBeInViewport({
+          ratio: 1,
+        });
+        await page.screenshot({ path: testInfo.outputPath('finished-summary.png') });
+        for (const id of [
+          'save-as-habit-accept',
+          'writing-session-banner-dismiss',
+          'writing-timer-compact',
+        ]) {
+          const control = page.getByTestId(id);
+          await control.scrollIntoViewIfNeeded();
+          await expect(control).toBeInViewport({ ratio: 1 });
+          if (id !== 'save-as-habit-accept')
+            expect((await boxOf(control, id)).height).toBeGreaterThanOrEqual(44);
+          await control.click({ trial: true });
+          if (id === 'writing-timer-compact') {
+            expect(
+              await page
+                .getByTestId('writing-timer-readout')
+                .evaluate((node) => node.scrollWidth <= node.clientWidth),
+              'the completed timer readout must not ellipsize at enlarged text',
+            ).toBe(true);
+          }
+          await page.screenshot({ path: testInfo.outputPath(`${id}.png`) });
+        }
+        await expectReachable(page, 'journal-finish-button');
+        await expectReachable(page, 'get-resonance-button');
+        await page.getByTestId('journal-finish-button').click();
+        await expect(page.getByTestId('journal-edit-button')).toBeVisible();
+      });
+    }
+  }
+}

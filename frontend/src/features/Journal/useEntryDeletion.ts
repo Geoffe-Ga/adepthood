@@ -19,6 +19,7 @@ import {
   ALREADY_DELETED_NOTICE,
   WITHDRAWAL_PENDING_LOCATIONS,
   deleteEntryFailureNotice,
+  deleteEntryPendingNotice,
   erasureReceiptNotice,
 } from './deleteEntryCopy';
 import { optimisticRemove } from './optimisticRemove';
@@ -139,7 +140,9 @@ function deleteWithChoice(target: JournalMessage, ctx: RemovalContext): void {
       ctx.adjustTotal(1);
       // A withdrawal 503 means the deletion is recorded and finishes on its
       // own once the vault confirms; say that, not that the delete failed.
-      ctx.setError(location === null ? deleteEntryFailureNotice(detail) : detail);
+      ctx.setError(
+        location === null ? deleteEntryFailureNotice(detail) : deleteEntryPendingNotice(detail),
+      );
       if (location !== null) ctx.setUnreachable({ entry: target, location });
     },
     beforeStart: () => {
