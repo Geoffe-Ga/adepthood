@@ -59,7 +59,7 @@ from services.encryption_inventory import (
     encrypted_columns,
     raw_table,
 )
-from tests.support.encrypted_rows import ROW_FACTORIES, insert_row
+from tests.support.encrypted_rows import ROW_FACTORIES, insert_row, stored_plaintext
 
 # The literal marker real ciphertext carries. Spelled out rather than imported
 # from ``journal_encryption._PREFIX`` so this file pins the on-disk format
@@ -130,6 +130,20 @@ _FEEDBACK_PROSE_COLUMNS: frozenset[str] = frozenset(
 # what they wrote, typed by an administrator in the expectation that only other
 # administrators read it -- and a stolen dump would read it just as easily.
 _OPERATOR_NOTE_COLUMNS: frozenset[str] = frozenset({"feedbacknote.body"})
+
+# Values derived from a person's writing that are not text: the embedding a
+# model computes from a corpus passage, and the frequency / Wavelength-phase
+# labels a vault returns for an entry. Neither is the person's words, but each
+# says what the words mean, and a stolen dump would read that meaning. The owner
+# chose to encrypt these two rather than keep disclosing them (#3263); the
+# derived values still stored in the clear are named in
+# ``tests/test_column_classification.py`` and in the privacy policy.
+_DERIVED_LIST_COLUMNS: frozenset[str] = frozenset(
+    {
+        "corpusfragment.embedding",
+        "journalentry.vault_tags",
+    }
+)
 
 # Columns encrypted for a reason other than holding anyone's writing. They are
 # named here rather than folded into the sets above because the distinction is
@@ -314,6 +328,7 @@ def test_the_pinned_inventory_is_exactly_what_the_schema_encrypts() -> None:
         | _PRACTICE_PROSE_COLUMNS
         | _FEEDBACK_PROSE_COLUMNS
         | _OPERATOR_NOTE_COLUMNS
+        | _DERIVED_LIST_COLUMNS
         | _OTHER_ENCRYPTED_COLUMNS
     )
 
@@ -639,4 +654,4 @@ async def test_every_encrypted_column_stores_ciphertext(
         await db_session.execute(select(raw.c[target.column]).where(raw.c[ROW_ID_COLUMN] == row_id))
     ).scalar_one()
 
-    _assert_ciphertext_of(stored, _canary(target), target.qualified)
+    _assert_ciphertext_of(stored, stored_plaintext(target, _canary(target)), target.qualified)

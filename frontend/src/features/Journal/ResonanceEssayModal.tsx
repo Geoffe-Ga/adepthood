@@ -3,10 +3,12 @@
  * hovering over the (still-visible, dimmed) page. A warm editorial reading card,
  * not a chat reply.
  *
- * A note's first letter is a charged depth (#623): the server spends one unit of
- * the BotMason wallet to write it unless the writer's own key pays. So a note
- * with no letter opens on an *offer* — what a letter is, where the entry goes,
- * what it costs, and two equal arms — and only "Ask for the letter" asks. A
+ * A note's first letter is a charged depth (#623): the writer's own key pays
+ * for it, and since ADR 0009 phase (a) (#3067) nothing else can outside a
+ * development build. So a note with no letter opens on an *offer* — what a
+ * letter is, where the entry goes, what it costs, and two equal arms — and only
+ * "Ask for the letter" asks; with no key the line says the key is needed and
+ * the ask becomes "Open Settings" (#3262). A
  * letter already written opens straight to the letter, because reopening it is
  * free. A 402 is not rendered as an error: it is handed to ``onFundingRequired``
  * so the screen can show the same refill remedy a resonance pass gets.
@@ -26,8 +28,15 @@ import { ExplainerActionPair, explainerStyles } from './ExplainerDialogParts';
 import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
 import JournalModalShell from './JournalModalShell';
-import { loadCostState, unknownCostState } from './resonanceCost';
 import {
+  knownCostState,
+  loadCostState,
+  unknownCostState,
+  type ResonanceCostState,
+} from './resonanceCost';
+import {
+  KEY_NEEDED_SETTINGS,
+  KEY_NEEDED_SETTINGS_A11Y,
   ESSAY_ASK_CANCEL,
   ESSAY_ASK_CANCEL_A11Y,
   ESSAY_ASK_CHOICE,
@@ -51,6 +60,11 @@ export interface ResonanceEssayModalProps {
   hasOwnKey?: boolean;
   /** A 402 on the ask: the wallet is empty, or a key is required. */
   onFundingRequired?: (_outcome: FundingOutcome) => void;
+  /**
+   * Leave for Settings to add a key. With no key a letter can be paid for by
+   * nothing else (#3262), so the offer's ask becomes this.
+   */
+  onOpenSettings?: () => void;
 }
 
 /** Shown when a fetch resolves an empty essay, so the user isn't stranded on a blank card. */
@@ -154,20 +168,26 @@ function askForEssay(noteId: number, settlers: EssaySettlers): void {
     });
 }
 
-/** The letter's price line, read only while the offer is on screen. */
-function useEssayCost(showing: boolean, hasOwnKey: boolean): string {
-  const [copy, setCopy] = useState(() => unknownCostState(ESSAY_NOUN).copy);
+/**
+ * The letter's price line, read only while the offer is on screen. A line that
+ * needs no read (a key pays, or only a key could) is the first one painted, so
+ * the offer never flashes a price it will not charge.
+ */
+function useEssayCost(showing: boolean, hasOwnKey: boolean): ResonanceCostState {
+  const [cost, setCost] = useState(
+    () => knownCostState(hasOwnKey, ESSAY_NOUN) ?? unknownCostState(ESSAY_NOUN),
+  );
   useEffect(() => {
     if (!showing) return undefined;
     let active = true;
     void loadCostState(hasOwnKey, ESSAY_NOUN).then((next) => {
-      if (active) setCopy(next.copy);
+      if (active) setCost(next);
     });
     return () => {
       active = false;
     };
   }, [showing, hasOwnKey]);
-  return copy;
+  return cost;
 }
 
 interface EssayCallbacks {
@@ -285,23 +305,43 @@ function useEssay(
   return { ...state, ask, retry };
 }
 
-/** The priced offer: what a letter is, what it costs, and two equal arms. */
+const NO_SETTINGS = (): void => undefined;
+
+/**
+ * The priced offer: what a letter is, what it costs, and two equal arms. When
+ * only the writer's own key could pay, the ask becomes a way to Settings.
+ */
 function EssayOffer({
   cost,
   onAsk,
   onDecline,
+  onOpenSettings = NO_SETTINGS,
 }: {
-  cost: string;
+  cost: ResonanceCostState;
   onAsk: () => void;
   onDecline: () => void;
+  onOpenSettings?: () => void;
 }): React.JSX.Element {
+  const proceed = cost.keyNeeded
+    ? {
+        label: KEY_NEEDED_SETTINGS,
+        accessibilityLabel: KEY_NEEDED_SETTINGS_A11Y,
+        testID: 'essay-open-settings',
+        onPress: onOpenSettings,
+      }
+    : {
+        label: ESSAY_ASK_PROCEED,
+        accessibilityLabel: ESSAY_ASK_PROCEED_A11Y,
+        testID: 'essay-ask',
+        onPress: onAsk,
+      };
   return (
     <View testID="essay-offer">
       <Text style={explainerStyles.body} testID="essay-ask-what">
         {ESSAY_ASK_WHAT}
       </Text>
       <Text style={explainerStyles.body} testID="essay-ask-cost">
-        {cost}
+        {cost.copy}
       </Text>
       <Text style={explainerStyles.body} testID="essay-ask-choice">
         {ESSAY_ASK_CHOICE}
@@ -313,12 +353,7 @@ function EssayOffer({
           testID: 'essay-not-now',
           onPress: onDecline,
         }}
-        proceed={{
-          label: ESSAY_ASK_PROCEED,
-          accessibilityLabel: ESSAY_ASK_PROCEED_A11Y,
-          testID: 'essay-ask',
-          onPress: onAsk,
-        }}
+        proceed={proceed}
       />
     </View>
   );
@@ -375,6 +410,7 @@ function ResonanceEssayModal({
   onEssayLoaded,
   hasOwnKey = false,
   onFundingRequired,
+  onOpenSettings,
 }: ResonanceEssayModalProps): React.JSX.Element {
   const { essay, loading, error, retryable, offer, essaySource, ask, retry } = useEssay(note, {
     onEssayLoaded,
@@ -409,7 +445,7 @@ function ResonanceEssayModal({
       </Text>
       <ScrollView contentContainerStyle={styles.bodyScroll}>
         {offer ? (
-          <EssayOffer cost={cost} onAsk={ask} onDecline={onClose} />
+          <EssayOffer {...{ cost, onOpenSettings }} onAsk={ask} onDecline={onClose} />
         ) : (
           <EssayBody {...{ essay, loading, error, retryable, retry, essaySource }} />
         )}

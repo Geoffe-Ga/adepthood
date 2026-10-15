@@ -53,8 +53,10 @@
       "completionsuggestion.anchor_text",
       "completionsuggestion.label",
       "corpusfragment.content",
+      "corpusfragment.embedding",
       "journalentry.message",
       "journalentry.title",
+      "journalentry.vault_tags",
       "marginalia.anchor_text",
       "marginalia.essay",
       "marginalia.note",
@@ -155,7 +157,7 @@
         "source": "repo:frontend/nginx.conf"
       },
       "primary_copy_removal": {
-        "value": "Nothing removed: 18 EncryptedString columns across 10 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control.",
+        "value": "Nothing removed: 20 EncryptedString columns across 10 tables, DERIVED_FROM_PROSE plaintext, backups, Creek copies and vendor copies all persist under operator control.",
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {
@@ -455,7 +457,7 @@
         "source": "repo:frontend/nginx.conf"
       },
       "primary_copy_removal": {
-        "value": "The 12 in-scope EncryptedString columns of journal_scope_proposal (of the 18; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected.",
+        "value": "The 14 in-scope EncryptedString columns of journal_scope_proposal (of the 20; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected.",
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {

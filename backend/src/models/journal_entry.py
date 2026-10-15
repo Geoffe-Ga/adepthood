@@ -2,13 +2,13 @@ import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, CheckConstraint, Column, DateTime, Index, String, and_
+from sqlalchemy import CheckConstraint, Column, DateTime, Index, String, and_
 from sqlmodel import Field, Relationship, SQLModel
 
 from domain.constants import TOTAL_STAGES
 from domain.reflection_hierarchy import ReflectionLevel
 from security.idempotency import IDEMPOTENCY_DIGEST_COLUMN_WIDTH
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import EncryptedJSONList, EncryptedString
 
 # The inclusive lower bound of a valid Aspect tag. The upper bound is
 # ``TOTAL_STAGES`` (an Aspect == a stage 1..TOTAL_STAGES), so the range never
@@ -250,11 +250,16 @@ class JournalEntry(SQLModel, table=True):
     # sent to a vault and after Creek confirms withdrawal. A newly-intimate or
     # deleting row may retain both temporarily as its durable retry marker when
     # Creek is offline; the row is not hidden or deleted until that confirmation.
-    # Declared with no length / as JSON to match the migration exactly
-    # (drift-free), and both nullable so the write path is purely additive over
-    # existing rows.
+    # ``vault_ref`` is declared with no length to match the migration exactly
+    # (drift-free). ``vault_tags`` says what the vault found in the writing, so
+    # it is encrypted at rest like the writing (#3263): ``EncryptedJSONList``
+    # stores the JSON of the labels as ``EncryptedString`` ciphertext. It is
+    # only ever null-checked in Python, never queried inside in SQL. Both are
+    # nullable so the write path is purely additive over existing rows.
     vault_ref: str | None = Field(default=None, sa_column=Column(String, nullable=True))
-    vault_tags: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+    vault_tags: list[str] | None = Field(
+        default=None, sa_column=Column(EncryptedJSONList(), nullable=True)
+    )
     # Opaque fingerprint of the vault this entry was offered to, written and
     # committed *before* the ingest is dialled. A withdrawal is trusted only
     # from that same destination: a replaced connection answering "unknown id,

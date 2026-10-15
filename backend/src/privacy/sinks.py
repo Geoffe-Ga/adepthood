@@ -138,6 +138,7 @@ class SinkId(enum.StrEnum):
     COMPLETION_SUGGESTION_ANCHOR = "db.completionsuggestion.anchor_text"
     COMPLETION_SUGGESTION_LABEL = "db.completionsuggestion.label"
     CORPUS_FRAGMENT_CONTENT = "db.corpusfragment.content"
+    CORPUS_FRAGMENT_EMBEDDING = "db.corpusfragment.embedding"
     FEEDBACK_NOTE_BODY = "db.feedbacknote.body"
     FEEDBACK_REPORT_ACTUAL = "db.feedbackreport.actual"
     FEEDBACK_REPORT_EXPECTED = "db.feedbackreport.expected"
@@ -145,6 +146,7 @@ class SinkId(enum.StrEnum):
     FEEDBACK_REPORT_SUMMARY = "db.feedbackreport.summary"
     JOURNAL_MESSAGE = "db.journalentry.message"
     JOURNAL_TITLE = "db.journalentry.title"
+    JOURNAL_VAULT_TAGS = "db.journalentry.vault_tags"
     MARGINALIA_ANCHOR = "db.marginalia.anchor_text"
     MARGINALIA_ESSAY = "db.marginalia.essay"
     MARGINALIA_NOTE = "db.marginalia.note"
@@ -336,6 +338,13 @@ _ROWS: Final[tuple[Sink, ...]] = (
         EGRESS_TIERS,
         _column("corpusfragment.content"),
     ),
+    # The passage's embedding is part of the same derived corpus (#3263).
+    _outside(
+        SinkId.CORPUS_FRAGMENT_EMBEDDING,
+        SinkKind.DB_COLUMN,
+        EGRESS_TIERS,
+        _column("corpusfragment.embedding"),
+    ),
     # Feedback text is its own channel, never a journal tier.
     _encrypted(SinkId.FEEDBACK_NOTE_BODY, NO_TIERS),
     _encrypted(SinkId.FEEDBACK_REPORT_ACTUAL, NO_TIERS),
@@ -344,6 +353,8 @@ _ROWS: Final[tuple[Sink, ...]] = (
     _encrypted(SinkId.FEEDBACK_REPORT_SUMMARY, NO_TIERS),
     _encrypted(SinkId.JOURNAL_MESSAGE, ALL_TIERS),
     _encrypted(SinkId.JOURNAL_TITLE, ALL_TIERS),
+    # Labels a vault returned, so only for an entry a vault was allowed to see.
+    _encrypted(SinkId.JOURNAL_VAULT_TAGS, EGRESS_TIERS),
     _encrypted(SinkId.MARGINALIA_ANCHOR, EGRESS_TIERS),
     _encrypted(SinkId.MARGINALIA_ESSAY, EGRESS_TIERS),
     _encrypted(SinkId.MARGINALIA_NOTE, EGRESS_TIERS),

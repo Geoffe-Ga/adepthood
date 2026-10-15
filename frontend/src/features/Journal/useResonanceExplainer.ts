@@ -58,6 +58,11 @@ export interface ResonanceExplainerGate {
   cost: string;
   /** True while the payer is unknown or the known wallet cannot fund a pass. */
   continueDisabled: boolean;
+  /**
+   * Only the writer's own key could pay (#3262): the disclosure leads with
+   * that, and its charged arm becomes a way to Settings.
+   */
+  keyNeeded: boolean;
   /** The state of the "don’t show this again" box for this showing. */
   dontShowAgain: boolean;
   onToggleDontShowAgain: () => void;
@@ -142,7 +147,12 @@ async function publishDecision(
   dismissed: boolean,
   input: DisclosureDecisionInput,
 ): Promise<void> {
-  if (payerKey === null && !resolvedCost.canContinue) {
+  // A remedy, not a disclosure: a dismissal never turns this press into a
+  // request the server can only refuse.
+  if (resolvedCost.keyNeeded) {
+    input.disclosedKeyRef.current = payerKey;
+    input.show();
+  } else if (payerKey === null && !resolvedCost.canContinue) {
     input.disclosedKeyRef.current = null;
     input.showRefill(resolvedCost.monthlyResetDate, resolvedCost.monthlyCap, 'wallet_exhausted');
   } else if (dismissed) {
@@ -308,7 +318,7 @@ function useContinue(input: ContinueInput): () => void {
     if (keyIsLoading || apiKey !== disclosedKeyRef.current) {
       disclosedKeyRef.current = apiKey;
       void cost.refresh(apiKey).then((latest) => {
-        if (apiKey === null && latest !== null && !latest.canContinue) {
+        if (apiKey === null && latest !== null && !latest.canContinue && !latest.keyNeeded) {
           showRefill(latest.monthlyResetDate, latest.monthlyCap, 'wallet_exhausted');
         }
       });
@@ -428,6 +438,7 @@ function gateFromParts(parts: GateParts): ResonanceExplainerGate {
     visible: surfaces.visible,
     cost: cost.current.copy,
     continueDisabled: cost.current.loading || !cost.current.canContinue,
+    keyNeeded: cost.current.keyNeeded,
     dontShowAgain: surfaces.dontShowAgain,
     onToggleDontShowAgain: surfaces.onToggleDontShowAgain,
     onContinue,

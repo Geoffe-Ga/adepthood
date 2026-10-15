@@ -41,7 +41,7 @@ from services.encryption_inventory import (
     encrypted_columns,
     raw_table,
 )
-from tests.support.encrypted_rows import ROW_FACTORIES, insert_row
+from tests.support.encrypted_rows import ROW_FACTORIES, insert_row, stored_plaintext
 
 _COLUMNS = encrypted_columns()
 _MESSAGE = EncryptedColumn("journalentry", "message")
@@ -224,7 +224,7 @@ async def test_sweep_moves_everything_to_the_new_key_so_the_old_one_can_go(
             value = stored[ids[target.table]]
             assert value is not None
             assert je.is_ciphertext(value), target.qualified
-            assert je.decrypt(value) == _canary(phase, target.qualified)
+            assert je.decrypt(value) == stored_plaintext(target, _canary(phase, target.qualified))
     db_session.expire_all()
     entry = await db_session.get(JournalEntry, legacy_ids["journalentry"])
     assert entry is not None
@@ -237,6 +237,50 @@ async def test_sweep_moves_everything_to_the_new_key_so_the_old_one_can_go(
     assert "encrypted=1" not in rerun
     assert "rotated=1" not in rerun
     _assert_no_content(rerun + caplog.text)
+
+
+_DERIVED_LISTS = (
+    EncryptedColumn("corpusfragment", "embedding"),
+    EncryptedColumn("journalentry", "vault_tags"),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_cli_session")
+async def test_the_derived_list_columns_are_swept_and_still_read_as_lists(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plaintext or old-key embedding / vault-tags value is rewritten, and reads back (#3263).
+
+    The sweep is schema-driven, so it reaches these two the moment their type is
+    ciphertext. What only a test can show is that the bytes it rewrites are the
+    JSON of a list, and that the model still reads that list after the old key
+    is gone.
+    """
+    assert set(_DERIVED_LISTS) <= set(_COLUMNS)
+    old, new = Fernet.generate_key().decode(), Fernet.generate_key().decode()
+    legacy = await insert_row(db_session, "journalentry", _texts("legacy", "journalentry"))
+    fragment_legacy = await insert_row(
+        db_session, "corpusfragment", _texts("legacy", "corpusfragment")
+    )
+    await db_session.commit()
+    _keys(monkeypatch, old)
+    stale = await insert_row(db_session, "journalentry", _texts("old", "journalentry"))
+    await db_session.commit()
+    _keys(monkeypatch, new, old)
+
+    assert await sweep.run(_apply()) == sweep.EXIT_CLEAN
+    _keys(monkeypatch, new)
+
+    tags = await _raw(db_session, _DERIVED_LISTS[1])
+    vectors = await _raw(db_session, _DERIVED_LISTS[0])
+    for value in (tags[legacy], tags[stale], vectors[fragment_legacy]):
+        assert value is not None
+        assert je.key_index(value) == 0
+    db_session.expire_all()
+    entry = await db_session.get(JournalEntry, stale)
+    assert entry is not None
+    assert entry.vault_tags == [_canary("old", "journalentry.vault_tags")]
 
 
 @pytest.mark.asyncio
