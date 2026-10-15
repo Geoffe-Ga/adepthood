@@ -20,6 +20,9 @@ The recorders, and the :mod:`privacy.sinks` rows each one stands for:
   ``services.botmason.generate_response``, wrapped at **every module that binds
   it**, found by object identity rather than by a list, so a new binding site is
   recorded without an edit here. Stands for ``net.openai`` and ``net.anthropic``.
+* :func:`record_provider_constructions` -- each registered provider's
+  entrypoint, where an SDK client is built for a writer's own ``X-LLM-API-Key``
+  (BYOK): the same two recipients, reached with the writer's key.
 * :func:`record_classifier_inputs` -- what the corpus classifier submits for
   classification, at its request to its model (after its own tier refusal).
 * :func:`corpus_fragments` -- the ``corpusfragment`` table itself
@@ -76,6 +79,10 @@ from domain.creek_vault import (
 from models.corpus_fragment import CorpusFragment
 from services import botmason, frequency_classification
 
+# The stub provider's own answer, so a recorded construction still hands the
+# route a reply in the shape its parser demands.
+from services.botmason import _stub_answer as stub_answer
+
 # Bound by import, as the neighbouring seam suites bind theirs: the private
 # request the classifier makes to its model is the seam this recorder watches.
 from services.frequency_classification import _reply_within as reply_within
@@ -95,6 +102,8 @@ class Recorder(enum.StrEnum):
     """Every recorder the matrix installs, by the seam it watches."""
 
     PROVIDER = "provider dial"
+    #: A provider SDK client built for the writer's own (BYOK) key.
+    PROVIDER_CLIENT = "provider client construction"
     VAULT = "creek vault client"
     CLASSIFIER = "classifier input"
     CORPUS = "corpus fragment store"
@@ -419,6 +428,43 @@ def record_provider_dials(
     for module, name in sites:
         monkeypatch.setattr(module, name, _wrap(module))
     return [f"{module.__name__}.{name}" for module, name in sites]
+
+
+def record_provider_constructions(monkeypatch: pytest.MonkeyPatch, ledger: Ledger) -> list[str]:
+    """Stand in for every provider client a writer's own key would build; return the providers.
+
+    A BYOK key (``X-LLM-API-Key``) selects its own provider, and
+    ``services.botmason.generate_response`` then reaches that provider's
+    entrypoint -- the one place its SDK client is constructed for the key. Each
+    registered entrypoint, by the name :data:`services.botmason.PROVIDER_REGISTRY`
+    resolves at call time, is replaced with one that records the construction
+    (with everything the client would have been sent; never the key) under
+    :attr:`Recorder.PROVIDER_CLIENT`, then answers as the stub provider would, so
+    nothing leaves the test process and the route's parser still gets its shape.
+    """
+    providers: list[str] = []
+    for provider, spec in botmason.PROVIDER_REGISTRY.items():
+        monkeypatch.setattr(botmason, spec.call_name, _recorded_construction(ledger, provider))
+        providers.append(provider)
+    return providers
+
+
+def _recorded_construction(ledger: Ledger, provider: str) -> Callable[..., Awaitable[LLMResponse]]:
+    """One provider's entrypoint, recording the client it would build instead of building it."""
+
+    async def _constructed(
+        user_message: str,
+        conversation_history: list[dict[str, str]],
+        system_prompt: str,
+        api_key: str | None = None,
+        images: Sequence[ImagePayload] | None = None,
+    ) -> LLMResponse:
+        assert api_key, f"a {provider} client was built without the writer's key"
+        payload = repr((user_message, conversation_history, system_prompt, images))
+        ledger.record(Recorder.PROVIDER_CLIENT, provider, payload)
+        return stub_answer(user_message, system_prompt, images)
+
+    return _constructed
 
 
 def record_classifier_inputs(monkeypatch: pytest.MonkeyPatch, ledger: Ledger) -> None:
