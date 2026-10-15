@@ -194,11 +194,11 @@ describe('TarotMeditationView', () => {
       expect(inner.props.nestedScrollEnabled).toBe(true);
     });
 
-    it('keeps the card name on a single fitted line', () => {
+    it('allows the full card name to wrap without reducing the requested text size', () => {
       const { getByTestId } = renderLongCard();
       const name = getByTestId('tarot-card-name');
-      expect(name.props.numberOfLines).toBe(1);
-      expect(name.props.adjustsFontSizeToFit).toBe(true);
+      expect(name.props.numberOfLines).toBeUndefined();
+      expect(name.props.adjustsFontSizeToFit).toBeUndefined();
     });
   });
 });

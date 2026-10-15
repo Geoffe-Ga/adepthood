@@ -107,6 +107,8 @@ async function frames(
   testInfo: TestInfo,
   state: string,
   control: string,
+  mode: Mode,
+  tarotName = 'The Fool',
 ): Promise<void> {
   for (const viewport of [
     { width: 1280, height: 720 },
@@ -128,11 +130,12 @@ async function frames(
         }
       }, scale);
       // Modal completion deliberately blocks the underlying shell controls.
-      if (state === 'idle') {
+      if (state !== 'complete') {
         await headerFits(page);
-        await playerTextFits(page);
+        await playerTextFits(page, mode, tarotName, scale);
         await bellTimeFits(page);
       }
+      await tarotCardFrame(page, testInfo, mode, state, viewport.width, scale);
       await reachable(page.getByTestId(control));
       await page.screenshot({
         path: testInfo.outputPath(`${state}-${String(viewport.width)}-${scale}x.png`),
@@ -140,7 +143,90 @@ async function frames(
     }
   }
 }
-async function playerTextFits(page: Page): Promise<void> {
+/** Capture the full card name before the separate control reachability scroll. */
+async function tarotCardFrame(
+  page: Page,
+  testInfo: TestInfo,
+  mode: Mode,
+  state: string,
+  width: number,
+  scale: number,
+): Promise<void> {
+  if (mode === 'tarot' && state !== 'complete') {
+    const name = page.getByTestId('tarot-card-name');
+    await name.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+    const box = await name.boundingBox();
+    expect(box).not.toBeNull();
+    if (!box) throw new Error('the Tarot name has no browser geometry');
+    expect(box.y).toBeGreaterThanOrEqual(110);
+    expect(box.y + box.height).toBeLessThanOrEqual(page.viewportSize()?.height ?? 0);
+    await page.screenshot({
+      path: testInfo.outputPath(`${state}-card-${String(width)}-${scale}x.png`),
+    });
+    const begin = await page.getByTestId('tarot-begin').boundingBox();
+    expect(begin).not.toBeNull();
+    expect(begin?.width).toBeGreaterThanOrEqual(44);
+    expect(begin?.height).toBeGreaterThanOrEqual(44);
+  }
+}
+async function tarotNameFits(page: Page, expectedName: string, scale: number): Promise<void> {
+  const name = page.getByTestId('tarot-card-name');
+  await expect(name).toBeVisible();
+  await expect(name, 'the rendered Tarot name must retain the complete card name').toHaveText(
+    expectedName,
+  );
+  const bounds = await name.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const glyphs = range.getBoundingClientRect();
+    const box = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('the browser cannot measure text');
+    context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const naturalWidth = context.measureText(element.textContent ?? '').width;
+    return {
+      fits:
+        (style.whiteSpace !== 'nowrap' || naturalWidth <= box.width + 0.01) &&
+        glyphs.left >= box.left - 1 &&
+        glyphs.right <= box.right + 1 &&
+        glyphs.top >= box.top - 1 &&
+        glyphs.bottom <= box.bottom + 1,
+      naturalWidth,
+      width: box.width,
+      height: box.height,
+      font: context.font,
+      whiteSpace: style.whiteSpace,
+      fontSize: parseFloat(style.fontSize),
+    };
+  });
+  expect(bounds.fontSize, 'Tarot names retain the requested text size').toBe(26 * scale);
+  expect(bounds.fits, `the full Tarot name must fit: ${JSON.stringify(bounds)}`).toBe(true);
+}
+/** A real later day selects a longer arcana name; no future session is submitted. */
+async function laterTarotCardFits(page: Page, testInfo: TestInfo, mode: Mode): Promise<void> {
+  if (mode === 'tarot') {
+    const now = await page.evaluate(() => Date.now());
+    await page.clock.setSystemTime(now + 2 * 24 * 60 * MINUTE);
+    await page.reload();
+    await openPractice(page);
+    await expect(page.getByTestId('tarot-card-name')).toHaveText('The High Priestess');
+    await expect(page.getByTestId('tarot-card-keyword')).toHaveText('Intuition');
+    await frames(page, testInfo, 'later-idle', 'tarot-begin', mode, 'The High Priestess');
+  }
+}
+async function playerTextFits(
+  page: Page,
+  mode: Mode,
+  tarotName: string,
+  scale: number,
+): Promise<void> {
+  if (mode === 'tarot') {
+    await tarotNameFits(page, tarotName, scale);
+    await expect(page.getByTestId('tarot-symbolism-scroll')).toBeVisible();
+    await symbolismIsReadable(page, 'tarot-symbolism-scroll');
+  }
   const cardName = page.getByTestId('card-meditation-card-name');
   if ((await cardName.count()) > 0) {
     const glyphsFit = await cardName.evaluate((element) => {
@@ -164,38 +250,44 @@ async function playerTextFits(page: Page): Promise<void> {
     'the practice name must wrap inside the identity row',
   ).toBe(true);
 }
-async function symbolismIsReadable(page: Page): Promise<void> {
-  const scroll = page.getByTestId('card-meditation-symbolism-scroll');
-  if ((await scroll.count()) === 0) return;
-  const dimensions = await scroll.evaluate((element) => ({
-    viewport: element.clientHeight,
-    content: element.scrollHeight,
-  }));
-  expect(dimensions.viewport).toBeGreaterThan(0);
-  if (dimensions.content <= dimensions.viewport) return;
-  await scroll.hover();
-  await page.mouse.wheel(0, dimensions.content);
-  await expect
-    .poll(() =>
-      scroll.evaluate(
-        (element) => element.scrollTop + element.clientHeight >= element.scrollHeight - 1,
-      ),
-    )
-    .toBe(true);
+async function symbolismIsReadable(
+  page: Page,
+  testID = 'card-meditation-symbolism-scroll',
+): Promise<void> {
+  const scroll = page.getByTestId(testID);
+  if ((await scroll.count()) > 0) {
+    const dimensions = await scroll.evaluate((element) => ({
+      viewport: element.clientHeight,
+      content: element.scrollHeight,
+    }));
+    expect(dimensions.viewport).toBeGreaterThan(0);
+    if (dimensions.content > dimensions.viewport) {
+      await scroll.hover();
+      await page.mouse.wheel(0, dimensions.content);
+      await expect
+        .poll(() =>
+          scroll.evaluate(
+            (element) => element.scrollTop + element.clientHeight >= element.scrollHeight - 1,
+          ),
+        )
+        .toBe(true);
+    }
+  }
 }
 async function bellTimeFits(page: Page): Promise<void> {
   const row = page.getByTestId('interval-bell-row-0');
-  if ((await row.count()) === 0) return;
-  await expect(row.getByText('Opening bell', { exact: true })).toHaveCount(1);
-  const time = row.getByText('00:00', { exact: true });
-  expect(
-    await time.evaluate((element) => {
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      return range.getClientRects().length;
-    }),
-    'a bell timestamp must stay readable on one line',
-  ).toBe(1);
+  if ((await row.count()) > 0) {
+    await expect(row.getByText('Opening bell', { exact: true })).toHaveCount(1);
+    const time = row.getByText('00:00', { exact: true });
+    expect(
+      await time.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return range.getClientRects().length;
+      }),
+      'a bell timestamp must stay readable on one line',
+    ).toBe(1);
+  }
 }
 async function headerFits(page: Page): Promise<void> {
   const heading = page.getByRole('heading', { name: 'Practice', exact: true });
@@ -303,12 +395,70 @@ async function cancelAndRestart(page: Page, mode: Mode): Promise<void> {
   await expect(page.getByTestId(startControl(mode))).toBeVisible();
   await expect(page.getByTestId('insight-capture-modal')).toHaveCount(0);
 }
-async function pauseOnce(page: Page): Promise<void> {
-  if ((await page.getByTestId('ritual-pause').count()) === 0) return;
-  await press(page, 'ritual-pause');
-  await page.clock.fastForward(PAUSE_MINUTES * MINUTE);
-  await press(page, 'ritual-resume');
+type PauseCapability =
+  { kind: 'required' } | { kind: 'card'; defaultHidden: boolean; cancel: string };
+/** UI capability comes from the mode and saved configuration, never missing DOM. */
+const PAUSE_CAPABILITIES: Record<Mode, PauseCapability> = {
+  sense_grounding: { kind: 'required' },
+  meditation_timer: { kind: 'required' },
+  tallied_grounding: { kind: 'required' },
+  mindful_anchor: { kind: 'required' },
+  tarot: { kind: 'card', defaultHidden: false, cancel: 'tarot-cancel-longpress' },
+  metronome: { kind: 'required' },
+  count_up: { kind: 'required' },
+  interval_bell: { kind: 'required' },
+  random_interval_bell: { kind: 'required' },
+  rep_counter: { kind: 'required' },
+  card_meditation: {
+    kind: 'card',
+    defaultHidden: true,
+    cancel: 'card-meditation-cancel-longpress',
+  },
+};
+async function pauseOnce(page: Page, config: ModeConfig): Promise<void> {
+  const capability = PAUSE_CAPABILITIES[config.mode];
+  let hidden = false;
+  if (capability.kind === 'card') {
+    if (config.mode !== 'tarot' && config.mode !== 'card_meditation')
+      throw new Error('a card-only capability must name a card mode');
+    hidden = config.hide_timer_during_meditation ?? capability.defaultHidden;
+  }
+  if (hidden && capability.kind === 'card') {
+    await expect(page.getByTestId('ritual-pause')).toHaveCount(0);
+    await expect(page.getByTestId('ritual-resume')).toHaveCount(0);
+    await reachable(page.getByTestId(capability.cancel));
+  } else {
+    await expect(page.getByTestId('ritual-pause')).toBeVisible();
+    await press(page, 'ritual-pause');
+    await expect(page.getByTestId('ritual-resume')).toBeVisible();
+    await expect(page.getByTestId('ritual-pause')).toHaveCount(0);
+    await page.clock.fastForward(PAUSE_MINUTES * MINUTE);
+    await press(page, 'ritual-resume');
+    await expect(page.getByTestId('ritual-pause')).toBeVisible();
+    await expect(page.getByTestId('ritual-resume')).toHaveCount(0);
+  }
 }
+/** #3273: a missing required Pause must fail the same real-player witness. */
+async function missingPauseIsRejected(page: Page, config: ModeConfig): Promise<void> {
+  const pause = await page.getByTestId('ritual-pause').elementHandle();
+  if (!pause) throw new Error('the control-removal witness requires the actual Pause button');
+  const parent = await pause.evaluateHandle((element) => element.parentElement);
+  await pause.evaluate((element) => element.remove());
+  try {
+    await expect(pauseOnce(page, config)).rejects.toThrow(/ritual-pause/);
+  } finally {
+    await parent.evaluate((element, control) => {
+      if (!element || !control) throw new Error('cannot restore the actual Pause control');
+      element.appendChild(control);
+    }, pause);
+  }
+}
+
+async function beginWithPauseProof(page: Page, mode: Mode, config: ModeConfig): Promise<void> {
+  await press(page, startControl(mode));
+  if (mode === 'meditation_timer') await missingPauseIsRejected(page, config);
+}
+
 function timedMinutes(config: ModeConfig): number | null {
   switch (config.mode) {
     case 'meditation_timer':
@@ -328,14 +478,14 @@ async function complete(page: Page, config: ModeConfig): Promise<number> {
   const plan = timedMinutes(config);
   if (plan !== null) {
     await page.clock.fastForward((plan * MINUTE) / 2);
-    await pauseOnce(page);
+    await pauseOnce(page, config);
     await page.clock.fastForward((plan * MINUTE) / 2 + 1000);
     return plan;
   }
   const minutes =
     config.mode === 'mindful_anchor' ? config.min_duration_seconds / 60 + 1 : OPEN_MINUTES;
   await page.clock.fastForward((minutes * MINUTE) / 2);
-  await pauseOnce(page);
+  await pauseOnce(page, config);
   await page.clock.fastForward((minutes * MINUTE) / 2);
   await finishUntimed(page, config);
   return minutes;
@@ -475,7 +625,7 @@ for (const [mode, family] of Object.entries(FAMILIES) as Array<[Mode, Family]>) 
       mode === 'card_meditation'
         ? await page.getByTestId('card-meditation-card-name').innerText()
         : null;
-    await frames(page, testInfo, 'idle', startControl(mode));
+    await frames(page, testInfo, 'idle', startControl(mode), mode);
     const posts: PracticeSessionCreate[] = [];
     page.on('request', (request) => {
       if (new URL(request.url()).pathname === '/practice-sessions/' && request.method() === 'POST')
@@ -488,10 +638,10 @@ for (const [mode, family] of Object.entries(FAMILIES) as Array<[Mode, Family]>) 
         await expect(page.getByTestId('mindful-anchor-begin')).toBeDisabled();
       await press(page, `mindful-anchor-option-${config.options[0].key}`);
     }
-    await press(page, startControl(mode));
+    await beginWithPauseProof(page, mode, config);
     const expectedMinutes = await complete(page, config);
     await expect(page.getByTestId('insight-capture-modal')).toBeVisible();
-    await frames(page, testInfo, 'complete', 'insight-skip');
+    await frames(page, testInfo, 'complete', 'insight-skip', mode);
     const saved = page.waitForResponse(
       (reply) =>
         new URL(reply.url()).pathname === '/practice-sessions/' &&
@@ -519,6 +669,7 @@ for (const [mode, family] of Object.entries(FAMILIES) as Array<[Mode, Family]>) 
     );
     expect(history.ok()).toBe(true);
     expect(await history.json()).toEqual([session]);
+    await laterTarotCardFits(page, testInfo, mode);
     expect(posts).toHaveLength(1);
   });
 }

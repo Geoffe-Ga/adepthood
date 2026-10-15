@@ -6,12 +6,7 @@ import type { RitualControls, RitualState } from '../engine/types';
 
 import type { SessionSurface } from './sessionSurface';
 import { useSessionSurface } from './sessionSurface';
-import {
-  MeditationCardShell,
-  SESSION_CARD_MAX_HEIGHT,
-  SESSION_LIST_MAX_HEIGHT,
-  SessionCtaButton,
-} from './shared';
+import { MeditationCardShell, SESSION_LIST_MAX_HEIGHT, SessionCtaButton } from './shared';
 
 import { BORDER_RADIUS, SPACING, colors, shadows } from '@/design/tokens';
 
@@ -75,18 +70,13 @@ const TarotCardFace = ({ card, surface }: TarotCardFaceProps): React.JSX.Element
     <Text style={[styles.cardIndex, { color: surface.textMuted }]}>
       {`${card.index} · MAJOR ARCANA`}
     </Text>
-    <Text
-      style={[styles.cardName, { color: surface.text }]}
-      numberOfLines={1}
-      adjustsFontSizeToFit
-      testID="tarot-card-name"
-    >
+    <Text style={[styles.cardName, { color: surface.text }]} testID="tarot-card-name">
       {card.name}
     </Text>
     <Text style={[styles.cardKeyword, { color: surface.textSoft }]} testID="tarot-card-keyword">
       {card.keyword}
     </Text>
-    <ScrollView style={styles.symbolismScroll} nestedScrollEnabled>
+    <ScrollView style={styles.symbolismScroll} nestedScrollEnabled testID="tarot-symbolism-scroll">
       <Text
         style={[styles.cardSymbolism, { color: surface.textSoft }]}
         testID="tarot-card-symbolism"
@@ -113,9 +103,9 @@ const TarotSaveButton = ({ onSave }: { onSave?: () => void }): React.JSX.Element
 
 const styles = StyleSheet.create({
   card: {
-    width: 260,
+    width: 320,
+    maxWidth: '100%',
     minHeight: 360,
-    maxHeight: SESSION_CARD_MAX_HEIGHT,
     borderRadius: BORDER_RADIUS.xl,
     borderWidth: 2,
     borderColor: colors.secondary,
@@ -131,6 +121,8 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
   },
   cardName: {
+    width: '100%',
+    flexShrink: 0,
     fontSize: 26,
     fontWeight: '600',
     textAlign: 'center',
