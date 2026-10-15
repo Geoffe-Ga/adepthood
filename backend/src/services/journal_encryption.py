@@ -375,6 +375,11 @@ class EncryptedJSONList(TypeDecorator[JSONList]):
             decoded = json.loads(value)
         except ValueError as exc:
             raise JournalEncryptionError(msg) from exc
+        # The plain ``JSON`` column these lists replaced stored Python ``None``
+        # as JSON ``null`` rather than SQL NULL, and ``e8a3c5f7b9d2`` encrypted
+        # that text like any other value. It meant "no list" then and still does.
+        if decoded is None:
+            return None
         if not isinstance(decoded, list):
             raise JournalEncryptionError(msg)
         return decoded
