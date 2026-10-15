@@ -768,7 +768,10 @@ keys — the body and title on `journalentry`, the anchored passage on
 `promotedquote`, the passage plus the note and essay on `marginalia`, the
 passage plus its label on `completionsuggestion`, the weekly answer on
 `promptresponse` (mirrored into an entry byte-for-byte), and the ontologized
-copy on `corpusfragment`. A single plaintext copy beside the ciphertext would be
+copy on `corpusfragment`. Two values derived from the writing are encrypted
+with the same keys too: the passage's `embedding` on `corpusfragment` and the
+vault's `vault_tags` on `journalentry`, each stored as the ciphertext of its
+JSON list. A single plaintext copy beside the ciphertext would be
 the copy a stolen dump yields, so the set is pinned by a test rather than by this
 list. **Key presence is the switch**: with no key configured the columns are
 plaintext, which is the right default on a laptop and unacceptable on a server.
