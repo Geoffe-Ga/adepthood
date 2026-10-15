@@ -235,7 +235,16 @@ export const ROUTES: readonly Route[] = [
   tab('Journal', 'Journal shelf', '/journal', 'journal-shelf'),
   tab('Habits', 'Habits grid', '/habits', 'habits-list'),
   tab('Practice', 'Practice player', PRACTICE_PATH, 'practice-screen'),
-  tab('Course', 'Course reader', '/course', 'content-list'),
+  {
+    name: 'Course',
+    label: 'Course reader',
+    anchor: 'content-list',
+    open: async (page) => {
+      await goTo(page, '/course');
+      // The bare tab opens Start Here; retain the Frequency chapter-list census.
+      await page.getByTestId('stage-pill-1').click();
+    },
+  },
   tab('Map', 'Map', '/map', 'journey-read'),
   {
     name: 'JournalEntry',

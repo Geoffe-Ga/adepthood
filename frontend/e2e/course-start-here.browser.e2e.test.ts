@@ -197,6 +197,14 @@ for (const viewport of VIEWPORTS) {
     const drawer = page.getByRole('dialog');
     const resources = drawer.getByTestId('course-drawer-start-here');
     await expect(resources.getByText('Start Here', { exact: true })).toBeVisible();
+    // A visible sliding panel can still be outside the viewport mid-transition.
+    await expect
+      .poll(() =>
+        page
+          .getByTestId('screen-drawer-panel')
+          .evaluate((panel) => new DOMMatrixReadOnly(getComputedStyle(panel).transform).m41),
+      )
+      .toBe(0);
     await doubleText(resources);
     await expectVisibleGlyphs(resources);
     await page.screenshot({ path: `e2e/artifacts/start-here-drawer-${viewport.width}-2x.png` });
