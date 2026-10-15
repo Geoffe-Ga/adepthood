@@ -120,7 +120,7 @@ for (const width of [390, 1280]) {
     await note.scrollIntoViewIfNeeded();
     await frame(page, `real-demo-${width}-reload`);
 
-    await note.click();
+    await page.getByTestId(`margin-note-open-${noteId}`).click();
     const essayWrite = page.waitForResponse(
       (r) =>
         r.request().method() === 'POST' &&
@@ -342,6 +342,20 @@ const CASES: ControlledCase[] = [
     payer: 'Payment route not recorded',
     completion: 'No AI completion check was sent.',
   },
+  ...(['app_provider', 'demo'] as const).map((source) => ({
+    name: `legacy-unversioned-model-${source}`,
+    noteMetadata: {
+      source,
+      source_provider: null,
+      source_model: 'unsupported-legacy-model',
+      receipt_version: null,
+    },
+    provenance: PASS,
+    noteSource: UNRECORDED,
+    passSource: "From the app's AI provider",
+    payer: 'Adepthood wallet',
+    completion: 'No AI completion check was sent.',
+  })),
 ];
 
 /** These overrides are intentionally hermetic client-boundary evidence, never server persistence proof. */
@@ -421,7 +435,7 @@ for (const width of [390, 1280]) {
       await expect(page.getByTestId('resonance-pass-receipt')).toHaveCount(0);
       await note.scrollIntoViewIfNeeded();
       await frame(page, `${scenario.name}-${width}-reload`);
-      await note.click();
+      await page.getByTestId(`margin-note-open-${noteId}`).click();
       await expect(page.getByTestId('essay-source')).toHaveText(DEMO);
       await expect(page.getByTestId('essay-text')).toHaveText('The letter has its own source.');
       await page.getByTestId('essay-close').click();

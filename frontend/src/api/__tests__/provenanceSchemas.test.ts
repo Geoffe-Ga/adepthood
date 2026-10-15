@@ -41,6 +41,32 @@ const PROVENANCE = {
 };
 
 describe('provenance schemas fail safe (#3062)', () => {
+  it.each(['app_provider', 'demo'])(
+    'rejects an unversioned legacy model while keeping prose and essay source: %s',
+    (source) => {
+      const parsed = marginaliaSchema.parse({
+        ...LEGACY_NOTE,
+        source,
+        source_provider: null,
+        source_model: 'unsupported-legacy-model',
+        receipt_version: null,
+        essay_source: 'creek_vault',
+      });
+      expect(parsed.source).toBeNull();
+      expect(parsed.source_model).toBeNull();
+      expect(parsed.note).toBe('A note.');
+      expect(parsed.essay_source).toBe('creek_vault');
+    },
+  );
+
+  it.each(['app_provider', 'demo', 'creek_vault'])(
+    'preserves coherent legacy source-only identity: %s',
+    (source) => {
+      const parsed = marginaliaSchema.parse({ ...LEGACY_NOTE, source });
+      expect(parsed.source).toBe(source);
+      expect(parsed.source_model ?? null).toBeNull();
+    },
+  );
   it('parses a legacy note with every provenance field unset', () => {
     const parsed = marginaliaSchema.parse(LEGACY_NOTE);
     expect(parsed.source ?? null).toBeNull();
