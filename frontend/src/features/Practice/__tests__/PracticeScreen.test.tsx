@@ -2745,6 +2745,105 @@ describe('PracticeScreen manual log', () => {
     expect(mockUserPracticesLinkHabit).not.toHaveBeenCalled();
   });
 
+  describe('habit picker dismissal while a link change is pending (#3382)', () => {
+    type LinkGate = { resolve: (_row: UserPractice) => void; reject: (_err: Error) => void };
+    function holdLink(): LinkGate {
+      const gate = {} as LinkGate;
+      mockUserPracticesLinkHabit.mockReturnValueOnce(
+        new Promise<UserPractice>((resolve, reject) => {
+          gate.resolve = resolve;
+          gate.reject = reject;
+        }),
+      );
+      return gate;
+    }
+    async function openPicker(linkedHabit: number | null) {
+      authenticateHabitOwner();
+      mockUserPracticesList.mockResolvedValue([sampleUserPractice({ habit_id: linkedHabit })]);
+      const view = render(<PracticeScreenWithHeader habitBindings={habitBindings()} />);
+      await waitFor(() => expect(view.getByTestId('ritual-start')).toBeTruthy());
+      fireEvent.press(view.getByLabelText('Open Practice menu'));
+      fireEvent.press(view.getByTestId('practice-drawer-link-habit'));
+      expect(view.getByTestId('practice-habit-picker')).toBeTruthy();
+      return view;
+    }
+    function tryEveryDismissal(view: ReturnType<typeof render>) {
+      expect(view.getByTestId('practice-habit-cancel')).toBeDisabled();
+      fireEvent.press(view.getByTestId('practice-habit-cancel'));
+      act(() => {
+        view.getByTestId('practice-habit-picker-modal').props.onRequestClose();
+      });
+      expect(view.getByTestId('practice-habit-picker')).toBeTruthy();
+    }
+
+    for (const write of ['choose', 'clear'] as const) {
+      it(`keeps the picker open through Cancel and system back until a pending ${write} lands`, async () => {
+        const view = await openPicker(write === 'clear' ? 25 : null);
+        const gate = holdLink();
+        fireEvent.press(
+          view.getByTestId(write === 'clear' ? 'practice-habit-clear' : 'practice-habit-choose-25'),
+        );
+        expect(mockUserPracticesLinkHabit).toHaveBeenCalledWith(
+          10,
+          write === 'clear' ? null : 25,
+          mockHabitToken,
+        );
+        tryEveryDismissal(view);
+        await act(async () => {
+          gate.resolve(sampleUserPractice({ habit_id: write === 'clear' ? null : 25 }));
+        });
+        expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+        if (write === 'clear') expect(view.queryByTestId('practice-linked-habit')).toBeNull();
+        else {
+          expect(view.getByTestId('practice-linked-habit')).toHaveTextContent(
+            'Linked to Breath habit',
+          );
+        }
+      });
+    }
+
+    it('reopens both ways out after a pending link fails, then a retry links for the current owner', async () => {
+      const view = await openPicker(null);
+      const gate = holdLink();
+      fireEvent.press(view.getByTestId('practice-habit-choose-25'));
+      tryEveryDismissal(view);
+      await act(async () => {
+        gate.reject(new Error('offline'));
+      });
+      expect(view.getByTestId('practice-habit-picker')).toBeTruthy();
+      expect(view.getByTestId('practice-habit-cancel')).toBeEnabled();
+      expect(view.queryByTestId('practice-linked-habit')).toBeNull();
+      const retry = holdLink();
+      fireEvent.press(view.getByTestId('practice-habit-choose-25'));
+      tryEveryDismissal(view);
+      await act(async () => {
+        retry.resolve(sampleUserPractice({ habit_id: 25 }));
+      });
+      expect(mockUserPracticesLinkHabit).toHaveBeenCalledTimes(2);
+      expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+      expect(view.getByTestId('practice-linked-habit')).toHaveTextContent('Linked to Breath habit');
+    });
+
+    it('closes the picker on an account switch and never applies the outgoing pending link', async () => {
+      const view = await openPicker(null);
+      const gate = holdLink();
+      fireEvent.press(view.getByTestId('practice-habit-choose-25'));
+      tryEveryDismissal(view);
+      act(() => {
+        setActiveUser(2);
+      });
+      expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+      act(() => {
+        setActiveUser(1);
+      });
+      await act(async () => {
+        gate.resolve(sampleUserPractice({ habit_id: 25 }));
+      });
+      expect(view.queryByTestId('practice-habit-picker')).toBeNull();
+      expect(view.queryByTestId('practice-linked-habit')).toBeNull();
+    });
+  });
+
   for (const admission of ['mismatched', 'missing'] as const) {
     it(`mounted habit controller hides private link facts under ${admission} credentials`, async () => {
       authenticateHabitOwner();

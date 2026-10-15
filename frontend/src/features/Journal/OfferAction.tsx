@@ -32,6 +32,14 @@ export interface OfferActionProps {
   disabled?: boolean;
 }
 
+/**
+ * Dims an action held while a write is in flight, matching the 0.5 the
+ * Practice controls use for the same state, so a held button reads as
+ * waiting rather than broken. Disabled controls are exempt from the WCAG
+ * text-contrast floor; the label stays legible on the card.
+ */
+export const OFFER_ACTION_DISABLED_OPACITY = 0.5;
+
 /** A pair of these is what every step of the note offers the writer. */
 function OfferAction({
   label,
@@ -43,7 +51,11 @@ function OfferAction({
 }: OfferActionProps): React.JSX.Element {
   return (
     <TouchableOpacity
-      style={[styles.action, emphasis ? styles.actionEmphasis : null]}
+      style={[
+        styles.action,
+        emphasis ? styles.actionEmphasis : null,
+        disabled ? styles.actionDisabled : null,
+      ]}
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
@@ -69,6 +81,9 @@ const styles = StyleSheet.create({
     borderRadius: BORDER_RADIUS.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.paper.inkSoft,
+  },
+  actionDisabled: {
+    opacity: OFFER_ACTION_DISABLED_OPACITY,
   },
   actionLabel: {
     ...editorialType.action,
