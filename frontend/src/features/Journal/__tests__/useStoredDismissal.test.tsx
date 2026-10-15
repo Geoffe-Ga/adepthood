@@ -119,3 +119,32 @@ it('rejects an old A read after A to B to A even when React batches the switch',
   unmount();
   setActiveUser(null);
 });
+
+it('refuses a dismissal from a stale callback after the account changed', () => {
+  setActiveUser(1);
+  const { load } = heldLoad();
+  const save = jest.fn(() => Promise.resolve());
+  const { result, unmount } = renderHook(() => useStoredDismissal(load, save));
+  const staleDismiss = result.current.markDismissed;
+  act(() => setActiveUser(2));
+  act(() => staleDismiss());
+  expect(save).not.toHaveBeenCalled();
+  expect(result.current.known()).toBeNull();
+  unmount();
+  setActiveUser(null);
+});
+
+it('answers a stale read “not dismissed” once its account has been replaced', async () => {
+  setActiveUser(1);
+  const first = heldLoad();
+  const { result, unmount } = renderHook(() => useStoredDismissal(first.load, noSave));
+  const staleRead = result.current.read();
+  act(() => {
+    setActiveUser(2);
+    setActiveUser(1);
+  });
+  first.settle(true);
+  await expect(staleRead).resolves.toBe(false);
+  unmount();
+  setActiveUser(null);
+});
