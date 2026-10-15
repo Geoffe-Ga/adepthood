@@ -20,12 +20,23 @@ gate, the generation slot, the wallet, the usage log and the provider.
 Each spy below *delegates* to the real function, so the same spies fire on the
 ``personal`` / ``public`` counterweights: a spy that could not see a call would
 fail there rather than pass every refusal.
+
+**The payer dimension** (#3353, C08). Every refusal also runs with a writer's
+own key on ``X-LLM-API-Key`` (BYOK), and with the *real* provider dial behind
+the router's seam and both vendors' SDK factories recorded
+(:func:`tests.support.egress_recorders.record_provider_clients`), so a refused
+page must build no provider client whoever would have paid. Neither door
+declares that header (ADR 0009 phase (a), #3067): one sent anyway is ignored,
+so an *admitted* page carrying a key is still read keyless on the stub seam and
+builds no client either -- the BYOK counterweights pin that real behaviour, and
+the recorder's own positive control shows a client built with a key is seen.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Final
 
@@ -36,7 +47,15 @@ from sqlmodel import col
 from models.llm_usage_log import LLMUsageLog
 from models.user import User
 from routers import transcription as transcription_router
+from services import botmason
 from tests.incident.test_privacy_suspension import signup
+from tests.provider_transport import OPENAI_KEY
+from tests.support.egress_recorders import (
+    WRITERS_KEY,
+    Ledger,
+    Recorder,
+    record_provider_clients,
+)
 from tests.transcription_helpers import (
     JPEG_BYTES,
     SENTINEL_TEXT,
@@ -58,6 +77,21 @@ _REFUSAL: Final = {"detail": "tier_refused"}
 #: of an eligible tier.
 _DENIED: Final = ("intimate", "INTIMATE", "Intimate", "secret", "", "Personal", " personal")
 _ADMITTED: Final = ("personal", "public")
+
+#: Every seam an admitted page crosses, in order, on its way to a kept reading.
+_KEYLESS_READ: Final = (
+    "require_external_ai_available",
+    "resolve_reflection_boundary",
+    "require_ai_payer",
+    "generation_slot",
+    "preflight_deduction",
+    "generate_response",
+    "record_llm_usage",
+)
+
+#: Who would pay for the read: the app's own seam (no key), or the writer's own
+#: key on the BYOK header, which neither transcription door declares.
+_PAYERS: Final = {"app-seam": {}, "byok": {"X-LLM-API-Key": OPENAI_KEY}}
 
 #: The router-level seams a page read crosses, in order, before it is billed
 #: and dialled. ``generate_response`` is the provider dial itself (here a
@@ -124,6 +158,46 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return calls
 
 
+@pytest.fixture
+def clients(monkeypatch: pytest.MonkeyPatch, seams: list[str]) -> Ledger:
+    """Put the real provider dial behind the seam spy, and record every SDK client built.
+
+    ``seams`` answers with a canned reply that never reaches a vendor's SDK, so
+    a key that leaked through it could build no client to be seen. Here the
+    spy delegates to the real :func:`services.botmason.generate_response`
+    instead: a key the router forwarded would select a vendor and build its
+    client, at a factory that records it (and talks to an in-process transport).
+    """
+    real_dial = botmason.generate_response
+    monkeypatch.setattr(
+        transcription_router,
+        "generate_response",
+        _record_async(seams, "generate_response", real_dial),
+    )
+    ledger = Ledger()
+    record_provider_clients(monkeypatch, ledger, writer_key=OPENAI_KEY)
+    return ledger
+
+
+@dataclass(frozen=True)
+class Watched:
+    """The router seams a request reached, and every SDK client it built."""
+
+    seams: list[str]
+    clients: Ledger
+
+
+@pytest.fixture
+def watched(seams: list[str], clients: Ledger) -> Watched:
+    """Both spies at once, for a test whose parameters leave room for one fixture."""
+    return Watched(seams, clients)
+
+
+def _built(ledger: Ledger) -> list[tuple[str, str]]:
+    """Every provider client built, as (vendor, whose key)."""
+    return [(e.verb, e.payload) for e in ledger.since(0, Recorder.PROVIDER_CLIENT)]
+
+
 async def _wallet(session: AsyncSession, user_id: int) -> tuple[int, int]:
     """(monthly_messages_used, offering_balance), read fresh."""
     await session.rollback()
@@ -144,19 +218,23 @@ async def _usage_rows(session: AsyncSession, user_id: int) -> int:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payer", _PAYERS)
 @pytest.mark.parametrize("tier", _DENIED)
 async def test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched(
-    async_client: AsyncClient, db_session: AsyncSession, seams: list[str], tier: str
+    async_client: AsyncClient, db_session: AsyncSession, watched: Watched, tier: str, payer: str
 ) -> None:
-    """403 ``tier_refused``: no boundary read, payer, slot, charge, usage row or dial."""
-    headers, user_id, _ = await signup(async_client, f"tier_refused_{tier.encode().hex()}")
+    """403 ``tier_refused``: no boundary read, payer, slot, charge, usage row, dial or client."""
+    headers, user_id, _ = await signup(async_client, f"tier_refused_{payer}_{tier.encode().hex()}")
     before = await _wallet(db_session, user_id)
 
-    resp = await async_client.post(_TRANSCRIBE, headers=headers, json=_page(tier))
+    resp = await async_client.post(
+        _TRANSCRIBE, headers={**headers, **_PAYERS[payer]}, json=_page(tier)
+    )
 
     assert resp.status_code == HTTPStatus.FORBIDDEN, resp.text
     assert resp.json() == _REFUSAL
-    assert seams == []
+    assert watched.seams == []
+    assert _built(watched.clients) == []
     assert await _wallet(db_session, user_id) == before
     assert await _usage_rows(db_session, user_id) == 0
 
@@ -190,35 +268,69 @@ async def test_a_page_of_an_egress_tier_is_still_read_and_billed(
     resp = await async_client.post(_TRANSCRIBE, headers=headers, json=_page(tier))
 
     assert resp.status_code == HTTPStatus.OK, resp.text
-    assert seams == [
-        "require_external_ai_available",
-        "resolve_reflection_boundary",
-        "require_ai_payer",
-        "generation_slot",
-        "preflight_deduction",
-        "generate_response",
-        "record_llm_usage",
-    ]
+    assert seams == list(_KEYLESS_READ)
     assert await _wallet(db_session, user_id) != before
     assert await _usage_rows(db_session, user_id) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tier", _ADMITTED)
+async def test_a_writers_key_sent_with_an_egress_tier_page_is_ignored(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    seams: list[str],
+    clients: Ledger,
+    tier: str,
+) -> None:
+    """BYOK counterweight: the route reads the page keyless on the stub seam, building no client.
+
+    The real behaviour since ADR 0009 phase (a): the header is not declared, so
+    the same seams fire as for a keyless page, the real dial is reached without
+    the key, the armed stub answers, and no SDK client is ever built with it.
+    """
+    headers, user_id, _ = await signup(async_client, f"tier_admitted_byok_{tier}")
+    before = await _wallet(db_session, user_id)
+
+    resp = await async_client.post(
+        _TRANSCRIBE, headers={**headers, **_PAYERS["byok"]}, json=_page(tier)
+    )
+
+    assert _built(clients) == [], "the ignored key reached a vendor's SDK"
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert seams == list(_KEYLESS_READ)
+    assert await _wallet(db_session, user_id) != before
+
+
+@pytest.mark.asyncio
+async def test_the_client_recorder_sees_a_client_built_with_the_writers_key(
+    clients: Ledger,
+) -> None:
+    """The recorder's positive control: a dial that does carry the key is seen building a client."""
+    await botmason.generate_response("Read this page.", [], api_key=OPENAI_KEY)
+
+    assert _built(clients) == [("openai", WRITERS_KEY)]
 
 
 # --- POST /journal/transcribe-page/direct-admission ----------------------------
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payer", _PAYERS)
 @pytest.mark.parametrize("tier", _DENIED)
 async def test_the_direct_admission_never_admits_a_non_egress_tier(
-    async_client: AsyncClient, seams: list[str], tier: str
+    async_client: AsyncClient, seams: list[str], clients: Ledger, tier: str, payer: str
 ) -> None:
-    """The device is told no, so the page never leaves it for the vendor."""
-    headers, _, _ = await signup(async_client, f"admission_refused_{tier.encode().hex()}")
+    """The device is told no, so the page never leaves it for the vendor, whoever would pay."""
+    headers, _, _ = await signup(async_client, f"admission_refused_{payer}_{tier.encode().hex()}")
 
-    resp = await async_client.post(_ADMISSION, headers=headers, json={"classification": tier})
+    resp = await async_client.post(
+        _ADMISSION, headers={**headers, **_PAYERS[payer]}, json={"classification": tier}
+    )
 
     assert resp.status_code == HTTPStatus.FORBIDDEN, resp.text
     assert resp.json() == _REFUSAL
     assert seams == []
+    assert _built(clients) == []
 
 
 @pytest.mark.asyncio
@@ -236,15 +348,23 @@ async def test_the_direct_admission_requires_a_declared_tier(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("payer", _PAYERS)
 @pytest.mark.parametrize("tier", _ADMITTED)
 async def test_the_direct_admission_still_admits_an_egress_tier(
-    async_client: AsyncClient, seams: list[str], tier: str
+    async_client: AsyncClient, seams: list[str], clients: Ledger, tier: str, payer: str
 ) -> None:
-    """Counterweight: 204, and the incident switch is still consulted."""
-    headers, _, _ = await signup(async_client, f"admission_admitted_{tier}")
+    """Counterweight: 204, the incident switch is still consulted, and no client is built.
 
-    resp = await async_client.post(_ADMISSION, headers=headers, json={"classification": tier})
+    The admission carries neither the page nor the key: the device dials its
+    own vendor, so a key sent here anyway changes nothing on the server.
+    """
+    headers, _, _ = await signup(async_client, f"admission_admitted_{payer}_{tier}")
+
+    resp = await async_client.post(
+        _ADMISSION, headers={**headers, **_PAYERS[payer]}, json={"classification": tier}
+    )
 
     assert resp.status_code == HTTPStatus.NO_CONTENT, resp.text
     assert resp.content == b""
     assert seams == ["require_external_ai_available"]
+    assert _built(clients) == []
