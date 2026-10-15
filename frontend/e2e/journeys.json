@@ -1386,6 +1386,18 @@
     "coveredBy": "frontend/e2e/corpus-consent.e2e.test.ts"
   },
   {
+    "id": "corpus.settings-share-confirmed-decisions",
+    "description": "The Settings hub keeps its inline sorting switches. Pushing What reflections draw on while the genuine consent GET is held reuses the same read; a real confirmed PUT grant appears in the detail and the retained hub. The hub withdrawal still asks, cancellation writes nothing, confirmation is retained after reload. Phone and desktop normal and targeted doubled rendered Settings text keep copy contained, keyboard grant reachable and withdrawal targets44px. This browser proof does not certify native text scaling, corpus classification providers or live vendor retention.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
+      "client": ["corpusConsent"],
+      "routes": ["GET /corpus/consent", "PUT /corpus/consent/{source}"],
+      "tables": ["corpusconsentevent", "corpusfragment"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/settings-corpus-sharing.browser.e2e.test.ts"
+  },
+  {
     "id": "corpus.sorting-switches-on-the-hub",
     "description": "Someone who has just given their corpus a vault is told, on the vault screen, that creating one does not turn sorting on and that the yes is a switch under Your corpus in Settings. On the hub, that group now carries the sorting switches themselves -- one per kind of material the server names, under a one-line lead that says what sorting is for, what it sends and that Intimate is never sent -- between Bring in your writing and the What reflections draw on row that holds the full account. The switches are the same component the sub-screen mounts (CorpusConsentRows), so turning a source on records the decision over PUT /corpus/consent/{source} and shows only the state the server reported back, and turning one off asks first, naming the deletion, before anything is withdrawn. Uncovered because the browser lane presses the switches only on the sub-screen (corpus.decide-what-may-be-sorted); the hub mount is pinned by SettingsHubScreen.test.tsx (the switches' place in the group, the lead's three facts, the grant and the revoke question) and the vault copy by vaultCopy.test.ts.",
     "crosses": {

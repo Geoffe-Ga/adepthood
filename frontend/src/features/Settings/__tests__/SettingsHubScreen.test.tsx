@@ -91,16 +91,26 @@ import { BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
 import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
 
-import { ApiError } from '@/api';
+import { ApiError, setTokenGetter } from '@/api';
 import { restoreFeedbackOrigin } from '@/features/Feedback/feedbackFocus';
 import {
   SEED_ROW_DESCRIPTION,
   SEED_ROW_LABEL,
   SEED_ROW_VAULT_FIRST_DESCRIPTION,
 } from '@/features/Seed/seedCopy';
+import { setActiveUser } from '@/storage/userScope';
 import { expectNavigationOwnsTitle, watchFocusMoves } from '@/testing/navigationOwnsTitle';
 
+const consentToken = `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ sub: '1', exp: 4102444800 })).toString('base64url')}.signature`;
+
+afterEach(() => {
+  setActiveUser(null);
+  setTokenGetter(null);
+});
+
 beforeEach(() => {
+  setActiveUser(1);
+  setTokenGetter(() => consentToken);
   jest.clearAllMocks();
 });
 
