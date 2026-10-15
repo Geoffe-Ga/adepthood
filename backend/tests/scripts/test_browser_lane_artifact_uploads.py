@@ -49,9 +49,8 @@ _E2E_DIR = _REPO_ROOT / "frontend" / "e2e"
 _BROWSER_JOB = "browser-journey-shards"
 _UPLOAD_ACTION = "actions/upload-artifact@"
 _ALWAYS = "always()"
-_SELECTION_CONDITION = (
-    "${{ !cancelled() && (needs.changes.result != 'success' || "
-    "needs.changes.outputs.e2e != 'false') }}"
+_AGGREGATE_CONDITION = (
+    "${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}"
 )
 
 # The browser job's own ``timeout-minutes``, at the job's key indentation.
@@ -227,7 +226,7 @@ jobs:
         env:
           SHARD_RESULT: ${{ needs.browser-journey-shards.result }}
         run: test "$SHARD_RESULT" = success
-""".replace("SELECTED_LANE", _SELECTION_CONDITION)
+""".replace("SELECTED_LANE", _AGGREGATE_CONDITION)
 
 _COMPLIANT_CONFIG = """\
   fullyParallel: false,
@@ -296,7 +295,7 @@ def _assert_stable_browser_check(workflow: str) -> None:
     """Keep the pre-matrix required check, failing on any unsuccessful shard."""
     job = jobs(without_comment_lines(workflow)).get("browser-journey", "")
     assert "    needs: [changes, browser-journey-shards]" in job
-    assert f"    if: {_SELECTION_CONDITION}" in job
+    assert f"    if: {_AGGREGATE_CONDITION}" in job
     assert "continue-on-error" not in job
     step = "\n".join(step_body(job, "Require every browser shard to pass"))
     assert "SHARD_RESULT: ${{ needs.browser-journey-shards.result }}" in step
@@ -376,13 +375,20 @@ def test_diagnostics_reject_a_missing_json_reporter() -> None:
         ("needs: [changes, browser-journey-shards]", "needs: changes"),
         ('test "$SHARD_RESULT" = success', "true"),
         ("needs.browser-journey-shards.result", "needs.changes.result"),
-        ("!cancelled()", "success()"),
+        ("always() &&", "success() &&"),
     ],
 )
 def test_required_check_rejects_renaming_and_masked_shard_failures(before: str, after: str) -> None:
     """The stable check must wait for the matrix and propagate its result after failure."""
     with pytest.raises(AssertionError):
         _assert_stable_browser_check(_COMPLIANT.replace(before, after))
+
+
+def test_cancelled_dependencies_cannot_skip_the_required_check() -> None:
+    """A skipped required job passes protection, so the aggregate must survive cancellation."""
+    workflow = _COMPLIANT.replace("always() &&", "!cancelled() &&")
+    with pytest.raises(AssertionError):
+        _assert_stable_browser_check(workflow)
 
 
 def test_the_check_can_be_satisfied() -> None:

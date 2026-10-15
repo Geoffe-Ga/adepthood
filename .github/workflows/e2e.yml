@@ -266,7 +266,9 @@ jobs:
   # so this check must fail when any shard fails, is cancelled or never runs.
   browser-journey:
     needs: [changes, browser-journey-shards]
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
+    # A skipped required job is green. Always evaluate selected runs so a
+    # cancelled shard reaches the comparison below instead of skipping this job.
+    if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

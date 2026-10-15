@@ -75,7 +75,8 @@ retain their existing artifact names: each walk lives in a single spec file,
 so only its owning shard produces that folder. Other shards finish even if one
 fails, preserving their coverage and review artifacts.
 The `browser-journey` aggregate check keeps the original required-check name
-and passes only when every selected shard succeeds.
+and passes only when every selected shard succeeds. It runs even after a shard
+is cancelled, since skipping a required job would count as success.
 
 ## What is real, and the four external boundaries that are not
 
