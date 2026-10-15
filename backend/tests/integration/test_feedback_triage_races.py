@@ -9,9 +9,9 @@ the check against the same stale state.
 
 Three races, three invariants:
 
-- two transitions from one state: exactly one lands, the other is refused with
-  ``feedback_transition_not_allowed``, and the trail holds exactly one event
-  whose ``old_state`` is the state the report really had;
+- two transitions from one state: the outcomes and exact audit trail match a
+  valid serial order. Closing first refuses a later plan; planning first permits
+  a later close, whose event must read ``planned`` rather than stale ``triaged``;
 - two unlinks of one link: exactly one lands and one event is written;
 - ``X -> Y`` and ``Y -> X`` together: exactly one lands and the other is
   refused as a cycle, so the table never holds a 2-cycle.
@@ -115,10 +115,10 @@ def _statuses(responses: list[Response]) -> list[int]:
 
 
 @pytest.mark.asyncio
-async def test_two_transitions_from_one_state_cannot_both_land(
+async def test_two_transitions_serialize_into_a_valid_audit_chain(
     pair: SessionPerRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """triaged->closed and triaged->planned at once: one lands, one is refused."""
+    """Concurrent close/plan requests must observe one of the two legal serial orders."""
     first, second, [report] = await _seed(pair, 1)
     report_id = report.id or 0
     async with pair.factory() as session:
@@ -132,13 +132,24 @@ async def test_two_transitions_from_one_state_cannot_both_land(
         )
     )
 
-    assert _statuses(responses) == [HTTPStatus.OK, HTTPStatus.CONFLICT]
-    refused = next(r for r in responses if r.status_code == HTTPStatus.CONFLICT)
-    assert refused.json()["detail"] == "feedback_transition_not_allowed"
-    landed = next(r for r in responses if r.status_code == HTTPStatus.OK)
-    final_status = landed.json()["operator_added"]["status"]
-    assert (await _state(pair, report_id))[0] == final_status
-    assert await _events(pair, report_id) == [("status_changed", "triaged", final_status)]
+    closed, planned = responses
+    assert closed.status_code == HTTPStatus.OK
+    assert closed.json()["operator_added"]["status"] == "closed"
+    assert await _state(pair, report_id) == ("closed", None)
+
+    if planned.status_code == HTTPStatus.CONFLICT:
+        # Closing held the lock first: closed -> planned is not an edge.
+        assert planned.json()["detail"] == "feedback_transition_not_allowed"
+        expected_trail = [("status_changed", "triaged", "closed")]
+    else:
+        # Planning held it first: planned -> closed is a valid next edge.
+        assert planned.status_code == HTTPStatus.OK
+        assert planned.json()["operator_added"]["status"] == "planned"
+        expected_trail = [
+            ("status_changed", "triaged", "planned"),
+            ("status_changed", "planned", "closed"),
+        ]
+    assert await _events(pair, report_id) == expected_trail
 
 
 @pytest.mark.asyncio
