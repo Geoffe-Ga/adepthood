@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import type { OfferSwitchStorage } from './journalOfferSwitches';
 
-import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
-import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
+import { useAccountScope } from '@/storage/useActiveUser';
 
 /** What a switch row needs: its position, whether it can move, and how to move it. */
 export interface OfferSwitch {
@@ -25,8 +24,7 @@ export interface OfferSwitch {
  * cannot race the first.
  */
 export function useOfferSwitch(storage: OfferSwitchStorage): OfferSwitch {
-  const owner = useActiveUser();
-  const epoch = useActiveUserGeneration();
+  const { owner, epoch, isCurrent } = useAccountScope();
   const [answer, setAnswer] = useState<{
     owner: number | null;
     epoch: number;
@@ -39,25 +37,24 @@ export function useOfferSwitch(storage: OfferSwitchStorage): OfferSwitch {
     let live = true;
     setWriting(false);
     void storage.read().then((offered) => {
-      if (live && getActiveUser() === owner && getActiveUserGeneration() === epoch)
-        setAnswer({ owner, epoch, value: offered });
+      if (live && isCurrent()) setAnswer({ owner, epoch, value: offered });
     });
     return () => {
       live = false;
     };
-  }, [storage, owner, epoch]);
+  }, [storage, owner, epoch, isCurrent]);
 
   const set = useCallback(
     (next: boolean) => {
-      if (getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
+      if (!isCurrent()) return;
       setWriting(true);
       void storage.write(next).then((saved) => {
-        if (getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
+        if (!isCurrent()) return;
         if (saved) setAnswer({ owner, epoch, value: next });
         setWriting(false);
       });
     },
-    [storage, owner, epoch],
+    [storage, owner, epoch, isCurrent],
   );
 
   return { value: value ?? true, busy: value === null || writing, set };

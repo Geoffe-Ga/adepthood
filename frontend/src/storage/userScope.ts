@@ -90,6 +90,16 @@ export function getActiveUser(): number | null {
 }
 
 /**
+ * Whether work captured under ``owner`` at ``epoch`` may still land.
+ *
+ * The owner alone is not enough: an A to B to A switch puts A back in charge,
+ * and A's old read must still be refused, so the generation is checked too.
+ */
+export function isAccountScopeCurrent(owner: number | null, epoch: number): boolean {
+  return activeUserId === owner && activeUserGeneration === epoch;
+}
+
+/**
  * Resolve ``base`` against the active account.
  *
  * Anonymous callers get ``base`` verbatim. That is not an oversight: no
