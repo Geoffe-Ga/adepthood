@@ -924,6 +924,7 @@ export const releasedHabitSchema = z.object({
 /** Eligibility, the week sequence, the active arc, the offer-dismissal flag, and any rested habits. */
 export const mettaReturnStateSchema = z.object({
   eligible: z.boolean(),
+  offer_episode: z.string().min(1).max(128).nullable(),
   weeks: z.array(returnWeekSchema),
   arc: returnArcSchema.nullable(),
   offer_dismissed: z.boolean(),

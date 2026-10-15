@@ -42,7 +42,7 @@ export const TRANSCRIPTION_SYSTEM_PROMPT =
   '\n' +
   "Conversations: If the image shows a conversation, such as a text-message thread or a chat, write one message per line in reading order, prefix each line with the sender label exactly as shown (or Me: for the writer's own messages and the contact's name for theirs when no label is shown), keep a timestamp only when it sits inline with the message text, and ignore interface chrome such as the status bar, the input field and reaction badges.\n" +
   '\n' +
-  'Screens: If the image is a photo of a screen, transcribe the document or messages shown on it. Ignore window frames, browser tabs, menus, toolbars, taskbars, notifications and any other windows. Glare, moiré or a skewed angle are not reasons to decline — write [illegible] for any span you cannot read and keep going.\n' +
+  'Screens: If the image is a photo of a screen, transcribe the document or messages shown on it. Ignore window frames, browser tabs, menus, toolbars, taskbars, notifications and any other windows. Glare, moiré or a skewed angle are not reasons to decline — write [illegible] for any span you cannot make out and keep going.\n' +
   '\n' +
   'Examples:\n' +
   '- Handwriting shows: I felt <s>angry</s> frustrated about the meeting. Transcribe as: I felt frustrated about the meeting.\n' +

@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -55,6 +55,19 @@ async def _signup(client: AsyncClient, username: str) -> dict[str, str]:
     assert resp.status_code == HTTPStatus.OK
     token = resp.json()["token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+async def _dismiss_current_offer(client: AsyncClient, headers: dict[str, str]) -> Response:
+    """Round-trip the observed current identity rather than deriving a coordinate."""
+    current = await client.get(_BASE_URL, headers=headers)
+    assert current.status_code == HTTPStatus.OK
+    episode = current.json()["offer_episode"]
+    assert isinstance(episode, str)
+    return await client.post(
+        _DISMISS_URL,
+        headers=headers,
+        json={"expected_offer_episode": episode},
+    )
 
 
 async def _get_user(session: AsyncSession, email: str) -> User:
@@ -687,7 +700,7 @@ async def test_dismiss_offer_eligible_user_returns_dismissed_state(
     assert user.id is not None
     await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
 
-    resp = await async_client.post(_DISMISS_URL, headers=headers)
+    resp = await _dismiss_current_offer(async_client, headers)
 
     assert resp.status_code == HTTPStatus.OK
     body = resp.json()
@@ -706,7 +719,7 @@ async def test_dismiss_offer_persists_across_sessions(
     assert user.id is not None
     await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
 
-    dismiss_resp = await async_client.post(_DISMISS_URL, headers=headers)
+    dismiss_resp = await _dismiss_current_offer(async_client, headers)
     assert dismiss_resp.status_code == HTTPStatus.OK
 
     get_resp = await async_client.get(_BASE_URL, headers=headers)
@@ -726,9 +739,9 @@ async def test_dismiss_offer_twice_is_idempotent_single_row(
     user_id = user.id
     await _seed_progress(db_session, user_id, current_stage=_ELIGIBLE_STAGE)
 
-    first = await async_client.post(_DISMISS_URL, headers=headers)
+    first = await _dismiss_current_offer(async_client, headers)
     assert first.status_code == HTTPStatus.OK
-    second = await async_client.post(_DISMISS_URL, headers=headers)
+    second = await _dismiss_current_offer(async_client, headers)
     assert second.status_code == HTTPStatus.OK
     assert second.json()["offer_dismissed"] is True
 
@@ -753,15 +766,27 @@ async def test_dismiss_offer_concurrent_insert_race_returns_200_single_row(
     user_id = user.id
     await _seed_progress(db_session, user_id, current_stage=_ELIGIBLE_STAGE)
 
-    first = await async_client.post(_DISMISS_URL, headers=headers)
+    first = await _dismiss_current_offer(async_client, headers)
     assert first.status_code == HTTPStatus.OK
 
-    async def _always_absent(*_args: object, **_kwargs: object) -> bool:
-        return False
+    missed = False
+    with monkeypatch.context() as insert_race:
 
-    monkeypatch.setattr(metta_return_router, "_offer_dismissed", _always_absent)
+        async def _miss_insert_precheck(*_args: object, **_kwargs: object) -> bool:
+            nonlocal missed
+            missed = True
+            # Only the insert precheck misses. The response's later query must
+            # observe real persisted state through the restored implementation.
+            insert_race.undo()
+            return False
 
-    racing = await async_client.post(_DISMISS_URL, headers=headers)
+        insert_race.setattr(metta_return_router, "_offer_dismissed", _miss_insert_precheck)
+        racing = await async_client.post(
+            _DISMISS_URL,
+            headers=headers,
+            json={"expected_offer_episode": first.json()["offer_episode"]},
+        )
+    assert missed is True
 
     assert racing.status_code == HTTPStatus.OK
     assert racing.json()["offer_dismissed"] is True
@@ -780,7 +805,11 @@ async def test_dismiss_offer_ineligible_user_returns_409_and_persists_nothing(
     user_id = user.id
     await _seed_progress(db_session, user_id, current_stage=_INELIGIBLE_STAGE)
 
-    resp = await async_client.post(_DISMISS_URL, headers=headers)
+    resp = await async_client.post(
+        _DISMISS_URL,
+        headers=headers,
+        json={"expected_offer_episode": "no-current-offer"},
+    )
 
     assert resp.status_code == HTTPStatus.CONFLICT
     assert resp.json()["detail"] == "return_not_eligible"
@@ -804,7 +833,7 @@ async def test_dismiss_offer_cross_user_isolation(
     await _seed_progress(db_session, alice.id, current_stage=_ELIGIBLE_STAGE)
     await _seed_progress(db_session, bob.id, current_stage=_ELIGIBLE_STAGE)
 
-    dismiss_resp = await async_client.post(_DISMISS_URL, headers=alice_headers)
+    dismiss_resp = await _dismiss_current_offer(async_client, alice_headers)
     assert dismiss_resp.status_code == HTTPStatus.OK
 
     bob_get = await async_client.get(_BASE_URL, headers=bob_headers)
@@ -827,7 +856,7 @@ async def test_dismiss_offer_resets_when_episode_advances(
     assert user.id is not None
     progress = await _seed_progress(db_session, user.id, current_stage=_ELIGIBLE_STAGE)
 
-    dismiss_resp = await async_client.post(_DISMISS_URL, headers=headers)
+    dismiss_resp = await _dismiss_current_offer(async_client, headers)
     assert dismiss_resp.status_code == HTTPStatus.OK
 
     dismissed_get = await async_client.get(_BASE_URL, headers=headers)
@@ -862,7 +891,7 @@ async def test_dismiss_offer_does_not_mutate_stage_progress_or_create_arc(
     before_completed = list(progress.completed_stages)
     before_cycle = progress.cycle_number
 
-    dismiss_resp = await async_client.post(_DISMISS_URL, headers=headers)
+    dismiss_resp = await _dismiss_current_offer(async_client, headers)
     assert dismiss_resp.status_code == HTTPStatus.OK
 
     db_session.expire_all()
@@ -1183,3 +1212,211 @@ async def test_return_lived_out_and_left_from_clear_light_moves_no_stage(
     assert refreshed.current_stage == _CLEAR_LIGHT_STAGE
     assert refreshed.cycle_number == _FIRST_CYCLE
     assert list(refreshed.completed_stages) == _STAGES_BEFORE_CLEAR_LIGHT
+
+
+async def _episode_account(
+    client: AsyncClient,
+    session: AsyncSession,
+    username: str,
+) -> tuple[dict[str, str], int]:
+    """An eligible account whose current episode can be observed over HTTP."""
+    headers = await _signup(client, username)
+    user = await _get_user(session, f"{username}@example.com")
+    assert user.id is not None
+    await _seed_progress(session, user.id, current_stage=_ELIGIBLE_STAGE)
+    return headers, user.id
+
+
+@pytest.mark.asyncio
+async def test_offer_episode_contract_get_is_stable_and_account_bound(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A client gets an opaque account-bound identity rather than deriving one."""
+    alice, _ = await _episode_account(async_client, db_session, "mr_episode_alice")
+    bob, _ = await _episode_account(async_client, db_session, "mr_episode_bob")
+    first = await async_client.get(_BASE_URL, headers=alice)
+    again = await async_client.get(_BASE_URL, headers=alice)
+    other = await async_client.get(_BASE_URL, headers=bob)
+    assert first.status_code == again.status_code == other.status_code == HTTPStatus.OK
+    episode = first.json()["offer_episode"]
+    assert isinstance(episode, str)
+    assert episode
+    assert episode == again.json()["offer_episode"]
+    assert episode != other.json()["offer_episode"]
+    assert episode != f"1:{_ELIGIBLE_STAGE}"
+
+
+@pytest.mark.asyncio
+async def test_offer_episode_contract_rejects_stale_identity_without_a_dismissal(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A retry carrying an unrelated episode must never dismiss today's offer."""
+    headers, user_id = await _episode_account(async_client, db_session, "mr_episode_stale")
+    response = await async_client.post(
+        _DISMISS_URL,
+        headers=headers,
+        json={"expected_offer_episode": "a-previous-offer-identity"},
+    )
+    assert response.status_code == HTTPStatus.CONFLICT
+    rows = await db_session.execute(
+        select(MettaReturnOfferDismissal).where(
+            col(MettaReturnOfferDismissal.user_id) == user_id,
+        )
+    )
+    assert list(rows.scalars().all()) == []
+    current = await async_client.get(_BASE_URL, headers=headers)
+    assert current.json()["offer_dismissed"] is False
+
+
+@pytest.mark.asyncio
+async def test_offer_episode_contract_requires_an_explicit_expected_identity(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """An older unbound retry is refused rather than assigned a fresh episode."""
+    headers, _ = await _episode_account(async_client, db_session, "mr_episode_missing")
+    response = await async_client.post(_DISMISS_URL, headers=headers)
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.asyncio
+async def test_offer_episode_contract_dismiss_is_idempotent_for_its_current_identity(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    headers, user_id = await _episode_account(async_client, db_session, "mr_episode_current")
+    state = await async_client.get(_BASE_URL, headers=headers)
+    body = {"expected_offer_episode": state.json()["offer_episode"]}
+    first = await async_client.post(_DISMISS_URL, headers=headers, json=body)
+    again = await async_client.post(_DISMISS_URL, headers=headers, json=body)
+    assert first.status_code == again.status_code == HTTPStatus.OK
+    assert first.json()["offer_dismissed"] is True
+    assert again.json()["offer_episode"] == body["expected_offer_episode"]
+    rows = await db_session.execute(
+        select(MettaReturnOfferDismissal).where(
+            col(MettaReturnOfferDismissal.user_id) == user_id,
+        )
+    )
+    assert len(list(rows.scalars().all())) == 1
+
+
+@pytest.mark.asyncio
+async def test_offer_episode_contract_rejects_another_accounts_identity(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    alice, _ = await _episode_account(async_client, db_session, "mr_episode_other_a")
+    bob, _ = await _episode_account(async_client, db_session, "mr_episode_other_b")
+    state = await async_client.get(_BASE_URL, headers=alice)
+    response = await async_client.post(
+        _DISMISS_URL,
+        headers=bob,
+        json={"expected_offer_episode": state.json()["offer_episode"]},
+    )
+    assert response.status_code == HTTPStatus.CONFLICT
+    state_b = await async_client.get(_BASE_URL, headers=bob)
+    assert state_b.json()["offer_dismissed"] is False
+
+
+@pytest.mark.asyncio
+async def test_offer_episode_contract_reports_the_re_read_episode_after_progress_changes(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recording the chosen old offer cannot mark the newly current offer dismissed."""
+    headers, user_id = await _episode_account(async_client, db_session, "mr_episode_boundary")
+    before = await async_client.get(_BASE_URL, headers=headers)
+    expected = before.json()["offer_episode"]
+    commit = db_session.commit
+    advanced = False
+
+    async def commit_then_advance() -> None:
+        nonlocal advanced
+        await commit()
+        if advanced:
+            return
+        advanced = True
+        progress = await metta_return_router.get_user_progress(db_session, user_id)
+        assert progress is not None
+        progress.current_stage += 1
+        db_session.add(progress)
+        await commit()
+
+    monkeypatch.setattr(db_session, "commit", commit_then_advance)
+    response = await async_client.post(
+        _DISMISS_URL,
+        headers=headers,
+        json={"expected_offer_episode": expected},
+    )
+    assert response.status_code == HTTPStatus.OK
+    assert advanced is True
+    assert response.json()["offer_episode"] != expected
+    assert response.json()["offer_dismissed"] is False
+    rows = await db_session.execute(
+        select(MettaReturnOfferDismissal).where(
+            col(MettaReturnOfferDismissal.user_id) == user_id,
+        )
+    )
+    assert [row.episode_key for row in rows.scalars()] == [f"1:{_ELIGIBLE_STAGE}"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("advance_cycle", [False, True], ids=["stage", "cycle"])
+async def test_offer_episode_contract_rejects_a_real_previous_stage_or_cycle(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    advance_cycle: bool,
+) -> None:
+    headers, user_id = await _episode_account(
+        async_client,
+        db_session,
+        f"mr_episode_advance_{str(advance_cycle).lower()}",
+    )
+    old = await async_client.get(_BASE_URL, headers=headers)
+    previous = old.json()["offer_episode"]
+    progress = await metta_return_router.get_user_progress(db_session, user_id)
+    assert progress is not None
+    if advance_cycle:
+        progress.cycle_number += 1
+    else:
+        progress.current_stage += 1
+    db_session.add(progress)
+    await db_session.commit()
+    stale = await async_client.post(
+        _DISMISS_URL,
+        headers=headers,
+        json={"expected_offer_episode": previous},
+    )
+    assert stale.status_code == HTTPStatus.CONFLICT
+    fresh = await async_client.get(_BASE_URL, headers=headers)
+    assert fresh.json()["offer_episode"] != previous
+    assert fresh.json()["offer_dismissed"] is False
+    assert await _dismissal_count(db_session, user_id) == 0
+    accepted = await _dismiss_current_offer(async_client, headers)
+    assert accepted.status_code == HTTPStatus.OK
+    assert accepted.json()["offer_dismissed"] is True
+    assert await _dismissal_count(db_session, user_id) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("seed_ineligible", [False, True], ids=["no-progress", "ineligible"])
+async def test_offer_episode_contract_has_no_identity_without_an_eligible_offer(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    seed_ineligible: bool,
+) -> None:
+    username = f"mr_no_episode_{str(seed_ineligible).lower()}"
+    headers = await _signup(async_client, username)
+    user = await _get_user(db_session, f"{username}@example.com")
+    assert user.id is not None
+    if seed_ineligible:
+        await _seed_progress(db_session, user.id, current_stage=_INELIGIBLE_STAGE)
+    response = await async_client.get(_BASE_URL, headers=headers)
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["eligible"] is False
+    assert response.json()["offer_episode"] is None
+    if not seed_ineligible:
+        assert await metta_return_router.get_user_progress(db_session, user.id) is None

@@ -1260,6 +1260,22 @@
         "title": "DirectAdmissionRequest",
         "type": "object"
       },
+      "DismissReturnOfferRequest": {
+        "description": "The exact account-bound offer that the caller chose to set aside.",
+        "properties": {
+          "expected_offer_episode": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Expected Offer Episode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_offer_episode"
+        ],
+        "title": "DismissReturnOfferRequest",
+        "type": "object"
+      },
       "DocumentImportResponse": {
         "description": "What became of one imported document, and where it went.\n\n``destination`` is the discriminator: a ``vault`` answer carries\n``vault_status`` and possibly a ``vault_ref`` and ``tags``, and a\n``corpus`` answer carries ``corpus_status`` and possibly a ``fragment_id``.\nThe other side is ``null`` in each case, which is a stronger statement than\nan absent field -- it says that vocabulary did not apply, rather than that\nnobody filled it in.",
         "properties": {
@@ -4657,6 +4673,19 @@
             "title": "Offer Dismissed",
             "type": "boolean"
           },
+          "offer_episode": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offer Episode"
+          },
           "released_habits": {
             "items": {
               "$ref": "#/components/schemas/ReleasedHabitResponse"
@@ -4674,6 +4703,7 @@
         },
         "required": [
           "eligible",
+          "offer_episode",
           "weeks",
           "arc",
           "offer_dismissed",
@@ -21443,7 +21473,7 @@
     },
     "/metta-return/offer/dismiss": {
       "post": {
-        "description": "Dismiss the Return offer for the caller's current episode; idempotent.\n\nRaises 409 when the caller is not eligible, since there is no offer to\ndismiss. Stage progress is read (never provisioned) and no arc is opened.\nA repeat dismiss of the same episode collapses to the same success backed by\na single row, and any stage or cycle advance opens a fresh episode whose\noffer surfaces again.",
+        "description": "Dismiss the Return offer for the caller's current episode; idempotent.\n\nRequires the opaque identity observed on GET, returning 409 for a stale\nor other-account identity. An omitted identity fails request validation.\nAn ineligible caller receives 409 because there is no episode to dismiss.\nStage progress is read (never provisioned) and no arc is opened.\nA repeat dismiss of the same episode collapses to the same success backed by\na single row, and any stage or cycle advance opens a fresh episode whose\noffer surfaces again.",
         "operationId": "dismiss_offer_metta_return_offer_dismiss_post",
         "parameters": [
           {
@@ -21463,6 +21493,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DismissReturnOfferRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
