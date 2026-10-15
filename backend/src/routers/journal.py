@@ -149,11 +149,11 @@ from services.corpus_ingest import (
 from services.corpus_invitation import record_completed_pass
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_letters import (
-    LetterAsk,
-    VaultLetterAnswer,
-    VaultLetterOutcome,
-    vault_letter_refusal,
-    write_vault_letter,
+    VaultLetterSettlement,
+    answer_vault_letter,
+    letter_ask,
+    require_vault_letters,
+    settle_vault_letter,
 )
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
@@ -173,6 +173,12 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
+from services.essay_settlement import (
+    ESSAY_ATTEMPTS,
+    EssayCharge,
+    keep_letter,
+    log_settled_essay,
+)
 from services.generation_access import payer_refusal, require_ai_payer
 from services.generation_guardrails import (
     consume_generation_minute,
@@ -186,7 +192,6 @@ from services.inference_provenance import (
     is_demo,
     pass_provenance,
     source_value,
-    stamp_letter,
     stamp_note,
 )
 from services.journal_vault_withdrawal import begin_deletion, withdraw_owed_copies
@@ -3311,50 +3316,6 @@ def _log_essay_cache_hit(note: Marginalia, stage: str) -> None:
     )
 
 
-def _log_letter_unavailable(note: Marginalia, reason: VaultSourceUnavailableReason) -> None:
-    """One WARNING in a closed vocabulary: ids, the operation and the reason word.
-
-    Never the body, a prompt, a key or a letter -- the reflection route's
-    refusal record, under its token (#3156).
-    """
-    logger.warning(
-        REFLECTION_SOURCE_UNAVAILABLE,
-        extra={
-            "user_id": note.user_id,
-            "id": note.id,
-            "operation": GenerationFeature.ESSAY.value,
-            "reason": reason.value,
-        },
-    )
-
-
-async def _require_vault_letters(
-    session: AsyncSession, note: Marginalia, clients: _EssayClients
-) -> None:
-    """Admit a vault-bound writer's first letter only when their vault writes letters (#3203).
-
-    A vault-bound writer's letter is written by their vault or not at all
-    (#3156): the app provider is never asked, and a BYOK key changes none of it
-    -- a key pays for a call, it does not consent to one. So a vault that is not
-    available, or that does not advertise ``letters`` (and the ``voice-drafts``
-    resource that retracts what it writes), is the reflection route's refusal:
-    a 503 ``reflection_source_unavailable``, raised ahead of the payer, price
-    and guardrail gates, so nothing is staged, charged or dialled and ``essay``
-    stays ``NULL`` for a later ask -- #3183's fail-closed answer, unchanged.
-
-    The commit releases the pooled connection the ownership reads opened before
-    the handshake dials.
-    """
-    if clients.boundary is not ReflectionBoundary.VAULT_BOUND:
-        return
-    await session.commit()
-    reason = await vault_letter_refusal(clients.vault_client)
-    if reason is None:
-        return
-    _log_letter_unavailable(note, reason)
-    raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
-
-
 def _require_price_acknowledged(clients: _EssayClients) -> None:
     """Refuse a server-paid first letter the writer was not shown the price of.
 
@@ -3399,7 +3360,7 @@ async def _expand_essay(
     require_external_ai_available()
     # Before the payer gate: asking a vault-bound writer for a key or a price
     # would be a false next step when no source may answer them (#3156).
-    await _require_vault_letters(session, note, clients)
+    await require_vault_letters(session, note, clients.vault_client, clients.boundary)
     # Before the price gate: asking a writer with no way to pay to acknowledge
     # a price would be a false next step (#3096). A key pays only when the app
     # provider answers; a vault letter needs credits (#3258).
@@ -3494,8 +3455,12 @@ async def _cache_and_mirror_essay(
         # Shadow only (#3059). ``_cache_essay`` commits before it dials, so this
         # read is released with its own before anything leaves the process.
         await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
-        cached = await _write_first_letter(session, note=note, entry=entry, clients=clients)
-    return await _mirror_app_written_letter(session, entry=entry, cached=cached, clients=clients)
+        cached, essay = await _write_first_letter(session, note=note, entry=entry, clients=clients)
+    if essay is None:
+        return cached
+    return await _mirror_cached_essay(
+        session, entry=entry, cached=cached, essay=essay, clients=clients
+    )
 
 
 async def _write_first_letter(
@@ -3504,48 +3469,27 @@ async def _write_first_letter(
     note: Marginalia,
     entry: JournalEntry,
     clients: _EssayClients,
-) -> Marginalia:
-    """Have the one source this writer's boundary allows write the letter (#3156, #3203).
+) -> tuple[Marginalia, str | None]:
+    """Have the one source this writer's boundary allows write the letter; name what to mirror.
 
-    The vault for a vault-bound writer -- it writes and keeps the letter in one
-    call, with no app provider to fall back to -- and the app provider for
-    everyone else.
+    The vault for a vault-bound writer (#3156, #3203): it writes and keeps the
+    letter in one call, so there is nothing left to mirror and no app provider
+    to fall back to. The app provider for everyone else, whose letter is
+    mirrored once -- unless it was not a letter at all, so the note comes back
+    with ``essay`` unset and nothing reaches the vault the cache refused it
+    from, or it is a stored demo letter a refused regeneration left in the row,
+    which must never reach the vault (#3096).
     """
     if clients.boundary is ReflectionBoundary.VAULT_BOUND:
-        return await _cache_vault_letter(session, note=note, entry=entry, clients=clients)
-    return await _cache_essay(
+        return await _cache_vault_letter(session, note=note, entry=entry, clients=clients), None
+    cached = await _cache_essay(
         session,
         note,
         _sanitize_message(entry.message),
         api_key=clients.api_key,
         boundary=clients.boundary,
     )
-
-
-async def _mirror_app_written_letter(
-    session: AsyncSession,
-    *,
-    entry: JournalEntry,
-    cached: Marginalia,
-    clients: _EssayClients,
-) -> Marginalia:
-    """Mirror an app-written letter once; a vault-written one is already in the vault.
-
-    The provider answered with something that was not a letter, so there is no
-    letter: the note comes back with ``essay`` unset -- the same no-letter
-    state the privacy floor returns -- and nothing is mirrored, because
-    mirroring a refusal would put it in the vault the cache refused it from.
-    Mirror only a letter this request may serve: a refused regeneration leaves
-    a stored demo letter in the row, which must never reach the vault (#3096).
-    """
-    if clients.boundary is ReflectionBoundary.VAULT_BOUND:
-        return cached
-    essay = demo_visibility.served_letter(cached)
-    if essay is None:
-        return cached
-    return await _mirror_cached_essay(
-        session, entry=entry, cached=cached, essay=essay, clients=clients
-    )
+    return cached, demo_visibility.served_letter(cached)
 
 
 async def _mirror_cached_essay(
@@ -3594,19 +3538,6 @@ async def _mirror_cached_essay(
     return cached
 
 
-def _letter_ask(note: Marginalia, entry: JournalEntry) -> LetterAsk:
-    """What the vault is asked to expand: the note, its sanitized entry, and the tier."""
-    return LetterAsk(
-        owner_user_id=entry.user_id,
-        marginalia_id=cast("int", note.id),
-        body=_sanitize_message(entry.message),
-        note=note.note,
-        anchor_text=note.anchor_text,
-        kind=note.kind,
-        classification=entry.classification,
-    )
-
-
 async def _cache_vault_letter(
     session: AsyncSession,
     *,
@@ -3620,14 +3551,9 @@ async def _cache_vault_letter(
     that just re-read the entry's tier and liveness. The economy is the app
     provider's (#623, #3062): one unit, deducted before the commit that precedes
     the call -- whatever key header rode along, since the vault never uses it
-    (#3258) -- kept when a letter is cached and refunded by the ``finally``
-    guard on every other ending. The receipt is the vault's, so a vault letter
-    is never billed as a demo.
-
-    The call runs under this entry's Voice Draft hold as well, account
-    outermost and entry innermost, because the letter *is* a Voice Draft: the
-    intent row :func:`services.creek_vault_letters.write_vault_letter` commits
-    before dialling is what an Intimate PATCH or a DELETE retracts it by.
+    (#3258) -- kept when a letter is cached, and refunded on every other ending
+    by :func:`services.creek_vault_letters.settle_vault_letter`. The receipt is
+    the vault's, so a vault letter is never billed as a demo.
     """
     destination = await resolved_vault_destination(session, entry.user_id)
     spent = await preflight_deduction(session, note.user_id) if ESSAY_PRICE_UNITS else None
@@ -3635,66 +3561,25 @@ async def _cache_vault_letter(
     # the app-provider path.
     consume_generation_minute(note.user_id)
     await session.commit()
-    charge = _EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
-    answer: VaultLetterAnswer | None = None
-    settled = False
-    try:
-        async with voice_draft_privacy.hold(session, cast("int", entry.id)):
-            answer = await write_vault_letter(
-                session,
-                clients.vault_client,
-                _letter_ask(note, entry),
-                entry=entry,
-                destination=destination,
-            )
-            if answer.letter is not None:
-                outcome = await _keep_letter(session, note, answer.letter, VAULT_RECEIPT, charge)
-                _log_settled_essay(note, charge, summarize_usage(()), outcome)
-                settled = True
-    finally:
-        if not settled:
-            await _refund_failed_pass(
-                session,
-                note.user_id,
-                spent,
-                reason=REASON_REFUND_FAILED_ESSAY,
-                trace=_FailedGeneration(
-                    feature=GenerationFeature.ESSAY,
-                    key=charge.key,
-                    usage=(),
-                    attempts=_ESSAY_ATTEMPTS,
-                ),
-            )
-    return await _vault_letter_answer(session, note, answer)
+    charge = EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
 
+    async def keep(letter: str) -> None:
+        outcome = await keep_letter(session, note, letter, VAULT_RECEIPT, charge)
+        log_settled_essay(note, charge, summarize_usage(()), outcome)
 
-# The endings that answer the note with no letter rather than a refusal: the
-# vault's care guard spoke instead (the essay route has no care surface, so the
-# writer sees the same retryable no-letter state an intimate entry gets), or
-# the tier admitted no vault at all.
-_NO_LETTER_OUTCOMES = frozenset({VaultLetterOutcome.ESCALATED, VaultLetterOutcome.NOT_OFFERED})
-
-
-async def _vault_letter_answer(
-    session: AsyncSession, note: Marginalia, answer: VaultLetterAnswer
-) -> Marginalia:
-    """Answer a settled vault letter: the cached note, the no-letter note, or a 503.
-
-    Every failure -- a refused, unreadable or unreachable vault, an answer that
-    was not a letter, a withheld or suspended request -- is #3183's refusal
-    under its token. Never a fallback to the app provider.
-    """
-    if answer.letter is not None:
-        await session.refresh(note)
-        logger.info(
-            "marginalia_essay_generated",
-            extra={"user_id": note.user_id, "id": note.id, "prior_draft_count": 0},
+    async def refund() -> None:
+        trace = _FailedGeneration(GenerationFeature.ESSAY, charge.key, (), ESSAY_ATTEMPTS)
+        await _refund_failed_pass(
+            session, note.user_id, spent, reason=REASON_REFUND_FAILED_ESSAY, trace=trace
         )
-        return note
-    if answer.outcome in _NO_LETTER_OUTCOMES:
-        return note
-    _log_letter_unavailable(note, VaultSourceUnavailableReason.NO_ANSWER)
-    raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
+
+    answer = await settle_vault_letter(
+        session,
+        clients.vault_client,
+        letter_ask(note, entry, _sanitize_message(entry.message)),
+        VaultLetterSettlement(entry=entry, destination=destination, keep=keep, refund=refund),
+    )
+    return await answer_vault_letter(session, note, answer)
 
 
 async def _essay_charge(
@@ -3769,7 +3654,7 @@ async def _cache_essay(
     await session.commit()
     # Pure constructor, hoisted so the failure guard can report the generation
     # the calls belong to (#623 PR3).
-    charge = _EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
+    charge = EssayCharge(spent=spent, key=GenerationKey.for_spend(spent))
     settled = False
     try:
         essay = await _dial_essay(llm, note, body, prior_letters)
@@ -3786,7 +3671,7 @@ async def _cache_essay(
                     feature=GenerationFeature.ESSAY,
                     key=charge.key,
                     usage=llm.usage,
-                    attempts=_ESSAY_ATTEMPTS,
+                    attempts=ESSAY_ATTEMPTS,
                 ),
             )
     if essay is not None:
@@ -3838,41 +3723,12 @@ async def _dial_essay(
         raise bad_gateway("llm_provider_error") from exc
 
 
-# An essay is one dial: ``generate_essay`` has no corrective retry.
-_ESSAY_ATTEMPTS = 1
-
-
-@dataclass(frozen=True, slots=True)
-class _EssayCharge:
-    """A first letter's deduction (``None`` when nobody paid) and its generation."""
-
-    spent: SpendResult | None
-    key: GenerationKey
-
-
-def _log_settled_essay(
-    note: Marginalia, charge: _EssayCharge, usage: GenerationUsage, outcome: GenerationOutcome
-) -> None:
-    """Write a committed essay's one settlement line (#623 PR3)."""
-    log_generation_settled(
-        GenerationSettlement(
-            feature=GenerationFeature.ESSAY,
-            user_id=note.user_id,
-            key=charge.key,
-            bucket=None if charge.spent is None else charge.spent.bucket,
-            outcome=outcome,
-            attempts=_ESSAY_ATTEMPTS,
-            usage=usage,
-        )
-    )
-
-
 async def _settle_essay(
     session: AsyncSession,
     note: Marginalia,
     essay: str | None,
     llm: BotmasonResonanceLLM,
-    charge: _EssayCharge,
+    charge: EssayCharge,
 ) -> None:
     """Meter the call, then cache the letter or refund the non-letter; commit.
 
@@ -3897,7 +3753,7 @@ async def _settle_essay(
             )
         await session.commit()
         log_committed_refund(refund)
-        _log_settled_essay(note, charge, usage, GenerationOutcome.REFUSED)
+        log_settled_essay(note, charge, usage, GenerationOutcome.REFUSED)
         # Counted, never quoted: the refused text is the prompt (or something
         # else unpublishable), and logging it would leak exactly what the
         # refusal exists to withhold.
@@ -3906,36 +3762,8 @@ async def _settle_essay(
             extra={"user_id": note.user_id, "id": note.id},
         )
         return
-    outcome = await _keep_letter(session, note, essay, receipt_since(llm.usage), charge)
-    _log_settled_essay(note, charge, usage, outcome)
-
-
-async def _keep_letter(
-    session: AsyncSession,
-    note: Marginalia,
-    essay: str,
-    receipt: InferenceReceipt | None,
-    charge: _EssayCharge,
-) -> GenerationOutcome:
-    """Cache the letter with its source; hand a demo letter's unit back in the same commit.
-
-    The letter's source is stamped beside the letter itself, so the two can
-    never be committed apart. A stub letter is still cached -- the writer asked
-    for it and sees it labelled as a demo -- but it is never billed (#3062).
-    Returns the outcome the settlement line reports.
-    """
-    note.essay = essay
-    note.essay_generated_at = datetime.now(UTC)
-    stamp_letter(note, receipt)
-    demo = is_demo(receipt)
-    refund = None
-    if demo and charge.spent is not None:
-        refund = await refund_one_message(
-            session, note.user_id, charge.spent, reason=REASON_REFUND_DEMO
-        )
-    await session.commit()
-    log_committed_refund(refund)
-    return GenerationOutcome.REFUNDED_DEMO if demo else GenerationOutcome.KEPT
+    outcome = await keep_letter(session, note, essay, receipt_since(llm.usage), charge)
+    log_settled_essay(note, charge, usage, outcome)
 
 
 @router.post("/{entry_id}/erase-locally", response_model=JournalErasureReceipt)

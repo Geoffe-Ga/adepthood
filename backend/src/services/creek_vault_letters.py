@@ -26,6 +26,7 @@ Two rules shape it.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final, cast
@@ -43,14 +44,22 @@ from domain.creek_vault import (
 )
 from domain.privacy_tier import admits_egress
 from domain.resonance import accept_vault_letter
+from errors import service_unavailable
 from models.journal_entry import JournalEntry
+from models.marginalia import Marginalia
 from services.creek_vault_voice_drafts import (
     drop_staged_mirror_intent,
     stage_mirror_intent,
     voice_draft_external_id,
 )
+from services.llm_usage import GenerationFeature
 from services.privacy_lineage import LineageOperation, observe_entry_lineage
-from services.reflection_boundary import VaultSourceUnavailableReason
+from services.reflection_boundary import (
+    REFLECTION_SOURCE_UNAVAILABLE,
+    ReflectionBoundary,
+    VaultSourceUnavailableReason,
+)
+from services.voice_draft_privacy import voice_draft_privacy
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -234,3 +243,146 @@ async def _dial_letter(
         _LETTER_WRITTEN_EVENT, extra={"external_id": external_id, "action": written.action.value}
     )
     return VaultLetterAnswer(VaultLetterOutcome.WRITTEN, letter)
+
+
+def log_letter_unavailable(note: Marginalia, reason: VaultSourceUnavailableReason) -> None:
+    """One WARNING in a closed vocabulary: ids, the operation and the reason word.
+
+    Never the body, a prompt, a key or a letter -- the reflection route's
+    refusal record, under its token (#3156).
+    """
+    _LOGGER.warning(
+        REFLECTION_SOURCE_UNAVAILABLE,
+        extra={
+            "user_id": note.user_id,
+            "id": note.id,
+            "operation": GenerationFeature.ESSAY.value,
+            "reason": reason.value,
+        },
+    )
+
+
+async def require_vault_letters(
+    session: AsyncSession,
+    note: Marginalia,
+    client: CreekVaultLetterClient,
+    boundary: ReflectionBoundary,
+) -> None:
+    """Admit a vault-bound writer's first letter only when their vault writes letters (#3203).
+
+    A vault-bound writer's letter is written by their vault or not at all
+    (#3156): the app provider is never asked, and a BYOK key changes none of it
+    -- a key pays for a call, it does not consent to one. So a vault that is not
+    available, or that does not advertise ``letters`` (and the ``voice-drafts``
+    resource that retracts what it writes), is the reflection route's refusal:
+    a 503 ``reflection_source_unavailable``, raised by the essay route ahead of
+    its payer, price and guardrail gates, so nothing is staged, charged or
+    dialled and ``essay`` stays ``NULL`` for a later ask -- #3183's fail-closed
+    answer, unchanged.
+
+    The commit releases the pooled connection the route's ownership reads
+    opened before the handshake dials.
+
+    Raises:
+        HTTPException: The 503 ``reflection_source_unavailable``.
+    """
+    if boundary is not ReflectionBoundary.VAULT_BOUND:
+        return
+    await session.commit()
+    reason = await vault_letter_refusal(client)
+    if reason is None:
+        return
+    log_letter_unavailable(note, reason)
+    raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
+
+
+def letter_ask(note: Marginalia, entry: JournalEntry, body: str) -> LetterAsk:
+    """What the vault is asked to expand: the note, its sanitized entry ``body``, and the tier."""
+    return LetterAsk(
+        owner_user_id=entry.user_id,
+        marginalia_id=cast("int", note.id),
+        body=body,
+        note=note.note,
+        anchor_text=note.anchor_text,
+        kind=note.kind,
+        classification=entry.classification,
+    )
+
+
+#: The endings that answer the note with no letter rather than a refusal: the
+#: vault's care guard spoke instead (the essay route has no care surface, so the
+#: writer sees the same retryable no-letter state an intimate entry gets), or
+#: the tier admitted no vault at all.
+_NO_LETTER_OUTCOMES: Final = frozenset(
+    {VaultLetterOutcome.ESCALATED, VaultLetterOutcome.NOT_OFFERED}
+)
+
+
+async def answer_vault_letter(
+    session: AsyncSession, note: Marginalia, answer: VaultLetterAnswer
+) -> Marginalia:
+    """Answer a settled vault letter: the cached note, the no-letter note, or a 503.
+
+    Every failure -- a refused, unreadable or unreachable vault, an answer that
+    was not a letter, a withheld or suspended request -- is #3183's refusal
+    under its token. Never a fallback to the app provider.
+
+    Raises:
+        HTTPException: The 503 ``reflection_source_unavailable``.
+    """
+    if answer.letter is not None:
+        await session.refresh(note)
+        _LOGGER.info(
+            "marginalia_essay_generated",
+            extra={"user_id": note.user_id, "id": note.id, "prior_draft_count": 0},
+        )
+        return note
+    if answer.outcome in _NO_LETTER_OUTCOMES:
+        return note
+    log_letter_unavailable(note, VaultSourceUnavailableReason.NO_ANSWER)
+    raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)
+
+
+@dataclass(frozen=True)
+class VaultLetterSettlement:
+    """Where a letter is offered, and how the caller keeps or refunds its charge.
+
+    ``keep`` caches the letter and settles the charge in one commit; ``refund``
+    compensates the charge. The economy is the route's (#623); this module only
+    decides which of the two every ending owes.
+    """
+
+    entry: JournalEntry
+    destination: str | None
+    keep: Callable[[str], Awaitable[None]]
+    refund: Callable[[], Awaitable[None]]
+
+
+async def settle_vault_letter(
+    session: AsyncSession,
+    client: CreekVaultLetterClient,
+    ask: LetterAsk,
+    settlement: VaultLetterSettlement,
+) -> VaultLetterAnswer:
+    """Write the letter under the entry's Voice Draft hold; keep it, or refund every other ending.
+
+    Account outermost (the caller's hold) and entry innermost, the fixed
+    nesting everywhere the two meet, because the letter *is* a Voice Draft:
+    the intent row :func:`write_vault_letter` commits before dialling is what
+    an Intimate PATCH or a DELETE retracts it by. A raise anywhere -- the call,
+    or keeping the letter -- is refunded too.
+    """
+    entry = settlement.entry
+    settled = False
+    try:
+        async with voice_draft_privacy.hold(session, cast("int", entry.id)):
+            answer = await write_vault_letter(
+                session, client, ask, entry=entry, destination=settlement.destination
+            )
+            if answer.letter is not None:
+                await settlement.keep(answer.letter)
+                settled = True
+    finally:
+        if not settled:
+            await settlement.refund()
+    return answer
