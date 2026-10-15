@@ -75,7 +75,7 @@ async function openPracticeTab(page: Page): Promise<void> {
 
 test('a practice opens in place over the embedded catalog, and declining it keeps the catalog', async ({
   page,
-}) => {
+}, testInfo) => {
   const email = await signUp(page, 'practice-catalog-details');
   const token = await tokenFor(page.request, email);
   const practiceId = await groundingPracticeId(page.request, token);
@@ -127,6 +127,7 @@ test('a practice opens in place over the embedded catalog, and declining it keep
     testID: 'practice-tab-practice',
     insideHidden: false,
   });
+  await page.screenshot({ path: testInfo.outputPath('catalog-first-adoption-focus.png') });
 
   // The server agrees the adoption is real, not just painted.
   const adopted = await page.request.get(`${backendUrl()}/user-practices/`, {

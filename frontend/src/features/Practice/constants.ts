@@ -26,6 +26,16 @@ export const FALLBACK_STAGE = 1;
 /** Practice sessions that make up a full week's goal — the single source of truth for the weekly target. */
 export const WEEKLY_TARGET = 4;
 
+/** An optional linked habit starts at one sitting, four times per week. */
+export const PRACTICE_HABIT_DEFAULTS = {
+  unit: 'sessions',
+  low: 1,
+  clear: 1,
+  stretch: 1,
+  frequency: 4,
+  frequencyUnit: 'per_week',
+} as const;
+
 /** The inclusive integer stage range ``MIN_STAGE..MAX_STAGE`` as an array. */
 export const stageRange = (): number[] =>
   Array.from({ length: MAX_STAGE - MIN_STAGE + 1 }, (_, i) => MIN_STAGE + i);

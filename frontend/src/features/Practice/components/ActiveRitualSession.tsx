@@ -70,7 +70,10 @@ import type {
 } from '@/features/Practice/engine/types';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 import { useRitualEngine } from '@/features/Practice/engine/useRitualEngine';
-import { useSaveSessionMutation } from '@/features/Practice/hooks/useSaveSessionMutation';
+import {
+  useSaveSessionMutation,
+  type UseSaveSessionMutationParams,
+} from '@/features/Practice/hooks/useSaveSessionMutation';
 import type { ModeSummaryKind, ModeSummaryMetadata } from '@/features/Practice/insights/format';
 import CardMeditationView from '@/features/Practice/views/CardMeditationView';
 import CountUpTimerView from '@/features/Practice/views/CountUpTimerView';
@@ -108,6 +111,8 @@ export interface ActiveRitualSessionProps {
   onSessionRollback: () => void;
   /** Authoritative refetch after the server confirms the row. */
   onSessionCommitted: () => void;
+  /** Independent linked-habit work after server-confirmed practice persistence. */
+  onSessionConfirmed?: UseSaveSessionMutationParams['onConfirmed'];
   /** Replace the in-memory active row after the configurator saves. */
   onUserPracticeUpdated: (_next: UserPractice) => void;
   /** Open the journal-reflection composer (parent owns the navigator). */
@@ -303,6 +308,20 @@ function useEngineDeps(tarotCardIndex: number, injectedAudio?: AudioAdapter): Se
   return { deps, bellsUnavailable, audio };
 }
 
+function useConfirmedSessionSave(
+  props: ActiveRitualSessionProps,
+  setSaveError: (_error: string | null) => void,
+): ReturnType<typeof useSaveSessionMutation> {
+  return useSaveSessionMutation({
+    apply: props.onSessionApply,
+    rollback: props.onSessionRollback,
+    commit: props.onSessionCommitted,
+    onConfirmed: props.onSessionConfirmed,
+    setSaveError,
+    errorOptions: { fallback: SAVE_FALLBACK },
+  });
+}
+
 function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
   const tarotCardIndex = useTarotCardIndex(props);
   const { deps: engineDeps, bellsUnavailable, audio } = useEngineDeps(tarotCardIndex, props.audio);
@@ -318,13 +337,7 @@ function useActiveSession(props: ActiveRitualSessionProps): ActiveSession {
     onMindfulAnchorComplete,
     resetMindfulAnchor,
   } = useHarvestedMetadata(props.effectiveConfig, state, tarotCardIndex, cardPick);
-  const saveMutation = useSaveSessionMutation({
-    apply: props.onSessionApply,
-    rollback: props.onSessionRollback,
-    commit: props.onSessionCommitted,
-    setSaveError,
-    errorOptions: { fallback: SAVE_FALLBACK },
-  });
+  const saveMutation = useConfirmedSessionSave(props, setSaveError);
   const finishAndReset = useCallback(() => {
     window.reset();
     setSaveError(null);

@@ -9,6 +9,7 @@ import {
   CalendarClock,
   Compass,
   Info,
+  Link2,
   Plus,
   RefreshCw,
   SlidersHorizontal,
@@ -40,6 +41,7 @@ export interface PracticeDrawerProps {
    * recording a second sitting while one is running is not a coherent action.
    */
   onLogSession: () => void;
+  onLinkHabit?: () => void;
   onClose: () => void;
 }
 
@@ -75,6 +77,7 @@ function usePracticeRows({
   onBrowseCatalog,
   sessionActive,
   onLogSession,
+  onLinkHabit,
 }: Omit<PracticeDrawerProps, 'onClose'>): DrawerRow[] {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const browse = row('practice-drawer-browse', 'Browse all practices', Compass, onBrowseCatalog);
@@ -92,6 +95,8 @@ function usePracticeRows({
   const log = row('practice-drawer-log', 'Log a practice', CalendarClock, onLogSession);
   // Withhold the tab-flip rows mid-session; keep the modal/push-based rows.
   const rows: DrawerRow[] = sessionActive ? [customize] : [change, browse, customize, log];
+  if (!sessionActive && onLinkHabit)
+    rows.push(row('practice-drawer-link-habit', 'Link a habit', Link2, onLinkHabit));
   if (practiceId !== undefined) {
     rows.push({
       testID: 'practice-drawer-details',

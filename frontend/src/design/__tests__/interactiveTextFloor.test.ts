@@ -226,6 +226,15 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   'features/Practice/components/LogPracticeSessionSheet.tsx::subtitle',
   'features/Practice/components/ModePicker.tsx::categoryBlurb',
   'features/Practice/components/ModePicker.tsx::rowDescription',
+  // Audited (#3153): saved-link failure copy, invitation explanation, picker
+  // help/error and linked-habit/log-result facts are plain Text under only
+  // View/ScrollView containers. Their separate OfferAction controls use the
+  // action face; none of these five captions has a press handler or target.
+  'features/Practice/components/PracticeHabitConnection.tsx::copy',
+  'features/Practice/components/PracticeHabitOffer.tsx::copy',
+  'features/Practice/components/PracticeHabitPicker.tsx::error',
+  'features/Practice/components/PracticeHabitPicker.tsx::help',
+  'features/Practice/components/PracticeHabitSessionProvider.tsx::copy',
   // Audited: the line under the quick-launch button explaining that a page
   // written before the stage opens is not counted on the practice yet. Plain
   // Text, no press handler — the button above it is the tappable thing.

@@ -43,7 +43,10 @@ import {
   MS_PER_HOUR,
 } from '@/features/Practice/constants';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
-import { useSaveSessionMutation } from '@/features/Practice/hooks/useSaveSessionMutation';
+import {
+  useSaveSessionMutation,
+  type UseSaveSessionMutationParams,
+} from '@/features/Practice/hooks/useSaveSessionMutation';
 import {
   SESSION_WINDOW_COPY,
   SESSION_WINDOW_HINT,
@@ -87,6 +90,8 @@ export interface LogPracticeSessionSheetProps {
   onSessionRollback: () => void;
   /** Authoritative refetch once the row exists. */
   onSessionCommitted: () => void;
+  /** Independent linked-habit work after server-confirmed practice persistence. */
+  onSessionConfirmed?: UseSaveSessionMutationParams['onConfirmed'];
 }
 
 /** "Today", "Yesterday", or a short weekday date — the day the sitting ended. */
@@ -358,6 +363,8 @@ const LogPracticeSessionSheet = (props: LogPracticeSessionSheetProps): React.JSX
     apply: props.onSessionApply,
     rollback: props.onSessionRollback,
     commit: props.onSessionCommitted,
+    onConfirmed: (session, payload) =>
+      props.onSessionConfirmed?.(session, payload, 'manual') ?? Promise.resolve(),
     setSaveError,
     errorOptions: {
       fallback: LOG_SAVE_FALLBACK,

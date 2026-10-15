@@ -2520,5 +2520,26 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/date-picker-reflow.browser.e2e.test.ts"
+  },
+  {
+    "id": "practice.completed-sitting-links-and-logs-a-habit",
+    "description": "A practitioner adopts Body Scan through the catalog and saves a real manual sitting before accepting the optional once-per-adoption habit invitation (#3153). The actual app uses the shared canonical habit manager and timer eligibility predicate. A new habit is created through the shared goal editor with one session per tier four times per week, explicitly revealed, then its server-confirmed ID is linked to the caller-owned adoption. The first link attempt is aborted by the harness; retry reuses the saved row, remains disabled during a held real PATCH, clears the prior failure claim while pending, and adopts only its confirmed response. Later completed timed and manual sittings add one session each; only the real timer marks via_timer. The link and additive total survive reload, clearing persists through the same adoption PATCH, and a previously answered offer does not reappear. A second real journey links an already-owned minutes habit arranged through the API, logs seven user-entered minutes without inventing timer origin and five real timer minutes additively, then aborts only the optional habit POST while the real practice POST still saves. Reload and authenticated verification-only GET /practice-sessions/ prove all four sittings persisted and the failed habit write added no units. Phone390 and desktop1280 original frames, normal and doubled rendered text, glyph bounds and 44px control geometry validate the new invitation, picker, shared goals and factual failure notice. Mounted controls additionally cover duplicate creation taps, reuse of an already saved habit after a refused link, account ABA and missing credential masking. Browser evidence does not certify native geometry or physical-device lifecycle.",
+    "crosses": {
+      "screen": "frontend/src/features/Practice/PracticeScreen.tsx",
+      "client": ["practices", "userPractices", "practiceSessions", "habits", "goalCompletions"],
+      "routes": [
+        "GET /practices/",
+        "GET /user-practices/",
+        "POST /user-practices/",
+        "PATCH /user-practices/{user_practice_id}/habit",
+        "POST /practice-sessions/",
+        "GET /habits/",
+        "POST /habits/",
+        "POST /goal_completions/"
+      ],
+      "tables": ["practice", "userpractice", "practicesession", "habit", "goal", "goalcompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/practice-habit-link.browser.e2e.test.ts"
   }
 ]

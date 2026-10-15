@@ -3299,6 +3299,15 @@ export const practices = {
 };
 
 export const userPractices = {
+  /** Link or clear the caller-owned adoption, rather than the shared catalog row. */
+  linkHabit(userPracticeId: number, habitId: number | null, token?: string): Promise<UserPractice> {
+    return request<UserPractice>(`/user-practices/${userPracticeId}/habit`, {
+      method: 'PATCH',
+      body: { habit_id: habitId },
+      token,
+      schema: userPracticeSchema as unknown as z.ZodType<UserPractice>,
+    });
+  },
   create(payload: UserPracticeCreate, token?: string): Promise<UserPractice> {
     return request<UserPractice>('/user-practices/', {
       method: 'POST',

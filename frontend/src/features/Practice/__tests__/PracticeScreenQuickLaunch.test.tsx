@@ -14,7 +14,7 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
-import type { PracticeItem, UserPractice } from '../../../api';
+import type { captureSessionToken, PracticeItem, UserPractice } from '../../../api';
 import { useStageStore } from '../../../store/useStageStore';
 import PracticeScreen from '../PracticeScreen';
 
@@ -72,6 +72,7 @@ const openSelection = (practice: PracticeItem, overrides: Partial<UserPractice> 
 const mockPracticesList = jest.fn<() => Promise<PracticeItem[]>>();
 const mockUserPracticesList = jest.fn<() => Promise<UserPractice[]>>();
 const mockRootNavigate = jest.fn();
+const mockSessionToken = 'test-token';
 let mockUserTimezone = 'UTC';
 
 jest.mock('react-native-safe-area-context', () => {
@@ -92,6 +93,7 @@ jest.mock('react-native-safe-area-context', () => {
 });
 
 jest.mock('../../../api', () => ({
+  captureSessionToken: (): ReturnType<typeof captureSessionToken> => mockSessionToken,
   stages: {
     listAll: () => Promise.resolve([]),
     programCalendar: () => Promise.reject(new Error('calendar unused in this suite')),
@@ -113,7 +115,7 @@ jest.mock('../../../api', () => ({
 }));
 
 jest.mock('../../../context/AuthContext', () => ({
-  useAuth: () => ({ token: 'test-token', userTimezone: mockUserTimezone }),
+  useAuth: () => ({ token: mockSessionToken, userTimezone: mockUserTimezone }),
 }));
 
 const mockRouteParams: Record<string, unknown> = { stageNumber: GREEN };

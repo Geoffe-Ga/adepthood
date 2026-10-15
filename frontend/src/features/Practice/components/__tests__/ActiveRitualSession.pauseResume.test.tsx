@@ -45,7 +45,13 @@ const twentyMinuteTimer: ModeConfig = {
 
 const silentAudio: AudioAdapter = { play: () => undefined };
 
-function renderSession(config: ModeConfig) {
+function renderSession(
+  config: ModeConfig,
+  onSessionConfirmed?: (
+    _session: PracticeSessionResponse,
+    _payload: PracticeSessionCreate,
+  ) => Promise<void>,
+) {
   return render(
     <ActiveRitualSession
       userPractice={userPractice}
@@ -57,6 +63,7 @@ function renderSession(config: ModeConfig) {
       onSessionCommitted={jest.fn()}
       onUserPracticeUpdated={jest.fn()}
       onWriteReflection={jest.fn()}
+      onSessionConfirmed={onSessionConfirmed}
       audio={silentAudio}
     />,
   );
@@ -93,6 +100,34 @@ describe('ActiveRitualSession completion window', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it('hands a mounted timer completion to independent habit work only after persistence', async () => {
+    let confirm!: (_session: PracticeSessionResponse) => void;
+    mockCreate.mockReturnValueOnce(
+      new Promise((resolve) => {
+        confirm = resolve;
+      }),
+    );
+    const onSessionConfirmed = jest.fn<
+      (_session: PracticeSessionResponse, _payload: PracticeSessionCreate) => Promise<void>
+    >(() => new Promise(() => {}));
+    const view = renderSession(twentyMinuteTimer, onSessionConfirmed);
+    fireEvent.press(view.getByTestId('ritual-start'));
+    clockTo(T0 + 20 * MIN);
+    await skipInsight(view.getByTestId);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(onSessionConfirmed).not.toHaveBeenCalled();
+    const saved = {
+      id: 77,
+      user_practice_id: userPractice.id,
+      completed: true,
+    } as PracticeSessionResponse;
+    await act(async () => {
+      confirm(saved);
+    });
+    expect(onSessionConfirmed).toHaveBeenCalledWith(saved, mockCreate.mock.calls[0]?.[0]);
+    expect(view.getByTestId('ritual-start')).toBeTruthy();
   });
 
   it('records the full sitting after pause and resume', async () => {
