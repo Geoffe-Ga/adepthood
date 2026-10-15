@@ -1,4 +1,4 @@
-"""Response schemas for the Return (Metta arc) endpoints.
+"""Schemas for the Return (Metta arc) endpoints.
 
 The Return is a declinable five-week arc offered as a skillful rest. These DTOs
 project the sequence, the caller's eligibility, and the caller's active arc.
@@ -19,6 +19,8 @@ from bounds import RowIdField
 # that no real caller reaches, present only to reject pathological payloads
 # before any DB work.
 MAX_RELEASE_BATCH = 50
+# A correlation identity may change encoding, but must stay bounded on the wire.
+MAX_OFFER_EPISODE_LENGTH = 128
 
 
 class ReturnWeekResponse(BaseModel):
@@ -95,8 +97,17 @@ class MettaReturnStateResponse(BaseModel):
     ``recommitted`` flag says whether it is still resting.
     """
 
+    # Identity belongs to the eligible episode even while its card is hidden
+    # by an active arc or a prior dismissal. It does not decide visibility.
     eligible: bool
+    offer_episode: str | None = Field(min_length=1, max_length=MAX_OFFER_EPISODE_LENGTH)
     weeks: list[ReturnWeekResponse]
     arc: ReturnArcResponse | None
     offer_dismissed: bool
     released_habits: list[ReleasedHabitResponse]
+
+
+class DismissReturnOfferRequest(BaseModel):
+    """The exact account-bound offer that the caller chose to set aside."""
+
+    expected_offer_episode: str = Field(min_length=1, max_length=MAX_OFFER_EPISODE_LENGTH)

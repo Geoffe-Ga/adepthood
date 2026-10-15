@@ -32,6 +32,7 @@ from domain.metta_return import (
     current_offer_episode,
     is_return_complete,
     is_return_eligible,
+    offer_episode_identity,
     resumed_start,
 )
 from domain.stage_progress import get_user_progress
@@ -43,6 +44,7 @@ from models.metta_return_habit_release import MettaReturnHabitRelease
 from models.metta_return_offer_dismissal import MettaReturnOfferDismissal
 from routers.auth import get_current_user
 from schemas.metta_return import (
+    DismissReturnOfferRequest,
     MettaReturnStateResponse,
     ReleasedHabitResponse,
     ReleaseHabitsRequest,
@@ -307,6 +309,7 @@ def _build_state(
     """Project the caller's progress and arc onto the full Return state DTO."""
     return MettaReturnStateResponse(
         eligible=is_return_eligible(progress),
+        offer_episode=offer_episode_identity(progress),
         weeks=_sequence_response(),
         arc=_to_arc_response(arc, now) if arc is not None else None,
         offer_dismissed=offer_dismissed,
@@ -560,13 +563,16 @@ async def recommit_habits(
 
 @router.post("/offer/dismiss", response_model=MettaReturnStateResponse)
 async def dismiss_offer(
+    body: DismissReturnOfferRequest,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> MettaReturnStateResponse:
     """Dismiss the Return offer for the caller's current episode; idempotent.
 
-    Raises 409 when the caller is not eligible, since there is no offer to
-    dismiss. Stage progress is read (never provisioned) and no arc is opened.
+    Requires the opaque identity observed on GET, returning 409 for a stale
+    or other-account identity. An omitted identity fails request validation.
+    An ineligible caller receives 409 because there is no episode to dismiss.
+    Stage progress is read (never provisioned) and no arc is opened.
     A repeat dismiss of the same episode collapses to the same success backed by
     a single row, and any stage or cycle advance opens a fresh episode whose
     offer surfaces again.
@@ -575,6 +581,8 @@ async def dismiss_offer(
     episode = current_offer_episode(progress)
     if episode is None:
         raise conflict("return_not_eligible")
+    if body.expected_offer_episode != offer_episode_identity(progress):
+        raise conflict("return_offer_changed")
     await _record_dismissal(session, user_id, episode)
     # ``_record_dismissal`` may roll back on a concurrent-insert IntegrityError,
     # which expires every ORM instance (including ``progress``). Re-materialize it
@@ -583,4 +591,7 @@ async def dismiss_offer(
     arc = await _active_arc(session, user_id)
     released = await _released_habits(session, user_id)
     now = datetime.now(UTC)
-    return _build_state(progress, arc, offer_dismissed=True, released=released, now=now)
+    # Progress can advance around the dismissal commit. Report the episode in
+    # this response, not unconditional success for the originally chosen one.
+    dismissed = await _offer_dismissed(session, user_id, current_offer_episode(progress))
+    return _build_state(progress, arc, offer_dismissed=dismissed, released=released, now=now)

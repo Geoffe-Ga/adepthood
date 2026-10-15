@@ -11,15 +11,13 @@
  * arc unchanged. An unmount guard keeps late resolutions from setting state on a
  * dead hook.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { MutableRefObject } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { useContractionSignalActive } from './contractionSignal';
+import { useReturnOfferState } from './useReturnOfferState';
 
 import { mettaReturn } from '@/api';
 import type { ReleasedHabit, ReturnArc, ReturnWeek } from '@/api';
-import { useMountedRef } from '@/hooks/useMountedRef';
-import { loadReturnOfferDismissed, saveReturnOfferDismissed } from '@/storage/returnOfferStorage';
 
 export interface UseMettaReturnResult {
   eligible: boolean;
@@ -38,75 +36,6 @@ export interface UseMettaReturnResult {
   skipLetGo: () => void;
 }
 
-interface LoadedReturn {
-  eligible: boolean;
-  weeks: ReturnWeek[];
-  arc: ReturnArc | null;
-  dismissed: boolean;
-  releasedHabits: ReleasedHabit[];
-  setArc: (_arc: ReturnArc | null) => void;
-  setDismissed: (_dismissed: boolean) => void;
-  setReleasedHabits: (_habits: ReleasedHabit[]) => void;
-  mountedRef: MutableRefObject<boolean>;
-}
-
-/** Persist the dismissal flag best-effort — a failed write leaves the server authoritative. */
-function cacheDismissed(value: boolean): void {
-  void saveReturnOfferDismissed(value).catch(() => {
-    // A failed cache write is harmless — the server flag remains the source of truth.
-  });
-}
-
-/** Own the Return state and load it (server state + persisted decline) once on mount. */
-function useLoadedReturn(): LoadedReturn {
-  const [eligible, setEligible] = useState(false);
-  const [weeks, setWeeks] = useState<ReturnWeek[]>([]);
-  const [arc, setArc] = useState<ReturnArc | null>(null);
-  const [dismissed, setDismissed] = useState(false);
-  const [releasedHabits, setReleasedHabits] = useState<ReleasedHabit[]>([]);
-  const mountedRef = useMountedRef();
-  const serverAppliedRef = useRef(false);
-
-  useEffect(() => {
-    serverAppliedRef.current = false;
-    void loadReturnOfferDismissed()
-      .then((wasDismissed) => {
-        // Cache seeds the flag only until the server answers — server wins.
-        if (mountedRef.current && !serverAppliedRef.current) setDismissed(wasDismissed);
-      })
-      .catch(() => {
-        // A failed flag read stays silent — the offer simply is not suppressed.
-      });
-    void mettaReturn
-      .state()
-      .then((state) => {
-        if (!mountedRef.current) return;
-        serverAppliedRef.current = true;
-        setEligible(state.eligible);
-        setWeeks(state.weeks);
-        setArc(state.arc);
-        setDismissed(state.offer_dismissed);
-        setReleasedHabits(state.released_habits);
-        cacheDismissed(state.offer_dismissed);
-      })
-      .catch(() => {
-        // A failed load stays silent — the Return must never nag or crash the tab.
-      });
-  }, [mountedRef]);
-
-  return {
-    eligible,
-    weeks,
-    arc,
-    dismissed,
-    releasedHabits,
-    setArc,
-    setDismissed,
-    setReleasedHabits,
-    mountedRef,
-  };
-}
-
 interface LetGoActions {
   letGoVisible: boolean;
   markStarted: () => void;
@@ -117,39 +46,45 @@ interface LetGoActions {
 
 /** Own the let-go / re-commit moment: its visibility and the release/recommit calls. */
 function useLetGoActions(
-  mountedRef: MutableRefObject<boolean>,
+  current: () => boolean,
+  token: string | null,
   setReleasedHabits: (_habits: ReleasedHabit[]) => void,
 ): LetGoActions {
   const [letGoVisible, setLetGoVisible] = useState(false);
+  useEffect(() => setLetGoVisible(false), [current]);
   const markStarted = useCallback((): void => setLetGoVisible(true), []);
-  const skipLetGo = useCallback((): void => setLetGoVisible(false), []);
+  const skipLetGo = useCallback((): void => {
+    if (current()) setLetGoVisible(false);
+  }, [current]);
   const release = useCallback(
     async (habitIds: number[]): Promise<void> => {
+      if (!current() || token === null) return;
       try {
-        const rested = await mettaReturn.release(habitIds);
-        if (mountedRef.current) setReleasedHabits(rested);
+        const rested = await mettaReturn.release(habitIds, token);
+        if (current()) setReleasedHabits(rested);
       } catch {
         // A failed release stays silent — letting go is a declinable invitation,
         // so even a rejected call (e.g. an empty selection the backend refuses)
         // closes the moment gently rather than stranding the person on the card.
       } finally {
-        if (mountedRef.current) setLetGoVisible(false);
+        if (current()) setLetGoVisible(false);
       }
     },
-    [mountedRef, setReleasedHabits],
+    [current, token, setReleasedHabits],
   );
   const recommit = useCallback(
     async (habitIds: number[]): Promise<void> => {
+      if (!current() || token === null) return;
       try {
-        const updated = await mettaReturn.recommit(habitIds);
-        if (mountedRef.current) setReleasedHabits(updated);
+        const updated = await mettaReturn.recommit(habitIds, token);
+        if (current()) setReleasedHabits(updated);
       } catch {
         // Mirrors `release`'s hardening: recommit is dispatched fire-and-forget
         // (`void recommit(...)`), so a rejected call resolves silently and leaves
         // the resting list untouched rather than raising an unhandled rejection.
       }
     },
-    [mountedRef, setReleasedHabits],
+    [current, token, setReleasedHabits],
   );
   return { letGoVisible, markStarted, skipLetGo, release, recommit };
 }
@@ -163,59 +98,58 @@ interface ArcLifecycle {
 
 /** Drive the arc lifecycle, committing the local arc only after the API confirms. */
 function useArcLifecycle(
-  mountedRef: MutableRefObject<boolean>,
+  current: () => boolean,
+  token: string | null,
   setArc: (_arc: ReturnArc | null) => void,
   onStarted: () => void,
 ): ArcLifecycle {
   const start = useCallback(async (): Promise<void> => {
-    const started = await mettaReturn.start();
-    if (mountedRef.current) {
+    if (!current() || token === null) return;
+    const started = await mettaReturn.start(token);
+    if (current()) {
       setArc(started);
       onStarted();
     }
-  }, [mountedRef, setArc, onStarted]);
+  }, [current, token, setArc, onStarted]);
   const runLifecycle = useCallback(
     async (call: () => Promise<ReturnArc>): Promise<void> => {
+      if (!current()) return;
       const updated = await call();
-      if (mountedRef.current) setArc(updated);
+      if (current()) setArc(updated);
     },
-    [mountedRef, setArc],
+    [current, setArc],
   );
-  const pause = useCallback(() => runLifecycle(() => mettaReturn.pause()), [runLifecycle]);
-  const resume = useCallback(() => runLifecycle(() => mettaReturn.resume()), [runLifecycle]);
+  const pause = useCallback(
+    () => runLifecycle(() => mettaReturn.pause(token ?? undefined)),
+    [runLifecycle, token],
+  );
+  const resume = useCallback(
+    () => runLifecycle(() => mettaReturn.resume(token ?? undefined)),
+    [runLifecycle, token],
+  );
   const leave = useCallback(async (): Promise<void> => {
-    await mettaReturn.leave();
-    if (mountedRef.current) setArc(null);
-  }, [mountedRef, setArc]);
+    if (!current() || token === null) return;
+    await mettaReturn.leave(token);
+    if (current()) setArc(null);
+  }, [current, token, setArc]);
   return { start, pause, resume, leave };
 }
 
-/** The dismiss-offer action: hide the offer and persist the decline, best-effort. */
-function useDismissOffer(setDismissed: (_dismissed: boolean) => void): () => Promise<void> {
-  return useCallback(async (): Promise<void> => {
-    setDismissed(true);
-    cacheDismissed(true);
-    try {
-      await mettaReturn.dismissOffer();
-    } catch {
-      // A failed dismiss stays silent — the offer must never re-show once declined.
-    }
-  }, [setDismissed]);
-}
-
 export function useMettaReturn(): UseMettaReturnResult {
-  const loaded = useLoadedReturn();
+  const loaded = useReturnOfferState();
   const contractionActive = useContractionSignalActive();
   const { letGoVisible, markStarted, skipLetGo, release, recommit } = useLetGoActions(
-    loaded.mountedRef,
+    loaded.current,
+    loaded.token,
     loaded.setReleasedHabits,
   );
   const { start, pause, resume, leave } = useArcLifecycle(
-    loaded.mountedRef,
+    loaded.current,
+    loaded.token,
     loaded.setArc,
     markStarted,
   );
-  const dismissOffer = useDismissOffer(loaded.setDismissed);
+  const dismissOffer = loaded.dismissOffer;
   const offerVisible =
     loaded.eligible && contractionActive && !loaded.dismissed && loaded.arc === null;
 

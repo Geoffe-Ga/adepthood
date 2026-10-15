@@ -2566,10 +2566,20 @@ export const mettaReturn = {
       schema: returnArcSchema as unknown as z.ZodType<ReturnArc>,
     });
   },
-  dismissOffer(token?: string): Promise<MettaReturnState> {
+  dismissOffer(
+    command: { expected_offer_episode: string },
+    token?: string,
+  ): Promise<MettaReturnState> {
     return request<MettaReturnState>('/metta-return/offer/dismiss', {
       method: 'POST',
+      body: { expected_offer_episode: command.expected_offer_episode },
       token,
+      headers: {
+        [IDEMPOTENCY_KEY_HEADER]: idempotencyKey(
+          'dismiss-return-offer',
+          command.expected_offer_episode,
+        ),
+      },
       schema: mettaReturnStateSchema as unknown as z.ZodType<MettaReturnState>,
     });
   },

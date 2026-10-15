@@ -50,6 +50,7 @@ function arc(overrides: Partial<ReturnArc> = {}): ReturnArc {
 function state(overrides: Partial<MettaReturnState> = {}): MettaReturnState {
   return {
     eligible: true,
+    offer_episode: 'opaque-episode-a',
     weeks: fiveWeeks(),
     arc: null,
     offer_dismissed: false,
@@ -82,7 +83,8 @@ describe('mettaReturn.state', () => {
   });
 
   test('rejects a payload missing the required offer_dismissed field via Zod', async () => {
-    const payload = { eligible: true, weeks: fiveWeeks(), arc: null };
+    const { offer_dismissed: _omitted, ...payload } = state();
+    void _omitted;
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
@@ -95,13 +97,7 @@ describe('mettaReturn.state', () => {
   });
 
   test('parses an active arc when present', async () => {
-    const payload: MettaReturnState = {
-      eligible: true,
-      weeks: fiveWeeks(),
-      arc: arc({ week: 3, focus: 'stranger' }),
-      offer_dismissed: false,
-      released_habits: [],
-    };
+    const payload = state({ arc: arc({ week: 3, focus: 'stranger' }) });
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     const result = await mettaReturn.state('tok');
 
@@ -110,42 +106,38 @@ describe('mettaReturn.state', () => {
   });
 
   test('rejects a malformed payload missing a required field via Zod', async () => {
-    const { eligible: _omit, ...withoutEligible } = { eligible: true, weeks: [], arc: null };
+    const { eligible: _omit, ...withoutEligible } = state();
     void _omit;
     mockFetch.mockReturnValueOnce(jsonResponse(withoutEligible));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
 
   test('rejects a bad focus enum value via Zod', async () => {
-    const payload = {
-      eligible: true,
-      weeks: [week({ focus: 'not-a-real-focus' as ReturnWeek['focus'] })],
-      arc: null,
-    };
+    const payload = state({ weeks: [week({ focus: 'not-a-real-focus' as ReturnWeek['focus'] })] });
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
 
   test('rejects an out-of-range week_number via Zod', async () => {
-    const payload = { eligible: true, weeks: [week({ week_number: 6 })], arc: null };
+    const payload = state({ weeks: [week({ week_number: 6 })] });
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
 
   test('rejects a zero week_number via Zod', async () => {
-    const payload = { eligible: true, weeks: [week({ week_number: 0 })], arc: null };
+    const payload = state({ weeks: [week({ week_number: 0 })] });
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
 
   test('rejects a zero arc week via Zod', async () => {
-    const payload = { eligible: true, weeks: fiveWeeks(), arc: arc({ week: 0 }) };
+    const payload = state({ arc: arc({ week: 0 }) });
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
 
   test('rejects an over-bound arc week via Zod', async () => {
-    const payload = { eligible: true, weeks: fiveWeeks(), arc: arc({ week: 6 }) };
+    const payload = state({ arc: arc({ week: 6 }) });
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
@@ -154,7 +146,7 @@ describe('mettaReturn.state', () => {
     const fullArc = arc();
     const { complete: _omit, ...withoutComplete } = fullArc as ReturnArc & { complete: boolean };
     void _omit;
-    const payload = { eligible: true, weeks: fiveWeeks(), arc: withoutComplete };
+    const payload = { ...state(), arc: withoutComplete };
     mockFetch.mockReturnValueOnce(jsonResponse(payload));
     await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
   });
@@ -254,7 +246,10 @@ describe('mettaReturn.leave', () => {
 describe('mettaReturn.dismissOffer', () => {
   test('POSTs /metta-return/offer/dismiss and returns the full dismissed state', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse(state({ offer_dismissed: true })));
-    const result = await mettaReturn.dismissOffer('tok');
+    const result = await mettaReturn.dismissOffer(
+      { expected_offer_episode: 'opaque-episode-a' },
+      'tok',
+    );
 
     const [url, init] = mockFetch.mock.calls[0];
     expect(url).toBe('http://test/metta-return/offer/dismiss');
@@ -313,5 +308,34 @@ describe('mettaReturn.recommit', () => {
   test('rejects a malformed ReleasedHabit entry via Zod', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse([{ habit_id: 3, name: 'Cold plunge' }]));
     await expect(mettaReturn.recommit([3], 'tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+});
+
+describe('Return offer episode wire contract', () => {
+  test('retains the opaque episode returned for an eligible account', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(state()));
+    expect((await mettaReturn.state('tok')).offer_episode).toBe('opaque-episode-a');
+  });
+
+  test('retains a null identity when there is no eligible episode', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(state({ eligible: false, offer_episode: null })));
+    expect((await mettaReturn.state('tok')).offer_episode).toBeNull();
+  });
+
+  test('rejects a state that omits its episode instead of inventing one', async () => {
+    const { offer_episode: _episode, ...incomplete } = state();
+    void _episode;
+    mockFetch.mockReturnValueOnce(jsonResponse(incomplete));
+    await expect(mettaReturn.state('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+
+  test('round-trips the explicitly chosen episode with its captured credential', async () => {
+    const command = { expected_offer_episode: 'opaque-episode-a' };
+    mockFetch.mockReturnValueOnce(jsonResponse(state({ offer_dismissed: true })));
+    await mettaReturn.dismissOffer(command, 'tok');
+    const [, init] = mockFetch.mock.calls[0];
+    expect(JSON.parse(init.body as string)).toEqual(command);
+    expect(init.headers.Authorization).toBe('Bearer tok');
+    expect(init.headers[IDEMPOTENCY_KEY_HEADER]).toContain('opaque-episode-a');
   });
 });
