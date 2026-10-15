@@ -35,6 +35,7 @@ import { clearAllNotificationData } from '@/storage/notificationStorage';
 import { setUserTimezonePending } from '@/storage/userCalendar';
 import {
   getActiveUser,
+  beginActiveUserTransition,
   loadDeviceOwner,
   parseUserId,
   saveDeviceOwner,
@@ -300,6 +301,7 @@ function adoptUserTimezone(mutators: AuthMutators, timezone: string | undefined)
  * the wipe half-done.
  */
 async function wipeUserState(): Promise<void> {
+  beginActiveUserTransition();
   resetLlmApiKey();
   resetAllStores();
   const clears: Array<[string, Promise<void>]> = [

@@ -4,10 +4,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
-import { LLM_API_KEY_HEADER, auth as authApi, resonance } from '@/api';
+import {
+  ApiError,
+  LLM_API_KEY_HEADER,
+  auth as authApi,
+  habits as habitsApi,
+  resonance,
+} from '@/api';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import type { Habit } from '@/features/Habits/Habits.types';
+import { habitManager } from '@/features/Habits/services/habitManager';
 import { clearUserTimezone, saveUserTimezone } from '@/storage/authStorage';
 import { loadCheckInReplayState, saveCheckInReplayState } from '@/storage/checkInReplayState';
 import { loadFeedbackDraft, saveFeedbackDraft } from '@/storage/feedbackDraftStorage';
@@ -23,6 +30,7 @@ import * as llmKeyStorage from '@/storage/llmKeyStorage';
 import * as notificationStorage from '@/storage/notificationStorage';
 import { _resetSerializedWriteForTests } from '@/storage/serializedWrite';
 import { setActiveUser } from '@/storage/userScope';
+import { useHabitStore } from '@/store/useHabitStore';
 
 /**
  * The account switch that never passes through ``logout``.
@@ -74,6 +82,7 @@ jest.mock('@/utils/token', () => ({
   decodeJwtPayload: jest.fn(() => null),
   isTokenExpired: jest.fn(() => false),
   shouldRefreshToken: jest.fn(() => false),
+  refreshDeadlineMs: jest.requireActual('@/utils/token').refreshDeadlineMs,
   REFRESH_BUFFER_SECONDS: 300,
 }));
 
@@ -426,4 +435,142 @@ describe('an account switch with no explicit logout (#2898)', () => {
     setActiveUser(USER_A);
     expect(await loadFeedbackDraft()).toBeNull();
   });
+});
+
+test.each(
+  ['adoption', 'logout', 'reauth sign out'].flatMap((kind) => [
+    { kind, during: false },
+    { kind, during: true },
+  ]),
+)(
+  'an outgoing refresh cannot repopulate the store while $kind awaits a wipe; started during wipe=$during (#3314)',
+  async ({ kind, during }) => {
+    const tokenFor = (owner: number) =>
+      `e30.${btoa(JSON.stringify({ sub: String(owner), exp: 4_000_000_000 }))}.sig`;
+    const tokenModule = jest.requireMock('@/utils/token');
+    tokenModule.decodeJwtPayload.mockImplementation(
+      jest.requireActual('@/utils/token').decodeJwtPayload,
+    );
+    mockAuthApi.login.mockReset();
+    mockAuthApi.login
+      .mockResolvedValueOnce({ token: tokenFor(USER_A), user_id: USER_A })
+      .mockResolvedValueOnce({ token: tokenFor(USER_B), user_id: USER_B });
+    const result = await mountSignedOut();
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    await seedDeviceStateForUserA();
+    useHabitStore.getState().setHabits([habitOfUserA]);
+    let releaseRead!: () => void;
+    const readHeld = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    let readStarted!: () => void;
+    const reading = new Promise<void>((resolve) => {
+      readStarted = resolve;
+    });
+    const list = jest.spyOn(habitsApi, 'listAll').mockImplementationOnce(async () => {
+      readStarted();
+      await readHeld;
+      return [{ ...habitOfUserA, start_date: '2026-08-01' }] as Awaited<
+        ReturnType<typeof habitsApi.listAll>
+      >;
+    });
+    let refreshing: Promise<boolean> | undefined;
+    if (!during) {
+      refreshing = habitManager.refreshHabits('UTC', { replayCheckIns: false });
+      await reading;
+    }
+    let releaseWipe!: () => void;
+    const wipeHeld = new Promise<void>((resolve) => {
+      releaseWipe = resolve;
+    });
+    let wipeStarted!: () => void;
+    const wiping = new Promise<void>((resolve) => {
+      wipeStarted = resolve;
+    });
+    mockClearUserTimezone.mockImplementationOnce(async () => {
+      wipeStarted();
+      await wipeHeld;
+    });
+    let duringWipe: number[] = [];
+    await act(async () => {
+      const adopting =
+        kind === 'adoption'
+          ? result.current.auth.login('b@test.com', 'password123')
+          : kind === 'logout'
+            ? result.current.auth.logout()
+            : result.current.auth.dismissReauth();
+      await wiping;
+      expect(useHabitStore.getState().habits).toEqual([]);
+      if (during) {
+        refreshing = habitManager.refreshHabits('UTC', { replayCheckIns: false });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      releaseRead();
+      await refreshing;
+      duringWipe = useHabitStore.getState().habits.map((row) => row.id!);
+      releaseWipe();
+      await adopting;
+    });
+    const networkReads = list.mock.calls.length;
+    list.mockRestore();
+    tokenModule.decodeJwtPayload.mockImplementation(() => null);
+    expect({ networkReads, duringWipe }).toEqual({ networkReads: during ? 0 : 1, duringWipe: [] });
+    expect(useHabitStore.getState().habits).toEqual([]);
+    expect(await loadHabits()).toBeNull();
+  },
+);
+
+test('new anonymous work cannot rehydrate an unstamped legacy cache during the incoming account wipe (#3314)', async () => {
+  const tokenFor = (owner: number) =>
+    `e30.${btoa(JSON.stringify({ sub: String(owner), exp: 4_000_000_000 }))}.sig`;
+  const tokenModule = jest.requireMock('@/utils/token');
+  tokenModule.decodeJwtPayload.mockImplementation(
+    jest.requireActual('@/utils/token').decodeJwtPayload,
+  );
+  mockAuthApi.login.mockReset().mockResolvedValueOnce({ token: tokenFor(USER_B), user_id: USER_B });
+  const result = await mountSignedOut();
+  // A legacy client persisted these rows before device-owner stamps existed.
+  // Keep the actual unscoped cache read/write path, with only its clear held.
+  await saveHabits([habitOfUserA]);
+  useHabitStore.getState().setHabits([habitOfUserA]);
+  let releaseClear!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseClear = resolve;
+  });
+  let clearStarted!: () => void;
+  const clearing = new Promise<void>((resolve) => {
+    clearStarted = resolve;
+  });
+  const originalRemove = jest.mocked(AsyncStorage.removeItem).getMockImplementation()!;
+  jest.mocked(AsyncStorage.removeItem).mockImplementation(async (key) => {
+    if (key === '@adepthood/habits') {
+      clearStarted();
+      await held;
+    }
+    await originalRemove(key);
+  });
+  // An unauthenticated request cannot return A's server rows. The defect is
+  // cache hydration before that genuine failure, after the memory reset.
+  const list = jest
+    .spyOn(habitsApi, 'listAll')
+    .mockRejectedValue(new ApiError(401, 'not_authenticated'));
+  let duringWipe: number[] = [];
+  await act(async () => {
+    const adopting = result.current.auth.login('b@test.com', 'password123');
+    await clearing;
+    expect(useHabitStore.getState().habits).toEqual([]);
+    await habitManager.refreshHabits('UTC', { replayCheckIns: false });
+    duringWipe = useHabitStore.getState().habits.map((row) => row.id!);
+    releaseClear();
+    await adopting;
+  });
+  const networkReads = list.mock.calls.length;
+  list.mockRestore();
+  jest.mocked(AsyncStorage.removeItem).mockImplementation(originalRemove);
+  tokenModule.decodeJwtPayload.mockImplementation(() => null);
+  expect({ networkReads, duringWipe }).toEqual({ networkReads: 0, duringWipe: [] });
+  expect(useHabitStore.getState().habits).toEqual([]);
+  expect(await loadHabits()).toBeNull();
 });

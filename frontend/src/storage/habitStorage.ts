@@ -5,7 +5,7 @@ import type { Habit } from '../features/Habits/Habits.types';
 
 import { getJsonArray, getJsonArrayForUpdate } from './jsonStore';
 import { serialize } from './serializedWrite';
-import { getActiveUser, scopedKey } from './userScope';
+import { getActiveUser, getActiveUserGeneration, scopedKey } from './userScope';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
 
@@ -35,11 +35,19 @@ function pendingCheckInsKey(): string {
 export interface PendingCheckInScope {
   key: string;
   owner: number | null;
+  generation: number;
 }
 
 export function capturePendingCheckInScope(): PendingCheckInScope {
-  return { key: pendingCheckInsKey(), owner: getActiveUser() };
+  return {
+    key: pendingCheckInsKey(),
+    owner: getActiveUser(),
+    generation: getActiveUserGeneration(),
+  };
 }
+
+const isPendingScopeCurrent = (scope: PendingCheckInScope): boolean =>
+  scope.generation === getActiveUserGeneration();
 
 /** This account's dropped-check-in quarantine key. */
 function droppedCheckInsKey(): string {
@@ -181,10 +189,10 @@ export async function loadPendingCheckIns(
 
 /** Persist identities under the append lane before any legacy entry reaches a POST. */
 async function preparePendingReplay(scope: PendingCheckInScope): Promise<PendingCheckIn[]> {
-  if (getActiveUser() !== scope.owner) return [];
+  if (!isPendingScopeCurrent(scope)) return [];
   try {
     const entries = (await getJsonArrayForUpdate<PendingCheckIn>(scope.key)) ?? [];
-    if (getActiveUser() !== scope.owner) return [];
+    if (!isPendingScopeCurrent(scope)) return [];
     let changed = false;
     const prepared = entries.map((entry) => {
       if (entry.operation_id || entry.replay_id) return entry;
@@ -192,7 +200,7 @@ async function preparePendingReplay(scope: PendingCheckInScope): Promise<Pending
       return { ...entry, replay_id: uuidv4() };
     });
     if (changed) await AsyncStorage.setItem(scope.key, JSON.stringify(prepared));
-    return getActiveUser() === scope.owner ? prepared : [];
+    return isPendingScopeCurrent(scope) ? prepared : [];
   } catch {
     // A failed read or identity write must retain the queue and defer the POST.
     console.warn('[storage] could not prepare pending check-in identities; retaining queue');
@@ -223,10 +231,10 @@ export async function removePendingCheckIns(
   completed: PendingCheckIn[],
   scope: PendingCheckInScope,
 ): Promise<void> {
-  const { owner, key } = scope;
-  if (completed.length === 0 || getActiveUser() !== owner) return;
+  const { key } = scope;
+  if (completed.length === 0 || !isPendingScopeCurrent(scope)) return;
   await serialize(key, async () => {
-    if (getActiveUser() !== owner) return;
+    if (!isPendingScopeCurrent(scope)) return;
     let current: PendingCheckIn[] | null;
     try {
       current = await getJsonArrayForUpdate<PendingCheckIn>(key);
@@ -251,7 +259,7 @@ export async function removePendingCheckIns(
       );
       if (index >= 0) remaining.splice(index, 1);
     }
-    if (getActiveUser() !== owner) return;
+    if (!isPendingScopeCurrent(scope)) return;
     if (remaining.length === 0) await AsyncStorage.removeItem(key);
     else await AsyncStorage.setItem(key, JSON.stringify(remaining));
   });
@@ -265,7 +273,7 @@ export async function removePendingCheckIns(
 async function appendDroppedCheckIn(
   key: string,
   entry: DroppedCheckIn,
-  owner: number | null,
+  generation: number,
 ): Promise<void> {
   let result: DroppedCheckIn[] | null;
   try {
@@ -288,7 +296,7 @@ async function appendDroppedCheckIn(
     return;
   existing.push(entry);
   // Oldest-first storage, so trimming from the front evicts the oldest.
-  if (getActiveUser() !== owner) return;
+  if (getActiveUserGeneration() !== generation) return;
   await AsyncStorage.setItem(key, JSON.stringify(existing.slice(-MAX_DROPPED_CHECK_INS)));
 }
 
@@ -308,9 +316,11 @@ export async function recordDroppedCheckIn(
 ): Promise<void> {
   if (getActiveUser() !== owner) return;
   const key = droppedCheckInsKey();
+  const generation = getActiveUserGeneration();
   try {
     await serialize(key, async () => {
-      if (getActiveUser() === owner) await appendDroppedCheckIn(key, entry, owner);
+      if (getActiveUserGeneration() === generation)
+        await appendDroppedCheckIn(key, entry, generation);
     });
   } catch {
     reportDiagnostic('storage_write_failed', { storage: 'quarantine' });

@@ -154,3 +154,96 @@ for (const width of [390, 1280]) {
     await expect(page.getByTestId('habit-tile').filter({ hasText: OUTGOING })).toHaveCount(0);
   });
 }
+
+for (const width of [390, 1280]) {
+  test(`a held refresh cannot hydrate the next account's habits at ${width}px`, async ({
+    browser,
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const otherContext = await browser.newContext();
+    const otherPage = await otherContext.newPage();
+    const incomingEmail = await signUp(otherPage, 'habit-refresh-incoming');
+    const incoming = await sessionFor(otherPage.request, incomingEmail);
+    await seedHabit(otherPage.request, incoming.token, INCOMING, '2026-01-01');
+    await otherContext.close();
+    const outgoingEmail = await signUp(page, 'habit-refresh-outgoing');
+    const outgoing = await sessionFor(page.request, outgoingEmail);
+    await seedHabit(page.request, outgoing.token, OUTGOING, '2026-01-01');
+    await page.reload();
+    await openHabits(page);
+    await expect(page.getByTestId('habit-tile').filter({ hasText: OUTGOING })).toBeVisible();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let fetched!: () => void;
+    const serverRead = new Promise<void>((resolve) => {
+      fetched = resolve;
+    });
+    let holding = false;
+    let heldCredential = '';
+    await page.route(
+      (url) => url.pathname === '/habits/',
+      async (route) => {
+        if (holding || route.request().method() !== 'GET') {
+          await route.continue();
+        } else {
+          holding = true;
+          heldCredential = route.request().headers().authorization ?? '';
+          expect(heldCredential).toMatch(/^Bearer /);
+          const response = await route.fetch();
+          expect(response.ok()).toBe(true);
+          const payload = (await response.json()) as { items: { name: string }[] };
+          expect(payload.items.map((row) => row.name)).toContain(OUTGOING);
+          fetched();
+          await held;
+          await route.fulfill({ response });
+        }
+      },
+    );
+    await page.reload();
+    await page.evaluate(() => {
+      document.documentElement.dataset.refreshWitness = 'same-running-app';
+    });
+    // The reload retains the Habits URL; its real cache keeps the page usable
+    // while the next authoritative refresh answer is held.
+    await expect(page.getByTestId('habits-list')).toBeVisible();
+    await serverRead;
+    await page.getByRole('button', { name: 'Open settings' }).filter({ visible: true }).click();
+    await page.getByTestId('settings-row-logout').click();
+    await page.getByRole('link', { name: 'Go to log-in screen' }).click();
+    await logInInPlace(page, incomingEmail);
+    await expect(page.locator('html')).toHaveAttribute('data-refresh-witness', 'same-running-app');
+    await openHabits(page);
+    await expect(page.getByTestId('habit-tile').filter({ hasText: INCOMING })).toBeVisible();
+    const delivered = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/habits/' &&
+        response.request().headers().authorization === heldCredential,
+    );
+    release();
+    await (await delivered).finished();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
+    // Assert before B's own successful create/confirmation could cover a stale A hydration.
+    await expect(page.getByTestId('habit-tile').filter({ hasText: INCOMING })).toBeVisible();
+    await expect(page.getByTestId('habit-tile').filter({ hasText: OUTGOING })).toHaveCount(0);
+    await page.screenshot({
+      path: testInfo.outputPath('incoming-account-after-held-refresh.png'),
+      fullPage: true,
+    });
+    await addHabit(page, CURRENT_CREATE);
+    await expect(page.getByTestId('habit-tile').filter({ hasText: CURRENT_CREATE })).toBeVisible();
+    await page.reload();
+    await expect(page.getByTestId('habits-list')).toBeVisible();
+    await expect(page.getByTestId('habit-tile').filter({ hasText: INCOMING })).toBeVisible();
+    await expect(page.getByTestId('habit-tile').filter({ hasText: CURRENT_CREATE })).toBeVisible();
+    await expect(page.getByTestId('habit-tile').filter({ hasText: OUTGOING })).toHaveCount(0);
+  });
+}

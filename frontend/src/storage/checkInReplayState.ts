@@ -21,7 +21,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { z } from 'zod';
 
 import { serialize } from './serializedWrite';
-import { getActiveUser, scopedKey } from './userScope';
+import { getActiveUser, getActiveUserGeneration, scopedKey } from './userScope';
 
 const CHECKIN_REPLAY_STATE_KEY_BASE = '@adepthood/pending_checkin_replay_state';
 
@@ -72,9 +72,11 @@ export async function saveCheckInReplayState(
 ): Promise<void> {
   if (getActiveUser() !== owner) return;
   const key = replayStateKey();
+  const generation = getActiveUserGeneration();
   try {
     await serialize(key, async () => {
-      if (getActiveUser() === owner) await AsyncStorage.setItem(key, JSON.stringify(state));
+      if (getActiveUserGeneration() === generation)
+        await AsyncStorage.setItem(key, JSON.stringify(state));
     });
   } catch {
     console.warn(WARN_WRITE);
@@ -87,9 +89,10 @@ export async function clearCheckInReplayState(
 ): Promise<void> {
   if (getActiveUser() !== owner) return;
   const key = replayStateKey();
+  const generation = getActiveUserGeneration();
   try {
     await serialize(key, async () => {
-      if (getActiveUser() === owner) await AsyncStorage.removeItem(key);
+      if (getActiveUserGeneration() === generation) await AsyncStorage.removeItem(key);
     });
   } catch {
     console.warn(WARN_CLEAR);
