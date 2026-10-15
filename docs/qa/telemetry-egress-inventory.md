@@ -41,6 +41,8 @@ test to claim C12, see `docs/privacy/claim-coverage.md`.
 | 6 | **`uvicorn.access`** | **Nothing (disabled).** It used to carry the raw request line *with the query string* (journal `?search=`) and the client IP. | `--no-access-log` in `backend/Dockerfile` CMD; `uvicorn.access` disabled in `configure_logging` | `test_the_runtime_cmd_disables_uvicorns_access_log`, `test_uvicorns_access_logger_is_switched_off` | n/a | n/a |
 | 7 | **`httpx` / `httpx2`** (outbound HTTP client loggers) | WARNING and above only. The INFO per-request line, which carries the outbound URL (a user's vault address and an entry id in its path), is suppressed. | `observability._OUTBOUND_CLIENT_LOGGERS` | `test_outbound_request_urls_stay_out_of_the_info_stream` | as #3 | as #3 |
 | 7a | **`slowapi`** (rate limiter logger, on #3) | Its "limit exceeded" warning, reduced to the limit itself (`ratelimit 30 per 1 hour exceeded`). The throttle key (the caller's address) and the raw path (which can hold a share token) are dropped. Its storage warnings and errors are kept. | `observability.RateLimitRecordFilter` | `test_a_rate_limited_share_token_never_reaches_the_log` | as #3 | as #3 |
+| 7b | **`alembic upgrade head`** (the runtime CMD's migration step → stderr, before uvicorn starts) | alembic's own lines in alembic.ini's `generic` format. A failing migration's traceback renders frames plus `Type: safe_code / message_withheld`; a database error's statement and bound parameters (row data) are withheld. | `migrations/env.py` calls `observability.make_cli_output_content_free` after `fileConfig`: `ContentFreeFormatter` on every configured handler, and a content-free `sys.excepthook` | `test_a_failing_migration_prints_its_type_but_not_the_row` (subprocess, real `env.py`), `test_cli_hardening_formats_every_configured_handler_content_free`, `test_cli_hardening_makes_the_uncaught_traceback_content_free` | as #3 | as #3 |
+| 7c | **`threading.excepthook`** (a thread's unhandled exception → stderr, outside logging) | `Exception in thread <name>:` and the traceback rendered by `observability.render_exception`: frames plus `Type: safe_code / message_withheld`. Silent for `SystemExit`. | `configure_logging` replaces the interpreter's default hook (a hook the host installed on purpose is left in place) | `test_a_thread_dying_uncaught_prints_its_type_but_not_its_message`, `test_a_thread_exiting_via_system_exit_prints_nothing` | as #3 | as #3 |
 | 8 | **Creek vault telemetry** (in-process tally plus one log line on #3) | Closed vocabulary only: `VaultTelemetryOutcome`, `CreekCapability` wire name, `VaultErrorCode` | `services/creek_vault_telemetry.py` | that module's own suite | in-process tally: process lifetime; log line: as #3 | as #3 |
 | 9 | **LLM metering** (`LLMUsageLog` rows, Postgres) | Per-call usage accounting. Field review belongs to B08. | `models/llm_usage_log.py` | B08 | TBD (B08) | TBD (owner; database access) |
 | 10 | **Feedback correlation id** | A random per-session id the app generates, stored on a feedback report alongside the seven-field allowlisted context | `routers/feedback.py` | feedback suites | TBD (B08) | TBD (owner) |
@@ -48,13 +50,13 @@ test to claim C12, see `docs/privacy/claim-coverage.md`.
 
 ## Open rows (not closed by this slice)
 
-- **`alembic upgrade head` in the runtime CMD.** If a migration fails, the
-  traceback is printed by Python's default excepthook or by alembic's own
-  logging config, not by `ContentFreeFormatter`. An `IntegrityError` there can
-  quote row data. Follow-up: AC24.
-- **Python's default excepthooks.** `threading.excepthook` and an unhandled
-  exception at interpreter level print to stderr directly, outside logging.
-  Follow-up: AC24.
+- **The uvicorn process's own `sys.excepthook`.** The migration step (#7b) and
+  app threads (#7c) are closed (#3352). In the uvicorn process itself,
+  `sys.excepthook` stays the interpreter's default: an exception that escapes
+  before the app's lifespan runs (an import error while uvicorn loads
+  `main:app`) is printed by uvicorn or the default hook, not by
+  `ContentFreeFormatter`. Such a failure happens before any request is served,
+  so it carries code, not a user's content. Follow-up: AC24.
 - **Pre-stringified exception text.** The formatter neutralises exception
   *objects*. An f-string or `str(exc)` built into the message before logging
   is not caught. At this commit the grep finds one such site in

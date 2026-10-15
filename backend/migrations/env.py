@@ -29,12 +29,19 @@ from sqlmodel import SQLModel  # noqa: E402
 
 import models  # noqa: E402, F401  (register tables on SQLModel.metadata)
 from database import normalize_database_url  # noqa: E402
+from observability import make_cli_output_content_free  # noqa: E402
 
 # Alembic Config object.
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
+    # The runtime CMD runs this before uvicorn, into the same log collection,
+    # and a failing migration's database error quotes its parameters -- row
+    # data. Keep alembic.ini's format, but render it content-free, and let the
+    # uncaught traceback name only types and frames (#3352). In-process test
+    # runs set ``config_file_name = None`` and so leave the pytest worker alone.
+    make_cli_output_content_free(config.file_config.get("formatter_generic", "format", raw=True))
 
 # Inject the runtime DATABASE_URL so migrations run against the same database
 # as the app.  Falls back to whatever is configured in alembic.ini (useful for

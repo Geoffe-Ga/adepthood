@@ -97,6 +97,11 @@ fixable = ["ALL"]
 # cannot leak into the parent run. Same reason, same file-by-file scope.
 "tests/security/test_privacy_guard_mutations.py" = ["S603"]
 "backend/tests/security/test_privacy_guard_mutations.py" = ["S603"]
+# The migration-output canary (#3352) runs this repo's own `alembic upgrade`
+# exactly as the container's CMD does, argv built from sys.executable and a
+# tmp_path ini: the real env.py's fileConfig and excepthook only exist there.
+"tests/security/test_cli_telemetry_sentinels.py" = ["S603"]
+"backend/tests/security/test_cli_telemetry_sentinels.py" = ["S603"]
 "conftest.py" = ["S101"]
 "backend/conftest.py" = ["S101"]
 # Issue #272: ``lifespan`` deliberately lazy-imports ``models`` (one-time
