@@ -48,7 +48,14 @@ _ARRAY_COLUMNS = [
     ("habit", "notification_times"),
     ("goal", "days_of_week"),
     ("stageprogress", "completed_stages"),
+]
+
+# List columns encrypted at rest (#3263): the migration retypes each to ``text``
+# holding ciphertext of its JSON, so on Postgres neither may still be an array
+# or ``json`` -- a leftover array type would refuse the ciphertext on write.
+_ENCRYPTED_LIST_COLUMNS = [
     ("corpusfragment", "embedding"),
+    ("journalentry", "vault_tags"),
 ]
 
 _MINIMUM_SERVER_VERSION_NUM = 160_000
@@ -133,3 +140,21 @@ async def test_array_columns_are_declared_as_arrays(
     )
 
     assert data_type == "ARRAY"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("table_name", "column_name"), _ENCRYPTED_LIST_COLUMNS)
+async def test_encrypted_list_columns_are_text(
+    pg_session: AsyncSession, table_name: str, column_name: str
+) -> None:
+    """The embedding and vault tags are ``text`` after ``alembic upgrade head``."""
+    data_type = await pg_session.scalar(
+        text(
+            "SELECT data_type FROM information_schema.columns "
+            "WHERE table_schema = 'public' "
+            "AND table_name = :table_name AND column_name = :column_name"
+        ),
+        {"table_name": table_name, "column_name": column_name},
+    )
+
+    assert data_type == "text"

@@ -30,6 +30,7 @@ process restart to take effect (rotation is a deploy-time operation); tests call
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 from collections.abc import Mapping
@@ -335,3 +336,55 @@ class EncryptedString(TypeDecorator[str]):
 
     def process_result_value(self, value: str | None, _dialect: object) -> str | None:
         return None if value is None else decrypt(value)
+
+
+#: What an :class:`EncryptedJSONList` column holds: an embedding's floats or a
+#: vault's tag labels. The two mapped columns each keep their own narrower
+#: annotation on the model; this is the union the codec has to round-trip.
+JSONList = list[float] | list[str]
+
+
+class EncryptedJSONList(TypeDecorator[JSONList]):
+    """A list column stored as :class:`EncryptedString` ciphertext of its JSON (#3263).
+
+    For values *derived* from a person's writing that are lists rather than
+    text -- ``corpusfragment.embedding`` and ``journalentry.vault_tags``. The
+    list is JSON-serialised and the JSON is handed to ``EncryptedString``, which
+    is the ``impl``, so the codec, the ``enc::v1::`` marker, the production
+    refusal and the key rotation are exactly the writing's own, and the stored
+    bytes are what the operator sweep and audit already understand. NULL stays
+    NULL; ``[]`` is a value and is encrypted like any other.
+
+    Nothing queries inside these lists in SQL: retrieval ranks embeddings in
+    Python and vault tags are only ever null-checked, so ciphertext costs no
+    query a plaintext array could answer.
+    """
+
+    impl = EncryptedString
+    cache_ok = True
+
+    def process_bind_param(self, value: JSONList | None, _dialect: object) -> str | None:
+        return None if value is None else json.dumps(list(value))
+
+    def process_result_value(self, value: str | None, _dialect: object) -> JSONList | None:
+        if value is None:
+            return None
+        # The message never quotes the value: it is decrypted content.
+        msg = "encrypted list column holds a value that is not a JSON list"
+        try:
+            decoded = json.loads(value)
+        except ValueError as exc:
+            raise JournalEncryptionError(msg) from exc
+        if not isinstance(decoded, list):
+            raise JournalEncryptionError(msg)
+        return decoded
+
+
+def is_encrypted_type(column_type: object) -> bool:
+    """Whether a column of ``column_type`` stores ``EncryptedString`` ciphertext.
+
+    The one definition of "encrypted column" every inventory reads, so a list
+    column encrypted through :class:`EncryptedJSONList` is counted by the
+    audit, the sweep, the at-rest canary and the policy pins alike.
+    """
+    return isinstance(column_type, (EncryptedString, EncryptedJSONList))

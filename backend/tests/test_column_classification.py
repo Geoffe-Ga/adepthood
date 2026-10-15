@@ -5,8 +5,9 @@ guard is one-directional about everything else: a new column holding somebody's
 writing, or a new column *derived* from it (an embedding, a tag set, a weight
 map), ships in the clear and nothing notices. This module closes that gap. Every
 String / Text / AutoString / Enum / JSON / ARRAY column must be either typed
-``EncryptedString`` or named below under exactly one reason it is stored as
-plaintext. An unclassified column fails, and so does a stale entry.
+``EncryptedString`` (directly, or behind ``EncryptedJSONList``) or named below
+under exactly one reason it is stored as plaintext. An unclassified column fails,
+and so does a stale entry.
 
 This is a classification, not a verdict. Several groups below hold material a
 reader would call sensitive -- ``DERIVED_FROM_PROSE`` and ``USER_AUTHORED`` in
@@ -30,7 +31,7 @@ from services.encryption_inventory import (
     EncryptionInventoryError,
     encrypted_columns,
 )
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import EncryptedString, is_encrypted_type
 
 # Each key is the reason its columns are stored as plaintext.
 _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
@@ -209,21 +210,19 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "voicedraftretraction.safe_failure_code",
         }
     ),
-    # Derived from a person's prose and stored in the clear. An embedding and a
-    # frequency-weight map are computed *from* the encrypted text; vault tags
-    # are frequency tags assigned to an entry on vault ingest; the privacy tier,
-    # entry tag and reflection scope describe the entry. Each reveals something
-    # about what was written without being it. Encrypting these versus
-    # narrowing the "everything derived from it" copy is escalated (AC5/AC14).
+    # Derived from a person's prose and stored in the clear. A frequency-weight
+    # map is computed *from* the encrypted text; the privacy tier, entry tag and
+    # reflection scope describe the entry. Each reveals something about what was
+    # written without being it, and the privacy policy names each one. The
+    # embedding and the vault tags were here until the owner chose to encrypt
+    # them (#3263); they are in ``_ENCRYPTED_DERIVED`` below.
     "DERIVED_FROM_PROSE": frozenset(
         {
-            "corpusfragment.embedding",
             "corpusfragment.frequency_weights",
             "corpusfragment.tier",
             "journalentry.classification",
             "journalentry.reflection_scope_key",
             "journalentry.tag",
-            "journalentry.vault_tags",
         }
     ),
     # Short labels a person typed -- a goal, a habit, a group, a renamed
@@ -264,11 +263,18 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
 # regrouping cannot quietly bury them among identifiers.
 _PINNED_DERIVED = frozenset(
     {
-        "corpusfragment.embedding",
         "corpusfragment.frequency_weights",
-        "journalentry.vault_tags",
         "journalentry.classification",
         "journalentry.tag",
+    }
+)
+
+# Derived from a person's prose and encrypted at rest (#3263), so they are
+# classified by being ciphertext rather than by a plaintext reason.
+_ENCRYPTED_DERIVED = frozenset(
+    {
+        "corpusfragment.embedding",
+        "journalentry.vault_tags",
     }
 )
 
@@ -295,7 +301,7 @@ def _schema_textual_columns() -> tuple[frozenset[str], frozenset[str]]:
     for table in SQLModel.metadata.tables.values():
         for column in table.columns:
             name = f"{table.name}.{column.name}"
-            if isinstance(column.type, EncryptedString):
+            if is_encrypted_type(column.type):
                 encrypted.add(name)
             elif _is_textual(column.type):
                 plaintext.add(name)
@@ -336,6 +342,15 @@ def test_no_column_is_classified_twice() -> None:
 def test_columns_derived_from_prose_are_named_explicitly() -> None:
     """The derived columns #3058 names are classified as derived, not as identifiers."""
     assert _PLAINTEXT_COLUMNS["DERIVED_FROM_PROSE"] >= _PINNED_DERIVED
+
+
+def test_the_encrypted_derived_columns_are_ciphertext_not_plaintext() -> None:
+    """The embedding and vault tags are encrypted and named under no plaintext reason."""
+    encrypted, plaintext = _schema_textual_columns()
+
+    assert encrypted >= _ENCRYPTED_DERIVED
+    assert not (plaintext & _ENCRYPTED_DERIVED)
+    assert not (_classified() & _ENCRYPTED_DERIVED)
 
 
 def test_the_inventory_module_agrees_with_the_schema() -> None:

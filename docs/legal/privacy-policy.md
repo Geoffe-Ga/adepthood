@@ -73,23 +73,24 @@ drawn from your entries**, and **your answers to the weekly prompts**. So is
 the writing you do away from the journal: **the reflection and the insight
 you write after sitting a practice**, and **everything you write in a beta
 feedback report** — none of these is part of any entry, and all of them are
-protected for the same reason. One thing that is not your writing is
+protected for the same reason. Two things computed from your writing are
+encrypted the same way as the writing itself: **the embedding of each passage
+in the corpus** — a list of numbers a model computes from the text so that
+passages with similar meaning can be found — and **the vault tags on an
+entry**, the frequency and Wavelength-phase labels a Creek Vault gives back
+when an entry is sent to it. One thing that is not your writing is
 encrypted alongside all of it: **the access key for a private vault, if you
 connect one**. They are encrypted with a key the
 operator configures, and a production server refuses to start without one, so
 a production deployment of this service cannot quietly store your writing in
 the clear.
 
-Some of what is derived from your writing is not text, and it is stored
-unencrypted. **Frequency weights**: when the corpus is on, each passage in it
-is stored with a score for each frequency the sorting found in it, and one
-overall confidence score for the sorting as a whole. **Embeddings**: the
-corpus can also hold, for each passage, an embedding — a list of numbers a
-model computes from the text so that passages with similar meaning can be
-found. **Vault tags**: when an entry is sent to a Creek Vault, the frequency
-and Wavelength-phase labels the vault gives back are kept on the entry.
-**Detected amounts and dates**: when a reflection notices that an entry seems
-to record a habit or practice you finished, the suggestion it offers keeps the
+Some of the rest of what is derived from your writing is not text, and it is
+stored unencrypted. **Frequency weights**: when the corpus is on, each passage
+in it is stored with a score for each frequency the sorting found in it, and
+one overall confidence score for the sorting as a whole. **Detected amounts
+and dates**: when a reflection notices that an entry seems to record a habit
+or practice you finished, the suggestion it offers keeps the
 amount and date it found (say, 5 miles on a given day), where in the entry it
 found them, and which habit or practice it points at; the suggestion's wording
 and the quoted words are encrypted, these are not. **An entry's tier**: the

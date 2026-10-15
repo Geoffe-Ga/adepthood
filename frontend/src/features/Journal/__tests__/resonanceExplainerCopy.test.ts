@@ -2,8 +2,9 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   ESSAY_ASK_WHAT,
+  ESSAY_NOUN,
   RESONANCE_EXPLAINER_WHAT,
-  essayExplainerCost,
+  keyNeededCost,
   resonanceExplainerCost,
 } from '../resonanceExplainerCopy';
 
@@ -54,7 +55,7 @@ describe('resonanceExplainerCost keeps the reading’s shipped wording', () => {
   });
 });
 
-describe('essayExplainerCost prices a letter from the same wallet', () => {
+describe('a letter priced in a development build uses the same wallet wording', () => {
   it.each<CostCase>([
     [
       'the caller’s own key',
@@ -82,7 +83,27 @@ describe('essayExplainerCost prices a letter from the same wallet', () => {
       `This letter spends one BotMason message from your account. ${ADD_KEY}`,
     ],
   ])('for %s', (_case, args, expected) => {
-    expect(essayExplainerCost(...args)).toBe(expected);
+    const [hasKey, cap, remaining = null, offerings = null] = args;
+    expect(resonanceExplainerCost(hasKey, cap, remaining, offerings, ESSAY_NOUN)).toBe(expected);
+  });
+});
+
+describe('keyNeededCost leads with the key and names no price (#3262)', () => {
+  it.each([
+    [
+      'a reading',
+      undefined,
+      'This needs your own API key. Add one in Settings to ask for this reading.',
+    ],
+    [
+      'a letter',
+      ESSAY_NOUN,
+      'This needs your own API key. Add one in Settings to ask for this letter.',
+    ],
+  ])('for %s', (_case, noun, expected) => {
+    const line = keyNeededCost(noun);
+    expect(line).toBe(expected);
+    expect(line).not.toMatch(/BotMason|offering|spends/u);
   });
 });
 

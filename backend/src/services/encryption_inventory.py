@@ -1,7 +1,9 @@
 """Which columns hold ciphertext, derived from the schema rather than listed.
 
 The set of encrypted columns is whatever the ORM declares as
-:class:`~services.journal_encryption.EncryptedString`, so a column added
+:class:`~services.journal_encryption.EncryptedString` -- directly, or as the
+``impl`` of :class:`~services.journal_encryption.EncryptedJSONList`, whose
+stored bytes are the same ciphertext (see ``is_encrypted_type``) -- so a column added
 tomorrow is covered by every consumer of this module (the raw at-rest canary,
 the column classification test, the operator audit and the re-encrypt sweep)
 without anyone remembering to add it anywhere.
@@ -22,7 +24,7 @@ from sqlalchemy import Integer, MetaData, Table, Text, column, table
 from sqlalchemy.sql.expression import TableClause
 from sqlmodel import SQLModel
 
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import is_encrypted_type
 
 # Importing the package registers every table on ``SQLModel.metadata``; without
 # it a standalone caller (the operator CLI) would see an empty schema and
@@ -81,9 +83,7 @@ def encrypted_columns(metadata: MetaData | None = None) -> tuple[EncryptedColumn
 def _encrypted_in(owner: Table) -> list[EncryptedColumn]:
     """``owner``'s encrypted columns, after checking the sweep can page it."""
     found = [
-        EncryptedColumn(owner.name, c.name)
-        for c in owner.columns
-        if isinstance(c.type, EncryptedString)
+        EncryptedColumn(owner.name, c.name) for c in owner.columns if is_encrypted_type(c.type)
     ]
     if found:
         _require_integer_row_id(owner)

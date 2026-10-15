@@ -54,7 +54,7 @@ from sqlalchemy import Table, inspect
 from models.journal_entry import JournalEntry
 from scripts import restore_suppression as restore_cli
 from services import journal_encryption
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import is_encrypted_type
 from services.restore_suppression import RESTORE_ID_ENV_VAR, RESTORE_SUPPRESSION_REQUIRED_ENV_VAR
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -126,11 +126,7 @@ def _journal_table() -> Table:
 
 def _encrypted_column_names() -> list[str]:
     """Names of the journal columns actually encrypted at rest."""
-    return [
-        column.name
-        for column in _journal_table().columns
-        if isinstance(column.type, EncryptedString)
-    ]
+    return [column.name for column in _journal_table().columns if is_encrypted_type(column.type)]
 
 
 def _known_revisions() -> set[str]:

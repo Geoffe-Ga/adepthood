@@ -42,12 +42,11 @@ import enum
 from datetime import UTC, datetime
 from typing import Final
 
-from sqlalchemy import JSON, CheckConstraint, Column, DateTime, Float, Index
-from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
+from sqlalchemy import JSON, CheckConstraint, Column, DateTime, Index
 from sqlmodel import Field, SQLModel
 
 from models.journal_entry import JournalClassification
-from services.journal_encryption import EncryptedString
+from services.journal_encryption import EncryptedJSONList, EncryptedString
 
 
 class CorpusSource(enum.StrEnum):
@@ -188,13 +187,15 @@ class CorpusFragment(SQLModel, table=True):
         default_factory=dict, sa_column=Column(JSON, nullable=False)
     )
     overall_confidence: float = Field(default=0.0)
-    # A dense vector of whatever width the embedding provider produces. Stored
-    # as a plain float array rather than a pgvector column: retrieval ranks a
-    # bounded candidate pool in Python, so no ANN index is consulted, and an
-    # extension-typed column would be unusable under the SQLite test database
-    # where every assertion about ranking is made.
+    # A dense vector of whatever width the embedding provider produces. It is
+    # computed from the encrypted ``content`` and says what the passage means,
+    # so it is encrypted at rest like it (#3263): ``EncryptedJSONList`` stores
+    # the JSON of the floats as ``EncryptedString`` ciphertext. No pgvector
+    # column and no SQL-side array is needed: retrieval ranks a bounded
+    # candidate pool in Python (``services.corpus_store``), so the database
+    # never compares two vectors.
     embedding: list[float] | None = Field(
-        default=None, sa_column=Column(PG_ARRAY(Float), nullable=True)
+        default=None, sa_column=Column(EncryptedJSONList(), nullable=True)
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

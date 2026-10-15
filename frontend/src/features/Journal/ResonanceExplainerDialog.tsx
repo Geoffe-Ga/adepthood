@@ -24,6 +24,8 @@ import {
 } from './ExplainerDialogParts';
 import JournalModalShell from './JournalModalShell';
 import {
+  KEY_NEEDED_SETTINGS,
+  KEY_NEEDED_SETTINGS_A11Y,
   RESONANCE_EXPLAINER_CANCEL,
   RESONANCE_EXPLAINER_CANCEL_A11Y,
   RESONANCE_EXPLAINER_CHOICE,
@@ -49,17 +51,42 @@ export interface ResonanceExplainerDialogProps {
   onContinue: () => void;
   /** Leave without a pass. Also what the scrim and the hardware back do. */
   onCancel: () => void;
+  /**
+   * Only the writer's own key could pay (#3262): the charged arm becomes
+   * {@link onOpenSettings}, and the "don’t show" box is not offered, since this
+   * showing is a remedy rather than the disclosure.
+   */
+  keyNeeded?: boolean;
+  /** Leave for Settings to add a key. Required for ``keyNeeded`` to act. */
+  onOpenSettings?: () => void;
 }
+
+const NO_SETTINGS = (): void => undefined;
 
 /** The two arms, in the disclosure's own words; the charged one waits on the payer. */
 function ResonanceArms({
   continueDisabled,
   onContinue,
   onCancel,
+  keyNeeded = false,
+  onOpenSettings = NO_SETTINGS,
 }: Pick<
   ResonanceExplainerDialogProps,
-  'continueDisabled' | 'onContinue' | 'onCancel'
+  'continueDisabled' | 'onContinue' | 'onCancel' | 'keyNeeded' | 'onOpenSettings'
 >): React.JSX.Element {
+  const proceed = keyNeeded
+    ? {
+        label: KEY_NEEDED_SETTINGS,
+        accessibilityLabel: KEY_NEEDED_SETTINGS_A11Y,
+        testID: 'resonance-explainer-open-settings',
+        onPress: onOpenSettings,
+      }
+    : {
+        label: RESONANCE_EXPLAINER_CONTINUE,
+        accessibilityLabel: RESONANCE_EXPLAINER_CONTINUE_A11Y,
+        testID: 'resonance-explainer-continue',
+        onPress: onContinue,
+      };
   return (
     <ExplainerActionPair
       cancel={{
@@ -68,13 +95,27 @@ function ResonanceArms({
         testID: 'resonance-explainer-cancel',
         onPress: onCancel,
       }}
-      proceed={{
-        label: RESONANCE_EXPLAINER_CONTINUE,
-        accessibilityLabel: RESONANCE_EXPLAINER_CONTINUE_A11Y,
-        testID: 'resonance-explainer-continue',
-        onPress: onContinue,
-      }}
-      proceedDisabled={continueDisabled}
+      proceed={proceed}
+      proceedDisabled={!keyNeeded && continueDisabled}
+    />
+  );
+}
+
+/** The "don’t show this again" box, offered only while this is the disclosure. */
+function DontShowAgain({
+  dontShowAgain,
+  onToggle,
+}: {
+  dontShowAgain: boolean;
+  onToggle: () => void;
+}): React.JSX.Element {
+  return (
+    <DontShowAgainCheckbox
+      checked={dontShowAgain}
+      onToggle={onToggle}
+      label={RESONANCE_EXPLAINER_DONT_SHOW}
+      accessibilityLabel={RESONANCE_EXPLAINER_DONT_SHOW_A11Y}
+      testID="resonance-explainer-dont-show"
     />
   );
 }
@@ -87,6 +128,8 @@ function ResonanceExplainerDialog({
   onToggleDontShowAgain,
   onContinue,
   onCancel,
+  keyNeeded = false,
+  onOpenSettings,
 }: ResonanceExplainerDialogProps): React.JSX.Element {
   return (
     <JournalModalShell
@@ -110,17 +153,15 @@ function ResonanceExplainerDialog({
       <Text style={styles.body} testID="resonance-explainer-choice">
         {RESONANCE_EXPLAINER_CHOICE}
       </Text>
-      <DontShowAgainCheckbox
-        checked={dontShowAgain}
-        onToggle={onToggleDontShowAgain}
-        label={RESONANCE_EXPLAINER_DONT_SHOW}
-        accessibilityLabel={RESONANCE_EXPLAINER_DONT_SHOW_A11Y}
-        testID="resonance-explainer-dont-show"
-      />
+      {keyNeeded ? null : (
+        <DontShowAgain dontShowAgain={dontShowAgain} onToggle={onToggleDontShowAgain} />
+      )}
       <ResonanceArms
         continueDisabled={continueDisabled}
         onContinue={onContinue}
         onCancel={onCancel}
+        keyNeeded={keyNeeded}
+        onOpenSettings={onOpenSettings}
       />
     </JournalModalShell>
   );

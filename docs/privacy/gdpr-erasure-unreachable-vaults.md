@@ -140,8 +140,8 @@ The table is registered in all three registries:
 
 The owner ratified the row's lifetime on 2026-10-13: a `confirmed` row is kept
 30 days after confirmation, and an open row is never eligible until confirmed
-(`domain/retention.py` now carries `fixed_days` with those exemptions; no sweep
-applies it yet). The decision is recorded in
+(`domain/retention.py` now carries `fixed_days` with those exemptions, and the
+nightly retention sweep applies it, #3266). The decision is recorded in
 [retention-proposal.md](retention-proposal.md). Whether an `unconfirmed` row
 should outlive account deletion was not part of that decision and stays open.
 
