@@ -46,9 +46,12 @@ _E2E_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "e2e.yml"
 _E2E_DIR = _REPO_ROOT / "frontend" / "e2e"
 
 # The job that boots the lane and runs the Playwright specs.
-_BROWSER_JOB = "browser-journey"
+_BROWSER_JOB = "browser-journey-shards"
 _UPLOAD_ACTION = "actions/upload-artifact@"
 _ALWAYS = "always()"
+_AGGREGATE_CONDITION = (
+    "${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}"
+)
 
 # The browser job's own ``timeout-minutes``, at the job's key indentation.
 _JOB_TIMEOUT = re.compile(r"^    timeout-minutes:\s*(?P<minutes>\d+)\s*(?:#.*)?$", re.MULTILINE)
@@ -181,12 +184,30 @@ _COMPLIANT = """\
 name: E2E
 on: pull_request
 jobs:
-  browser-journey:
+  browser-journey-shards:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Run the real-browser journey
-        run: npm run test:e2e:web
+        run: npm run test:e2e:web -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}
+
+      - name: Upload failed-test traces
+        if: failure()
+        uses: actions/upload-artifact@0123456789abcdef
+        with:
+          name: browser-journey-test-results-${{ matrix.shard }}
+          path: frontend/test-results
+
+      - name: Upload browser timing report
+        if: always()
+        uses: actions/upload-artifact@0123456789abcdef
+        with:
+          name: browser-journey-report-${{ matrix.shard }}
+          path: frontend/playwright-report/results.json
 
       - name: Upload the action-row sweep
         if: always()
@@ -195,6 +216,30 @@ jobs:
           name: action-row-sweep
           path: frontend/e2e/artifacts/action-rows/**
           if-no-files-found: warn
+
+  browser-journey-complete:
+    needs: browser-journey-shards
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record success of every browser shard
+        run: echo 'Every browser shard passed.'
+
+  browser-journey:
+    needs: [changes, browser-journey-complete]
+    if: SELECTED_LANE
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every browser shard to pass
+        env:
+          SHARD_RESULT: ${{ needs.browser-journey-complete.result }}
+        run: test "$SHARD_RESULT" = success
+""".replace("SELECTED_LANE", _AGGREGATE_CONDITION)
+
+_COMPLIANT_CONFIG = """\
+  fullyParallel: false,
+  workers: 1,
+  reporter: [['line'], ['json', { outputFile: 'playwright-report/results.json' }]],
 """
 
 _SWEEP = _PUBLICATIONS[0]
@@ -226,7 +271,154 @@ def test_the_browser_job_has_time_to_publish_every_screen() -> None:
     assert shortfall is None, shortfall
 
 
+def _assert_isolated_sharding(workflow: str, config: str) -> None:
+    """Shared ports/state require runner isolation; every shard must finish its review."""
+    job = jobs(without_comment_lines(workflow)).get(_BROWSER_JOB, "")
+    assert "shard: [1, 2, 3, 4]" in job
+    assert "fail-fast: false" in job
+    command = "\n".join(step_body(job, "Run the real-browser journey"))
+    expected = "npm run test:e2e:web -- --shard=${{ matrix.shard }}/${{ strategy.job-total }}"
+    assert expected in command
+    assert "continue-on-error" not in job
+    assert re.search(r"^\s*fullyParallel: false,", config, re.MULTILINE)
+    assert re.search(r"^\s*workers: 1,", config, re.MULTILINE)
+
+
+def _assert_shard_diagnostics(workflow: str, config: str) -> None:
+    """Artifact v4+ refuses two runners uploading to the same artifact name."""
+    job = jobs(without_comment_lines(workflow)).get(_BROWSER_JOB, "")
+    assert step_uses(job, "Upload failed-test traces").startswith(_UPLOAD_ACTION)
+    traces = step_inputs(job, "Upload failed-test traces")
+    assert traces["name"] == "browser-journey-test-results-${{ matrix.shard }}"
+    report_step = "Upload browser timing report"
+    assert _step_condition(job, report_step) == _ALWAYS
+    assert step_uses(job, report_step).startswith(_UPLOAD_ACTION)
+    report = step_inputs(job, report_step)
+    assert report["name"] == "browser-journey-report-${{ matrix.shard }}"
+    assert report["path"] == "frontend/playwright-report/results.json"
+    assert "['json', { outputFile: 'playwright-report/results.json' }]" in config
+
+
+def _assert_stable_browser_check(workflow: str) -> None:
+    """Keep the pre-matrix required check, failing on any unsuccessful shard."""
+    workflow_jobs = jobs(without_comment_lines(workflow))
+    barrier = workflow_jobs.get("browser-journey-complete", "")
+    assert "    needs: browser-journey-shards" in barrier
+    assert "    if: ${{ success() }}" in barrier
+    assert "continue-on-error" not in barrier
+    job = workflow_jobs.get("browser-journey", "")
+    assert "    needs: [changes, browser-journey-complete]" in job
+    assert f"    if: {_AGGREGATE_CONDITION}" in job
+    assert "continue-on-error" not in job
+    step = "\n".join(step_body(job, "Require every browser shard to pass"))
+    assert "SHARD_RESULT: ${{ needs.browser-journey-complete.result }}" in step
+    assert 'run: test "$SHARD_RESULT" = success' in step
+
+
+def test_browser_sharding_and_diagnostics_in_the_real_tree() -> None:
+    """Exercise the same validators used by the deliberately broken fixtures below."""
+    workflow = _E2E_WORKFLOW.read_text()
+    config = (_REPO_ROOT / "frontend" / "playwright.config.ts").read_text()
+    _assert_isolated_sharding(workflow, config)
+    _assert_shard_diagnostics(workflow, config)
+    _assert_stable_browser_check(workflow)
+
+
 # --- Deliberately violating workflows --------------------------------------
+
+
+def test_sharding_and_diagnostics_accept_a_compliant_fixture() -> None:
+    """Negative cases must reject their mutation rather than an incomplete fixture."""
+    _assert_isolated_sharding(_COMPLIANT, _COMPLIANT_CONFIG)
+    _assert_shard_diagnostics(_COMPLIANT, _COMPLIANT_CONFIG)
+    _assert_stable_browser_check(_COMPLIANT)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("shard: [1, 2, 3, 4]", "shard: [1]"),
+        ("fail-fast: false", "fail-fast: true"),
+        (" --shard=${{ matrix.shard }}/${{ strategy.job-total }}", ""),
+        ("    strategy:", "    continue-on-error: true\n    strategy:"),
+    ],
+)
+def test_sharding_rejects_broken_workflow_fixtures(before: str, after: str) -> None:
+    """Losing parallelism, shard selection or failure visibility must trip the guard."""
+    with pytest.raises(AssertionError):
+        _assert_isolated_sharding(_COMPLIANT.replace(before, after), _COMPLIANT_CONFIG)
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [("workers: 1", "workers: 2"), ("fullyParallel: false", "fullyParallel: true")],
+)
+def test_sharding_rejects_shared_worker_and_split_file_fixtures(before: str, after: str) -> None:
+    """File-level fixture/artifact ownership must hold as the suite grows."""
+    with pytest.raises(AssertionError):
+        _assert_isolated_sharding(_COMPLIANT, _COMPLIANT_CONFIG.replace(before, after))
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("browser-journey-test-results-${{ matrix.shard }}", "browser-journey-test-results"),
+        ("browser-journey-report-${{ matrix.shard }}", "browser-journey-report"),
+        ("if: always()", "if: failure()"),
+        ("path: frontend/playwright-report/results.json", "path: frontend/missing.json"),
+        ("uses: actions/upload-artifact@", "# uses: actions/upload-artifact@"),
+    ],
+)
+def test_diagnostics_reject_collisions_and_missing_publication(before: str, after: str) -> None:
+    """Both unqualified artifact names and failure-only timing uploads are rejected."""
+    with pytest.raises(AssertionError):
+        _assert_shard_diagnostics(_COMPLIANT.replace(before, after), _COMPLIANT_CONFIG)
+
+
+def test_diagnostics_reject_a_missing_json_reporter() -> None:
+    """An upload path cannot compensate for a reporter that never writes it."""
+    with pytest.raises(AssertionError):
+        _assert_shard_diagnostics(_COMPLIANT, "reporter: [['line']]")
+
+
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        ("  browser-journey:\n", "  renamed-browser-check:\n"),
+        ("needs: [changes, browser-journey-complete]", "needs: changes"),
+        ('test "$SHARD_RESULT" = success', "true"),
+        ("needs.browser-journey-complete.result", "needs.changes.result"),
+        ("always() &&", "success() &&"),
+        ("  browser-journey-complete:\n", "  renamed-completion:\n"),
+        ("    needs: browser-journey-shards\n", "    needs: changes\n"),
+        ("if: ${{ success() }}", "if: ${{ always() }}"),
+        (
+            "  browser-journey-complete:\n",
+            "  browser-journey-complete:\n    continue-on-error: true\n",
+        ),
+    ],
+)
+def test_required_check_rejects_renaming_and_masked_shard_failures(before: str, after: str) -> None:
+    """The stable check must wait for the matrix and propagate its result after failure."""
+    with pytest.raises(AssertionError):
+        _assert_stable_browser_check(_COMPLIANT.replace(before, after))
+
+
+def test_cancelled_dependencies_cannot_skip_the_required_check() -> None:
+    """A skipped required job passes protection, so the aggregate must survive cancellation."""
+    workflow = _COMPLIANT.replace("always() &&", "!cancelled() &&")
+    with pytest.raises(AssertionError):
+        _assert_stable_browser_check(workflow)
+
+
+def test_selective_reruns_cannot_hide_an_earlier_shard_failure() -> None:
+    """A direct matrix result can forget failures from earlier selective rerun attempts."""
+    workflow = _COMPLIANT.replace(
+        "needs: [changes, browser-journey-complete]",
+        "needs: [changes, browser-journey-shards]",
+    ).replace("needs.browser-journey-complete.result", "needs.browser-journey-shards.result")
+    with pytest.raises(AssertionError):
+        _assert_stable_browser_check(workflow)
 
 
 def test_the_check_can_be_satisfied() -> None:
@@ -285,7 +477,7 @@ def test_a_drifted_path_is_caught() -> None:
 
 def test_an_upload_in_another_job_does_not_count() -> None:
     """Only the job that ran the browser has the folder to upload."""
-    workflow = _COMPLIANT.replace("  browser-journey:", "  api-journey:")
+    workflow = _COMPLIANT.replace(f"  {_BROWSER_JOB}:", "  api-journey:")
 
     shortfall = _upload_shortfall(workflow, _SWEEP)
 

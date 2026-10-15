@@ -48,11 +48,13 @@ beforeEach(() => {
 });
 
 describe('ResonanceRefillDialog — a refused pass says how to proceed', () => {
-  it('an empty wallet offers a key and says nothing was charged', () => {
+  it('an empty vault wallet names credits and says nothing was charged', () => {
     const { getByText } = renderDialog('wallet_exhausted');
 
     expect(getByText(/BotMason balance has run out/u)).toBeTruthy();
-    expect(getByText(/Add your own API key and it pays for the reading instead/u)).toBeTruthy();
+    expect(
+      getByText(/vault answers use BotMason credits, even when an API key is saved/u),
+    ).toBeTruthy();
     expect(getByText(/nothing was charged/iu)).toBeTruthy();
   });
 
@@ -85,7 +87,7 @@ describe('ResonanceRefillDialog — credits are offered only with a pack page (#
     mockCreditPackUrl = PACK_URL;
     const { getByTestId, getByText } = renderDialog('wallet_exhausted');
 
-    expect(getByText(/or add more BotMason credits/u)).toBeTruthy();
+    expect(getByText(/vault answers use BotMason credits/u)).toBeTruthy();
     expect(
       getByText(
         'Use the same email address as your Adepthood account when you buy, so the credits reach you.',
@@ -105,4 +107,9 @@ describe('ResonanceRefillDialog — credits are offered only with a pack page (#
     expect(queryByTestId('journal-resonance-refill-credit-pack')).toBeNull();
     expect(getByTestId('journal-resonance-refill-card')).not.toHaveTextContent(/credits/u);
   });
+});
+
+it('never offers a key as an alternative payer for an exhausted vault reading', () => {
+  const { queryByTestId } = renderDialog('wallet_exhausted');
+  expect(queryByTestId('journal-resonance-refill-add-key')).toBeNull();
 });

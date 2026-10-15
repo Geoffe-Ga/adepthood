@@ -4,13 +4,15 @@ export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.browser.e2e.test.ts',
   fullyParallel: false,
+  // Parallelism lives across isolated CI runners (--shard), since the lane's
+  // state files, fixed frontend ports and fake-vault owner are shared here.
   workers: 1,
   retries: 0,
   timeout: 60_000,
   expect: { timeout: 10_000 },
   globalSetup: './e2e/browserGlobalSetup.ts',
   globalTeardown: './e2e/browserGlobalTeardown.ts',
-  reporter: [['line']],
+  reporter: [['line'], ['json', { outputFile: 'playwright-report/results.json' }]],
   use: {
     browserName: 'chromium',
     channel: process.env.PLAYWRIGHT_BROWSER_CHANNEL,

@@ -17,6 +17,11 @@ export interface TimerHabitLogService extends Pick<HabitManager, 'prepareLogUnit
     },
   ) => Promise<CheckInResult | null>;
 }
+/** A failed attempt's context, with the habit unit its amount was measured in. */
+export interface PreparedPracticeHabitLog {
+  ctx: LogUnitContext;
+  unit: PracticeHabitLogInput['habit']['unit'];
+}
 export interface PracticeHabitLogInput {
   session: PracticeSessionResponse;
   payload: PracticeSessionCreate;
@@ -28,10 +33,10 @@ export interface PracticeHabitLogInput {
   isOwnerCurrent: () => boolean;
   onNotice: (_message: string) => void;
   manager: TimerHabitLogService;
-  /** A retry passes the context its failed attempt prepared, so the operation id is kept. */
-  prepared?: LogUnitContext;
-  /** Receives the failed attempt's context; a retry hands it back as ``prepared``. */
-  onFailed?: (_ctx: LogUnitContext) => void;
+  /** A retry passes what its failed attempt prepared, so the operation id is kept. */
+  prepared?: PreparedPracticeHabitLog;
+  /** Receives the failed attempt's context and unit; a retry hands it back as ``prepared``. */
+  onFailed?: (_prepared: PreparedPracticeHabitLog) => void;
 }
 
 function admitted({ session, payload, isCurrent }: PracticeHabitLogInput): boolean {
@@ -43,10 +48,17 @@ function admitted({ session, payload, isCurrent }: PracticeHabitLogInput): boole
     session.user_practice_id === payload.user_practice_id
   );
 }
+/** A prepared amount is only true for the habit, and the unit, it was measured for. */
+function reusable(
+  prepared: PreparedPracticeHabitLog,
+  habit: PracticeHabitLogInput['habit'],
+): LogUnitContext | null {
+  return prepared.ctx.habitId === habit.id && prepared.unit === habit.unit ? prepared.ctx : null;
+}
 function prepare(input: PracticeHabitLogInput): LogUnitContext | null {
   const { payload, habit, manager } = input;
   if (!admitted(input)) return null;
-  if (input.prepared) return input.prepared.habitId === habit.id ? input.prepared : null;
+  if (input.prepared) return reusable(input.prepared, habit);
   const elapsed = Date.parse(payload.ended_at) - Date.parse(payload.started_at);
   const amount = practiceHabitAmount(habit.unit, elapsed);
   if (amount === null) return null;
@@ -79,7 +91,7 @@ export async function logCompletedPracticeHabit(
   } catch {
     console.warn('Could not log the completed practice to its linked habit.');
     if (input.isCurrent()) input.onNotice(`Couldn't log to ${input.habit.name}`);
-    input.onFailed?.(ctx);
+    input.onFailed?.({ ctx, unit: input.habit.unit });
     return 'failed';
   } finally {
     manager.discardLogUnitContext(ctx);

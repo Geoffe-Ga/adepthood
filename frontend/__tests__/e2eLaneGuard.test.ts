@@ -132,6 +132,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'reauth-sheet-survives-anonymous-401.browser.e2e.test.ts',
   'resonance-credit-exhausted.browser.e2e.test.ts',
   'resonance-explainer.browser.e2e.test.ts',
+  'money-copy.browser.e2e.test.ts',
   'return-letgo-token-renewal.browser.e2e.test.ts',
   'return-recover-habit.browser.e2e.test.ts',
   'screen-title-heading.browser.e2e.test.ts',

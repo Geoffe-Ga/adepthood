@@ -44,27 +44,28 @@ describe('without a key of your own, Settings says what you lose', () => {
     }
   });
 
-  test('the vault exception covers resonance notes only, and is not called private', () => {
-    // Letters, completion checks and page reading are never vault-answered: the
-    // essay and transcription routes are app-provider only, and a vault-bound
-    // completion check answers `checked: false`.
+  test('the vault exception covers notes and letters, without claiming other cloud features', () => {
+    // Contract 0.17 allows vault letters; completion checks and page reading
+    // still require the app-provider route and the writer's own key.
     for (const copy of [NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY]) {
       const vaultSentences = copy.split(/(?<=[.;])\s+/).filter((s) => /vault/i.test(s));
       expect(vaultSentences.length).toBeGreaterThan(0);
       for (const sentence of vaultSentences) {
         expect(sentence).toMatch(/resonance notes/i);
-        expect(sentence).not.toMatch(/letters|completion checks|page reading/i);
+        expect(sentence).toMatch(/notes and letters/i);
+        expect(sentence).not.toMatch(/completion checks|page reading/i);
       }
       expect(copy).not.toMatch(/private/i);
     }
   });
 
-  test('the out-of-credits copy says credits pay only for vault-answered readings', () => {
+  test('the out-of-credits copy prices vault readings and letters without pricing page reading', () => {
     expect(INSUFFICIENT_OFFERINGS_COPY).not.toMatch(
       /letters and page reading all draw from the same pool/i,
     );
     expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/vault/i);
-    expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/letters and page reading need your own/i);
+    expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/readings and letters your vault answers/i);
+    expect(INSUFFICIENT_OFFERINGS_COPY).toMatch(/page reading needs your own/i);
     expect(INSUFFICIENT_OFFERINGS_COPY).not.toMatch(/private/i);
   });
 

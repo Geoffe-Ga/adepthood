@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.auth import require_admin
+from dependencies.creek_vault import get_reflection_boundary
 from error_responses import build_router
 from errors import forbidden
 from models.user import User
@@ -31,6 +32,8 @@ from schemas.botmason import (
     UsageResponse,
 )
 from services import wallet as wallet_service
+from services.botmason import server_generation_available
+from services.reflection_boundary import ReflectionBoundary
 from services.usage import get_monthly_cap
 from services.wallet import require_user_fresh, reset_monthly_usage_if_due
 
@@ -53,6 +56,7 @@ async def get_balance(
 async def get_usage(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
 ) -> UsageResponse:
     """Return the authenticated user's message-credit usage for the current month.
 
@@ -72,6 +76,12 @@ async def get_usage(
         monthly_cap=cap,
         monthly_reset_date=user.monthly_reset_date,
         offering_balance=user.offering_balance,
+        resonance_route=(
+            "vault_bound" if boundary is ReflectionBoundary.VAULT_BOUND else "app_provider"
+        ),
+        resonance_demo_available=(
+            boundary is ReflectionBoundary.APP_PROVIDER and server_generation_available()
+        ),
     )
 
 

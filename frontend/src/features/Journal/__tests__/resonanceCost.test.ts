@@ -1,147 +1,78 @@
-/* eslint-env jest */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import { knownCostState, loadCostState } from '../resonanceCost';
-
-/**
- * Which keyless price line a writer sees (#3262).
- *
- * Since ADR 0009 phase (a) (#3067) credits pay only for a reading the writer's
- * own vault answers. So in a production build a letter, and a reading for a
- * writer with no vault, lead with "This needs your own API key" and name no
- * BotMason price; a reading a vault may answer keeps its price, word for word.
- */
+import { loadCostState } from '../resonanceCost';
 const mockUsage = jest.fn<() => Promise<unknown>>();
-const mockConnection = jest.fn<() => Promise<{ connected: boolean; vault_url: string | null }>>();
-let mockKeylessReachesServer = false;
-
+const mockConnection = jest.fn();
 jest.mock('@/api', () => ({
   botmasonUsage: { get: () => mockUsage() },
   vault: { connection: () => mockConnection() },
 }));
-
-jest.mock('@/config', () =>
-  Object.defineProperty({}, 'KEYLESS_GENERATION_REACHES_SERVER', {
-    enumerable: true,
-    get: (): boolean => mockKeylessReachesServer,
-  }),
-);
-
-const KEY_NEEDED_READING =
-  'This needs your own API key. Add one in Settings to ask for this reading.';
-const KEY_NEEDED_LETTER =
-  'This needs your own API key. Add one in Settings to ask for this letter.';
-const ADD_KEY = 'Add your own API key in Settings and it pays instead.';
-
-function usage() {
+function usage(route: string) {
   return {
-    monthly_messages_used: 0,
+    resonance_route: route,
     monthly_messages_remaining: 7,
     monthly_cap: 7,
-    monthly_reset_date: '2026-11-01T00:00:00Z',
     offering_balance: 0,
+    monthly_reset_date: '2026-11-01T00:00:00Z',
   };
 }
-
 beforeEach(() => {
-  mockKeylessReachesServer = false;
   mockUsage.mockReset();
-  mockUsage.mockResolvedValue(usage());
   mockConnection.mockReset();
-  mockConnection.mockResolvedValue({ connected: false, vault_url: null });
 });
-
-describe('a keyless letter needs the writer’s own key', () => {
-  it('leads with the key, offers Settings, and reads neither wallet nor vault', async () => {
-    const state = await loadCostState(false, 'letter');
-
-    expect(state.copy).toBe(KEY_NEEDED_LETTER);
-    expect(state.keyNeeded).toBe(true);
-    expect(state.canContinue).toBe(false);
-    expect(state.copy).not.toMatch(/BotMason/u);
-    expect(mockUsage).not.toHaveBeenCalled();
-    expect(mockConnection).not.toHaveBeenCalled();
-  });
-
-  it('is known before any read, so the offer never flashes a price', () => {
-    expect(knownCostState(false, 'letter')?.copy).toBe(KEY_NEEDED_LETTER);
-  });
-
-  it('even when a vault is connected, since letters never go to a vault', async () => {
-    mockConnection.mockResolvedValue({ connected: true, vault_url: 'https://vault.example' });
-
-    expect((await loadCostState(false, 'letter')).copy).toBe(KEY_NEEDED_LETTER);
-  });
-});
-
-describe('a keyless reading with no vault needs the writer’s own key', () => {
-  it('leads with the key and names no price when nothing is attached', async () => {
-    const state = await loadCostState(false);
-
-    expect(state.copy).toBe(KEY_NEEDED_READING);
-    expect(state.keyNeeded).toBe(true);
-    expect(state.canContinue).toBe(false);
-    expect(mockUsage).not.toHaveBeenCalled();
-  });
-
-  it('cannot be known before the vault is read', () => {
-    expect(knownCostState(false)).toBeNull();
-  });
-});
-
-describe('a keyless reading a vault may answer keeps its price', () => {
-  it.each([
-    ['a connected vault', { connected: true, vault_url: 'https://vault.example' }],
-    ['a managed vault', { connected: true, vault_url: null }],
-  ])('for %s', async (_case, connection) => {
-    mockConnection.mockResolvedValue(connection);
-
-    const state = await loadCostState(false);
-
+describe('the authenticated server route determines the payer', () => {
+  it.each([false, true])('app-provider reading with own key %s', async (key) => {
+    mockUsage.mockResolvedValue(usage('app_provider'));
+    const state = await loadCostState(key);
+    expect(state.keyNeeded).toBe(!key);
+    expect(state.canContinue).toBe(key);
     expect(state.copy).toBe(
-      `This reading spends one of your 7 BotMason messages for the month. ${ADD_KEY}`,
+      key
+        ? 'Your own API key pays for this reading. Nothing is drawn from your BotMason messages.'
+        : 'This needs your own API key. Add one in Settings to ask for this reading.',
     );
-    expect(state.keyNeeded).toBe(false);
-    expect(state.canContinue).toBe(true);
+    expect(mockConnection).not.toHaveBeenCalled();
   });
-
-  it('for an unread connection, which is never read as "no vault"', async () => {
-    mockConnection.mockRejectedValue(new Error('offline'));
-
+  it.each([false, true])(
+    'a deployment-bound vault reading spends credits with key %s',
+    async (key) => {
+      mockUsage.mockResolvedValue(usage('vault_bound'));
+      const state = await loadCostState(key);
+      expect(state.copy).toBe('This reading spends one of your 7 BotMason messages for the month.');
+      expect(state.canContinue).toBe(true);
+      expect(state.keyNeeded).toBe(false);
+      expect(mockConnection).not.toHaveBeenCalled();
+    },
+  );
+  it.each([false, true])(
+    'a first vault-bound letter uses wallet credits with key %s',
+    async (key) => {
+      mockUsage.mockResolvedValue(usage('vault_bound'));
+      const state = await loadCostState(key, 'letter');
+      expect(state.copy).toBe('This letter spends one of your 7 BotMason messages for the month.');
+      expect(state.canContinue).toBe(true);
+      expect(state.fundingRequired).toBeNull();
+    },
+  );
+  it.each([false, true])('a first app-provider letter requires the caller key %s', async (key) => {
+    mockUsage.mockResolvedValue(usage('app_provider'));
+    const state = await loadCostState(key, 'letter');
+    expect(state.canContinue).toBe(key);
+    expect(state.keyNeeded).toBe(!key);
+    expect(state.copy).not.toMatch(/spends|offering/u);
+  });
+  it.each([false, true])('an unknown route never authorizes a charge with key %s', async (key) => {
+    mockUsage.mockResolvedValue(usage('future-route'));
+    const state = await loadCostState(key);
+    expect(state.canContinue).toBe(false);
+    expect(state.fundingRequired).toBeNull();
+  });
+  it('a failed route read never guesses the allowance or a key remedy', async () => {
+    mockUsage.mockRejectedValue(new Error('offline'));
     const state = await loadCostState(false);
-
+    expect(state.canContinue).toBe(false);
     expect(state.keyNeeded).toBe(false);
-    expect(state.copy).toMatch(/BotMason messages for the month/u);
-  });
-});
-
-describe('a saved key pays, unchanged', () => {
-  it.each([
-    [
-      'reading',
-      'Your own API key pays for this reading. Nothing is drawn from your BotMason messages.',
-    ],
-    [
-      'letter',
-      'Your own API key pays for this letter. Nothing is drawn from your BotMason messages.',
-    ],
-  ])('for a %s', async (noun, expected) => {
-    const state = await loadCostState(true, noun);
-
-    expect(state.copy).toBe(expected);
-    expect(state.keyNeeded).toBe(false);
-    expect(mockConnection).not.toHaveBeenCalled();
-  });
-});
-
-describe('a development build, whose stub seam answers keyless requests', () => {
-  it('keeps pricing a keyless letter and a vaultless reading', async () => {
-    mockKeylessReachesServer = true;
-
-    expect((await loadCostState(false, 'letter')).copy).toBe(
-      `This letter spends one of your 7 BotMason messages for the month. ${ADD_KEY}`,
-    );
-    expect((await loadCostState(false)).keyNeeded).toBe(false);
-    expect(mockConnection).not.toHaveBeenCalled();
+    expect(state.copy).toMatch(/couldn't check/u);
+    expect(state.copy).not.toMatch(/spends|Add.*key/u);
   });
 });

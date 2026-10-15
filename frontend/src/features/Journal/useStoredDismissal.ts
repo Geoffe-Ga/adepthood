@@ -36,29 +36,32 @@ export interface StoredDismissal {
 export function useStoredDismissal(
   load: () => Promise<boolean>,
   save: (_value: boolean) => Promise<void>,
+  paymentScope?: unknown,
 ): StoredDismissal {
   const { epoch, isCurrent } = useAccountScope();
-  const scope = useRef(epoch);
+  const scope = useRef({ epoch, paymentScope });
   const revision = useRef(0);
   const settled = useRef<boolean | null>(null);
   const pending = useRef<Promise<boolean> | null>(null);
 
-  if (scope.current !== epoch) {
-    scope.current = epoch;
+  if (scope.current.epoch !== epoch || scope.current.paymentScope !== paymentScope) {
+    scope.current = { epoch, paymentScope };
     revision.current += 1;
     settled.current = null;
     pending.current = null;
   }
 
+  const capturedScope = scope.current;
+
   const read = useCallback((): Promise<boolean> => {
     const atStart = revision.current;
     pending.current ??= load().then((stored) => {
-      if (!isCurrent()) return false;
+      if (scope.current !== capturedScope || !isCurrent()) return false;
       if (atStart === revision.current) settled.current = stored;
       return settled.current ?? stored;
     });
     return pending.current;
-  }, [load, isCurrent]);
+  }, [load, isCurrent, capturedScope]);
 
   // Warm the read at mount so a press is almost never the thing waiting on it.
   useEffect(() => {
@@ -68,12 +71,12 @@ export function useStoredDismissal(
   const markDismissed = useCallback((): void => {
     // Memory first, disk after: a second press in the same session must not be
     // able to race the write and be shown the note it was just dismissed from.
-    if (!isCurrent()) return;
+    if (scope.current !== capturedScope || !isCurrent()) return;
     revision.current += 1;
     settled.current = true;
     pending.current = Promise.resolve(true);
     void save(true);
-  }, [save, isCurrent]);
+  }, [save, isCurrent, capturedScope]);
 
   const known = useCallback((): boolean | null => settled.current, []);
 
