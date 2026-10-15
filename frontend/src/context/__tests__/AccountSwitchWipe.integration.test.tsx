@@ -10,7 +10,9 @@ import {
   auth as authApi,
   habits as habitsApi,
   resonance,
+  uiFlags,
 } from '@/api';
+import type { UiFlags } from '@/api';
 import { ApiKeyProvider, useApiKey } from '@/context/ApiKeyContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import type { Habit } from '@/features/Habits/Habits.types';
@@ -31,6 +33,7 @@ import * as notificationStorage from '@/storage/notificationStorage';
 import { _resetSerializedWriteForTests } from '@/storage/serializedWrite';
 import { setActiveUser } from '@/storage/userScope';
 import { useHabitStore } from '@/store/useHabitStore';
+import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 
 /**
  * The account switch that never passes through ``logout``.
@@ -573,4 +576,101 @@ test('new anonymous work cannot rehydrate an unstamped legacy cache during the i
   expect({ networkReads, duringWipe }).toEqual({ networkReads: 0, duringWipe: [] });
   expect(useHabitStore.getState().habits).toEqual([]);
   expect(await loadHabits()).toBeNull();
+});
+
+describe('a writing-habit link PATCH still on the wire at an account change (#3378)', () => {
+  const OUTGOING_LINK = 71;
+  const INCOMING_LINK = 88;
+  const linkFlags = (habitId: number | null): UiFlags => ({
+    has_seen_welcome: true,
+    energy_scaffolding_archived: false,
+    course_last_stage: null,
+    writing_session_habit_id: habitId,
+  });
+
+  test.each(['logout', 'switch to B', 'switch to B and back to A'] as const)(
+    'cannot repopulate the shared link store after %s',
+    async (change) => {
+      mockAuthApi.login
+        .mockReset()
+        .mockResolvedValueOnce({ token: 'token-a', user_id: USER_A })
+        .mockResolvedValueOnce({ token: 'token-b', user_id: USER_B })
+        .mockResolvedValueOnce({ token: 'token-a2', user_id: USER_A });
+      const result = await mountSignedOut();
+      await act(async () => {
+        await result.current.auth.login('a@test.com', 'password123');
+      });
+      let answer!: (value: UiFlags) => void;
+      const update = jest.spyOn(uiFlags, 'update').mockImplementationOnce(
+        () =>
+          new Promise<UiFlags>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      const pending = useWritingHabitLinkStore.getState().setLink(OUTGOING_LINK, 'token-a');
+
+      await act(async () => {
+        if (change === 'logout') {
+          await result.current.auth.logout();
+          return;
+        }
+        await result.current.auth.login('b@test.com', 'password123');
+        if (change === 'switch to B and back to A') {
+          await result.current.auth.login('a@test.com', 'password123');
+        }
+      });
+      const get = jest.spyOn(uiFlags, 'get').mockResolvedValueOnce(linkFlags(INCOMING_LINK));
+      if (change !== 'logout') {
+        await useWritingHabitLinkStore.getState().hydrate('token-incoming');
+      }
+      const before = useWritingHabitLinkStore.getState();
+      await act(async () => {
+        answer(linkFlags(OUTGOING_LINK));
+        await pending;
+      });
+
+      const after = useWritingHabitLinkStore.getState();
+      update.mockRestore();
+      get.mockRestore();
+      await expect(pending).resolves.toBe(false);
+      expect({ habitId: after.habitId, hydrated: after.hydrated }).toEqual(
+        change === 'logout'
+          ? { habitId: null, hydrated: false }
+          : { habitId: INCOMING_LINK, hydrated: true },
+      );
+      expect(after.habitId).toBe(before.habitId);
+    },
+  );
+
+  test('a same-account re-authentication keeps its own PATCH', async () => {
+    mockAuthApi.login
+      .mockReset()
+      .mockResolvedValueOnce({ token: 'token-a1', user_id: USER_A })
+      .mockResolvedValueOnce({ token: 'token-a2', user_id: USER_A });
+    const result = await mountSignedOut();
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    let answer!: (value: UiFlags) => void;
+    const update = jest.spyOn(uiFlags, 'update').mockImplementationOnce(
+      () =>
+        new Promise<UiFlags>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const pending = useWritingHabitLinkStore.getState().setLink(OUTGOING_LINK, 'token-a1');
+
+    await act(async () => {
+      await result.current.auth.login('a@test.com', 'password123');
+    });
+    await act(async () => {
+      answer(linkFlags(OUTGOING_LINK));
+      await pending;
+    });
+
+    update.mockRestore();
+    await expect(pending).resolves.toBe(true);
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(OUTGOING_LINK);
+    expect(useWritingHabitLinkStore.getState().hydrated).toBe(true);
+  });
 });
