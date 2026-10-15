@@ -5,7 +5,12 @@ import type { Habit } from '../features/Habits/Habits.types';
 
 import { getJsonArray, getJsonArrayForUpdate } from './jsonStore';
 import { serialize } from './serializedWrite';
-import { getActiveUser, getActiveUserGeneration, scopedKey } from './userScope';
+import {
+  getActiveUser,
+  getActiveUserGeneration,
+  isActiveUserTransitioning,
+  scopedKey,
+} from './userScope';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
 
@@ -120,8 +125,28 @@ function rehydrateHabit(raw: Habit): Habit {
   };
 }
 
+/**
+ * #3372: every habit-cache write runs in the cache key's serialized lane, the
+ * same lane ``clearHabits`` uses. A caller's generation guard only fences the
+ * *start* of a write; an ``AsyncStorage.setItem`` already in flight when
+ * account cleanup begins would otherwise commit after the clear and resurrect
+ * the rows the wipe removed. In the lane, the clear waits for that write to
+ * land and then removes it.
+ *
+ * The key and account generation are captured at call time, so a write that
+ * is still queued when cleanup bumps the generation (logout, a change of
+ * owner, or a transition in progress) is dropped instead of committed. A
+ * same-owner re-authentication does not bump the generation, so its writes
+ * stay durable.
+ */
 export async function saveHabits(habits: Habit[]): Promise<void> {
-  await AsyncStorage.setItem(habitsKey(), JSON.stringify(habits));
+  const key = habitsKey();
+  const generation = getActiveUserGeneration();
+  const payload = JSON.stringify(habits);
+  await serialize(key, async () => {
+    if (generation !== getActiveUserGeneration() || isActiveUserTransitioning()) return;
+    await AsyncStorage.setItem(key, payload);
+  });
 }
 
 export async function loadHabits(): Promise<Habit[] | null> {
@@ -130,8 +155,10 @@ export async function loadHabits(): Promise<Habit[] | null> {
   return parsed.map(rehydrateHabit);
 }
 
+/** Drop the habit cache, after any write already in its lane (#3372). */
 export async function clearHabits(): Promise<void> {
-  await AsyncStorage.removeItem(habitsKey());
+  const key = habitsKey();
+  await serialize(key, () => AsyncStorage.removeItem(key));
 }
 
 /**
