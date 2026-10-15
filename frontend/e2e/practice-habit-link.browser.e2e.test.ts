@@ -419,7 +419,11 @@ for (const width of [390, 1280]) {
       via_timer: true,
     });
     expect(units(await readHabit(page, token, habit.id))).toBe(12);
-    await page.route('**/goal_completions/', (route) => route.abort('failed'));
+    const refusedKeys: string[] = [];
+    await page.route('**/goal_completions/', (route) => {
+      refusedKeys.push(route.request().headers()['idempotency-key'] ?? '');
+      return route.abort('failed');
+    });
     await manual(page, 8);
     await expect(
       page.getByText("Couldn't log to Quiet measured minutes", { exact: true }),
@@ -429,9 +433,74 @@ for (const width of [390, 1280]) {
       info,
       'failed-habit-keeps-practice',
       page.getByTestId('practice-habit-controls'),
-      page.getByTestId('practice-habit-change'),
+      page.getByTestId('practice-habit-retry-log'),
     );
     await page.unroute('**/goal_completions/');
+    // The client's own transport retries already share one key; the button must keep it.
+    expect(new Set(refusedKeys).size).toBe(1);
+    expect(refusedKeys[0]).toMatch(/^log-unit:/);
+    // The retry resends the refused write under its original operation identity.
+    const retried = page.waitForResponse(habitPost);
+    await press(page.getByTestId('practice-habit-retry-log'));
+    const retriedLog = await retried;
+    expect(retriedLog.ok(), await retriedLog.text()).toBe(true);
+    expect(retriedLog.request().postDataJSON()).toMatchObject({ completed_units: 8 });
+    expect(retriedLog.request().headers()['idempotency-key']).toBe(refusedKeys[0]);
+    await expect(page.getByTestId('practice-habit-retry-log')).toHaveCount(0);
+    expect(units(await readHabit(page, token, habit.id))).toBe(20);
+
+    // Another device moves the linked habit to sessions while this screen stays mounted.
+    const remote = await page.request.put(`${backendUrl()}/habits/${habit.id}/goals/units`, {
+      headers: bearer(token),
+      data: { target_unit: 'sessions', frequency: 1, frequency_unit: 'per_day' },
+    });
+    expect(remote.status(), await remote.text()).toBe(200);
+    const sessionLog = page.waitForResponse(habitPost);
+    await manual(page, 9);
+    const remoteLog = await sessionLog;
+    expect(remoteLog.ok(), await remoteLog.text()).toBe(true);
+    expect(remoteLog.request().postDataJSON()).toMatchObject({ completed_units: 1 });
+    await expect(
+      page.getByText('Logged a session to Quiet measured minutes', { exact: true }),
+    ).toBeVisible();
+    expect(units(await readHabit(page, token, habit.id))).toBe(21);
+
+    // When the current habit cannot be read, nothing is posted and the notice says so.
+    const habitRead = (url: URL) => url.pathname.startsWith('/habits');
+    const unread: string[] = [];
+    const posts: string[] = [];
+    page.on('request', (request) => {
+      if (habitPost({ url: () => request.url(), request: () => request }))
+        posts.push(request.url());
+    });
+    await page.route(habitRead, (route) => {
+      if (route.request().method() !== 'GET') return route.continue();
+      unread.push(route.request().url());
+      return route.abort('failed');
+    });
+    await manual(page, 3);
+    const unavailable = page.getByText(
+      "Couldn't confirm the current goal for Quiet measured minutes, so this sitting isn't logged there yet. Your practice is saved.",
+      { exact: true },
+    );
+    await expect(unavailable).toBeVisible();
+    expect(unread.length).toBeGreaterThan(0);
+    expect(posts).toHaveLength(0);
+    await frame(
+      page,
+      info,
+      'unreadable-habit-retry',
+      page.getByTestId('practice-habit-controls'),
+      page.getByTestId('practice-habit-retry-log'),
+    );
+    await page.unroute(habitRead);
+    const recovered = page.waitForResponse(habitPost);
+    await press(page.getByTestId('practice-habit-retry-log'));
+    const recoveredLog = await recovered;
+    expect(recoveredLog.ok(), await recoveredLog.text()).toBe(true);
+    expect(recoveredLog.request().postDataJSON()).toMatchObject({ completed_units: 1 });
+    expect(units(await readHabit(page, token, habit.id))).toBe(22);
+
     await page.reload();
     await openPractice(page);
     const history = await page.request.get(
@@ -439,7 +508,7 @@ for (const width of [390, 1280]) {
       { headers: bearer(token) },
     );
     expect(history.ok()).toBe(true);
-    expect((await history.json()) as unknown[]).toHaveLength(4);
-    expect(units(await readHabit(page, token, habit.id))).toBe(12);
+    expect((await history.json()) as unknown[]).toHaveLength(6);
+    expect(units(await readHabit(page, token, habit.id))).toBe(22);
   });
 }
