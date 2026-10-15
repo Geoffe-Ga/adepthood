@@ -171,7 +171,7 @@ function LetGoActions({
   onSkip: () => void;
 }): React.JSX.Element {
   return (
-    <View style={styles.actions}>
+    <View style={styles.actions} testID="return-letgo-actions">
       <TouchableOpacity
         style={[styles.release, nothingChosen ? styles.releaseDisabled : undefined]}
         onPress={onRelease}
@@ -283,6 +283,9 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: 'row',
+    // Enlarged text makes the pair wider than a phone card; wrap "Keep them
+    // all" under "Let these rest" rather than clipping it off the card.
+    flexWrap: 'wrap',
     alignItems: 'center',
     marginTop: spacing(1.5),
     gap: spacing(1),

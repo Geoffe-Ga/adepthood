@@ -131,6 +131,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'practice-weekly-count.browser.e2e.test.ts',
   'resonance-credit-exhausted.browser.e2e.test.ts',
   'resonance-explainer.browser.e2e.test.ts',
+  'return-letgo-token-renewal.browser.e2e.test.ts',
   'return-recover-habit.browser.e2e.test.ts',
   'screen-title-heading.browser.e2e.test.ts',
   'settings-corpus-sharing.browser.e2e.test.ts',

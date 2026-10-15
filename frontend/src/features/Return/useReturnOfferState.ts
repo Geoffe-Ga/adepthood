@@ -25,6 +25,14 @@ interface ReturnScope {
   credentials: { userId: number; token: string } | null;
   current: () => boolean;
 }
+interface MountedReturnScope extends ReturnScope {
+  /**
+   * Identifies the signed-in owner session, ``null`` while unauthorized. Unlike
+   * ``current`` it survives a same-account token renewal, so owner-bound
+   * transient UI resets on a genuine lifecycle change, not every rotation.
+   */
+  session: string | null;
+}
 type Publish = (_state: MettaReturnState) => void;
 
 function cacheChoice(identity: ReturnOfferIdentity): void {
@@ -41,7 +49,7 @@ function identityFor(scope: ReturnScope, state: MettaReturnState): ReturnOfferId
 }
 
 /** Keep credentials and namespace together, including an A → B → A without a render. */
-function useReturnScope(): ReturnScope {
+function useReturnScope(): MountedReturnScope {
   const { token } = useAuth();
   const latestToken = useRef(token);
   latestToken.current = token;
@@ -61,6 +69,7 @@ function useReturnScope(): ReturnScope {
   );
   return {
     generation,
+    session: authorized ? `${owner}@${generation}` : null,
     current,
     credentials: authorized && owner !== null && token !== null ? { userId: owner, token } : null,
   };
@@ -204,6 +213,7 @@ export function useReturnOfferState() {
     dismissed: state.offer_dismissed,
     releasedHabits: state.released_habits,
     current: scope.current,
+    session: scope.session,
     token: scope.credentials?.token ?? null,
     ...writers,
     dismissOffer,
