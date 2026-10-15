@@ -371,3 +371,33 @@ it('keeps a newer GET when two read answers arrive backwards', async () => {
   await earlier;
   expect(store.getState().enable_course).toBe(false);
 });
+
+it('recovers untouched unknown fields from PATCH when the initial GET failed', async () => {
+  const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+  setActiveUser(1);
+  store.getState().reset();
+  mockApi.depthPreferences.get.mockRejectedValueOnce(new Error('initial read unavailable'));
+  await store.getState().load('a');
+  mockApi.depthPreferences.update.mockResolvedValueOnce({
+    ...ALL_ON,
+    enable_habits: false,
+    enable_course: false,
+  });
+  await store.getState().update({ enable_habits: false }, 'a');
+  expect(store.getState().enable_habits).toBe(false);
+  expect(store.getState().enable_course).toBe(false);
+});
+
+it('rejects an old read after account A returns through B even without a store reset', async () => {
+  const { useDepthPreferencesStore: store } = require('../useDepthPreferencesStore');
+  setActiveUser(1);
+  store.getState().reset();
+  const pending = deferredPreferences();
+  mockApi.depthPreferences.get.mockReturnValueOnce(pending.promise);
+  const read = store.getState().load('a');
+  setActiveUser(2);
+  setActiveUser(1);
+  pending.resolve({ ...ALL_ON, enable_habits: false });
+  await read;
+  expect(store.getState().enable_habits).toBe(true);
+});

@@ -1,4 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { readOwnedDecline, writeOwnedDeclineKey } from './declineOwnership';
+import { scopedKey } from './userScope';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
 // Persists "the offer made in the finished-writing note has been answered", so
@@ -36,13 +37,13 @@ const FLAG_TRUE = 'true';
 
 /** Record (or clear) that the offer has been answered, either way. */
 export async function saveWritingOfferAnswered(value: boolean): Promise<void> {
-  await AsyncStorage.setItem(WRITING_OFFER_ANSWERED_KEY, String(value));
+  await writeOwnedDeclineKey(scopedKey(WRITING_OFFER_ANSWERED_KEY), String(value));
 }
 
 /** Whether this person has already answered the offer, by declining or keeping it. */
 export async function loadWritingOfferAnswered(): Promise<boolean> {
   try {
-    const raw = await AsyncStorage.getItem(WRITING_OFFER_ANSWERED_KEY);
+    const raw = await readOwnedDecline(WRITING_OFFER_ANSWERED_KEY);
     return raw === FLAG_TRUE;
   } catch {
     reportDiagnostic('storage_read_failed', { storage: 'writing_offer' });

@@ -48,19 +48,28 @@ const SCOPE_MARKER = '#u';
 let activeUserId: number | null = null;
 let activeUserGeneration = 0;
 
+export function getActiveUserGeneration(): number {
+  return activeUserGeneration;
+}
+const activeUserListeners = new Set<() => void>();
+
+export function subscribeActiveUser(listener: () => void): () => void {
+  activeUserListeners.add(listener);
+  return () => {
+    activeUserListeners.delete(listener);
+  };
+}
+
 /**
  * Point the device-local caches at ``userId``'s namespace, or at the legacy
  * unscoped namespace when ``null`` (anonymous, and on a device whose owner
  * was never recorded).
  */
 export function setActiveUser(userId: number | null): void {
-  if (activeUserId !== userId) activeUserGeneration += 1;
+  if (activeUserId === userId) return;
   activeUserId = userId;
-}
-
-/** Identity changes invalidate pending work even when the same account returns. */
-export function getActiveUserGeneration(): number {
-  return activeUserGeneration;
+  activeUserGeneration += 1;
+  activeUserListeners.forEach((listener) => listener());
 }
 
 /** The account the cache keys currently resolve to, or ``null`` when anonymous. */

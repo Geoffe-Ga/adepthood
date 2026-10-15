@@ -9,6 +9,7 @@ import type {
   ReflectionCurrentScope,
   ReflectionDue,
 } from '@/api';
+import { setActiveUser } from '@/storage/userScope';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -24,6 +25,11 @@ const mockCurrent = jest.fn() as jest.MockedFunction<
 // Every mounted focus effect, as a "run its cleanup then run it again" thunk.
 // Firing these is this suite's stand-in for leaving the shelf and coming back.
 const mockFocusReruns = new Set<() => void>();
+
+// The shelf is authenticated: its namespace and decoded credential agree.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y', userTimezone: 'UTC' }),
+}));
 
 jest.mock('@/api', () => ({
   journal: {
@@ -131,6 +137,7 @@ async function returnToTheShelf(): Promise<void> {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   mockFocusReruns.clear();
   mockList.mockReset();
   mockDelete.mockReset();

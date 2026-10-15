@@ -10,6 +10,7 @@ import { useSyncExternalStore, type ReactElement } from 'react';
 
 import type { JournalListResponse, JournalMessage, PromptDetail } from '@/api';
 import type { VoiceReadinessT } from '@/api/schemas';
+import { setActiveUser } from '@/storage/userScope';
 
 const mockList = jest.fn() as jest.MockedFunction<
   (_p?: { search?: string; limit?: number; offset?: number }) => Promise<JournalListResponse>
@@ -47,7 +48,7 @@ jest.mock('@/api', () => ({
 }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ userTimezone: 'UTC' }),
+  useAuth: () => ({ userTimezone: 'UTC', token: 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y' }),
 }));
 
 const headerLeftStore: {
@@ -141,6 +142,7 @@ function prompt(overrides: Partial<PromptDetail> = {}): PromptDetail {
 }
 
 beforeEach(() => {
+  setActiveUser(1);
   jest.clearAllMocks();
   headerLeftStore.current = undefined;
   headerLeftStore.listeners.clear();

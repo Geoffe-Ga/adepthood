@@ -80,7 +80,10 @@ async function runASession(page: Page): Promise<void> {
 test('a finished writing session checks off the habit the writer linked it to', async ({
   page,
 }) => {
-  await page.clock.install();
+  // Three simulated sessions must stay on one day, including CI runs near midnight.
+  const midday = new Date();
+  midday.setUTCHours(12, 0, 0, 0);
+  await page.clock.install({ time: midday });
   const email = await signUp(page, 'writing-habit-link');
   const { token } = await sessionFor(page.request, email);
   const headers = { Authorization: `Bearer ${token}` };
