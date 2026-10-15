@@ -294,7 +294,7 @@ class WorkflowWiring(unittest.TestCase):
             "e2e.yml": {
                 "journey-ledger": "e2e",
                 "e2e-journeys": "e2e",
-                "browser-journey": "e2e",
+                "browser-journey-shards": "e2e",
             },
         }
         for name, jobs in scopes.items():
