@@ -230,6 +230,24 @@ async function refuseThenHoldLink(page: Page, adoptionId: number) {
   return { release, attempts: () => attempts, url };
 }
 
+async function holdLink(page: Page, adoptionId: number) {
+  let release!: () => void;
+  let reached!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const arrived = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const url = `**/user-practices/${adoptionId}/habit`;
+  await page.route(url, async (route) => {
+    reached();
+    await gate;
+    await route.continue();
+  });
+  return { release, reached: arrived, url };
+}
+
 for (const width of [390, 1280]) {
   test(`new session habit persists, accumulates and clears at ${width}px`, async ({
     page,
@@ -401,8 +419,24 @@ for (const width of [390, 1280]) {
       (reply) =>
         new URL(reply.url()).pathname.endsWith('/habit') && reply.request().method() === 'PATCH',
     );
-    await press(page.getByTestId(`practice-habit-choose-${habit.id}`));
+    // While the link PATCH is held, neither Cancel nor Escape (the web's
+    // onRequestClose) may close the picker as if nothing changed (#3382).
+    const held = await holdLink(page, row.id);
+    try {
+      await press(page.getByTestId(`practice-habit-choose-${habit.id}`));
+      await held.reached;
+      const cancel = page.getByTestId('practice-habit-cancel');
+      await expect(cancel).toBeDisabled();
+      await page.keyboard.press('Escape');
+      await cancel.click({ force: true });
+      await expect(page.getByTestId('practice-habit-picker')).toBeVisible();
+      await frame(page, info, 'pending-link', page.getByTestId('practice-habit-picker'), cancel);
+    } finally {
+      held.release();
+    }
     expect((await linked).ok()).toBe(true);
+    await expect(page.getByTestId('practice-habit-picker')).toHaveCount(0);
+    await page.unroute(held.url);
     const completed = page.waitForResponse(habitPost);
     await manual(page, 7);
     const log = await completed;
