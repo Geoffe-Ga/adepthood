@@ -2,7 +2,7 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import React from 'react';
-import { TouchableOpacity } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 
 import type { Marginalia } from '@/api';
 import { ApiError } from '@/api';
@@ -73,6 +73,22 @@ async function askForTheLetter(findByTestId: (_id: string) => Promise<unknown>):
   });
 }
 
+interface NativeHostNode {
+  type: string;
+  children: NativeHostTree[] | null;
+}
+type NativeHostTree = NativeHostNode | string | number | null | NativeHostTree[];
+
+/** RNTL's host permits raw text that the native renderer rejects outside Text. */
+function unwrappedNativeText(tree: NativeHostTree, parent = ''): string[] {
+  if (tree === null) return [];
+  if (Array.isArray(tree)) return tree.flatMap((child) => unwrappedNativeText(child, parent));
+  if (typeof tree === 'string' || typeof tree === 'number') {
+    return parent === 'Text' ? [] : [`${parent}: ${JSON.stringify(tree)}`];
+  }
+  return unwrappedNativeText(tree.children, tree.type);
+}
+
 beforeEach(() => {
   setActiveUser(1);
   mockAuthState.token = 'test.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test';
@@ -80,6 +96,55 @@ beforeEach(() => {
   mockEssay.mockReset();
   mockUsage.mockReset();
   mockUsage.mockResolvedValue(usage(20, 12));
+});
+
+describe('first-letter offers respect native text parents', () => {
+  it('accepts nested Text and rejects whitespace and numeric children of a View', () => {
+    const legal = render(
+      <View>
+        <Text>
+          A letter <Text>with nested text</Text> {0}
+        </Text>
+      </View>,
+    );
+    expect(unwrappedNativeText(legal.toJSON())).toEqual([]);
+    const illegal = render(<View> {0}</View>);
+    expect(unwrappedNativeText(illegal.toJSON())).toEqual(['View: " "', 'View: "0"']);
+  });
+
+  it.each(['paid', 'key-required', 'blocked'] as const)(
+    'renders a %s offer without text outside a native Text host',
+    async (state) => {
+      if (state === 'blocked') mockUsage.mockRejectedValue(new Error('usage unavailable'));
+      else {
+        mockUsage.mockResolvedValue({
+          ...usage(20, 12),
+          resonance_route: state === 'paid' ? 'vault_bound' : 'app_provider',
+        });
+      }
+      const view = render(
+        <ResonanceEssayModal
+          note={note()}
+          onClose={jest.fn()}
+          hasOwnKey={false}
+          onOpenSettings={jest.fn()}
+        />,
+      );
+      const copy = {
+        paid: /This letter spends one/u,
+        'key-required': /This needs your own API key/u,
+        blocked: /couldn't check/u,
+      };
+      await waitFor(() =>
+        expect(view.getByTestId('essay-ask-cost')).toHaveTextContent(copy[state]),
+      );
+      expect(view.getByTestId('essay-not-now')).toBeTruthy();
+      expect(view.queryByTestId('essay-ask') !== null).toBe(state === 'paid');
+      expect(view.queryByTestId('essay-open-settings') !== null).toBe(state === 'key-required');
+      expect(mockEssay).not.toHaveBeenCalled();
+      expect(unwrappedNativeText(view.toJSON())).toEqual([]);
+    },
+  );
 });
 
 describe('ResonanceEssayModal', () => {

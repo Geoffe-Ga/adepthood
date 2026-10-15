@@ -316,7 +316,6 @@ function EssayActions({
 }): React.JSX.Element {
   return (
     <View>
-      {' '}
       {cost.canContinue || cost.fundingRequired === 'key_required' ? (
         <ExplainerActionPair
           cancel={{
