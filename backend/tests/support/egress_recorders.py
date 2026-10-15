@@ -20,6 +20,10 @@ The recorders, and the :mod:`privacy.sinks` rows each one stands for:
   ``services.botmason.generate_response``, wrapped at **every module that binds
   it**, found by object identity rather than by a list, so a new binding site is
   recorded without an edit here. Stands for ``net.openai`` and ``net.anthropic``.
+* :func:`record_provider_clients` -- both vendors' SDK client factories, where a
+  writer's own ``X-LLM-API-Key`` (BYOK) becomes a client. The dial recorder
+  sees what would be sent; this one sees whether a cloud client was built at
+  all, and with whose key. Same two recipients.
 * :func:`record_classifier_inputs` -- what the corpus classifier submits for
   classification, at its request to its model (after its own tier refusal).
 * :func:`corpus_fragments` -- the ``corpusfragment`` table itself
@@ -38,13 +42,20 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import json
 import logging
+import re
 import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from http import HTTPStatus
 from types import ModuleType
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
+import anthropic
+import httpx
+import httpx2
+import openai
 from sqlmodel import select
 
 from domain.creek_vault import (
@@ -79,6 +90,7 @@ from services import botmason, frequency_classification
 # Bound by import, as the neighbouring seam suites bind theirs: the private
 # request the classifier makes to its model is the seam this recorder watches.
 from services.frequency_classification import _reply_within as reply_within
+from services.stub_completions import canned_completion
 from tests.helpers.telemetry_canaries import probes
 
 if TYPE_CHECKING:
@@ -99,6 +111,8 @@ class Recorder(enum.StrEnum):
     CLASSIFIER = "classifier input"
     CORPUS = "corpus fragment store"
     TELEMETRY = "telemetry"
+    #: A provider SDK client was built: the BYOK leg's seam (:func:`record_provider_clients`).
+    PROVIDER_CLIENT = "provider client built"
 
 
 @dataclass(frozen=True, slots=True)
@@ -445,6 +459,100 @@ def record_classifier_inputs(monkeypatch: pytest.MonkeyPatch, ledger: Ledger) ->
         )
 
     monkeypatch.setattr(frequency_classification, "_reply_within", _recorded)
+
+
+#: The payload a client-built crossing carries when the client holds the writer's
+#: own key, and when it holds anything else. The key itself is never recorded.
+WRITERS_KEY: Final = "the writer's own key"
+ANOTHER_KEY: Final = "another key"
+
+#: Where the user turn sits inside a nonce-wrapped provider message.
+_WRAPPED_TURN: Final = re.compile(
+    r"<user_input_[0-9a-f]+>(?P<text>.*)</user_input_[0-9a-f]+>", re.DOTALL
+)
+#: Every request to a vendor no flow is meant to reach is answered with this.
+_UNEXPECTED_VENDOR_STATUS: Final = 503
+
+
+def _unwrapped(content: str) -> str:
+    """The user's turn with the provider's nonce wrapper taken off."""
+    match = _WRAPPED_TURN.search(content)
+    return content if match is None else match.group("text")
+
+
+def _answer_as_the_stub_would(request: httpx2.Request) -> httpx2.Response:
+    """A chat completion whose text is what the armed stub seam would have answered.
+
+    So a caller-paid flow is driven exactly as far as a keyless one: a resonance
+    prompt gets a quotable reading, an essay a letter quoting its passage, and
+    anything else an echo of its own turn.
+    """
+    messages = json.loads(request.content)["messages"]
+    system = next(str(m["content"]) for m in messages if m["role"] == "system")
+    user = _unwrapped(str(messages[-1]["content"]))
+    text = canned_completion(user, system) or user
+    return httpx2.Response(
+        HTTPStatus.OK,
+        json={
+            "id": "chatcmpl-matrix",
+            "object": "chat.completion",
+            "created": 0,
+            "model": botmason.PROVIDER_REGISTRY[botmason.OPENAI_PROVIDER_NAME].default_model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": text},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        },
+        request=request,
+    )
+
+
+def _refuse(request: httpx.Request) -> httpx.Response:
+    """Answer a vendor no flow is meant to reach, without leaving the process."""
+    return httpx.Response(_UNEXPECTED_VENDOR_STATUS, json={}, request=request)
+
+
+def record_provider_clients(
+    monkeypatch: pytest.MonkeyPatch, ledger: Ledger, *, writer_key: str
+) -> None:
+    """Record every provider SDK client built, at both vendors' factories.
+
+    The construction is the BYOK leg's seam: a request that carries the
+    writer's own ``X-LLM-API-Key`` and is answered by a cloud model builds an
+    ``openai.AsyncOpenAI`` (or ``anthropic.AsyncAnthropic``) holding that key, and
+    nothing else does. Each build is one :attr:`Recorder.PROVIDER_CLIENT`
+    crossing, verb the vendor, payload :data:`WRITERS_KEY` or
+    :data:`ANOTHER_KEY` -- never the key. The client then talks to an in-process
+    transport (OpenAI answering as the stub seam would, Anthropic refusing), so
+    nothing leaves the test process.
+    """
+    built_openai = openai.AsyncOpenAI
+    built_anthropic = anthropic.AsyncAnthropic
+
+    def _whose(kwargs: dict[str, object]) -> str:
+        return WRITERS_KEY if kwargs.get("api_key") == writer_key else ANOTHER_KEY
+
+    def _openai(**kwargs: object) -> openai.AsyncOpenAI:
+        ledger.record(Recorder.PROVIDER_CLIENT, "openai", _whose(kwargs))
+        kwargs["http_client"] = httpx2.AsyncClient(
+            transport=httpx2.MockTransport(_answer_as_the_stub_would)
+        )
+        return built_openai(**cast("dict[str, Any]", kwargs))
+
+    def _anthropic(**kwargs: object) -> anthropic.AsyncAnthropic:
+        ledger.record(Recorder.PROVIDER_CLIENT, "anthropic", _whose(kwargs))
+        kwargs["http_client"] = httpx.AsyncClient(transport=httpx.MockTransport(_refuse))
+        return built_anthropic(**cast("dict[str, Any]", kwargs))
+
+    monkeypatch.setattr(botmason.openai, "AsyncOpenAI", _openai)
+    monkeypatch.setattr(botmason.anthropic, "AsyncAnthropic", _anthropic)
+    # Each vendor's own default model, so the writer's key is servable whatever
+    # the environment pinned.
+    monkeypatch.delenv("LLM_MODEL", raising=False)
 
 
 async def corpus_fragments(factory: async_sessionmaker[AsyncSession]) -> list[str]:

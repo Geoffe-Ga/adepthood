@@ -25,11 +25,22 @@ entry after a restart replays durable work. Every cell runs: none is skipped
 reclassify cells reclassify the row the create already committed -- after it
 answered, or while its own outward dial is held open.
 
+The third dimension is who pays for a model call (:class:`Payer`): the app's
+own seam (no key), or the writer's own key on an ``X-LLM-API-Key`` header
+(BYOK). The BYOK cells are **derived** too: every door whose live dependency
+tree declares that header (:func:`byok_doors`) runs under both payers, and
+:func:`test_every_byok_door_runs_under_the_writers_key` fails on one that does
+not. A door that never reads the header has nothing a key could change, and
+runs once.
+
 Every cell runs its flow twice, on two accounts sharing the recorders. The
 Intimate run asserts the canary is absent at every recorder outside the primary
 boundary; then the **Personal twin** runs the identical flow with canaries of
 its own and asserts they *arrive* where the row says they do. An absence from a
-recorder the twin cannot reach would prove nothing.
+recorder the twin cannot reach would prove nothing. Under BYOK the twin must
+also show a provider client really was built with the writer's key, wherever
+its row reaches the provider -- so "no client built" in the Intimate half is a
+finding, not a silence.
 
 Outside the matrix: the C10 transitive leg (reflecting on a second entry after
 the source became Intimate) and C11's release test (a lost acknowledgment after
@@ -40,6 +51,7 @@ What a cell asserts for an Intimate entry:
 * no provider dial, vault call or classifier input carried the canary (from the
   step's mark on: a Personal->Intimate reclassification legitimately sent the
   words *before* it);
+* no provider SDK client was built at all, under either payer (same mark);
 * no corpus fragment holds it, and the modelled remote vault holds no copy --
   state, read after the flow, so a copy sent before the reclassification and
   never withdrawn still fails;
@@ -60,11 +72,13 @@ from dataclasses import dataclass, field
 from datetime import date
 from functools import partial
 from http import HTTPStatus
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Annotated, Final
 
 import pytest
 import pytest_asyncio
 import sentry_sdk
+from fastapi import Depends, FastAPI, Header
+from fastapi.routing import APIRoute
 from sqlmodel import col, select
 
 from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
@@ -85,8 +99,12 @@ from services.creek_vault_voice_drafts import resume_voice_draft_retractions
 from services.reflection_boundary import ReflectionBoundary
 from tests.helpers.sentry_capture import capturing_sentry
 from tests.helpers.telemetry_canaries import SHORT_CANARY
+from tests.provider_transport import OPENAI_KEY
 from tests.security.test_egress_barrier_totality import BARRIERED, DETACHED_ENTRY_POINTS
+from tests.security.test_egress_barrier_totality import _flatten_dependants as flatten_dependants
+from tests.security.test_egress_barrier_totality import _flatten_routers as flatten_routers
 from tests.support.egress_recorders import (
+    WRITERS_KEY,
     Ledger,
     Recorder,
     RecordingVault,
@@ -94,6 +112,7 @@ from tests.support.egress_recorders import (
     carries,
     corpus_fragments,
     record_classifier_inputs,
+    record_provider_clients,
     record_provider_dials,
     recording_telemetry,
 )
@@ -128,6 +147,9 @@ _JOURNAL_SOURCE: Final = "journal"
 _INTIMATE: Final = "intimate"
 _PERSONAL: Final = "personal"
 
+#: The header a writer's own model key (BYOK) arrives on.
+_BYOK_HEADER: Final = "X-LLM-API-Key"
+
 
 class Step(enum.StrEnum):
     """How the canary comes to sit in an Intimate entry."""
@@ -137,6 +159,15 @@ class Step(enum.StrEnum):
     RECLASSIFY = "reclassify"
     RECLASSIFY_RACE = "reclassify-race"
     RESTART = "restart"
+
+
+class Payer(enum.StrEnum):
+    """Who pays for a model call the flow makes."""
+
+    #: No key of the writer's own: only the app's seam may answer.
+    APP = "app seam"
+    #: The writer's own key, on :data:`_BYOK_HEADER`: a cloud client is built with it.
+    BYOK = "byok"
 
 
 class Expect(enum.Enum):
@@ -171,6 +202,7 @@ class Harness:
     vault: RecordingVault
     telemetry: TelemetryRecorder
     headers: dict[str, str] = field(default_factory=dict)
+    payer: Payer = Payer.APP
     user_id: int = 0
     canary: str = ""
     title_canary: str = ""
@@ -183,7 +215,16 @@ class Harness:
         """A second account on the same recorders, with canaries of its own."""
         other = Harness(self.client, self.factory, self.ledger, self.vault, self.telemetry)
         await other.signup()
+        other.pay_with(self.payer)
         return other
+
+    def pay_with(self, payer: Payer) -> None:
+        """Send every request of this account's flow as ``payer`` would."""
+        self.payer = payer
+        if payer is Payer.BYOK:
+            self.headers[_BYOK_HEADER] = OPENAI_KEY
+        else:
+            self.headers.pop(_BYOK_HEADER, None)
 
     async def signup(self) -> None:
         """Create the account this harness writes as, and mint its canaries."""
@@ -527,6 +568,36 @@ ROWS: Final[tuple[Row, ...]] = (
 )
 
 
+def byok_doors(application: FastAPI) -> frozenset[tuple[str, str]]:
+    """Every live ``(method, path)`` whose dependency tree declares the BYOK header.
+
+    Read from the route table, not listed: a route that starts reading a
+    writer's key gets BYOK cells without an edit here.
+    """
+    found: set[tuple[str, str]] = set()
+    for route in flatten_routers(application.routes):
+        if not isinstance(route, APIRoute):
+            continue
+        aliases = {
+            param.alias
+            for dependant in flatten_dependants(route.dependant)
+            for param in dependant.header_params
+        }
+        if _BYOK_HEADER in aliases:
+            methods = (route.methods or set()) - {"HEAD", "OPTIONS"}
+            found.update((method, route.path) for method in methods)
+    return frozenset(found)
+
+
+#: The doors a writer's own key changes the payer on.
+BYOK_DOORS: Final = byok_doors(app)
+
+
+def payers(row: Row) -> tuple[Payer, ...]:
+    """The payers ``row`` runs under: both where its door reads the key, else the app seam."""
+    return (Payer.APP, Payer.BYOK) if row.door in BYOK_DOORS else (Payer.APP,)
+
+
 def missing_rows(
     rows: tuple[Row, ...], barriered: frozenset[tuple[str, str]], detached: frozenset[str]
 ) -> frozenset[_Door]:
@@ -535,10 +606,16 @@ def missing_rows(
     return frozenset[_Door](barriered | detached) - covered
 
 
-#: Every (row, step) cell. None carries a mark: a skipped cell is a silent gap in
-#: the claim (#3200), so a cell that cannot run must be argued out of the matrix
-#: in ``docs/privacy/claim-coverage.md``, not skipped in it.
-CELLS: Final = [pytest.param(row, step, id=f"{row.id}-{step}") for row in ROWS for step in Step]
+def _cell_id(row: Row, step: Step, payer: Payer) -> str:
+    """The app-seam cell keeps its historical id; a BYOK cell says so."""
+    return f"{row.id}-{step}" if payer is Payer.APP else f"{row.id}-{step}-{payer}"
+
+
+#: Every (row, step, payer) cell. None carries a mark: a skipped cell is a silent
+#: gap in the claim (#3200), so a cell that cannot run must be argued out of the
+#: matrix in ``docs/privacy/claim-coverage.md``, not skipped in it.
+CELL_KEYS: Final = [(row, step, payer) for row in ROWS for step in Step for payer in payers(row)]
+CELLS: Final = [pytest.param(*key, id=_cell_id(*key)) for key in CELL_KEYS]
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -572,6 +649,7 @@ async def harness(
         "no module binds the provider dial: the provider recorder would watch nothing"
     )
     record_classifier_inputs(monkeypatch, ledger)
+    record_provider_clients(monkeypatch, ledger, writer_key=OPENAI_KEY)
     with (
         capturing_sentry(monkeypatch) as sentry_events,
         recording_telemetry(monkeypatch, sentry_events) as telemetry,
@@ -683,7 +761,13 @@ def _leaks(h: Harness, canary: str, mark: int) -> list[str]:
 
 
 async def _assert_absent(h: Harness, row: Row, step: Step, entry_id: int, mark: int) -> None:
-    """The Intimate half: no canary at any recorder outside the primary boundary."""
+    """The Intimate half: no canary at any recorder outside the primary boundary.
+
+    Nor any provider client, under either payer: a client built for an Intimate
+    flow is a cloud model being readied for its words, whatever it was sent.
+    """
+    built = h.ledger.since(mark, Recorder.PROVIDER_CLIENT)
+    assert built == [], f"a provider client was built for an Intimate flow: {built}"
     fragments = await corpus_fragments(h.factory)
     for canary in (h.canary, h.title_canary):
         assert _leaks(h, canary, mark) == []
@@ -713,13 +797,28 @@ async def _assert_reached(h: Harness, row: Row, mark: int) -> None:
             )
 
 
+def _assert_paid_by(h: Harness, row: Row, mark: int) -> None:
+    """The Personal twin's payer leg: a client is built iff the writer's key pays a dial.
+
+    Under BYOK, a row that reaches the provider must build a client holding the
+    writer's own key -- the positive control for the Intimate half's "none was
+    built". Every other twin (the app seam, or a vault-bound row) builds none.
+    """
+    built = [(e.verb, e.payload) for e in h.ledger.since(mark, Recorder.PROVIDER_CLIENT)]
+    if h.payer is Payer.BYOK and Recorder.PROVIDER in row.expects:
+        assert built, "the twin's flow built no client with the writer's key: BYOK is not driven"
+        assert {payload for _vendor, payload in built} == {WRITERS_KEY}, built
+    else:
+        assert built == [], f"a client was built with no writer's key paying: {built}"
+
+
 # ── The matrix ───────────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("row", "step"), CELLS)
+@pytest.mark.parametrize(("row", "step", "payer"), CELLS)
 async def test_intimate_canary_reaches_no_forbidden_sink(
-    harness: Harness, row: Row, step: Step
+    harness: Harness, row: Row, step: Step, payer: Payer
 ) -> None:
     """Zero Intimate canaries outside the primary boundary; the Personal twin reaches each recorder.
 
@@ -729,12 +828,14 @@ async def test_intimate_canary_reaches_no_forbidden_sink(
     finding, not a silence.
     """
     app.dependency_overrides[get_reflection_boundary] = lambda: row.boundary
+    harness.pay_with(payer)
     entry_id, mark = await _drive(harness, row, step, _INTIMATE)
     await _assert_absent(harness, row, step, entry_id, mark)
 
     twin = await harness.another()
     _twin_entry, twin_mark = await _drive(twin, row, step, _PERSONAL)
     await _assert_reached(twin, row, twin_mark)
+    _assert_paid_by(twin, row, twin_mark)
 
     assert harness.telemetry.handler.rendered, "the telemetry recorder saw no record at all"
     assert harness.telemetry.carrying(harness.canary) == []
@@ -768,11 +869,51 @@ def test_every_row_names_a_live_door() -> None:
 
 
 def test_every_cell_runs() -> None:
-    """Every door meets every step, and no cell is skipped or expected to fail (#3200)."""
+    """Every door meets every step and payer, and no cell is skipped or expected to fail (#3200)."""
     marked = [cell.id for cell in CELLS if cell.marks]
 
-    assert len(CELLS) == len(ROWS) * len(Step)
+    assert len(CELLS) == sum(len(payers(row)) for row in ROWS) * len(Step)
     assert marked == []
+
+
+def test_every_byok_door_runs_under_the_writers_key() -> None:
+    """Each door reading ``X-LLM-API-Key`` has a row, and every one of its cells runs as BYOK."""
+    byok_cells = {(row.door, step) for row, step, payer in CELL_KEYS if payer is Payer.BYOK}
+    byok_rows = [row for row in ROWS if row.door in BYOK_DOORS]
+
+    assert BYOK_DOORS, "no live route reads the BYOK header: the derivation is blind"
+    assert {row.door for row in ROWS} >= BYOK_DOORS
+    assert byok_cells == {(row.door, step) for row in byok_rows for step in Step}
+    assert len(CELLS) == len(CELL_KEYS)
+
+
+def _planted_key(key: Annotated[str | None, Header(alias=_BYOK_HEADER)] = None) -> str | None:
+    """A dependency that reads the BYOK header, as the journal routes' do."""
+    return key
+
+
+def _planted_payer(key: Annotated[str | None, Depends(_planted_key)]) -> str | None:
+    """A dependency one level up, so the header sits two dependants deep."""
+    return key
+
+
+async def _planted_paid(key: Annotated[str | None, Depends(_planted_payer)]) -> str | None:
+    """A route that reads the key only through its dependencies."""
+    return key
+
+
+async def _planted_free(other: Annotated[str | None, Header(alias="X-Other")] = None) -> str | None:
+    """A route that reads a header, but not the key."""
+    return other
+
+
+def test_a_planted_byok_route_is_derived() -> None:
+    """The derivation finds a header declared on a nested dependency, and nothing else."""
+    planted = FastAPI()
+    planted.post("/paid")(_planted_paid)
+    planted.post("/free")(_planted_free)
+
+    assert byok_doors(planted) == {("POST", "/paid")}
 
 
 def test_every_content_recorder_has_a_carrying_twin() -> None:
