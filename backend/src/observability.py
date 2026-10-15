@@ -502,17 +502,21 @@ def make_cli_output_content_free(log_format: str) -> None:
     prints only :func:`render_exception`: a failing migration's database error
     quotes the statement's parameters, which are row data (#3352).
     """
+    for handler in _configured_handlers():
+        if not isinstance(handler.formatter, ContentFreeFormatter):
+            handler.setFormatter(ContentFreeFormatter(log_format))
+    sys.excepthook = _content_free_excepthook
+
+
+def _configured_handlers() -> list[logging.Handler]:
+    """Return every handler on the root logger and on every named logger."""
     loggers = [logging.getLogger()]
     loggers.extend(
         logger
         for logger in logging.Logger.manager.loggerDict.values()
         if isinstance(logger, logging.Logger)
     )
-    for logger in loggers:
-        for handler in logger.handlers:
-            if not isinstance(handler.formatter, ContentFreeFormatter):
-                handler.setFormatter(ContentFreeFormatter(log_format))
-    sys.excepthook = _content_free_excepthook
+    return [handler for logger in loggers for handler in logger.handlers]
 
 
 def remove_app_log_handlers_for_tests() -> None:
