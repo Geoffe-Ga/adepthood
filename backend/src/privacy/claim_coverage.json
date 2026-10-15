@@ -138,6 +138,10 @@
       "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
       "backend/tests/security/test_transcription_tier_refusal.py::test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched",
       "backend/tests/security/test_transcription_tier_refusal.py::test_the_direct_admission_never_admits_a_non_egress_tier",
+      "backend/tests/security/test_transcription_tier_refusal.py::test_a_writers_key_sent_with_an_egress_tier_page_is_ignored",
+      "backend/tests/security/test_transcription_tier_refusal.py::test_the_client_recorder_sees_a_client_built_with_the_writers_key",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_every_byok_door_runs_under_the_writers_key",
+      "backend/tests/security/test_intimate_egress_matrix.py::test_a_planted_byok_route_is_derived",
       "backend/tests/security/test_privacy_guard_mutations.py::test_removing_a_guard_fails_its_claim_suite[admits_egress-C08]"
     ],
     "sinks": [
@@ -150,18 +154,22 @@
     "by_sink": {
       "net.openai": [
         "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
-        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
+        "backend/tests/security/test_transcription_tier_refusal.py::test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched",
+        "backend/tests/security/test_transcription_tier_refusal.py::test_the_direct_admission_never_admits_a_non_egress_tier"
       ],
       "net.anthropic": [
         "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink",
-        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source"
+        "backend/tests/security/test_intimate_egress_matrix.py::test_reflecting_on_another_entry_carries_no_intimate_source",
+        "backend/tests/security/test_transcription_tier_refusal.py::test_a_page_of_a_non_egress_tier_is_refused_before_anything_is_touched",
+        "backend/tests/security/test_transcription_tier_refusal.py::test_the_direct_admission_never_admits_a_non_egress_tier"
       ],
       "net.creek_vault_connected": [
         "backend/tests/security/test_intimate_egress_matrix.py::test_intimate_canary_reaches_no_forbidden_sink"
       ]
     },
     "issue": 3059,
-    "gap": "OCR (transcribe-page, outside BARRIERED) and BYOK keys are not driven by the matrix; dials are recorded at generate_response's bindings, not the socket"
+    "gap": "OCR (transcribe-page) is driven by its tier-refusal suite under both payers, not a matrix row; dials are seen at generate_response bindings and SDK client factories, not the socket"
   },
   "C09": {
     "status": "partial",
