@@ -814,6 +814,33 @@ async def test_one_time_handoff_is_encrypted_idempotent_and_never_returned(
 
 
 @pytest.mark.asyncio
+async def test_handoff_stores_the_vault_base_url_without_creeks_v1_suffix(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    creek_client: FakeProvisioningClient,
+) -> None:
+    """Creek hands over ``.../v1``; the stored URL is the base the client appends to.
+
+    A redelivered handoff still carries the suffix, so it must compare equal to
+    the stored base rather than read as a conflicting second connection.
+    """
+    del creek_client
+    headers, user_id, _ = await _signup(async_client, "handoff-base-url")
+    await _activate(async_client, headers)
+    activation = (await db_session.execute(select(VaultActivation))).scalar_one()
+
+    assert await _handoff(async_client, activation) == HTTPStatus.NO_CONTENT
+    assert await _handoff(async_client, activation) == HTTPStatus.NO_CONTENT
+
+    config = (
+        await db_session.execute(
+            select(UserVaultConfig).where(col(UserVaultConfig.user_id) == user_id),
+        )
+    ).scalar_one()
+    assert config.vault_url == _VAULT_URL.removesuffix("/v1")
+
+
+@pytest.mark.asyncio
 async def test_malformed_or_unauthenticated_handoff_echoes_no_secret(
     async_client: AsyncClient,
     creek_client: FakeProvisioningClient,
