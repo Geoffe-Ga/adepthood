@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { completionsOf, readHabit } from './dayBoundaryBrowserSupport';
 import {
   backendUrl,
   bearer,
@@ -12,6 +13,70 @@ import {
 const OUTGOING = 'Outgoing account sitting';
 const INCOMING = 'Incoming account walk';
 const CURRENT_CREATE = 'Incoming account evening walk';
+
+for (const width of [390, 1280]) {
+  test(`a captured current-session check-in renews after a 401 at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const name = 'Current account renewed sitting';
+    const email = await signUp(page, 'captured-check-in-renewal');
+    const session = await sessionFor(page.request, email);
+    const habitId = await seedHabit(page.request, session.token, name, '2026-01-01', true);
+    await page.reload();
+    await openHabits(page);
+    const tile = page.getByTestId('habit-tile').filter({ hasText: name });
+    await expect(tile).toBeVisible();
+
+    const credentials: string[] = [];
+    const bodies: string[] = [];
+    let renewedToken = '';
+    await page.route('**/auth/refresh', async (route) => {
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      renewedToken = ((await response.json()) as { token: string }).token;
+      await route.fulfill({ response });
+    });
+    await page.route('**/goal_completions/**', async (route) => {
+      if (route.request().method() === 'POST') {
+        credentials.push(route.request().headers().authorization ?? '');
+        bodies.push(route.request().postData() ?? '');
+        if (credentials.length === 1) {
+          await route.fulfill({
+            status: 401,
+            contentType: 'application/json',
+            body: '{"detail":"session_expired"}',
+          });
+        } else {
+          await route.continue();
+        }
+      } else {
+        await route.continue();
+      }
+    });
+
+    await tile.click();
+    await page.getByRole('button', { name: 'Log Units' }).click();
+    await expect.poll(() => credentials.length).toBe(2);
+    expect(renewedToken).not.toBe('');
+    expect(credentials[0]).not.toBe(`Bearer ${renewedToken}`);
+    expect(credentials[1]).toBe(`Bearer ${renewedToken}`);
+    expect(bodies[1]).toBe(bodies[0]);
+    await expect
+      .poll(async () => completionsOf(await readHabit(page.request, session.token, habitId)).length)
+      .toBe(1);
+    await page.getByTestId('goal-modal-backdrop').click({ position: { x: 4, y: 4 } });
+    await expect(page.getByTestId('goal-modal-backdrop')).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByTestId('habits-list')).toBeVisible();
+    await expect(tile).toBeVisible();
+    await expect(tile).toContainText('1 DAYS');
+    await page.screenshot({
+      path: testInfo.outputPath('current-account-after-captured-renewal.png'),
+      fullPage: true,
+    });
+  });
+}
 
 async function openHabits(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Open Journal menu' }).click();

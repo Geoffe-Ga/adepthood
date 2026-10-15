@@ -2458,12 +2458,19 @@
   },
   {
     "id": "habits.pending-create-survives-account-switch",
-    "description": "A real outgoing-account habit POST is held while the user logs out and signs into another account in the same running app. Delivering its success or a controlled lost reply must not replace the incoming account habits or send old sibling updates. A real incoming-account create remains usable, and both incoming rows survive reload. Phone and desktop browser witnesses cover success and failure; real manager/store/scoped disk tests cover both create entrypoints, ABA, queued logs, missing credentials and compensation. The same phone and desktop account-switch journey also holds a real paginated GET after proving its answer contains the outgoing account row. That answer is delivered only after the incoming list is visible; the incoming row remains and the outgoing row stays absent before any incoming mutation can conceal stale hydration. Actual manager/storage integration additionally covers delayed cache reads, recovery and replay credentials, and both old replies and new work during adoption, logout and re-authentication wipes.",
+    "description": "A real outgoing-account habit POST is held while the user logs out and signs into another account in the same running app. Delivering its success or a controlled lost reply must not replace the incoming account habits or send old sibling updates. A real incoming-account create remains usable, and both incoming rows survive reload. Phone and desktop browser witnesses cover success and failure; real manager/store/scoped disk tests cover both create entrypoints, ABA, queued logs, missing credentials and compensation. The same phone and desktop account-switch journey also holds a real paginated GET after proving its answer contains the outgoing account row. That answer is delivered only after the incoming list is visible; the incoming row remains and the outgoing row stays absent before any incoming mutation can conceal stale hydration. Actual manager/storage integration additionally covers delayed cache reads, recovery and replay credentials, and both old replies and new work during adoption, logout and re-authentication wipes. A captured current-session check-in receiving a controlled 401 renews through the real auth endpoint, retries the same payload with its renewed credential, and persists through reload. Phone and desktop browser witnesses cover renewal; manager and scoped storage controls cover pinned mutator retries and durable create confirmation.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
-      "client": ["auth", "habits"],
-      "routes": ["POST /auth/signup", "POST /auth/login", "POST /habits/", "GET /habits/"],
-      "tables": ["user", "habit", "goal"]
+      "client": ["auth", "habits", "goalCompletions"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /habits/",
+        "GET /habits/",
+        "POST /auth/refresh",
+        "POST /goal_completions/"
+      ],
+      "tables": ["user", "habit", "goal", "goalcompletion"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habit-owner-switch.browser.e2e.test.ts"
