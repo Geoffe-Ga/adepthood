@@ -1126,6 +1126,27 @@
     "coveredBy": "frontend/e2e/course-start-here.browser.e2e.test.ts"
   },
   {
+    "id": "course.start-here-reloads-after-mounted-account-switch",
+    "description": "Two fresh accounts share a null program anchor. The outgoing account reads Course Start Here, then a controlled 401 on its next Frequency read (and on /auth/refresh) raises the re-auth sheet over the still-mounted Course, where the incoming account signs in; a document witness proves the running app never reloaded. Without a remount, Start Here shows the incoming account's own resources and server-confirmed read mark, Read next is re-asked for that account rather than keeping the outgoing answer, and the confirmed resource opens from the keyboard in the real reader as already read. Chromium covers phone and desktop at normal and targeted doubled rendered text (not native OS text-scale certification) with clipping checks. Held outgoing Start Here and Read next answers, A-to-B-to-A, the credential gap, a failed incoming load with retry, explicit Frequency routes, and same-session renewal are covered by the mounted CourseScreen jest suite, not by this browser spec.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["auth", "course", "stages"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "GET /stages",
+        "GET /course/site-resources",
+        "GET /course/start-here/progress",
+        "GET /course/next-unread",
+        "GET /course/site-resources/{slug}/body",
+        "POST /course/site-resources/{slug}/mark-read"
+      ],
+      "tables": ["user", "resourcecompletion", "stagecontent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course-start-here-account-switch.browser.e2e.test.ts"
+  },
+  {
     "id": "course.restores-last-read-frequency",
     "description": "At desktop and phone widths, a reader marks a Blue chapter read while the program calendar is on Orange, then reloads Course without route parameters and finds Blue selected. The browser uses the real reader scroll and mark-read action, GET /ui-flags, and GET /stages without response stubs.",
     "crosses": {
