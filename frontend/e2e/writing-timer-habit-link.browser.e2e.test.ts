@@ -451,6 +451,18 @@ test('a committed log whose first reply is lost retries the same operation and a
 });
 
 async function expectPrivacyLabelsFit(page: Page): Promise<void> {
+  // Measure the touch targets after the journal sheet's entrance has settled.
+  await expect
+    .poll(() =>
+      page.getByTestId('journal-sheet').evaluate((sheet) => {
+        const style = getComputedStyle(sheet);
+        return {
+          offset: new DOMMatrixReadOnly(style.transform).m42,
+          opacity: style.opacity,
+        };
+      }),
+    )
+    .toEqual({ offset: 0, opacity: '1' });
   const frames = await page.getByRole('radiogroup', { name: 'Entry privacy' }).evaluate((group) =>
     ['public', 'personal', 'intimate'].map((tier) => {
       const option = group.querySelector<HTMLElement>(`[data-testid="privacy-tier-${tier}"]`);
