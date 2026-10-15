@@ -217,14 +217,22 @@ jobs:
           path: frontend/e2e/artifacts/action-rows/**
           if-no-files-found: warn
 
+  browser-journey-complete:
+    needs: browser-journey-shards
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record success of every browser shard
+        run: echo 'Every browser shard passed.'
+
   browser-journey:
-    needs: [changes, browser-journey-shards]
+    needs: [changes, browser-journey-complete]
     if: SELECTED_LANE
     runs-on: ubuntu-latest
     steps:
       - name: Require every browser shard to pass
         env:
-          SHARD_RESULT: ${{ needs.browser-journey-shards.result }}
+          SHARD_RESULT: ${{ needs.browser-journey-complete.result }}
         run: test "$SHARD_RESULT" = success
 """.replace("SELECTED_LANE", _AGGREGATE_CONDITION)
 
@@ -293,12 +301,17 @@ def _assert_shard_diagnostics(workflow: str, config: str) -> None:
 
 def _assert_stable_browser_check(workflow: str) -> None:
     """Keep the pre-matrix required check, failing on any unsuccessful shard."""
-    job = jobs(without_comment_lines(workflow)).get("browser-journey", "")
-    assert "    needs: [changes, browser-journey-shards]" in job
+    workflow_jobs = jobs(without_comment_lines(workflow))
+    barrier = workflow_jobs.get("browser-journey-complete", "")
+    assert "    needs: browser-journey-shards" in barrier
+    assert "    if: ${{ success() }}" in barrier
+    assert "continue-on-error" not in barrier
+    job = workflow_jobs.get("browser-journey", "")
+    assert "    needs: [changes, browser-journey-complete]" in job
     assert f"    if: {_AGGREGATE_CONDITION}" in job
     assert "continue-on-error" not in job
     step = "\n".join(step_body(job, "Require every browser shard to pass"))
-    assert "SHARD_RESULT: ${{ needs.browser-journey-shards.result }}" in step
+    assert "SHARD_RESULT: ${{ needs.browser-journey-complete.result }}" in step
     assert 'run: test "$SHARD_RESULT" = success' in step
 
 
@@ -372,10 +385,17 @@ def test_diagnostics_reject_a_missing_json_reporter() -> None:
     ("before", "after"),
     [
         ("  browser-journey:\n", "  renamed-browser-check:\n"),
-        ("needs: [changes, browser-journey-shards]", "needs: changes"),
+        ("needs: [changes, browser-journey-complete]", "needs: changes"),
         ('test "$SHARD_RESULT" = success', "true"),
-        ("needs.browser-journey-shards.result", "needs.changes.result"),
+        ("needs.browser-journey-complete.result", "needs.changes.result"),
         ("always() &&", "success() &&"),
+        ("  browser-journey-complete:\n", "  renamed-completion:\n"),
+        ("    needs: browser-journey-shards\n", "    needs: changes\n"),
+        ("if: ${{ success() }}", "if: ${{ always() }}"),
+        (
+            "  browser-journey-complete:\n",
+            "  browser-journey-complete:\n    continue-on-error: true\n",
+        ),
     ],
 )
 def test_required_check_rejects_renaming_and_masked_shard_failures(before: str, after: str) -> None:
@@ -387,6 +407,16 @@ def test_required_check_rejects_renaming_and_masked_shard_failures(before: str, 
 def test_cancelled_dependencies_cannot_skip_the_required_check() -> None:
     """A skipped required job passes protection, so the aggregate must survive cancellation."""
     workflow = _COMPLIANT.replace("always() &&", "!cancelled() &&")
+    with pytest.raises(AssertionError):
+        _assert_stable_browser_check(workflow)
+
+
+def test_selective_reruns_cannot_hide_an_earlier_shard_failure() -> None:
+    """A direct matrix result can forget failures from earlier selective rerun attempts."""
+    workflow = _COMPLIANT.replace(
+        "needs: [changes, browser-journey-complete]",
+        "needs: [changes, browser-journey-shards]",
+    ).replace("needs.browser-journey-complete.result", "needs.browser-journey-shards.result")
     with pytest.raises(AssertionError):
         _assert_stable_browser_check(workflow)
 

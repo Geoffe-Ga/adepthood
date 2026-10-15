@@ -21,6 +21,7 @@ import {
   type PracticeHabitLogInput,
   type TimerHabitLogService,
 } from '@/features/Practice/practiceHabitLogging';
+import { useActiveUserGeneration } from '@/storage/useActiveUser';
 import { getActiveUser, getActiveUserGeneration, parseUserId } from '@/storage/userScope';
 import { decodeJwtPayload } from '@/utils/token';
 
@@ -66,13 +67,18 @@ interface Scope {
   viewCurrent: () => boolean;
   ownerCurrent: () => boolean;
   latest: () => Props;
+  /** The account generation this render belongs to. */
+  generation: number;
 }
 const Context = createContext<Controller | null>(null);
 export const usePracticeHabitSession = (): Controller | null => useContext(Context);
 
 function useControllerScope(props: Props): Scope {
+  // Subscribing re-renders on an account switch, so a picker held open by a
+  // pending link change (which cannot be dismissed, #3382) closes with the
+  // outgoing owner instead of waiting on a write whose result is fenced off.
+  const generation = useActiveUserGeneration();
   const owner = getActiveUser();
-  const generation = getActiveUserGeneration();
   const live = useRef({ props, mounted: true });
   live.current.props = props;
   useEffect(() => {
@@ -100,7 +106,7 @@ function useControllerScope(props: Props): Scope {
   const current = (): boolean =>
     viewCurrent() &&
     (live.current.props.userPractice.habit_id ?? null) === (props.userPractice.habit_id ?? null);
-  return { current, viewCurrent, ownerCurrent, latest: () => live.current.props };
+  return { current, viewCurrent, ownerCurrent, latest: () => live.current.props, generation };
 }
 
 interface Sitting {
@@ -300,7 +306,11 @@ function useLinkActions(props: Props, scope: Scope, setOpen: SetPicker, clearNot
 export default function PracticeHabitSessionProvider(props: Props): React.JSX.Element {
   const scope = useControllerScope(props);
   const completed = useCompletedHabit(props, scope);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  // The picker belongs to the account generation that opened it, so an A→B→A
+  // switch never revives a picker the outgoing session left open (#3382).
+  const [pickerFor, setPickerFor] = useState<number | null>(null);
+  const pickerOpen = pickerFor === scope.generation;
+  const setPickerOpen = (open: boolean): void => setPickerFor(open ? scope.generation : null);
   const actions = useLinkActions(props, scope, setPickerOpen, completed.clearNotice);
   const habitId = props.userPractice.habit_id ?? null;
   const linked = props.bindings.options.find((option) => option.habit.id === habitId) ?? null;

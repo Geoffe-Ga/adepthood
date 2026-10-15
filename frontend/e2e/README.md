@@ -77,6 +77,9 @@ fails, preserving their coverage and review artifacts.
 The `browser-journey` aggregate check keeps the original required-check name
 and passes only when every selected shard succeeds. It runs even after a shard
 is cancelled, since skipping a required job would count as success.
+A separate success-only barrier preserves earlier failures when a maintainer
+selectively reruns one matrix job; the aggregate validates that barrier instead
+of reading the matrix result directly.
 
 ## What is real, and the four external boundaries that are not
 

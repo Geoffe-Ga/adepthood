@@ -5,6 +5,7 @@ import React from 'react';
 import PracticeHabitPicker, { type PracticeHabitPickerProps } from '../PracticeHabitPicker';
 
 import type { Habit } from '@/features/Habits/Habits.types';
+import { OFFER_ACTION_DISABLED_OPACITY } from '@/features/Journal/OfferAction';
 
 const habit: Habit = {
   id: 25,
@@ -59,13 +60,16 @@ describe('PracticeHabitPicker', () => {
   it('can be declined with one tap without selecting or creating anything', () => {
     const p = props();
     const screen = render(<PracticeHabitPicker {...p} />);
+    expect(screen.getByTestId('practice-habit-cancel')).not.toHaveStyle({
+      opacity: OFFER_ACTION_DISABLED_OPACITY,
+    });
     fireEvent.press(screen.getByText('Cancel'));
     expect(p.onCancel).toHaveBeenCalledTimes(1);
     expect(p.onChoose).not.toHaveBeenCalled();
     expect(p.onNew).not.toHaveBeenCalled();
   });
 
-  it('disables writes while busy and keeps the way out available', () => {
+  it('disables every write while busy', () => {
     const p = props({ busy: true, onClear: jest.fn() });
     const screen = render(<PracticeHabitPicker {...p} />);
     for (const id of ['practice-habit-choose-25', 'practice-habit-new', 'practice-habit-clear']) {
@@ -75,7 +79,28 @@ describe('PracticeHabitPicker', () => {
     expect(p.onChoose).not.toHaveBeenCalled();
     expect(p.onNew).not.toHaveBeenCalled();
     expect(p.onClear).not.toHaveBeenCalled();
-    expect(screen.getByTestId('practice-habit-cancel')).toBeEnabled();
+  });
+
+  it('cannot be dismissed while a link change is pending (#3382)', () => {
+    const p = props({ busy: true, onClear: jest.fn() });
+    const screen = render(<PracticeHabitPicker {...p} />);
+    const cancel = screen.getByTestId('practice-habit-cancel');
+    expect(cancel).toBeDisabled();
+    expect(cancel).toHaveStyle({ opacity: OFFER_ACTION_DISABLED_OPACITY });
+    fireEvent.press(cancel);
+    screen.getByTestId('practice-habit-picker-modal').props.onRequestClose();
+    expect(p.onCancel).not.toHaveBeenCalled();
+  });
+
+  it('can be dismissed again by Cancel or the system back once the request settles', () => {
+    const p = props({ busy: true });
+    const screen = render(<PracticeHabitPicker {...p} />);
+    screen.rerender(<PracticeHabitPicker {...p} busy={false} />);
+    const cancel = screen.getByTestId('practice-habit-cancel');
+    expect(cancel).toBeEnabled();
+    fireEvent.press(cancel);
+    screen.getByTestId('practice-habit-picker-modal').props.onRequestClose();
+    expect(p.onCancel).toHaveBeenCalledTimes(2);
   });
 
   it('shows a contained retry message without hiding the choices', () => {

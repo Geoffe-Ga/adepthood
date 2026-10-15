@@ -262,10 +262,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # Keep success() separate from the always-running aggregate. Reading the
+  # matrix result directly there can forget another shard's earlier failure
+  # when a maintainer selectively reruns only one failed matrix job.
+  browser-journey-complete:
+    needs: browser-journey-shards
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Record success of every browser shard
+        run: echo 'Every browser shard passed.'
+
   # Preserve the original required-check name. A matrix reports suffixed names,
-  # so this check must fail when any shard fails, is cancelled or never runs.
+  # so this check must fail when the success barrier fails or never runs.
   browser-journey:
-    needs: [changes, browser-journey-shards]
+    needs: [changes, browser-journey-complete]
     # A skipped required job is green. Always evaluate selected runs so a
     # cancelled shard reaches the comparison below instead of skipping this job.
     if: ${{ always() && (needs.changes.result != 'success' || needs.changes.outputs.e2e != 'false') }}
@@ -274,5 +286,5 @@ jobs:
     steps:
       - name: Require every browser shard to pass
         env:
-          SHARD_RESULT: ${{ needs.browser-journey-shards.result }}
+          SHARD_RESULT: ${{ needs.browser-journey-complete.result }}
         run: test "$SHARD_RESULT" = success
