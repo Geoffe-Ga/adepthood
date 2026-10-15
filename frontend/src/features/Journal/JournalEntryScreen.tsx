@@ -52,6 +52,7 @@ import { isTierLooser, type RetryFailure, type SaveState } from './journalSaveRe
 import LinkHabitNudge from './LinkHabitNudge';
 import LiveMarkdownBody, { type LiveMarkdownBodyProps } from './LiveMarkdownBody';
 import { buildMarginItems, drawnNoteIds, type MarginItem } from './marginLayout';
+import { MarginNavigationProvider } from './marginNavigation';
 import MarginNote from './MarginNote';
 import PassReceiptNotice from './PassReceiptNotice';
 import PrivacyTierControl, { DEFAULT_TIER, tierLabel } from './PrivacyTierControl';
@@ -3775,10 +3776,19 @@ function JournalPageSurface({
       ]}
       testID="journal-page"
     >
-      <FocusScrollProvider value={focus.value}>
-        <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
-      </FocusScrollProvider>
-      <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
+      <MarginNavigationProvider
+        enabled={!ctl.editGate.editMode}
+        body={ctl.autosave.body}
+        notes={ctl.resonance.marginalia}
+        quotes={ctl.quote.quotes}
+        pageRef={focus.pageRef}
+        scrollRef={focus.scrollRef}
+      >
+        <FocusScrollProvider value={focus.value}>
+          <PageBodyColumn ctl={ctl} bodyPlaceholder={bodyPlaceholder} />
+        </FocusScrollProvider>
+        <JournalMargin ctl={ctl} narrow={narrow} layoutTick={layoutTick} />
+      </MarginNavigationProvider>
     </View>
   );
 }
