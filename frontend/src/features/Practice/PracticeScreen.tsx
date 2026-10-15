@@ -334,43 +334,47 @@ interface PracticeScreenProps {
 const PracticeScreen = ({ habitBindings }: PracticeScreenProps = {}): React.JSX.Element => {
   const s = usePracticeScreenModel();
   const { overlayOpacity } = useThresholdFade();
-  const screen = (
+  const content = (
     <>
-      <View style={[styles.screen, { paddingTop: s.topInset }]} testID="practice-screen-safe-area">
-        {s.showSwitcher && (
-          <PracticeCatalogSwitcher
-            active={s.tab}
-            onChange={s.setTab}
-            tabRefs={{ practice: s.detail.landingRef }}
-          />
-        )}
-        <PracticeStage model={s} />
-        {/* top: -s.topInset extends the fade up over the safe-area strip the
-            shell pads for, so the whole ground dims together on focus. */}
-        <Animated.View
-          style={[styles.groundFade, { opacity: overlayOpacity, top: -s.topInset }]}
-          pointerEvents="none"
-          testID="practice-ground-fade"
-        />
-      </View>
+      <PracticeStage model={s} />
       <PracticeScreenOverlays model={s} />
     </>
   );
   const adoption = s.active.activeUserPractice;
   const practice = s.active.practice;
-  return adoption && practice ? (
-    <PracticeHabitConnection
-      key={`${getActiveUserGeneration()}:${getActiveUser()}:${adoption.id}`}
-      userPractice={adoption}
-      practiceName={s.active.effectiveName ?? practice.name}
-      timezone={s.userTimezone}
-      bindings={habitBindings}
-      onUpdated={s.active.updateActivePractice}
-    >
-      {screen}
-    </PracticeHabitConnection>
-  ) : (
-    screen
+  const connectedContent =
+    adoption && practice ? (
+      <PracticeHabitConnection
+        key={`${getActiveUserGeneration()}:${getActiveUser()}:${adoption.id}`}
+        userPractice={adoption}
+        practiceName={s.active.effectiveName ?? practice.name}
+        timezone={s.userTimezone}
+        bindings={habitBindings}
+        onUpdated={s.active.updateActivePractice}
+      >
+        {content}
+      </PracticeHabitConnection>
+    ) : (
+      content
+    );
+  return (
+    <View style={[styles.screen, { paddingTop: s.topInset }]} testID="practice-screen-safe-area">
+      {s.showSwitcher && (
+        <PracticeCatalogSwitcher
+          active={s.tab}
+          onChange={s.setTab}
+          tabRefs={{ practice: s.detail.landingRef }}
+        />
+      )}
+      {connectedContent}
+      {/* top: -s.topInset extends the fade up over the safe-area strip the
+          shell pads for, so the whole ground dims together on focus. */}
+      <Animated.View
+        style={[styles.groundFade, { opacity: overlayOpacity, top: -s.topInset }]}
+        pointerEvents="none"
+        testID="practice-ground-fade"
+      />
+    </View>
   );
 };
 
