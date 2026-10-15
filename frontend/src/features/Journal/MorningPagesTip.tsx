@@ -62,6 +62,8 @@ import {
   saveMorningPagesTipSetAside,
   type MorningPagesTipState,
 } from '@/storage/morningPagesTipStorage';
+import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
+import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
 import { todayInUserTZ } from '@/utils/dateUtils';
 
 /** The band's identifying warm left rule (matches the shelf's other bands), in dp. */
@@ -96,39 +98,65 @@ export interface MorningPagesTipProps {
  * away if the writer declined while it was in flight: ``writeSeq`` counts the
  * local writes, so a stale read cannot hand back a card just set down.
  */
-function useMorningPagesTip(
-  onBegin: (_prefillTitle: string) => void,
+function useMorningPagesTipState(
   onDismissed: (() => void) | undefined,
   refreshKey: number | undefined,
 ) {
-  const { userTimezone } = useAuth();
-  const [state, setState] = useState<MorningPagesTipState | null>(null);
+  const owner = useActiveUser();
+  const epoch = useActiveUserGeneration();
+  const [answer, setAnswer] = useState<{
+    owner: number | null;
+    epoch: number;
+    value: MorningPagesTipState;
+  } | null>(null);
+  const state = answer?.epoch === epoch ? answer.value : null;
   const writeSeq = useRef(0);
 
   useEffect(() => {
     let active = true;
     const seqAtStart = writeSeq.current;
     void loadMorningPagesTipState().then((stored) => {
-      if (active && writeSeq.current === seqAtStart) setState(stored);
+      if (
+        active &&
+        getActiveUser() === owner &&
+        getActiveUserGeneration() === epoch &&
+        writeSeq.current === seqAtStart
+      )
+        setAnswer({ owner, epoch, value: stored });
     });
     return () => {
       active = false;
     };
-  }, [refreshKey]);
-
-  const onBeginPress = useCallback(() => {
-    onBegin(morningPageTitle(todayInUserTZ(userTimezone)));
-  }, [onBegin, userTimezone]);
+  }, [refreshKey, owner, epoch]);
 
   const decline = useCallback(
     (change: Partial<MorningPagesTipState>, persist: () => Promise<unknown>) => {
+      if (getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
       writeSeq.current += 1;
       void persist();
-      setState((prev) => ({ ...(prev ?? MORNING_PAGES_TIP_OPEN), ...change }));
+      setAnswer((prev) => ({
+        owner,
+        epoch,
+        value: { ...(prev?.epoch === epoch ? prev.value : MORNING_PAGES_TIP_OPEN), ...change },
+      }));
       onDismissed?.();
     },
-    [onDismissed],
+    [onDismissed, owner, epoch],
   );
+
+  return { state, decline };
+}
+
+function useMorningPagesTip(
+  onBegin: (_prefillTitle: string) => void,
+  onDismissed: (() => void) | undefined,
+  refreshKey: number | undefined,
+) {
+  const { userTimezone } = useAuth();
+  const { state, decline } = useMorningPagesTipState(onDismissed, refreshKey);
+  const onBeginPress = useCallback(() => {
+    onBegin(morningPageTitle(todayInUserTZ(userTimezone)));
+  }, [onBegin, userTimezone]);
 
   const onDismiss = useCallback(() => {
     const today = todayInUserTZ(userTimezone);

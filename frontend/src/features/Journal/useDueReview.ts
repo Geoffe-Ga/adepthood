@@ -16,10 +16,14 @@ import { useCallback, useState } from 'react';
 import { resolveStageTitles, type ReviewScope } from './reviewScopes';
 
 import { reflections } from '@/api';
+import { useAuth } from '@/context/AuthContext';
 import {
   loadReflectionDismissed,
   saveReflectionDismissed,
 } from '@/storage/reflectionDismissalStorage';
+import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
+import { getActiveUser, getActiveUserGeneration, parseUserId } from '@/storage/userScope';
+import { decodeJwtPayload } from '@/utils/token';
 
 /** A due review plus the stage title its program name needs (null for non-stage scopes). */
 export interface DueReview {
@@ -31,11 +35,17 @@ export interface DueReview {
 export type DueReviewStatus = 'loading' | 'settled';
 
 /** The due review for today, or null. Never rejects. */
-async function resolveDueReview(): Promise<DueReview | null> {
+async function resolveDueReview(
+  owner: number,
+  epoch: number,
+  token: string,
+): Promise<DueReview | null> {
   try {
-    const { due } = await reflections.due();
-    if (due == null) return null;
+    const { due } = await reflections.due(token);
+    if (due == null || getActiveUser() !== owner || getActiveUserGeneration() !== epoch)
+      return null;
     if (await loadReflectionDismissed(due.scope_key)) return null;
+    if (getActiveUserGeneration() !== epoch) return null;
     const titles = await resolveStageTitles([due]);
     return { scope: due, stageTitle: titles.get(due.scope_key) ?? null };
   } catch {
@@ -48,30 +58,38 @@ export function useDueReview(): {
   review: DueReview | null;
   dismiss: () => void;
 } {
-  const [status, setStatus] = useState<DueReviewStatus>('loading');
-  const [review, setReview] = useState<DueReview | null>(null);
+  const { token } = useAuth();
+  const owner = useActiveUser();
+  const epoch = useActiveUserGeneration();
+  // Auth adopts the durable namespace before committing its token to React.
+  // That transition must not start an old credential's read in the new scope.
+  const credentialOwner = token ? parseUserId(decodeJwtPayload(token)?.sub) : null;
+  const authenticated = owner !== null && credentialOwner === owner;
+  const [answer, setAnswer] = useState<{ epoch: number; review: DueReview | null } | null>(null);
+  const status: DueReviewStatus = authenticated && answer?.epoch === epoch ? 'settled' : 'loading';
+  const review = authenticated && answer?.epoch === epoch ? answer.review : null;
 
   useFocusEffect(
     useCallback(() => {
+      if (!authenticated || token === null || owner === null) return;
       let active = true;
-      void resolveDueReview().then((resolved) => {
-        if (!active) return;
+      void resolveDueReview(owner, epoch, token).then((resolved) => {
+        if (!active || getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
         // Null is written too: a review that has since closed must go away.
-        setReview(resolved);
-        setStatus('settled');
+        setAnswer({ epoch, review: resolved });
       });
       return () => {
         active = false;
       };
-    }, []),
+    }, [owner, epoch, token, authenticated]),
   );
 
   const dismiss = useCallback(() => {
-    if (review == null) return;
+    if (review == null || getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
     // Only this scope is set aside; the morning-pages tip keeps its own say.
     void saveReflectionDismissed(review.scope.scope_key, true);
-    setReview(null);
-  }, [review]);
+    setAnswer({ epoch, review: null });
+  }, [review, owner, epoch]);
 
   return { status, review, dismiss };
 }

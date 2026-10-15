@@ -1,4 +1,5 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { readOwnedDecline, writeOwnedDeclineKey } from './declineOwnership';
+import { scopedKey } from './userScope';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
 // Persists a "this reflection invitation was set aside" flag, keyed per
@@ -11,12 +12,12 @@ const FLAG_TRUE = 'true';
 
 /** The AsyncStorage key that isolates one reflection scope's dismissal flag. */
 function storageKey(scopeKey: string): string {
-  return `${KEY_PREFIX}${scopeKey}`;
+  return scopedKey(`${KEY_PREFIX}${scopeKey}`);
 }
 
 /** Record (or clear) the dismissal for a single reflection scope. */
 export async function saveReflectionDismissed(scopeKey: string, value: boolean): Promise<void> {
-  await AsyncStorage.setItem(storageKey(scopeKey), String(value));
+  await writeOwnedDeclineKey(storageKey(scopeKey), String(value));
 }
 
 /**
@@ -26,7 +27,7 @@ export async function saveReflectionDismissed(scopeKey: string, value: boolean):
  */
 export async function loadReflectionDismissed(scopeKey: string): Promise<boolean> {
   try {
-    const raw = await AsyncStorage.getItem(storageKey(scopeKey));
+    const raw = await readOwnedDecline(`${KEY_PREFIX}${scopeKey}`);
     return raw === FLAG_TRUE;
   } catch {
     reportDiagnostic('storage_read_failed', { storage: 'reflection_dismissal' });

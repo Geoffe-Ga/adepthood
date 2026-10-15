@@ -43,9 +43,15 @@ import type {
   DroppedCheckIn,
   DroppedCheckInReason,
   PendingCheckIn,
+  PendingCheckInScope,
 } from '../../../storage/habitStorage';
 import { isUserTimezonePending } from '../../../storage/userCalendar';
-import { getActiveUser, getActiveUserGeneration, parseUserId } from '../../../storage/userScope';
+import {
+  getActiveUser,
+  getActiveUserGeneration,
+  isActiveUserTransitioning,
+  parseUserId,
+} from '../../../storage/userScope';
 import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
@@ -720,7 +726,9 @@ const rescheduleAndPersist = (habit: Habit): Promise<void> => {
 const handleApiSuccess = async (
   apiHabits: Awaited<ReturnType<typeof habitsApi.listAll>>,
   tz: string,
+  scope: HabitMutationScope,
 ): Promise<void> => {
+  if (!scope.current()) return;
   // A 200 is authoritative even when it is empty. Strip any demo tiles left by
   // an earlier failed request so recovered connectivity cannot keep presenting
   // fictional history as though the server returned it. Real optimistic/cache
@@ -731,6 +739,7 @@ const handleApiSuccess = async (
     setHabits(liveWithoutDemo);
     await persistHabits(liveWithoutDemo);
   }
+  if (!scope.current()) return;
   if (apiHabits.length > 0) {
     const mapped = mapApiHabits(apiHabits, tz);
     setHabits(mapped);
@@ -757,32 +766,45 @@ const handleApiError = (err: unknown, hasCachedData: boolean): void => {
   if (HABIT_DEMO_MODE) setHabits(FALLBACK_HABITS);
 };
 
-type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' };
+type FetchResult = { kind: 'ok'; count: number } | { kind: 'error' } | { kind: 'stale' };
 
-const fetchFromApi = async (hasCachedData: boolean, tz: string): Promise<FetchResult> => {
+const fetchFromApi = async (
+  hasCachedData: boolean,
+  tz: string,
+  scope: HabitMutationScope,
+): Promise<FetchResult> => {
   try {
-    const apiHabits = await habitsApi.listAll();
-    await handleApiSuccess(apiHabits, tz);
+    if (!scope.current()) return { kind: 'stale' };
+    const apiHabits = await habitsApi.listAll(...scope.credentials);
+    if (!scope.current()) return { kind: 'stale' };
+    await handleApiSuccess(apiHabits, tz, scope);
+    if (!scope.current()) return { kind: 'stale' };
     setError(null);
     return { kind: 'ok', count: apiHabits.length };
   } catch (err) {
+    if (!scope.current()) return { kind: 'stale' };
     handleApiError(err, hasCachedData);
     return { kind: 'error' };
   }
 };
 
 /** Re-push cached habits when the server has none — the caller re-fetches. */
-const recoverStuckHabits = async (cached: Habit[], tz: string): Promise<void> => {
+const recoverStuckHabits = async (
+  cached: Habit[],
+  tz: string,
+  scope: HabitMutationScope,
+): Promise<void> => {
   for (const habit of cached) {
+    if (!scope.current()) return;
     try {
       // ``POST /habits/`` seeds default goal targets; the caller re-fetches
       // and then replays cached customizations via
       // ``replayCachedGoalTargets`` (#286).
-      await habitsApi.create(toApiPayload(habit, tz));
+      await habitsApi.create(toApiPayload(habit, tz), ...scope.credentials);
     } catch {
       // Best-effort; partial recovery is still better than the stuck state.
       // Surface to console so Sentry / CI can flag chronic recovery failures.
-      reportDiagnostic('habit_recovery_failed');
+      if (scope.current()) reportDiagnostic('habit_recovery_failed');
     }
   }
 };
@@ -805,9 +827,9 @@ const sanitizedGroupId = (cached: Goal, validGroupIds: Set<number>): number | nu
     : null;
 
 /** Server-side goal-group ids, for validating cached associations. */
-const fetchServerGroupIds = async (): Promise<Set<number>> => {
+const fetchServerGroupIds = async (scope: HabitMutationScope): Promise<Set<number>> => {
   try {
-    const groups = await goalGroupsApi.list();
+    const groups = await goalGroupsApi.list(...scope.credentials);
     return new Set(groups.map((g) => g.id));
   } catch {
     // Best-effort: with no list, replay proceeds without associations.
@@ -831,19 +853,24 @@ const replayOneGoal = async (
   freshGoalId: number,
   title: string,
   validGroupIds: Set<number>,
+  scope: HabitMutationScope,
 ): Promise<void> => {
-  await goalsApi.update(freshGoalId, {
-    title,
-    tier: cached.tier,
-    target: cached.target,
-    target_unit: cached.target_unit,
-    frequency: cached.frequency,
-    frequency_unit: cached.frequency_unit,
-    is_additive: cached.is_additive,
-    // Full-replace PUT: omitting these would wipe surviving values.
-    goal_group_id: sanitizedGroupId(cached, validGroupIds),
-    days_of_week: cached.days_of_week ?? null,
-  });
+  await goalsApi.update(
+    freshGoalId,
+    {
+      title,
+      tier: cached.tier,
+      target: cached.target,
+      target_unit: cached.target_unit,
+      frequency: cached.frequency,
+      frequency_unit: cached.frequency_unit,
+      is_additive: cached.is_additive,
+      // Full-replace PUT: omitting these would wipe surviving values.
+      goal_group_id: sanitizedGroupId(cached, validGroupIds),
+      days_of_week: cached.days_of_week ?? null,
+    },
+    ...scope.credentials,
+  );
 };
 
 /** Copy cached values onto each fresh goal whose tier the server accepted. */
@@ -877,16 +904,18 @@ const replayHabitGoals = async (
   cachedHabit: Habit,
   freshHabit: Habit,
   validGroupIds: Set<number>,
+  scope: HabitMutationScope,
 ): Promise<Set<string>> => {
   const replayedTiers = new Set<string>();
   for (const cachedGoal of cachedHabit.goals) {
+    if (!scope.current()) return replayedTiers;
     const freshGoal = freshHabit.goals.find((g) => g.tier === cachedGoal.tier);
     if (!freshGoal?.id || !goalNeedsReplay(cachedGoal, freshGoal, validGroupIds)) continue;
     try {
-      await replayOneGoal(cachedGoal, freshGoal.id, freshGoal.title, validGroupIds);
+      await replayOneGoal(cachedGoal, freshGoal.id, freshGoal.title, validGroupIds, scope);
       replayedTiers.add(cachedGoal.tier);
     } catch {
-      reportDiagnostic('goal_recovery_failed');
+      if (scope.current()) reportDiagnostic('goal_recovery_failed');
     }
   }
   return replayedTiers;
@@ -900,12 +929,19 @@ const replayHabitGoals = async (
  * would cascade phantom replays. Goal-group associations replay only when
  * the group still exists server-side; days_of_week replays verbatim.
  */
-const replayCachedGoalTargets = async (cached: Habit[], fresh: Habit[]): Promise<void> => {
-  const validGroupIds = await fetchServerGroupIds();
+const replayCachedGoalTargets = async (
+  cached: Habit[],
+  fresh: Habit[],
+  scope: HabitMutationScope,
+): Promise<void> => {
+  if (!scope.current()) return;
+  const validGroupIds = await fetchServerGroupIds(scope);
   for (const cachedHabit of cached) {
+    if (!scope.current()) return;
     const freshHabit = fresh.find((h) => h.name === cachedHabit.name);
     if (!freshHabit?.id) continue;
-    const replayedTiers = await replayHabitGoals(cachedHabit, freshHabit, validGroupIds);
+    const replayedTiers = await replayHabitGoals(cachedHabit, freshHabit, validGroupIds, scope);
+    if (!scope.current()) return;
     if (replayedTiers.size === 0) continue;
     const next = getHabits().map((h) =>
       h.id === freshHabit.id ? mergeReplayedGoals(h, cachedHabit, replayedTiers, validGroupIds) : h,
@@ -929,9 +965,10 @@ const captureHabitMutationScope = (): HabitMutationScope => {
     credentials: token === undefined ? [] : [token],
     current: () => generation === getActiveUserGeneration(),
     authorized:
-      owner === null
+      !isActiveUserTransitioning() &&
+      (owner === null
         ? token === undefined
-        : token !== undefined && parseUserId(decodeJwtPayload(token)?.sub) === owner,
+        : token !== undefined && parseUserId(decodeJwtPayload(token)?.sub) === owner),
   };
 };
 
@@ -994,13 +1031,20 @@ const syncRevealState = (next: Habit[], failureMessage: string, tz: string): voi
   Promise.all(updates).catch(revertOnFailure(prev, failureMessage));
 };
 
+/** Keep replay credentials and idempotency pinned to the initiating lifecycle. */
+const pendingCompletionOptions = (checkIn: PendingCheckIn, scope: HabitMutationScope) => ({
+  ...(scope.credentials.length === 0 ? {} : { token: scope.credentials[0] }),
+  ...(checkIn.operation_id ? { idempotencyKey: logUnitIdempotencyKey(checkIn.operation_id) } : {}),
+});
+
 /** POST one queued check-in, bucketing its day into the user's zone. */
 const postPendingCheckIn = async (
   checkIn: PendingCheckIn,
   zone: string,
   today: string,
-  owner: number | null,
+  scope: HabitMutationScope,
 ): Promise<void> => {
+  if (!scope.current()) return;
   const dayKey = dayKeyInTZ(checkIn.timestamp, zone);
   const payload = {
     goal_id: checkIn.goal_id,
@@ -1010,12 +1054,12 @@ const postPendingCheckIn = async (
     completed_on: checkIn.completed_on ?? (dayKey !== today ? dayKey : undefined),
     ...(checkIn.completed_units === undefined ? {} : { completed_units: checkIn.completed_units }),
   };
-  const result = checkIn.operation_id
-    ? await goalCompletionsApi.create(payload, {
-        idempotencyKey: logUnitIdempotencyKey(checkIn.operation_id),
-      })
-    : await goalCompletionsApi.create(payload);
-  if (getActiveUser() !== owner) return;
+  const options = pendingCompletionOptions(checkIn, scope);
+  const result =
+    Object.keys(options).length > 0
+      ? await goalCompletionsApi.create(payload, options)
+      : await goalCompletionsApi.create(payload);
+  if (!scope.current()) return;
   const habit = getHabits().find((candidate) =>
     candidate.goals.some((goal) => goal.id === checkIn.goal_id),
   );
@@ -1040,8 +1084,9 @@ const quarantineCheckIn = async (
   checkIn: PendingCheckIn,
   status: number,
   reason: DroppedCheckInReason,
-  owner: number | null,
+  scope: HabitMutationScope,
 ): Promise<void> => {
+  if (!scope.current()) return;
   reportDiagnostic(reason === 'gave_up' ? 'checkin_gave_up' : 'checkin_rejected', { status });
   const quarantined: DroppedCheckIn = {
     goal_id: checkIn.goal_id,
@@ -1055,7 +1100,7 @@ const quarantineCheckIn = async (
     dropped_at: new Date().toISOString(),
     reason,
   };
-  if (getActiveUser() === owner) await recordDroppedCheckIn(quarantined);
+  await recordDroppedCheckIn(quarantined);
 };
 
 /** Whether the drain moves on to the next entry or stops for this pass. */
@@ -1076,18 +1121,21 @@ const handleReplayFailure = async (
   headState: ReplayHeadState | null,
   nowMs: number,
   owner: number | null,
+  scope: HabitMutationScope,
 ): Promise<DrainStep> => {
+  if (!scope.current()) return 'stop';
   const failure = classifyReplayFailure(err);
   if (failure.kind === 'permanent') {
     // Awaited, not fired and forgotten: a floating quarantine write can
     // outlive the drain and lose the record it exists to keep.
-    await quarantineCheckIn(checkIn, failure.status, 'rejected', owner);
+    await quarantineCheckIn(checkIn, failure.status, 'rejected', scope);
     return 'continue';
   }
   if (failure.kind === 'counted') {
     const next = nextHeadState(headState, checkIn, failure.status, nowMs);
     if (hasExhaustedRetries(next, nowMs)) {
-      await quarantineCheckIn(checkIn, failure.status, 'gave_up', owner);
+      await quarantineCheckIn(checkIn, failure.status, 'gave_up', scope);
+      if (!scope.current()) return 'stop';
       await clearCheckInReplayState(owner);
       return 'continue';
     }
@@ -1104,13 +1152,14 @@ const replayCheckIn = async (
   headState: ReplayHeadState | null,
   nowMs: number,
   owner: number | null,
+  scope: HabitMutationScope,
 ): Promise<DrainStep> => {
   try {
-    await postPendingCheckIn(checkIn, zone, today, owner);
+    await postPendingCheckIn(checkIn, zone, today, scope);
     return 'continue';
   } catch (err) {
-    if (getActiveUser() !== owner) return 'stop';
-    return handleReplayFailure(checkIn, err, headState, nowMs, owner);
+    if (!scope.current()) return 'stop';
+    return handleReplayFailure(checkIn, err, headState, nowMs, owner, scope);
   }
 };
 
@@ -1120,9 +1169,13 @@ const replayCheckIn = async (
  * quarantined in a previous session must still surface at launch, and an empty
  * list is what retracts a notice the user has since dismissed.
  */
-const hydrateDroppedCheckIns = async (owner: number | null): Promise<void> => {
+const hydrateDroppedCheckIns = async (
+  owner: number | null,
+  scope: HabitMutationScope,
+): Promise<void> => {
+  if (!scope.current()) return;
   const entries = await loadDroppedCheckIns();
-  if (getActiveUser() === owner) useDroppedCheckInStore.getState().setEntries(entries);
+  if (scope.current()) useDroppedCheckInStore.getState().setEntries(entries);
 };
 
 /**
@@ -1146,33 +1199,49 @@ interface ReplayCalendar {
   zone: string;
 }
 
+const hasReplayWork = (pending: PendingCheckIn[], scope: HabitMutationScope): boolean =>
+  pending.length > 0 && scope.current();
+
+const canReplayCheckIns = (scope: HabitMutationScope, owner: number | null): boolean =>
+  scope.current() && !isUserTimezonePending(owner);
+
+const settlePendingReplay = async (
+  completed: PendingCheckIn[],
+  queueScope: PendingCheckInScope,
+  drained: boolean,
+  scope: HabitMutationScope,
+): Promise<void> => {
+  await removePendingCheckIns(completed, queueScope);
+  if (scope.current() && drained) await clearCheckInReplayState(queueScope.owner);
+};
+
 const drainPendingCheckIns = async (
   owner: number | null,
   calendar: ReplayCalendar,
+  scope: HabitMutationScope,
 ): Promise<void> => {
-  const scope = capturePendingCheckInScope();
-  const pending = await loadPendingCheckIns(scope, true);
-  if (pending.length === 0 || getActiveUser() !== owner) return;
+  if (!scope.current()) return;
+  const queueScope = capturePendingCheckInScope();
+  const pending = await loadPendingCheckIns(queueScope, true);
+  if (!hasReplayWork(pending, scope)) return;
   // One clock read and one record read per pass: the policy is pure, and
   // only the head can carry a retry record, so a stale read cannot matter.
   const nowMs = Date.now();
   const headState = await loadCheckInReplayState();
+  if (!scope.current()) return;
   const completed: PendingCheckIn[] = [];
   for (let i = 0; i < pending.length; i += 1) {
-    if (getActiveUser() !== owner || isUserTimezonePending(owner)) return;
+    if (!canReplayCheckIns(scope, owner)) return;
     // A newer authoritative calendar can arrive during storage reads or the
     // preceding POST. Read it immediately before sending each unsent entry.
     const zone = calendar.zone;
     const today = todayInUserTZ(zone);
-    const step = await replayCheckIn(pending[i]!, zone, today, headState, nowMs, owner);
-    if (step === 'stop') {
-      await removePendingCheckIns(completed, scope);
-      return;
-    }
+    const step = await replayCheckIn(pending[i]!, zone, today, headState, nowMs, owner, scope);
+    if (!scope.current()) return;
+    if (step === 'stop') break;
     completed.push(pending[i]!);
   }
-  await removePendingCheckIns(completed, scope);
-  await clearCheckInReplayState(owner);
+  await settlePendingReplay(completed, queueScope, completed.length === pending.length, scope);
 };
 
 /**
@@ -1181,21 +1250,28 @@ const drainPendingCheckIns = async (
  * queued, a transient abort, or a full pass — because a check-in dropped in an
  * earlier session is only real to the user once the notice can read it.
  */
-const activeReplays = new Map<number | null, Promise<void>>();
+const activeReplays = new Map<
+  number | null,
+  { scope: HabitMutationScope; promise: Promise<void> }
+>();
 const replayCalendars = new Map<number | null, ReplayCalendar>();
 
-const replayPendingCheckIns = (owner: number | null, calendar: ReplayCalendar): Promise<void> => {
+const replayPendingCheckIns = (
+  owner: number | null,
+  calendar: ReplayCalendar,
+  scope: HabitMutationScope,
+): Promise<void> => {
   const active = activeReplays.get(owner);
-  if (active) return active;
+  if (active?.scope.current()) return active.promise;
   const replay = (async () => {
     try {
-      await drainPendingCheckIns(owner, calendar);
-      if (getActiveUser() === owner) await hydrateDroppedCheckIns(owner);
+      await drainPendingCheckIns(owner, calendar, scope);
+      if (scope.current()) await hydrateDroppedCheckIns(owner, scope);
     } finally {
-      activeReplays.delete(owner);
+      if (activeReplays.get(owner)?.scope === scope) activeReplays.delete(owner);
     }
   })();
-  activeReplays.set(owner, replay);
+  activeReplays.set(owner, { scope, promise: replay });
   return replay;
 };
 
@@ -1207,11 +1283,16 @@ const replayPendingCheckIns = (owner: number | null, calendar: ReplayCalendar): 
  * cache would let fictional history outrank both a healthy empty response and
  * the real error state.
  */
-const hydrateRealHabitCache = async (cached: Habit[] | null): Promise<Habit[]> => {
+const hydrateRealHabitCache = async (
+  cached: Habit[] | null,
+  scope: HabitMutationScope,
+): Promise<Habit[]> => {
+  if (!scope.current()) return [];
   const real = (cached ?? []).filter(isNotDemoSeed);
   if (cached !== null && real.length !== cached.length) {
     await persistHabits(real);
   }
+  if (!scope.current()) return [];
   if (real.length > 0) {
     setHabits(real);
     setLoading(false);
@@ -1263,35 +1344,48 @@ const refreshReplayState = async (
   owner: number | null,
   calendar: ReplayCalendar,
   replayReady: boolean,
+  scope: HabitMutationScope,
 ): Promise<void> => {
-  if (getActiveUser() !== owner) return;
-  if (replayReady) await replayPendingCheckIns(owner, calendar);
-  else await hydrateDroppedCheckIns(owner);
+  if (!scope.current()) return;
+  if (replayReady) await replayPendingCheckIns(owner, calendar, scope);
+  else await hydrateDroppedCheckIns(owner, scope);
 };
 
+/** Recover only the initiating account's cached rows and custom goal targets. */
+const refreshRecoveredHabits = async (
+  recoverable: Habit[],
+  zone: string,
+  scope: HabitMutationScope,
+): Promise<boolean> => {
+  await recoverStuckHabits(recoverable, zone, scope);
+  if (!scope.current()) return false;
+  const refetch = await fetchFromApi(true, zone, scope);
+  if (!scope.current() || refetch.kind !== 'ok') return false;
+  await replayCachedGoalTargets(recoverable, getHabits(), scope);
+  return scope.current();
+};
+
+const needsHabitRecovery = (result: FetchResult, cached: Habit[]): boolean =>
+  result.kind === 'ok' && result.count === 0 && cached.length > 0;
+
 const refreshHabits = async (tz?: string, options: HabitRefreshOptions = {}): Promise<boolean> => {
+  const scope = captureHabitMutationScope();
+  if (!scope.authorized) return false;
   const { owner, calendar, zone, replayReady } = prepareRefreshCalendar(tz, options);
   setLoading(true);
   setError(null);
   const cached = await loadCachedHabits();
-  const recoverable = await hydrateRealHabitCache(cached);
+  if (!scope.current()) return false;
+  const recoverable = await hydrateRealHabitCache(cached, scope);
+  if (!scope.current()) return false;
   const hasCachedData = recoverable.length > 0;
-  const result = await fetchFromApi(hasCachedData, zone);
+  const result = await fetchFromApi(hasCachedData, zone, scope);
+  if (!scope.current()) return false;
   let fresh = result.kind === 'ok';
-  // Stuck-user recovery: cache has real habits, server returned an empty list.
-  // Push those back, then re-fetch so the store gets the server's ids. Demo
-  // tiles left in an older cache are skipped on both legs, so a cache holding
-  // nothing else means the user was never stuck.
-  if (result.kind === 'ok' && result.count === 0 && recoverable.length > 0) {
-    await recoverStuckHabits(recoverable, zone);
-    const refetch = await fetchFromApi(true, zone);
-    fresh = refetch.kind === 'ok';
-    // #286: the recovery push seeded default goal targets — replay any
-    // cached customizations onto the fresh server goals.
-    if (refetch.kind === 'ok') {
-      await replayCachedGoalTargets(recoverable, getHabits());
-    }
+  if (needsHabitRecovery(result, recoverable)) {
+    fresh = await refreshRecoveredHabits(recoverable, zone, scope);
   }
+  if (!scope.current()) return false;
   setLoading(false);
 
   // Give Map/Practice/Course/Journal an anchor to read if none is stored yet,
@@ -1305,8 +1399,8 @@ const refreshHabits = async (tz?: string, options: HabitRefreshOptions = {}): Pr
   // ``return``-ed from the first failure with the successful prefix still
   // in the queue, so on the next load every check-in that had already
   // posted would post AGAIN — silent duplication of the user's streak.
-  await refreshReplayState(owner, calendar, replayReady);
-  return fresh;
+  await refreshReplayState(owner, calendar, replayReady, scope);
+  return scope.current() && fresh;
 };
 
 const loadHabits = async (tz?: string, options?: HabitRefreshOptions): Promise<void> => {
