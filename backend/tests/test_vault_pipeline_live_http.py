@@ -8,7 +8,7 @@ listen on kernel-assigned loopback sockets here and every request uses httpx's
 normal network transport.
 
 The Creek peer is deliberately small rather than a second implementation.  It
-serves only the published 0.16 shapes used by this journey, keeps the uploaded
+serves only the published 0.17 shapes used by this journey, keeps the uploaded
 fragment and its labels as observable state, and refuses to report a completed
 classification until more than ten real seconds have elapsed.  The contract
 bundle and the adapter's parser suites remain the authorities for every other
@@ -83,7 +83,7 @@ class _Job:
 
 
 class _SlowCreekPeer:
-    """A 0.16 Creek HTTP peer whose LLM job really takes longer than ten seconds."""
+    """A 0.17 Creek HTTP peer whose LLM job really takes longer than ten seconds."""
 
     def __init__(
         self,
@@ -119,8 +119,8 @@ class _SlowCreekPeer:
 
     @staticmethod
     def _require_contract(request: Request) -> None:
-        """Fail the peer if a post-handshake request does not declare 0.16."""
-        assert request.headers.get("x-creek-contract-version") == "0.16"
+        """Fail the peer if a post-handshake request does not declare 0.17."""
+        assert request.headers.get("x-creek-contract-version") == "0.17"
 
     async def _capabilities(self, request: Request) -> Mapping[str, object]:
         """Advertise the three capabilities used by the two write journeys."""
@@ -130,8 +130,8 @@ class _SlowCreekPeer:
             "vault": {"available": True},
             "capabilities": ["capabilities", "journal-upsert", "upload", "pipeline"],
             "contract_version": CONTRACT_VERSION,
-            "contract_minor": "0.16",
-            "supported_contract_minors": ["0.16"],
+            "contract_minor": "0.17",
+            "supported_contract_minors": ["0.17"],
             "ontology_version": "aptitude-wavelength/2026-05-23",
             "tier_model": {
                 "ceilings": ["open", "personal"],

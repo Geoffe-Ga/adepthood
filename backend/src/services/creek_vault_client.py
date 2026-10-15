@@ -120,6 +120,8 @@ from domain.creek_vault import (
     VaultIngestRequest,
     VaultIngestResult,
     VaultJournalWithdrawResult,
+    VaultLetter,
+    VaultLetterRequest,
     VaultLinkPass,
     VaultLinkStage,
     VaultPipelineJob,
@@ -139,6 +141,7 @@ from domain.creek_vault import (
 from services.creek_vault_payload import (
     _CALL_FAILED,
     _CREDENTIAL_REJECTED,
+    _LETTER_UNREADABLE_MESSAGE,
     _REFLECT_UNREADABLE_MESSAGE,
     _REQUEST_REJECTED,
     _RESPONSE_UNREADABLE,
@@ -147,10 +150,12 @@ from services.creek_vault_payload import (
     _capability_message,
     _classification_request_body,
     _journal_entry_body,
+    _letter_body,
     _link_request_body,
     _parse_classification_pass,
     _parse_http_ingest_result,
     _parse_http_journal_withdraw_result,
+    _parse_http_letter_result,
     _parse_http_upload_result,
     _parse_http_voice_draft_delete_result,
     _parse_http_voice_draft_result,
@@ -612,6 +617,7 @@ _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
         "drive-connector": CreekCapability.DRIVE_CONNECTOR,
         "pipeline": CreekCapability.PIPELINE,
         "voice-drafts": CreekCapability.VOICE_DRAFTS,
+        "letters": CreekCapability.LETTERS,
     }
 )
 
@@ -907,6 +913,11 @@ _UPLOADS_PATH = "/v1/uploads"
 # DELETE, and the distinction preserves Creek's fixed AI attribution.
 _VOICE_DRAFTS_PATH = "/v1/voice-drafts/"
 
+# Where the vault writes one margin note's letter (contract 0.17.0). Addressed by
+# the same caller-owned external id as the Voice Draft it stores, so the draft is
+# withdrawn through :data:`_VOICE_DRAFTS_PATH` exactly as a mirrored one is.
+_LETTERS_PATH = "/v1/letters/"
+
 # Where a whole-vault classification pass and one linker stage are asked for,
 # relative to the configured base URL. Two collections, ``POST``ed to with a body
 # and no identifier of any kind: neither route takes a fragment selector, and
@@ -989,6 +1000,9 @@ _VOICE_DRAFT_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapa
 _VOICE_DRAFT_CREDENTIAL_MESSAGE = _capability_message(
     _CREDENTIAL_REJECTED, CreekCapability.VOICE_DRAFTS
 )
+_LETTER_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.LETTERS)
+_LETTER_REJECTED_MESSAGE = _capability_message(_REQUEST_REJECTED, CreekCapability.LETTERS)
+_LETTER_CREDENTIAL_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCapability.LETTERS)
 _WHEEL_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.WHEEL)
 _REFLECT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.REFLECT)
 _PIPELINE_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.PIPELINE)
@@ -1419,6 +1433,20 @@ def _voice_draft_failure(response: httpx.Response) -> CreekVaultError:
         call_failed=_VOICE_DRAFT_FAILED_MESSAGE,
         request_rejected=_VOICE_DRAFT_REJECTED_MESSAGE,
         credential_rejected=_VOICE_DRAFT_CREDENTIAL_MESSAGE,
+    )
+
+
+def _letter_failure(response: httpx.Response) -> CreekVaultError:
+    """Classify a failed letter under its own capability.
+
+    A write: the vault stores the letter it writes, so the write classifier
+    applies -- ``privacy_refused`` at 403 is a refusal, not a rejected key.
+    """
+    return _write_failure(
+        response,
+        call_failed=_LETTER_FAILED_MESSAGE,
+        request_rejected=_LETTER_REJECTED_MESSAGE,
+        credential_rejected=_LETTER_CREDENTIAL_MESSAGE,
     )
 
 
@@ -2194,6 +2222,52 @@ class HttpCreekVaultClient:
             )
             return result
 
+    async def _post_letter(self, request: VaultLetterRequest) -> httpx.Response:
+        """Ask the vault for one letter, normalizing any transport failure.
+
+        The tier is resolved before the body is built, so an intimate entry is
+        refused while its text is still a field on a frozen request. It is both
+        the stored draft's tier and the admission ceiling, as on the Voice
+        Draft PUT.
+        """
+        tier = wire_ceiling_for(request.tier)
+        segment = _voice_draft_path_segment(request.external_id)
+        try:
+            return await self._authorized_request(
+                "POST",
+                f"{self._url}{_LETTERS_PATH}{segment}",
+                _letter_body(request, tier),
+                ceiling=tier,
+            )
+        except _HTTP_CALL_TIMED_OUT_ERRORS:
+            raise VaultCallTimedOutError(_LETTER_FAILED_MESSAGE) from None
+        except _HTTP_CALL_FAILED_ERRORS:
+            raise CreekVaultUnavailableError(_LETTER_FAILED_MESSAGE) from None
+
+    async def write_letter(self, request: VaultLetterRequest, /) -> VaultLetter:
+        """Have the vault write and store one margin note's letter (contract 0.17).
+
+        Gated on the cached handshake first, so a vault that did not advertise
+        ``letters`` never sees the entry. A non-2xx is classified by
+        :func:`_letter_failure`; a 2xx that will not decode, or whose identity,
+        tier or attribution does not verify, is a
+        :class:`CreekVaultPayloadError`; Creek's 200 care handoff leaves as
+        :class:`~domain.creek_vault.CreekVaultCareEscalationError`. Counted
+        once through :class:`_CountingOutcome`, escalation included.
+        """
+        with _CountingOutcome(CreekCapability.LETTERS):
+            if not self.supports(CreekCapability.LETTERS):
+                raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.LETTERS))
+            response = await self._post_letter(request)
+            if not response.is_success:
+                raise _letter_failure(response) from None
+            payload = _decoded_object(response)
+            if payload is None:
+                raise CreekVaultPayloadError(_LETTER_UNREADABLE_MESSAGE)
+            letter = _parse_http_letter_result(payload, request)
+            record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.LETTERS)
+            return letter
+
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Refuse classification: no *per-entry* ``/v1`` request shape is ratified.
 
@@ -2599,6 +2673,11 @@ class LocalFallbackCreekVaultClient:
         """No-op Voice Draft retraction when no vault is configured."""
         record_vault_outcome(self._outcome, CreekCapability.VOICE_DRAFTS)
         return VaultVoiceDraftDeleteResult(deleted=False)
+
+    async def write_letter(self, _request: VaultLetterRequest, /) -> VaultLetter:
+        """Raise: a letter has no local vault to write it."""
+        record_vault_outcome(self._outcome, CreekCapability.LETTERS)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.LETTERS))
 
     async def classify(self, _body: str, _tier_ceiling: VaultTierCeiling, /) -> VaultClassification:
         """Raise: classification has no local vault to serve it."""
