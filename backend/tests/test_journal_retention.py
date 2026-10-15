@@ -14,7 +14,8 @@ off a hand-kept list.
 
 Its default window is the owner's ratified lifetime for a soft-deleted page:
 the backup bound, 97 days while dumps kept under the older 90-day retention
-are held (#3063 AC15, ratified 2026-10-13). Nothing schedules it (AC18).
+are held (#3063 AC15, ratified 2026-10-13). The nightly retention sweep runs
+it on that window (#3266).
 """
 
 from __future__ import annotations

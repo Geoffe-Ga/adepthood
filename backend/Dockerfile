@@ -54,6 +54,12 @@ COPY backend/migrations/ migrations/
 # from the blanket ``*.md`` exclusion.
 COPY backend/content/ content/
 
+# The nightly retention sweep's entrypoint (#3266). A Railway cron service runs
+# this same image with the start command ``python -m scripts.retention_sweep``
+# (DEPLOYMENT.md, "Nightly retention sweep"). Only this one script ships; the
+# rest of backend/scripts is operator and CI tooling.
+COPY backend/scripts/__init__.py backend/scripts/retention_sweep.py scripts/
+
 # Keep runtime file-mount ownership deterministic across Railway deployments.
 # The operator installs each credential for this identity with mode 0400; the
 # bootstrap changes only the mount directory. Pinning both ids prevents a

@@ -36,8 +36,10 @@ or a retention raised without raising the constants (pinned to DEPLOYMENT.md
 by a drift test), breaks it. Below the floor the purge refuses.
 
 The route's default window is the owner's ratified lifetime for a soft-deleted
-page, which is the floor itself (#3063 AC15, 2026-10-13). There is no schedule:
-when it runs is still an owner decision (AC18). Logs carry counts only.
+page, which is the floor itself (#3063 AC15, 2026-10-13). The nightly retention
+sweep (``scripts.retention_sweep``, a Railway cron service; #3266) runs the
+purge on that window; the admin route stays for an operator's ad hoc run. Logs
+carry counts only.
 """
 
 from __future__ import annotations
@@ -174,15 +176,8 @@ async def _purge_batch(
     return result.rowcount if result.rowcount >= 0 else len(entry_ids)
 
 
-async def purge_soft_deleted_entries(
-    session: AsyncSession, *, older_than_days: int
-) -> EntryPurgeResult:
-    """Hard-delete entries soft-deleted more than ``older_than_days`` ago.
-
-    Refuses a window shorter than the oldest live backup copy (see the
-    module docstring) and refuses outright while any reference into an entry lacks a stated
-    action. Commits per batch; returns counts only.
-    """
+def _purge_cutoff(older_than_days: int) -> datetime:
+    """The purge's cutoff, refusing a window below the floor or a reference with no action."""
     if older_than_days < PURGE_MIN_RETENTION_DAYS:
         msg = (
             f"older_than_days must be at least {PURGE_MIN_RETENTION_DAYS}, the age of the "
@@ -194,7 +189,36 @@ async def purge_soft_deleted_entries(
     if gaps:
         msg = "journal entry purge refused: " + "; ".join(gaps)
         raise EntryPurgeGapError(msg)
-    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    return datetime.now(UTC) - timedelta(days=older_than_days)
+
+
+async def preview_soft_deleted_purge(
+    session: AsyncSession, *, older_than_days: int
+) -> EntryPurgeResult:
+    """What :func:`purge_soft_deleted_entries` would do, in counts; writes nothing.
+
+    ``deleted`` is the number of entries the purge would remove, ``blocked`` the
+    number it would skip for an unsettled obligation. Refuses as the purge does.
+    """
+    cutoff = _purge_cutoff(older_than_days)
+    entries = _table(ENTRY_TABLE)
+    statement = sa.select(sa.func.count()).select_from(entries).where(_expired(cutoff))
+    for clause in _unsettled(entries.c["id"]):
+        statement = statement.where(~clause)
+    eligible = int((await session.execute(statement)).scalar_one())
+    return EntryPurgeResult(deleted=eligible, blocked=await _count_blocked(session, cutoff))
+
+
+async def purge_soft_deleted_entries(
+    session: AsyncSession, *, older_than_days: int
+) -> EntryPurgeResult:
+    """Hard-delete entries soft-deleted more than ``older_than_days`` ago.
+
+    Refuses a window shorter than the oldest live backup copy (see the
+    module docstring) and refuses outright while any reference into an entry lacks a stated
+    action. Commits per batch; returns counts only.
+    """
+    cutoff = _purge_cutoff(older_than_days)
     dependants = entry_dependants(SQLModel.metadata)
     blocked = await _count_blocked(session, cutoff)
     deleted = 0
