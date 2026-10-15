@@ -3,12 +3,10 @@
  * hovering over the (still-visible, dimmed) page. A warm editorial reading card,
  * not a chat reply.
  *
- * A note's first letter is a charged depth (#623): the writer's own key pays
- * for it, and since ADR 0009 phase (a) (#3067) nothing else can outside a
- * development build. So a note with no letter opens on an *offer* — what a
- * letter is, where the entry goes, what it costs, and two equal arms — and only
- * "Ask for the letter" asks; with no key the line says the key is needed and
- * the ask becomes "Open Settings" (#3262). A
+ * A first letter uses the writer's key on the app-provider route or one wallet
+ * credit when their vault writes it. So a note
+ * with no letter opens on an *offer* — what a letter is, where the entry goes,
+ * what it costs, and two equal arms — and only "Ask for the letter" asks. A
  * letter already written opens straight to the letter, because reopening it is
  * free. A 402 is not rendered as an error: it is handed to ``onFundingRequired``
  * so the screen can show the same refill remedy a resonance pass gets.
@@ -28,15 +26,8 @@ import { ExplainerActionPair, explainerStyles } from './ExplainerDialogParts';
 import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
 import JournalModalShell from './JournalModalShell';
+import { loadCostState, unknownCostState, type ResonanceCostState } from './resonanceCost';
 import {
-  knownCostState,
-  loadCostState,
-  unknownCostState,
-  type ResonanceCostState,
-} from './resonanceCost';
-import {
-  KEY_NEEDED_SETTINGS,
-  KEY_NEEDED_SETTINGS_A11Y,
   ESSAY_ASK_CANCEL,
   ESSAY_ASK_CANCEL_A11Y,
   ESSAY_ASK_CHOICE,
@@ -46,25 +37,24 @@ import {
   ESSAY_NOUN,
 } from './resonanceExplainerCopy';
 import { sourceLabel } from './sourceLabel';
+import { usePaymentScope } from './usePaymentScope';
 
 import { resonance } from '@/api';
 import type { Marginalia } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
+import { useAuth } from '@/context/AuthContext';
 import { colors, editorialType, spacing, touchTarget } from '@/design/tokens';
 
 export interface ResonanceEssayModalProps {
   note: Marginalia | null;
   onClose: () => void;
+  /** Close the offer and open the device's API key settings. */
+  onOpenSettings?: () => void;
   onEssayLoaded?: (_note: Marginalia) => void;
-  /** Whether the writer's own API key pays, which decides the price line. */
+  /** Whether an own key is available; the server route also gates eligibility. */
   hasOwnKey?: boolean;
   /** A 402 on the ask: the wallet is empty, or a key is required. */
   onFundingRequired?: (_outcome: FundingOutcome) => void;
-  /**
-   * Leave for Settings to add a key. With no key a letter can be paid for by
-   * nothing else (#3262), so the offer's ask becomes this.
-   */
-  onOpenSettings?: () => void;
 }
 
 /** Shown when a fetch resolves an empty essay, so the user isn't stranded on a blank card. */
@@ -168,28 +158,6 @@ function askForEssay(noteId: number, settlers: EssaySettlers): void {
     });
 }
 
-/**
- * The letter's price line, read only while the offer is on screen. A line that
- * needs no read (a key pays, or only a key could) is the first one painted, so
- * the offer never flashes a price it will not charge.
- */
-function useEssayCost(showing: boolean, hasOwnKey: boolean): ResonanceCostState {
-  const [cost, setCost] = useState(
-    () => knownCostState(hasOwnKey, ESSAY_NOUN) ?? unknownCostState(ESSAY_NOUN),
-  );
-  useEffect(() => {
-    if (!showing) return undefined;
-    let active = true;
-    void loadCostState(hasOwnKey, ESSAY_NOUN).then((next) => {
-      if (active) setCost(next);
-    });
-    return () => {
-      active = false;
-    };
-  }, [showing, hasOwnKey]);
-  return cost;
-}
-
 interface EssayCallbacks {
   onEssayLoaded?: (_n: Marginalia) => void;
   onFundingRequired?: (_outcome: FundingOutcome) => void;
@@ -248,6 +216,7 @@ function useShowingGeneration(note: Marginalia | null): React.MutableRefObject<n
 function useEssay(
   note: Marginalia | null,
   callbacks: EssayCallbacks,
+  scopeIsCurrent: () => boolean,
 ): EssayState & { ask: () => void; retry: () => void } {
   // Notes already asked about, that came back with no letter (#2435). A ref, so
   // it survives closing and reopening the modal and dies with the screen:
@@ -261,17 +230,16 @@ function useEssay(
   const ask = useCallback(() => {
     if (note == null) return;
     const showing = showingRef.current;
-    const isCurrent = (): boolean => showingRef.current === showing;
+    const isCurrent = (): boolean => showingRef.current === showing && scopeIsCurrent();
     setState(LOADING_STATE);
     askForEssay(note.id, {
       onLetter: (updated) => {
         if (!isCurrent()) return;
         // The note carries the letter from here on, via ``onEssayLoaded``.
         setState({
+          ...LOADING_STATE,
           essay: updated.essay,
           loading: false,
-          error: null,
-          offer: false,
           essaySource: updated.essay_source,
         });
         callbacksRef.current.onEssayLoaded?.(updated);
@@ -279,6 +247,7 @@ function useEssay(
       // Remembered even if the modal has since closed: the ask did happen and
       // produced nothing, so reopening should show that, not offer again.
       onUnanswered: (unanswered) => {
+        if (!scopeIsCurrent()) return;
         unansweredRef.current.set(note.id, unanswered);
         if (!isCurrent()) return;
         setState({
@@ -295,7 +264,7 @@ function useEssay(
         callbacksRef.current.onFundingRequired?.(outcome);
       },
     });
-  }, [callbacksRef, note, setState, showingRef]);
+  }, [callbacksRef, note, setState, showingRef, scopeIsCurrent]);
 
   const retry = useCallback(() => {
     if (note != null) unansweredRef.current.delete(note.id);
@@ -305,36 +274,18 @@ function useEssay(
   return { ...state, ask, retry };
 }
 
-const NO_SETTINGS = (): void => undefined;
-
-/**
- * The priced offer: what a letter is, what it costs, and two equal arms. When
- * only the writer's own key could pay, the ask becomes a way to Settings.
- */
+/** The priced offer: what a letter is, what it costs, and two equal arms. */
 function EssayOffer({
   cost,
+  onOpenSettings,
   onAsk,
   onDecline,
-  onOpenSettings = NO_SETTINGS,
 }: {
   cost: ResonanceCostState;
+  onOpenSettings: () => void;
   onAsk: () => void;
   onDecline: () => void;
-  onOpenSettings?: () => void;
 }): React.JSX.Element {
-  const proceed = cost.keyNeeded
-    ? {
-        label: KEY_NEEDED_SETTINGS,
-        accessibilityLabel: KEY_NEEDED_SETTINGS_A11Y,
-        testID: 'essay-open-settings',
-        onPress: onOpenSettings,
-      }
-    : {
-        label: ESSAY_ASK_PROCEED,
-        accessibilityLabel: ESSAY_ASK_PROCEED_A11Y,
-        testID: 'essay-ask',
-        onPress: onAsk,
-      };
   return (
     <View testID="essay-offer">
       <Text style={explainerStyles.body} testID="essay-ask-what">
@@ -346,15 +297,54 @@ function EssayOffer({
       <Text style={explainerStyles.body} testID="essay-ask-choice">
         {ESSAY_ASK_CHOICE}
       </Text>
-      <ExplainerActionPair
-        cancel={{
-          label: ESSAY_ASK_CANCEL,
-          accessibilityLabel: ESSAY_ASK_CANCEL_A11Y,
-          testID: 'essay-not-now',
-          onPress: onDecline,
-        }}
-        proceed={proceed}
-      />
+      <EssayActions {...{ cost, onOpenSettings, onAsk, onDecline }} />
+    </View>
+  );
+}
+
+/** The only offered action must be eligible on the recorded route. */
+function EssayActions({
+  cost,
+  onOpenSettings,
+  onAsk,
+  onDecline,
+}: {
+  cost: ResonanceCostState;
+  onOpenSettings: () => void;
+  onAsk: () => void;
+  onDecline: () => void;
+}): React.JSX.Element {
+  return (
+    <View>
+      {' '}
+      {cost.canContinue || cost.fundingRequired === 'key_required' ? (
+        <ExplainerActionPair
+          cancel={{
+            label: ESSAY_ASK_CANCEL,
+            accessibilityLabel: ESSAY_ASK_CANCEL_A11Y,
+            testID: 'essay-not-now',
+            onPress: onDecline,
+          }}
+          proceed={{
+            label: cost.canContinue ? ESSAY_ASK_PROCEED : 'Open Settings',
+            accessibilityLabel: cost.canContinue
+              ? ESSAY_ASK_PROCEED_A11Y
+              : 'Open Settings to add your own API key',
+            testID: cost.canContinue ? 'essay-ask' : 'essay-open-settings',
+            onPress: cost.canContinue ? onAsk : onOpenSettings,
+          }}
+        />
+      ) : (
+        <TouchableOpacity
+          style={explainerStyles.action}
+          onPress={onDecline}
+          accessibilityRole="button"
+          accessibilityLabel={ESSAY_ASK_CANCEL_A11Y}
+          testID="essay-not-now"
+        >
+          <Text style={explainerStyles.cancelLabel}>{ESSAY_ASK_CANCEL}</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -404,19 +394,78 @@ function EssayBody({
   );
 }
 
+/** Resolve only an uncached offer; responses belong to one note/key showing. */
+function useEssayCost(
+  note: Marginalia | null,
+  hasOwnKey: boolean,
+  scopeIsCurrent: () => boolean,
+): ResonanceCostState {
+  const { token } = useAuth();
+  const [snapshot, setSnapshot] = useState({ note, hasOwnKey, scopeIsCurrent });
+  const [cost, setCost] = useState(() => unknownCostState(ESSAY_NOUN));
+  if (
+    snapshot.note !== note ||
+    snapshot.hasOwnKey !== hasOwnKey ||
+    snapshot.scopeIsCurrent !== scopeIsCurrent
+  ) {
+    setSnapshot({ note, hasOwnKey, scopeIsCurrent });
+    setCost(unknownCostState(ESSAY_NOUN));
+  }
+  useEffect(() => {
+    if (note === null || token === null || !scopeIsCurrent()) return;
+    let current = true;
+    setCost({
+      ...unknownCostState(ESSAY_NOUN),
+      copy: 'Checking whether a letter can be written…',
+      loading: true,
+    });
+    void loadCostState(hasOwnKey, ESSAY_NOUN, token).then((next) => {
+      if (current && scopeIsCurrent()) setCost(next);
+    });
+    return () => {
+      current = false;
+    };
+  }, [note, hasOwnKey, scopeIsCurrent, token]);
+  return cost;
+}
+
+/** The note identity and reachable close action above the scrollable letter. */
+function EssayHeader({ note, onClose }: { note: Marginalia | null; onClose: () => void }) {
+  return (
+    <View style={styles.header}>
+      <Text style={[styles.kind, { color: note ? colors.marginalia[note.kind] : undefined }]}>
+        {note?.kind}
+      </Text>
+      <TouchableOpacity
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close"
+        testID="essay-close"
+      >
+        <Text style={styles.close}>×</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 function ResonanceEssayModal({
   note,
   onClose,
   onEssayLoaded,
+  onOpenSettings = () => undefined,
   hasOwnKey = false,
   onFundingRequired,
-  onOpenSettings,
 }: ResonanceEssayModalProps): React.JSX.Element {
-  const { essay, loading, error, retryable, offer, essaySource, ask, retry } = useEssay(note, {
-    onEssayLoaded,
-    onFundingRequired,
-  });
-  const cost = useEssayCost(note != null && offer, hasOwnKey);
+  const scopeIsCurrent = usePaymentScope();
+  const { essay, loading, error, retryable, offer, essaySource, ask, retry } = useEssay(
+    note,
+    {
+      onEssayLoaded,
+      onFundingRequired,
+    },
+    scopeIsCurrent,
+  );
+  const cost = useEssayCost(offer ? note : null, hasOwnKey, scopeIsCurrent);
 
   return (
     <JournalModalShell
@@ -427,25 +476,20 @@ function ResonanceEssayModal({
       modalTestID="essay-modal"
       cardStyle={styles.essayCard}
     >
-      <View style={styles.header}>
-        <Text style={[styles.kind, { color: note ? colors.marginalia[note.kind] : undefined }]}>
-          {note?.kind}
-        </Text>
-        <TouchableOpacity
-          onPress={onClose}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          testID="essay-close"
-        >
-          <Text style={styles.close}>×</Text>
-        </TouchableOpacity>
-      </View>
+      <EssayHeader note={note} onClose={onClose} />
       <Text style={styles.quote} testID="essay-quote">
         “{note?.anchor_text}”
       </Text>
       <ScrollView contentContainerStyle={styles.bodyScroll}>
         {offer ? (
-          <EssayOffer {...{ cost, onOpenSettings }} onAsk={ask} onDecline={onClose} />
+          <EssayOffer
+            cost={cost}
+            onOpenSettings={onOpenSettings}
+            onAsk={() => {
+              if (scopeIsCurrent() && cost.canContinue) ask();
+            }}
+            onDecline={onClose}
+          />
         ) : (
           <EssayBody {...{ essay, loading, error, retryable, retry, essaySource }} />
         )}

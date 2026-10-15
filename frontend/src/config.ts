@@ -109,7 +109,7 @@ export const SANGHA_INVITE_URL = resolveEnv(
  * No default, like the Sangha invite: the page is the owner's, and a
  * placeholder would ship a dead link inside a binary that cannot be patched.
  * Empty means the app neither links to it nor says credits can be bought --
- * the vault-reading empty-wallet remedy offers only a key -- so, unlike
+ * the vault-reading empty-wallet remedy names the next reset -- so, unlike
  * ``API_BASE_URL``, it never contributes to ``CONFIG_ERROR``.
  */
 export const CREDIT_PACK_URL = resolveEnv(

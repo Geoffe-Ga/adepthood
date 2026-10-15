@@ -92,23 +92,15 @@ test('the payer is disclosed before a resonance pass is ever sent', async ({ pag
   await page.reload();
   await page.getByTestId(`journal-shelf-open-${String(entryId)}`).click();
 
-  // 1. The first press buys nothing. It says what a pass does, where the entry
-  //    goes, and what it costs — and sends no request at all. The allowance is
-  //    the one this deployment serves, read from the server rather than written
-  //    here, so the copy check follows the cap wherever the operator sets it.
-  const { monthly_cap: monthlyCap } = await usage(page, token);
+  // 1. The real non-owner app-provider route needs a key, even with wallet
+  // credits remaining. The invitation sends no generation request.
   await page.getByRole('button', { name: 'Get resonance' }).click();
-  await expect(page.getByTestId('resonance-explainer-what')).toContainText('AI model');
-  await expect(page.getByTestId('resonance-explainer-cost')).toContainText(
-    `one of your ${String(monthlyCap)} BotMason messages`,
-  );
-  await expect(page.getByTestId('resonance-explainer-cost')).not.toContainText('free');
+  const keyRequired = page.getByTestId('journal-resonance-refill');
+  await expect(keyRequired).toContainText('This needs your own API key');
+  await expect(keyRequired).not.toContainText('BotMason');
   expect(passes.length).toBe(0);
-
-  // 2. Backing out is a real refusal, not a deferral of something already sent:
-  //    no request left the browser and the server kept nothing.
-  await page.getByTestId('resonance-explainer-cancel').click();
-  await expect(page.getByTestId('resonance-explainer-card')).toHaveCount(0);
+  await page.getByTestId('journal-resonance-refill-cancel').click();
+  await expect(keyRequired).toHaveCount(0);
   expect(passes.length).toBe(0);
   expect(await keptNotes(page, token, entryId)).toEqual([]);
 

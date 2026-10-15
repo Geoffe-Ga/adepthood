@@ -17,6 +17,7 @@ const SERVED_MONTHLY_CAP = 50;
 interface UsageOverrides {
   monthly_messages_remaining: number;
   offering_balance: number;
+  resonance_route?: 'vault_bound' | 'app_provider';
 }
 
 /** Make the browser's wallet read deterministic without changing the production request path. */
@@ -31,6 +32,7 @@ async function serveUsage(page: Page, overrides: UsageOverrides): Promise<void> 
         monthly_cap: SERVED_MONTHLY_CAP,
         monthly_reset_date: '2026-10-01T00:00:00Z',
         offering_balance: overrides.offering_balance,
+        resonance_route: overrides.resonance_route ?? 'vault_bound',
       }),
     });
   });
@@ -49,21 +51,26 @@ async function holdUsage(page: Page): Promise<{
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route('**/user/usage', async (route) => {
-    markRequested();
-    await held;
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        monthly_messages_used: 0,
-        monthly_messages_remaining: 0,
-        monthly_cap: 0,
-        monthly_reset_date: '2026-10-01T00:00:00Z',
-        offering_balance: 0,
-      }),
-    });
-  });
+  await page.route(
+    '**/user/usage',
+    async (route) => {
+      markRequested();
+      await held;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          monthly_messages_used: 0,
+          monthly_messages_remaining: 0,
+          monthly_cap: 0,
+          monthly_reset_date: '2026-10-01T00:00:00Z',
+          offering_balance: 0,
+          resonance_route: 'vault_bound',
+        }),
+      });
+    },
+    { times: 1 },
+  );
   return { requested, release };
 }
 
@@ -97,11 +104,15 @@ async function expectDraft(page: Page): Promise<void> {
   await expect(page.getByTestId('journal-body-input')).toHaveValue(DRAFT_BODY);
 }
 
-test('an empty wallet offers API-key settings and returns to the same journal draft', async ({
+test('a keyless app-provider route offers Settings and returns to the same journal draft', async ({
   page,
 }) => {
   await signUp(page, 'journal-resonance-refill');
-  await serveUsage(page, { monthly_messages_remaining: 0, offering_balance: 0 });
+  await serveUsage(page, {
+    monthly_messages_remaining: 0,
+    offering_balance: 0,
+    resonance_route: 'app_provider',
+  });
   await page.getByTestId('journal-new-entry').click();
   await page.getByTestId('journal-title-input').fill(DRAFT_TITLE);
   await page.getByTestId('journal-body-input').fill(DRAFT_BODY);
@@ -117,7 +128,8 @@ test('an empty wallet offers API-key settings and returns to the same journal dr
   await page.getByRole('button', { name: 'Get resonance' }).click();
   const refill = page.getByTestId('journal-resonance-refill');
   await expect(refill).toBeVisible();
-  await expect(refill).toContainText('October 1, 2026');
+  await expect(refill).toContainText('This needs your own API key');
+  await expect(refill).not.toContainText('BotMason');
   await expect(page.getByTestId('resonance-explainer')).toHaveCount(0);
   await expect(refill.getByText(/Don.t show this again/u)).toHaveCount(0);
 

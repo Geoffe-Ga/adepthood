@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -49,3 +50,5 @@ class UsageResponse(BaseModel):
     monthly_cap: int
     monthly_reset_date: datetime
     offering_balance: int
+    # Local routing eligibility only; a bound vault may be unavailable or unable to answer.
+    resonance_route: Literal["vault_bound", "app_provider"]

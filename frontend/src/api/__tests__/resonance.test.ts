@@ -9,6 +9,9 @@ import {
   setLlmApiKeyGetter,
 } from '../index';
 import type { Marginalia, ResonanceResponse } from '../index';
+import { botmasonUsageSchema } from '../schemas';
+
+import { loadCostState, unknownCostState } from '@/features/Journal/resonanceCost';
 
 const mockFetch = jest.fn() as jest.Mock;
 global.fetch = mockFetch;
@@ -60,6 +63,7 @@ describe('BotMason pricing inputs', () => {
   test('reads and validates the deployment-served usage policy', async () => {
     mockFetch.mockReturnValueOnce(
       jsonResponse({
+        resonance_route: 'vault_bound',
         monthly_messages_used: 3,
         monthly_messages_remaining: 4,
         monthly_cap: 7,
@@ -74,6 +78,57 @@ describe('BotMason pricing inputs', () => {
     expect(result.monthly_cap).toBe(7);
     expect(result.monthly_messages_remaining).toBe(4);
   });
+});
+
+describe('server-reported resonance route (#3262)', () => {
+  const usage = {
+    monthly_messages_used: 0,
+    monthly_messages_remaining: 20,
+    monthly_cap: 20,
+    monthly_reset_date: '2026-11-01T00:00:00Z',
+    offering_balance: 0,
+  };
+  test.each(['vault_bound', 'app_provider'] as const)(
+    'preserves %s through the usage client',
+    async (route) => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ ...usage, resonance_route: route }));
+      const result = await botmasonUsage.get('tok');
+      expect(result.resonance_route).toBe(route);
+      expect(mockFetch.mock.calls[0][0]).toBe('http://test/user/usage');
+    },
+  );
+  test('rejects a usage response missing the required route', async () => {
+    expect(botmasonUsageSchema.safeParse(usage).success).toBe(false);
+    mockFetch.mockReturnValueOnce(jsonResponse(usage));
+    await expect(botmasonUsage.get('tok')).rejects.toThrow();
+  });
+  test.each([false, true])(
+    'blocks a missing route through the real usage client and cost reader, own key=%s',
+    async (hasKey) => {
+      mockFetch.mockReturnValueOnce(jsonResponse(usage));
+      const result = await loadCostState(hasKey, 'reading', 'tok');
+      expect(result).toEqual(unknownCostState());
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch.mock.calls[0][0]).toBe('http://test/user/usage');
+    },
+  );
+  test.each([false, true])(
+    'blocks an unsupported route through the real usage client and cost reader, own key=%s',
+    async (hasKey) => {
+      mockFetch.mockReturnValueOnce(jsonResponse({ ...usage, resonance_route: 'future_route' }));
+      const result = await loadCostState(hasKey, 'reading', 'tok');
+      expect(result).toEqual(unknownCostState());
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    },
+  );
+  test.each(['shared_provider', 'vault_available', null, true])(
+    'rejects unsupported route %s',
+    (route) => {
+      expect(botmasonUsageSchema.safeParse({ ...usage, resonance_route: route }).success).toBe(
+        false,
+      );
+    },
+  );
 });
 
 describe('journal.update', () => {

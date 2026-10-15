@@ -2,8 +2,8 @@
  * The payer gate in front of a resonance pass.
  *
  * A press on "Get Resonance" used to reach ``resonance.generate`` directly, and
- * that call either uses the caller's API key or deducts one message from the
- * account's BotMason allowance before it dials the model. This hook puts the
+ * that call either uses the caller's key on the app-provider route or spends
+ * a credit when the bound vault answers, even if a key is saved. This hook puts the
  * payer disclosure in between: the first
  * press (for an account that has not asked otherwise) opens
  * ``ResonanceExplainerDialog``, and only the dialog's Continue arm runs the
@@ -33,10 +33,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 
 import { loadCostState, UNKNOWN_COST_STATE, type ResonanceCostState } from './resonanceCost';
+import { usePaymentScope } from './usePaymentScope';
 import type { ResonanceRequestOutcome } from './useResonance';
 import { useStoredDismissal, type StoredDismissal } from './useStoredDismissal';
 
 import { useApiKey } from '@/context/ApiKeyContext';
+import { useAuth } from '@/context/AuthContext';
 import { useMountedRef } from '@/hooks/useMountedRef';
 import {
   loadResonanceExplainerDismissed,
@@ -56,13 +58,9 @@ export interface ResonanceExplainerGate {
   visible: boolean;
   /** Spend copy for the payer and deployment policy currently in force. */
   cost: string;
+  keyNeeded: boolean;
   /** True while the payer is unknown or the known wallet cannot fund a pass. */
   continueDisabled: boolean;
-  /**
-   * Only the writer's own key could pay (#3262): the disclosure leads with
-   * that, and its charged arm becomes a way to Settings.
-   */
-  keyNeeded: boolean;
   /** The state of the "don’t show this again" box for this showing. */
   dontShowAgain: boolean;
   onToggleDontShowAgain: () => void;
@@ -87,14 +85,15 @@ export interface ResonanceExplainerGate {
  * Resolve price copy without ever exposing the key itself.
  *
  * The defensive catches keep the disclosure truthful during a failed usage
- * read (and while component tests intentionally supply a partial API seam): a
- * generic BotMason-message statement replaces any guessed allowance.
+ * read: an unknown route keeps Continue disabled rather than guessing a payer.
  */
-function useResonanceCost(): {
+function useResonanceCost(scopeIsCurrent: () => boolean): {
   current: ResonanceCostState;
   refresh: (_apiKey: string | null) => Promise<ResonanceCostState | null>;
 } {
-  const [current, setCurrent] = useState(UNKNOWN_COST_STATE);
+  const { token } = useAuth();
+  const [snapshot, setSnapshot] = useState({ scopeIsCurrent, value: UNKNOWN_COST_STATE });
+  const current = snapshot.scopeIsCurrent === scopeIsCurrent ? snapshot.value : UNKNOWN_COST_STATE;
   const generationRef = useRef(0);
   const mountedRef = useMountedRef();
   useEffect(
@@ -106,16 +105,19 @@ function useResonanceCost(): {
 
   const refresh = useCallback(
     async (apiKey: string | null): Promise<ResonanceCostState | null> => {
+      if (!scopeIsCurrent() || token === null) return null;
       const generation = ++generationRef.current;
-      if (apiKey === null) {
-        setCurrent({ ...UNKNOWN_COST_STATE, canContinue: false, loading: true });
-      }
-      const next = await loadCostState(apiKey !== null);
-      if (!mountedRef.current || generationRef.current !== generation) return null;
-      setCurrent(next);
+      setSnapshot({
+        scopeIsCurrent,
+        value: { ...UNKNOWN_COST_STATE, canContinue: false, loading: true },
+      });
+      const next = await loadCostState(apiKey !== null, undefined, token);
+      if (!mountedRef.current || generationRef.current !== generation || !scopeIsCurrent())
+        return null;
+      setSnapshot({ scopeIsCurrent, value: next });
       return next;
     },
-    [mountedRef],
+    [mountedRef, scopeIsCurrent, token],
   );
   return useMemo(() => ({ current, refresh }), [current, refresh]);
 }
@@ -125,6 +127,7 @@ type DismissedFlag = StoredDismissal;
 
 interface DisclosureDecisionInput {
   cost: ReturnType<typeof useResonanceCost>;
+  scopeIsCurrent: () => boolean;
   disclosedKeyRef: MutableRefObject<string | null>;
   payerRef: MutableRefObject<{ apiKey: string | null; keyIsLoading: boolean }>;
   flag: DismissedFlag;
@@ -147,15 +150,17 @@ async function publishDecision(
   dismissed: boolean,
   input: DisclosureDecisionInput,
 ): Promise<void> {
-  // A remedy, not a disclosure: a dismissal never turns this press into a
-  // request the server can only refuse.
   if (resolvedCost.keyNeeded) {
     input.disclosedKeyRef.current = payerKey;
     input.show();
-  } else if (payerKey === null && !resolvedCost.canContinue) {
+  } else if (resolvedCost.fundingRequired !== null) {
     input.disclosedKeyRef.current = null;
-    input.showRefill(resolvedCost.monthlyResetDate, resolvedCost.monthlyCap, 'wallet_exhausted');
-  } else if (dismissed) {
+    input.showRefill(
+      resolvedCost.monthlyResetDate,
+      resolvedCost.monthlyCap,
+      resolvedCost.fundingRequired,
+    );
+  } else if (dismissed && resolvedCost.canContinue) {
     await input.runRequest(payerKey);
   } else {
     input.disclosedKeyRef.current = payerKey;
@@ -202,7 +207,9 @@ function useDisclosureDecision(input: DisclosureDecisionInput) {
       if (inFlightRef.current !== null) return inFlightRef.current;
       setPending(true);
       const generation = ++generationRef.current;
-      const task = decideOnce(() => generationRef.current === generation).finally(() => {
+      const task = decideOnce(
+        () => generationRef.current === generation && input.scopeIsCurrent(),
+      ).finally(() => {
         if (inFlightRef.current !== task) return;
         inFlightRef.current = null;
         if (mountedRef.current) setPending(false);
@@ -210,7 +217,7 @@ function useDisclosureDecision(input: DisclosureDecisionInput) {
       inFlightRef.current = task;
       return task;
     },
-    [decideOnce, mountedRef],
+    [decideOnce, input, mountedRef],
   );
   const cancel = useCallback(() => {
     generationRef.current += 1;
@@ -277,20 +284,23 @@ function useShowRefillFor(
 function useFundingAwareRequest(
   requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
   showRefillFor: (_reason: ResonanceRefillReason) => Promise<void>,
+  scopeIsCurrent: () => boolean,
 ) {
   const generationRef = useRef(0);
   const run = useCallback(
     async (payerKey: string | null): Promise<void> => {
+      if (!scopeIsCurrent()) return;
       const requestGeneration = ++generationRef.current;
       const outcome = await requestResonance(payerKey);
       if (
+        !scopeIsCurrent() ||
         generationRef.current !== requestGeneration ||
         (outcome !== 'funding_required' && outcome !== 'key_required')
       )
         return;
       await showRefillFor(outcome === 'key_required' ? 'key_required' : 'wallet_exhausted');
     },
-    [requestResonance, showRefillFor],
+    [requestResonance, showRefillFor, scopeIsCurrent],
   );
   const cancel = useCallback(() => {
     generationRef.current += 1;
@@ -318,8 +328,8 @@ function useContinue(input: ContinueInput): () => void {
     if (keyIsLoading || apiKey !== disclosedKeyRef.current) {
       disclosedKeyRef.current = apiKey;
       void cost.refresh(apiKey).then((latest) => {
-        if (apiKey === null && latest !== null && !latest.canContinue && !latest.keyNeeded) {
-          showRefill(latest.monthlyResetDate, latest.monthlyCap, 'wallet_exhausted');
+        if (latest !== null && latest.fundingRequired !== null) {
+          showRefill(latest.monthlyResetDate, latest.monthlyCap, latest.fundingRequired);
         }
       });
       return;
@@ -395,7 +405,21 @@ function useDisclosureSurfaces(flag: DismissedFlag) {
     setVisible(false);
     if (dontShowAgain) flag.markDismissed();
   }, [dontShowAgain, flag]);
-  return { ...refill, visible, dontShowAgain, show, showRefill, onToggleDontShowAgain, close };
+  const reset = useCallback(() => {
+    setVisible(false);
+    setDontShowAgain(false);
+    onCancelRefill();
+  }, [onCancelRefill]);
+  return {
+    ...refill,
+    visible,
+    dontShowAgain,
+    show,
+    showRefill,
+    onToggleDontShowAgain,
+    close,
+    reset,
+  };
 }
 
 function useCancelPayerWork(
@@ -437,8 +461,8 @@ function gateFromParts(parts: GateParts): ResonanceExplainerGate {
     cancelPending,
     visible: surfaces.visible,
     cost: cost.current.copy,
-    continueDisabled: cost.current.loading || !cost.current.canContinue,
     keyNeeded: cost.current.keyNeeded,
+    continueDisabled: cost.current.loading || !cost.current.canContinue,
     dontShowAgain: surfaces.dontShowAgain,
     onToggleDontShowAgain: surfaces.onToggleDontShowAgain,
     onContinue,
@@ -452,21 +476,49 @@ function gateFromParts(parts: GateParts): ResonanceExplainerGate {
   };
 }
 
-/** Gate ``requestResonance`` behind disclosure pinned to the accepted payer. */
-export function useResonanceExplainer(
-  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
-): ResonanceExplainerGate {
-  const { apiKey, isLoading: keyIsLoading } = useApiKey();
+/** Clear prior-owner surfaces while immediately hiding them on the transition render. */
+function useScopeSurfaces(
+  scopeIsCurrent: () => boolean,
+  cancelPending: () => void,
+  surfaces: ReturnType<typeof useDisclosureSurfaces>,
+): boolean {
+  const surfaceScopeRef = useRef(scopeIsCurrent);
+  const sameScope = surfaceScopeRef.current === scopeIsCurrent;
+  useEffect(() => {
+    if (surfaceScopeRef.current === scopeIsCurrent) return;
+    surfaceScopeRef.current = scopeIsCurrent;
+    cancelPending();
+    surfaces.reset();
+  }, [scopeIsCurrent, cancelPending, surfaces]);
+  return sameScope;
+}
+
+function usePayerRef(apiKey: string | null, keyIsLoading: boolean) {
   const payerRef = useRef({ apiKey, keyIsLoading });
   payerRef.current = { apiKey, keyIsLoading };
-  const flag = useStoredDismissal(loadResonanceExplainerDismissed, saveResonanceExplainerDismissed);
+  return payerRef;
+}
+
+/** Resolve the current payer, disclosure preference, and one funding decision together. */
+function usePayerParts(
+  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
+  scopeIsCurrent: () => boolean,
+) {
+  const { apiKey, isLoading: keyIsLoading } = useApiKey();
+  const payerRef = usePayerRef(apiKey, keyIsLoading);
+  const flag = useStoredDismissal(
+    loadResonanceExplainerDismissed,
+    saveResonanceExplainerDismissed,
+    scopeIsCurrent,
+  );
   const surfaces = useDisclosureSurfaces(flag);
-  const cost = useResonanceCost();
+  const cost = useResonanceCost(scopeIsCurrent);
   const disclosedKeyRef = useRef<string | null>(null);
   const showRefillFor = useShowRefillFor(cost, surfaces);
-  const funding = useFundingAwareRequest(requestResonance, showRefillFor);
+  const funding = useFundingAwareRequest(requestResonance, showRefillFor, scopeIsCurrent);
   const decision = useDisclosureDecision({
     cost,
+    scopeIsCurrent,
     disclosedKeyRef,
     payerRef,
     flag,
@@ -474,6 +526,33 @@ export function useResonanceExplainer(
     show: surfaces.show,
     showRefill: surfaces.showRefill,
   });
+  return {
+    apiKey,
+    keyIsLoading,
+    surfaces,
+    cost,
+    disclosedKeyRef,
+    showRefillFor,
+    funding,
+    decision,
+  };
+}
+
+/** Gate ``requestResonance`` behind disclosure pinned to the accepted payer. */
+export function useResonanceExplainer(
+  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
+): ResonanceExplainerGate {
+  const scopeIsCurrent = usePaymentScope();
+  const {
+    apiKey,
+    keyIsLoading,
+    surfaces,
+    cost,
+    disclosedKeyRef,
+    showRefillFor,
+    funding,
+    decision,
+  } = usePayerParts(requestResonance, scopeIsCurrent);
   const hydratedPress = useHydratedPress(decision.decide, apiKey, keyIsLoading);
   const onContinue = useContinue({
     apiKey,
@@ -492,7 +571,8 @@ export function useResonanceExplainer(
     surfaces.onCancelRefill,
   );
 
-  return gateFromParts({
+  const sameScope = useScopeSurfaces(scopeIsCurrent, cancelPending, surfaces);
+  const gate = gateFromParts({
     decision,
     surfaces,
     cost,
@@ -501,4 +581,9 @@ export function useResonanceExplainer(
     cancelPending,
     showRefillFor,
   });
+  return {
+    ...gate,
+    visible: sameScope && gate.visible,
+    refillVisible: sameScope && gate.refillVisible,
+  };
 }

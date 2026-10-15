@@ -2,9 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   ESSAY_ASK_WHAT,
-  ESSAY_NOUN,
   RESONANCE_EXPLAINER_WHAT,
-  keyNeededCost,
+  essayExplainerCost,
   resonanceExplainerCost,
 } from '../resonanceExplainerCopy';
 
@@ -17,11 +16,11 @@ import {
  * never built from the module's own constants: a test that read the same
  * constant the screen renders would prove only that a string equals itself.
  */
-const ADD_KEY = 'Add your own API key in Settings and it pays instead.';
 
 /** A price line's arguments: payer, cap, then the optional wallet snapshot. */
-type CostArgs = [boolean, number | null, (number | null)?, (number | null)?];
+type CostArgs = [boolean, number | null, (number | null)?, (number | null)?, string?, boolean?];
 type CostCase = [string, CostArgs, string];
+type EssayCostCase = [string, [boolean, number | null, (number | null)?, (number | null)?], string];
 
 describe('resonanceExplainerCost keeps the reading’s shipped wording', () => {
   it.each<CostCase>([
@@ -32,31 +31,31 @@ describe('resonanceExplainerCost keeps the reading’s shipped wording', () => {
     ],
     [
       'an empty wallet',
-      [false, 20, 0, 0],
-      `You have no BotMason monthly messages or offerings available for this reading. ${ADD_KEY}`,
+      [false, 20, 0, 0, 'reading', true],
+      `You have no BotMason monthly messages or offerings available for this reading.`,
     ],
     [
       'a spent month with offerings left',
-      [false, 20, 0, 3],
-      `This reading spends one BotMason offering. ${ADD_KEY}`,
+      [false, 20, 0, 3, 'reading', true],
+      `This reading spends one BotMason offering.`,
     ],
     [
       'the monthly allowance',
-      [false, 20, 12, 0],
-      `This reading spends one of your 20 BotMason messages for the month. ${ADD_KEY}`,
+      [false, 20, 12, 0, 'reading', true],
+      `This reading spends one of your 20 BotMason messages for the month.`,
     ],
     [
       'an unknown allowance',
-      [false, null],
-      `This reading spends one BotMason message from your account. ${ADD_KEY}`,
+      [false, null, null, null, 'reading', true],
+      `This reading spends one BotMason message from your account.`,
     ],
   ])('for %s', (_case, args, expected) => {
     expect(resonanceExplainerCost(...args)).toBe(expected);
   });
 });
 
-describe('a letter priced in a development build uses the same wallet wording', () => {
-  it.each<CostCase>([
+describe('essayExplainerCost requires an own key for eligible app-provider letters', () => {
+  it.each<EssayCostCase>([
     [
       'the caller’s own key',
       [true, null],
@@ -65,45 +64,25 @@ describe('a letter priced in a development build uses the same wallet wording', 
     [
       'an empty wallet',
       [false, 20, 0, 0],
-      `You have no BotMason monthly messages or offerings available for this letter. ${ADD_KEY}`,
+      'This needs your own API key. Add one in Settings to ask for this letter.',
     ],
     [
       'a spent month with offerings left',
       [false, 20, 0, 3],
-      `This letter spends one BotMason offering. ${ADD_KEY}`,
+      'This needs your own API key. Add one in Settings to ask for this letter.',
     ],
     [
       'the monthly allowance',
       [false, 20, 12, 0],
-      `This letter spends one of your 20 BotMason messages for the month. ${ADD_KEY}`,
+      'This needs your own API key. Add one in Settings to ask for this letter.',
     ],
     [
       'an unknown allowance',
       [false, null],
-      `This letter spends one BotMason message from your account. ${ADD_KEY}`,
-    ],
-  ])('for %s', (_case, args, expected) => {
-    const [hasKey, cap, remaining = null, offerings = null] = args;
-    expect(resonanceExplainerCost(hasKey, cap, remaining, offerings, ESSAY_NOUN)).toBe(expected);
-  });
-});
-
-describe('keyNeededCost leads with the key and names no price (#3262)', () => {
-  it.each([
-    [
-      'a reading',
-      undefined,
-      'This needs your own API key. Add one in Settings to ask for this reading.',
-    ],
-    [
-      'a letter',
-      ESSAY_NOUN,
       'This needs your own API key. Add one in Settings to ask for this letter.',
     ],
-  ])('for %s', (_case, noun, expected) => {
-    const line = keyNeededCost(noun);
-    expect(line).toBe(expected);
-    expect(line).not.toMatch(/BotMason|offering|spends/u);
+  ])('for %s', (_case, args, expected) => {
+    expect(essayExplainerCost(...args)).toBe(expected);
   });
 });
 
