@@ -136,3 +136,118 @@ describe('useGrowingFieldHeight value-keyed remeasure (#3001)', () => {
     expect(read.mock.calls.length).toBe(mounted + 1);
   });
 });
+
+const NARROW = 320;
+const WIDE = 900;
+const WRAPPED = 410.5;
+const WRAPPED_CEIL = 411;
+const UNWRAPPED = 150;
+
+/** A twinnable host textarea whose copy reports ``natural`` as its text's height. */
+function twinnableNode(scrollHeight: number, natural: { height: number }) {
+  const twins: Array<{ style: Record<string, string>; value: string }> = [];
+  const appended: unknown[] = [];
+  const node = {
+    scrollHeight,
+    value: 'a title long enough to wrap',
+    ownerDocument: {
+      body: { appendChild: (child: unknown) => appended.push(child) },
+      defaultView: { getComputedStyle: () => ({ width: '358px' }) },
+    },
+    cloneNode: () => {
+      const twin = {
+        style: {} as Record<string, string>,
+        value: '',
+        get scrollHeight() {
+          return natural.height;
+        },
+        removeAttribute: jest.fn(),
+        setAttribute: jest.fn(),
+        remove: jest.fn(),
+      };
+      twins.push(twin);
+      return twin;
+    },
+  };
+  return { node, twins, appended };
+}
+
+function layout(width: number) {
+  return { nativeEvent: { layout: { width, height: 0, x: 0, y: 0 } } };
+}
+
+describe('useGrowingFieldHeight follows a width change (#3325)', () => {
+  let originalOS: string;
+  beforeEach(() => {
+    originalOS = Platform.OS;
+    Platform.OS = 'web';
+  });
+  afterEach(() => {
+    Platform.OS = originalOS;
+  });
+
+  function renderAt(node: unknown) {
+    const ref = { current: node };
+    return renderHook(() => useGrowingFieldHeight(MIN, { value: 'v', inputRef: ref }));
+  }
+
+  it('re-measures the natural height when a narrowed field rewraps', () => {
+    const natural = { height: UNWRAPPED };
+    const { node } = twinnableNode(UNWRAPPED, natural);
+    const { result } = renderAt(node);
+    act(() => result.current.onLayout(layout(WIDE)));
+    expect(result.current.style.height).toBe(UNWRAPPED);
+    natural.height = WRAPPED;
+    act(() => result.current.onLayout(layout(NARROW)));
+    expect(result.current.style.height).toBe(WRAPPED_CEIL);
+  });
+
+  it('gives the height back when a widened field needs fewer lines', () => {
+    const natural = { height: WRAPPED };
+    const { node } = twinnableNode(WRAPPED, natural);
+    const { result } = renderAt(node);
+    act(() => result.current.onLayout(layout(NARROW)));
+    expect(result.current.style.height).toBe(WRAPPED_CEIL);
+    natural.height = UNWRAPPED;
+    act(() => result.current.onLayout(layout(WIDE)));
+    expect(result.current.style.height).toBe(UNWRAPPED);
+  });
+
+  it('ignores a layout that only changes the height it set itself', () => {
+    const natural = { height: WRAPPED };
+    const { node, twins } = twinnableNode(WRAPPED, natural);
+    const { result } = renderAt(node);
+    act(() => result.current.onLayout(layout(NARROW)));
+    const measured = twins.length;
+    act(() => result.current.onLayout(layout(NARROW)));
+    expect(twins.length).toBe(measured);
+  });
+
+  it('re-measures once a font face finishes loading', () => {
+    const listeners: Array<() => void> = [];
+    const fonts = {
+      addEventListener: (_type: string, listener: () => void) => listeners.push(listener),
+      removeEventListener: jest.fn(),
+    };
+    (globalThis as { document?: unknown }).document = { fonts };
+    try {
+      const natural = { height: UNWRAPPED };
+      const { node } = twinnableNode(UNWRAPPED, natural);
+      const { result, unmount } = renderAt(node);
+      expect(listeners).toHaveLength(1);
+      natural.height = WRAPPED;
+      act(() => listeners[0]!());
+      expect(result.current.style.height).toBe(WRAPPED_CEIL);
+      unmount();
+      expect(fonts.removeEventListener).toHaveBeenCalledWith('loadingdone', listeners[0]);
+    } finally {
+      delete (globalThis as { document?: unknown }).document;
+    }
+  });
+
+  it('measures nothing on a layout for an untracked field', () => {
+    const { result } = renderHook(() => useGrowingFieldHeight(MIN));
+    act(() => result.current.onLayout(layout(NARROW)));
+    expect(result.current.style.height).toBe(MIN);
+  });
+});

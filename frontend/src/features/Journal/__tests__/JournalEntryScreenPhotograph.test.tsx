@@ -70,6 +70,9 @@ jest.mock('@/context/ApiKeyContext', () => require('./apiKeyContextTestKit'));
 const mockReadWebContentHeight = jest.fn<(_node: unknown) => number | undefined>();
 jest.mock('../webFieldMeasure', () => ({
   readWebContentHeight: (node: unknown) => mockReadWebContentHeight(node),
+  // The width and font re-measures (#3325) measure nothing here, as on native.
+  readWebNaturalHeight: () => undefined,
+  onWebFontsSettled: () => () => undefined,
 }));
 
 const JournalEntryScreen = require('../JournalEntryScreen').default;

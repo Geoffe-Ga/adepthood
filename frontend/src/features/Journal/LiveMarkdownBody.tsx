@@ -314,6 +314,7 @@ export default function LiveMarkdownBody({
           value={body}
           onChangeText={markdown.changeBody}
           onContentSizeChange={growth.onContentSizeChange}
+          onLayout={growth.onLayout}
           selection={markdown.selection}
           onSelectionChange={markdown.changeSelection}
           onKeyPress={onKeyPress}

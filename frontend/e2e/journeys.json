@@ -1580,6 +1580,18 @@
     "coveredBy": "frontend/e2e/journal-entry-controls.browser.e2e.test.ts"
   },
   {
+    "id": "journal.wrapped-title-shows-every-line",
+    "description": "A writer gives a page a title too long for one line and sees every line of it, at every width (#3325). The title is a growing field sized to its text, so a wrapped title belongs to the page flow, never to an inner scroll. The real browser lays the title's value out in a twin with the field's computed face, width and inset and proves every line box sits inside the field's visible padding box, nothing is left to scroll (scrollHeight within clientHeight, scrollTop 0), the field never runs under the hairline below it, and it holds no more than its lines and inset. The journey types the original report's title ('A page with steady controls') at 1280x720 and narrows to 390x844, where it now wraps to two visible lines instead of hiding the second; types a long title key by key at 390; widens to 1280 and sees the spare lines given back; edits the title in place at 390 and presses Enter to land in the body with the edited value kept; then closes, lets the real POST /journal/ save it, reopens it from the shelf and measures the loaded title at 390 and 1280. A second run at 200% browser zoom on a phone (195x422 CSS px at device scale 2) types and then sets a long title and measures it the same way. Jest pins the width-change and font-settlement re-measures in useGrowingFieldHeight and the twin measurement in webFieldMeasure.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["GET /journal/", "POST /journal/"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-title-wrap.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.read-past-prompts",
     "description": "Someone opens Past prompts from the journal shelf and reads the weekly questions they have already answered with what they wrote under each. Answering a prompt mirrors the response into the journal as an ordinary page, which keeps the writing and loses the question that drew it, so this route is the only one that returns the pair -- and nothing asked for it until this surface existed. What the seam has to prove is that a submitted response comes back joined to its own question, and that the limit and offset the modal sends actually slice the set rather than being ignored.",
     "crosses": {
@@ -2520,6 +2532,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/date-picker-reflow.browser.e2e.test.ts"
+  },
+  {
+    "id": "shared.date-shortcuts-follow-the-local-day",
+    "description": "A user leaves the shared date picker open across local midnight and the quick choices answer for the day it now is, not the day the picker mounted (#3381). The covering spec signs up through the real client in America/Los_Angeles, seeds one habit, moves the page clock to 23:59 on the next Sunday and opens the Energy Scaffolding date step, then moves the wall clock past midnight with setSystemTime so no timer fires and nothing re-renders the picker. Pressing next monday commits the following week's Monday, today commits Monday, and first of next month commits the first of the month after Monday's, at 390px and 1280px. Unmounted-clock edge cases stay in Jest (src/components/__tests__/DatePicker.test.tsx): the month boundary, maxDate/minDate/disabledDate re-evaluated on the next render, a stale-rendered enabled button that now falls outside maxDate committing nothing, and first of next month anchored to local midnight so a maxDate on that day keeps it enabled. Date selection here is a local draft, not a saved program-date mutation.",
+    "crosses": {
+      "screen": "frontend/src/components/DatePicker.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "GET /habits/"],
+      "tables": ["user", "habit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/date-picker-day-change.browser.e2e.test.ts"
   },
   {
     "id": "practice.completed-sitting-links-and-logs-a-habit",

@@ -6,7 +6,11 @@ jest.mock('@/api', () => ({
 }));
 
 import { resetAllStores } from '../registry';
-import { selectKnownUnlinked, useWritingHabitLinkStore } from '../useWritingHabitLinkStore';
+import {
+  getWritingHabitLinkGeneration,
+  selectKnownUnlinked,
+  useWritingHabitLinkStore,
+} from '../useWritingHabitLinkStore';
 
 import type { UiFlags, UiFlagsUpdate } from '@/api';
 
@@ -186,6 +190,144 @@ describe('useWritingHabitLinkStore.reset', () => {
 
     resetAllStores();
 
+    expect(useWritingHabitLinkStore.getState().habitId).toBeNull();
+    expect(useWritingHabitLinkStore.getState().hydrated).toBe(false);
+  });
+});
+
+/**
+ * A PATCH the test answers by hand, so an account change can land while it is
+ * still on the wire (#3378).
+ */
+function deferUpdate(): (value: UiFlags) => void {
+  let answer: ((value: UiFlags) => void) | undefined;
+  mockUiFlags.update.mockImplementationOnce(
+    () =>
+      new Promise<UiFlags>((resolve) => {
+        answer = resolve;
+      }),
+  );
+  return (value) => answer?.(value);
+}
+
+const OUTGOING_HABIT_ID = 41;
+const INCOMING_HABIT_ID = 52;
+const INCOMING_CHOICE_ID = 63;
+
+describe('useWritingHabitLinkStore.setLink across account changes (#3378)', () => {
+  it('a PATCH that lands for the account still signed in is adopted', async () => {
+    const answer = deferUpdate();
+    const pending = useWritingHabitLinkStore.getState().setLink(OUTGOING_HABIT_ID, 'tok-a');
+
+    answer(flags(OUTGOING_HABIT_ID));
+
+    await expect(pending).resolves.toBe(true);
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(OUTGOING_HABIT_ID);
+    expect(useWritingHabitLinkStore.getState().hydrated).toBe(true);
+  });
+
+  it('two picks by the same account both land, the later answer winning', async () => {
+    const answerFirst = deferUpdate();
+    const answerSecond = deferUpdate();
+    const first = useWritingHabitLinkStore.getState().setLink(OUTGOING_HABIT_ID, 'tok-a');
+    const second = useWritingHabitLinkStore.getState().setLink(SERVER_HABIT_ID, 'tok-a');
+
+    answerFirst(flags(OUTGOING_HABIT_ID));
+    await first;
+    answerSecond(flags(SERVER_HABIT_ID));
+
+    await expect(second).resolves.toBe(true);
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(SERVER_HABIT_ID);
+  });
+
+  it('a PATCH that lands after logout leaves the store signed-out and unhydrated', async () => {
+    const answer = deferUpdate();
+    const pending = useWritingHabitLinkStore.getState().setLink(OUTGOING_HABIT_ID, 'tok-a');
+
+    resetAllStores();
+    answer(flags(OUTGOING_HABIT_ID));
+
+    await expect(pending).resolves.toBe(false);
+    expect(useWritingHabitLinkStore.getState().habitId).toBeNull();
+    expect(useWritingHabitLinkStore.getState().hydrated).toBe(false);
+  });
+
+  it("a PATCH that lands after an A→B switch cannot replace B's hydrated link", async () => {
+    const answer = deferUpdate();
+    const pending = useWritingHabitLinkStore.getState().setLink(OUTGOING_HABIT_ID, 'tok-a');
+    resetAllStores();
+    mockUiFlags.get.mockResolvedValueOnce(flags(INCOMING_HABIT_ID));
+    await useWritingHabitLinkStore.getState().hydrate('tok-b');
+    const generationBefore = getWritingHabitLinkGeneration();
+
+    answer(flags(OUTGOING_HABIT_ID));
+
+    await expect(pending).resolves.toBe(false);
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(INCOMING_HABIT_ID);
+    expect(useWritingHabitLinkStore.getState().hydrated).toBe(true);
+    // The stale answer must not look like a link change to the completion fence.
+    expect(getWritingHabitLinkGeneration()).toBe(generationBefore);
+  });
+
+  it("a PATCH that lands after an A→B switch does not erase B's own selection", async () => {
+    const answer = deferUpdate();
+    const pending = useWritingHabitLinkStore.getState().setLink(OUTGOING_HABIT_ID, 'tok-a');
+    resetAllStores();
+    mockUiFlags.update.mockResolvedValueOnce(flags(INCOMING_CHOICE_ID));
+    await expect(
+      useWritingHabitLinkStore.getState().setLink(INCOMING_CHOICE_ID, 'tok-b'),
+    ).resolves.toBe(true);
+
+    answer(flags(OUTGOING_HABIT_ID));
+
+    await expect(pending).resolves.toBe(false);
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(INCOMING_CHOICE_ID);
+    expect(useWritingHabitLinkStore.getState().hydrated).toBe(true);
+  });
+
+  it('a PATCH that lands before B has read anything leaves B free to read its own link', async () => {
+    const answer = deferUpdate();
+    const pending = useWritingHabitLinkStore.getState().setLink(OUTGOING_HABIT_ID, 'tok-a');
+    resetAllStores();
+
+    answer(flags(OUTGOING_HABIT_ID));
+    await pending;
+    mockUiFlags.get.mockResolvedValueOnce(flags(INCOMING_HABIT_ID));
+    await useWritingHabitLinkStore.getState().hydrate('tok-b');
+
+    expect(mockUiFlags.get).toHaveBeenCalledWith('tok-b');
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(INCOMING_HABIT_ID);
+  });
+
+  it('a PATCH from the first A session cannot land after A→B→A', async () => {
+    const answer = deferUpdate();
+    const pending = useWritingHabitLinkStore.getState().setLink(OUTGOING_HABIT_ID, 'tok-a1');
+    resetAllStores();
+    resetAllStores();
+    mockUiFlags.get.mockResolvedValueOnce(flags(SERVER_HABIT_ID));
+    await useWritingHabitLinkStore.getState().hydrate('tok-a2');
+
+    answer(flags(OUTGOING_HABIT_ID));
+
+    await expect(pending).resolves.toBe(false);
+    expect(useWritingHabitLinkStore.getState().habitId).toBe(SERVER_HABIT_ID);
+    expect(useWritingHabitLinkStore.getState().hydrated).toBe(true);
+  });
+
+  it('a refused PATCH after logout changes nothing', async () => {
+    let refuse: ((reason: Error) => void) | undefined;
+    mockUiFlags.update.mockImplementationOnce(
+      () =>
+        new Promise<UiFlags>((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+    const pending = useWritingHabitLinkStore.getState().setLink(OUTGOING_HABIT_ID, 'tok-a');
+    resetAllStores();
+
+    refuse?.(new Error('401'));
+
+    await expect(pending).resolves.toBe(false);
     expect(useWritingHabitLinkStore.getState().habitId).toBeNull();
     expect(useWritingHabitLinkStore.getState().hydrated).toBe(false);
   });
