@@ -21,6 +21,17 @@ and failing it four ways through the production app and its middleware stack:
   passes the access logger's ``except`` branch, reaches Starlette's
   ``ServerErrorMiddleware`` and is re-raised to the server.
 
+Two sinks of their own are then driven on a failure path the same way:
+
+* **vault** -- a connected Creek Vault whose journal ingest fails with the
+  canary in the transport error and in an echoed 5xx body; the process tally
+  (``telemetry.vault_telemetry``) and its one ``creek vault outcome`` record
+  are read back;
+* **usage row** -- a provider that answers with the canary as its model name
+  and as an unreadable reflection, so the pass comes back empty; the stored
+  ``LLMUsageLog`` rows (``db.llmusagelog``) and the settlement line are read
+  back.
+
 Every case reads the same four sinks of the sink registry
 (``privacy.sinks``), each the way a deployment would write it:
 
@@ -52,18 +63,23 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Final, NoReturn
 
+import httpx
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+from sqlmodel import col, select
 from starlette.status import HTTP_422_UNPROCESSABLE_CONTENT
 
 import sentry as error_monitoring
 import telemetry_safety
 from database import get_session
+from dependencies.creek_vault import get_creek_vault_client
+from domain.creek_vault import CONTRACT_VERSION, CreekCapability
 from main import app
 from middleware import security_headers
 from models.journal_entry import JournalEntry
+from models.llm_usage_log import LLMUsageLog
 from observability import (
     TRACE_ID_HEADER,
     ContentFreeFormatter,
@@ -72,10 +88,22 @@ from observability import (
 )
 from privacy.sinks import SinkId
 from schemas.journal import ASPECT_MAX
-from services import botmason
+from services import botmason, creek_vault_telemetry, llm_usage
+from services.creek_vault_client import HttpCreekVaultClient
+from services.creek_vault_telemetry import (
+    VAULT_OUTCOME_EVENT,
+    VaultTelemetryOutcome,
+    reset_vault_telemetry_for_tests,
+    vault_outcome_counts,
+)
 from tests.helpers.sentry_capture import CapturedEvent, capturing_sentry
 from tests.helpers.telemetry_canaries import SHORT_CANARY, assert_no_canary
-from tests.provider_transport import ANTHROPIC_KEY, TransportStub, use_anthropic
+from tests.provider_transport import (
+    ANTHROPIC_KEY,
+    ANTHROPIC_MODEL,
+    TransportStub,
+    use_anthropic,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -635,4 +663,220 @@ async def test_a_middleware_failure_during_an_intimate_write_ships_no_canary(
     assert "Exception in ASGI application" in server
     assert _withheld("_HeaderPolicyError") in server
     assert _withheld("KeyError") in server
+    sinks.assert_live()
+
+
+# ── (e) Vault telemetry ──────────────────────────────────────────────────────
+
+_VAULT_URL: Final = "https://vault.c12.example.test"
+_VAULT_CREDENTIAL: Final = "c12-vault-credential"  # pragma: allowlist secret
+_VAULT_CAPABILITIES_PATH: Final = "/v1/capabilities"
+_VAULT_TELEMETRY_LOGGER: Final = creek_vault_telemetry.__name__
+#: The two ways a failing vault can hand the canary back: in the exception the
+#: transport raises, and in the body of a 5xx it answers.
+_VAULT_RAISES: Final = "transport"
+_VAULT_ECHOES: Final = "5xx"
+
+
+class _FailingVault:
+    """A connected Creek Vault that handshakes cleanly and then fails every ingest.
+
+    Its failure carries ``canary`` -- in the transport error it raises, or in
+    the 5xx body it answers -- exactly as a vault that quoted the entry back
+    would. Every request body it is sent is kept, so a case can prove the
+    canary really went out and the echo is the vault's.
+    """
+
+    def __init__(self, canary: str, failure: str) -> None:
+        """Fail with ``canary`` in the way ``failure`` names."""
+        self.canary = canary
+        self.failure = failure
+        self.bodies: list[str] = []
+
+    @staticmethod
+    def _capabilities() -> httpx.Response:
+        """The capability document of a healthy vault that accepts journal upserts."""
+        minor = ".".join(CONTRACT_VERSION.split(".")[:2])
+        return httpx.Response(
+            HTTPStatus.OK,
+            json={
+                "vault": {"available": True},
+                "capabilities": ["journal-upsert"],
+                "contract_version": CONTRACT_VERSION,
+                "contract_minor": minor,
+                "supported_contract_minors": [minor],
+                "ontology_version": "aptitude-wavelength/2026-05-23",
+                "attestation": None,
+            },
+        )
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        """Answer the handshake; fail everything else with the canary."""
+        if request.url.path == _VAULT_CAPABILITIES_PATH:
+            return self._capabilities()
+        self.bodies.append(request.content.decode())
+        if self.failure == _VAULT_RAISES:
+            msg = f"vault dropped the write of {self.canary}"
+            raise httpx.ConnectError(msg, request=request)
+        return httpx.Response(
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            json={"detail": f"could not store {self.canary}", "echo": {"body": self.canary}},
+        )
+
+
+@pytest.fixture
+def vault_records(monkeypatch: pytest.MonkeyPatch) -> Iterator[_RecordList]:
+    """Every record the vault telemetry logger writes, structured fields included."""
+    records = _RecordList()
+    telemetry_logger = logging.getLogger(_VAULT_TELEMETRY_LOGGER)
+    monkeypatch.setattr(telemetry_logger, "handlers", [*telemetry_logger.handlers, records])
+    reset_vault_telemetry_for_tests()
+    yield records
+    reset_vault_telemetry_for_tests()
+
+
+@pytest_asyncio.fixture
+async def failing_vault(
+    writer: Writer, request: pytest.FixtureRequest
+) -> AsyncIterator[_FailingVault]:
+    """A handshaken vault client over a :class:`_FailingVault`, wired into the app."""
+    double = _FailingVault(writer.canary, request.param)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(double)) as http:
+        vault = HttpCreekVaultClient(_VAULT_URL, _VAULT_CREDENTIAL, http_client=http)
+        assert (await vault.handshake()).available is True
+        app.dependency_overrides[get_creek_vault_client] = lambda: vault
+        yield double
+
+
+def _assert_tally_clean(canary: str) -> None:
+    """The tally's one failure is the journal ingest, under closed-enum keys only.
+
+    The handshakes that preceded it are counted as the successes they were.
+    """
+    counts = vault_outcome_counts()
+    failures = {key: n for key, n in counts.items() if key[0] is not VaultTelemetryOutcome.SUCCESS}
+    assert failures == {(VaultTelemetryOutcome.UNAVAILABLE, CreekCapability.JOURNAL): 1}
+    for outcome, capability in counts:
+        assert isinstance(outcome, VaultTelemetryOutcome)
+        assert isinstance(capability, CreekCapability)
+        assert_no_canary(f"{outcome!r} {capability!r}", canary)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_vault", [_VAULT_RAISES, _VAULT_ECHOES], indirect=True)
+async def test_a_failing_vault_echoing_the_entry_ships_no_canary(
+    sinks: Sinks, writer: Writer, vault_records: _RecordList, failing_vault: _FailingVault
+) -> None:
+    """A vault that fails a Personal ingest with the body in its error is a clean tally.
+
+    The entry is saved whatever the vault does, so the write still answers
+    201; the one ``creek vault outcome`` record and the per-capability tally
+    name the failure by closed-enum members, and no sink holds the words the
+    vault handed back.
+    """
+    response = await writer.http.post(
+        "/journal/",
+        json={"message": writer.body(), "title": writer.title_canary, "classification": _PERSONAL},
+        headers=writer.headers,
+    )
+
+    assert response.status_code == HTTPStatus.CREATED, response.text
+    assert any(writer.canary in body for body in failing_vault.bodies), "the body went out"
+    _assert_tally_clean(writer.canary)
+    (failed,) = [
+        record
+        for record in vault_records.records
+        if record.getMessage() == VAULT_OUTCOME_EVENT
+        and getattr(record, "outcome", None) != VaultTelemetryOutcome.SUCCESS.value
+    ]
+    assert getattr(failed, "outcome", None) == VaultTelemetryOutcome.UNAVAILABLE.value
+    assert getattr(failed, "capability", None) == CreekCapability.JOURNAL.value
+    assert failed.levelno == logging.WARNING
+    for record in vault_records.records:
+        assert_no_canary(_structured(record), writer.canary)
+        assert record.exc_info is None
+    assert VAULT_OUTCOME_EVENT in sinks.root.getvalue()
+    sinks.assert_clean(writer.canary, writer.title_canary)
+    sinks.assert_live()
+
+
+# ── (f) The usage row ────────────────────────────────────────────────────────
+
+_USAGE_INPUT_TOKENS: Final = 7
+_USAGE_OUTPUT_TOKENS: Final = 3
+#: The one line a settled generation writes, ids and counts only.
+_SETTLEMENT_EVENT: Final = "llm_generation_settled"
+
+
+def _echoing_message(echo: str) -> dict[str, Any]:
+    """An Anthropic 200 that names ``echo`` as its model and answers it as prose.
+
+    The prose is no reflection the parser can read, so the pass -- corrective
+    retry and all -- comes back empty: a failed generation that was still
+    dialled, and so still metered.
+    """
+    return {
+        "id": "msg_c12",
+        "type": "message",
+        "role": "assistant",
+        "model": f"{echo}-model",
+        "content": [{"type": "text", "text": f"I cannot reflect on {echo}"}],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {"input_tokens": _USAGE_INPUT_TOKENS, "output_tokens": _USAGE_OUTPUT_TOKENS},
+    }
+
+
+def _usage_row_text(row: LLMUsageLog) -> str:
+    """Every column of a usage row, rendered as a reader of the table would see it."""
+    return json.dumps(row.model_dump(), default=str, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_a_provider_echoing_the_prompt_as_its_model_ships_no_canary_to_the_usage_row(
+    sinks: Sinks, writer: Writer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The model a usage row stores is the one adepthood asked for, never the vendor's echo.
+
+    ``model`` is the row's only free-text column, so a provider that answered
+    with the prompt as its model name is the one way user words could reach
+    ``llmusagelog``. Every row the failed pass metered names the configured
+    model, and neither the row nor the settlement line nor any sink carries
+    the canary the provider handed back.
+    """
+    stub = use_anthropic(monkeypatch, HTTPStatus.OK, _echoing_message(writer.canary))
+    monkeypatch.delenv(botmason.STUB_SEAM_ENV_VAR, raising=False)
+    usage_records = _RecordList()
+    usage_logger = logging.getLogger(llm_usage.__name__)
+    monkeypatch.setattr(usage_logger, "handlers", [*usage_logger.handlers, usage_records])
+    entry_id = await writer.seed(_PERSONAL)
+
+    response = await writer.http.post(
+        _RESONANCE_ROUTE.format(entry_id=entry_id),
+        headers={**writer.headers, "X-LLM-API-Key": ANTHROPIC_KEY},
+    )
+
+    assert response.status_code == HTTPStatus.OK, response.text
+    assert stub.request_count >= 1
+    assert any(writer.canary in json.dumps(body) for body in stub.bodies), "the prompt went out"
+    result = await writer.session.execute(
+        select(LLMUsageLog).where(col(LLMUsageLog.user_id) == writer.user_id)
+    )
+    rows = list(result.scalars())
+    assert len(rows) == stub.request_count, "every dial is metered"
+    for row in rows:
+        assert_no_canary(_usage_row_text(row), writer.canary)
+        assert row.model == ANTHROPIC_MODEL
+        assert row.journal_entry_id == entry_id
+        assert row.prompt_tokens == _USAGE_INPUT_TOKENS
+    (settled,) = [
+        record
+        for record in usage_records.records
+        if record.getMessage().startswith(_SETTLEMENT_EVENT)
+    ]
+    assert_no_canary(_structured(settled), writer.canary)
+    assert getattr(settled, "model", None) == ANTHROPIC_MODEL
+    assert getattr(settled, "calls", None) == len(rows)
+    assert _SETTLEMENT_EVENT in sinks.root.getvalue()
+    sinks.assert_clean(writer.canary, writer.title_canary)
     sinks.assert_live()
