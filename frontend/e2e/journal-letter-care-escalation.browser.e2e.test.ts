@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -25,18 +24,6 @@ const VIEWPORTS = [
   { width: 390, height: 844 },
   { width: 1280, height: 800 },
 ];
-const CREEK_LETTER_ESCALATION = join(
-  __dirname,
-  '..',
-  '..',
-  'backend',
-  'tests',
-  'fixtures',
-  'creek_v1',
-  'examples',
-  'letters',
-  'care-escalation.json',
-);
 
 interface CareResource {
   kind: string;
@@ -60,11 +47,13 @@ function bearer(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
-/** Creek's own care message, which adepthood must drop at the adapter. */
-function creekCareMessage(): string {
-  const cell = JSON.parse(readFileSync(CREEK_LETTER_ESCALATION, 'utf8')) as {
-    care_signal: { message: string };
-  };
+/** Creek's own care message, as the lane vault serves it; adepthood must drop it. */
+async function creekCareMessage(page: Page): Promise<string> {
+  const response = await page.request.get(`${lane().vaultUrl}/__lane/letter-care-escalation`, {
+    headers: bearer(lane().vaultApiKey),
+  });
+  expect(response.status()).toBe(200);
+  const cell = (await response.json()) as { care_signal: { message: string } };
   return cell.care_signal.message;
 }
 
@@ -186,7 +175,7 @@ for (const viewport of VIEWPORTS) {
     for (const resource of care.resources) {
       await expect(card.getByText(resource.name, { exact: false }).first()).toBeAttached();
     }
-    await expect(dialog.getByText(creekCareMessage())).toHaveCount(0);
+    await expect(dialog.getByText(await creekCareMessage(page))).toHaveCount(0);
     await expect(dialog.getByTestId('essay-error')).toHaveCount(0);
     await expect(dialog.getByTestId('essay-retry')).toHaveCount(0);
     expect(await monthlyUsed(page, token)).toBe(usedBefore);

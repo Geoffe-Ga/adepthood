@@ -41,6 +41,8 @@ import { fileURLToPath } from 'node:url';
  * request is answered with Creek's own published `letters` care-escalation cell
  * (read verbatim from the vendored bundle, never written here) and stores no
  * Voice Draft, as Creek's acute-distress guard answers instead of writing.
+ * `GET /__lane/letter-care-escalation` hands a journey that same cell, so it can
+ * prove none of Creek's prose reached the writer without reading backend files.
  *
  * `GET /__lane/uploads` reports what actually arrived: every `/v1` request in
  * order, and the fragments the ledger holds. Requests are recorded by shape and
@@ -564,6 +566,11 @@ const server = createServer((request, response) => {
       request.resume();
       lettersHeld = pathname === '/__lane/hold-letters';
       send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'GET' && pathname === '/__lane/letter-care-escalation') {
+      request.resume();
+      send(response, HTTP_OK, LETTER_CARE_ESCALATION);
       return;
     }
     if (request.method === 'POST' && pathname === '/__lane/escalate-next-letter') {
