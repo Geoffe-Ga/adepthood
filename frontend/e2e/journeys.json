@@ -2767,5 +2767,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/money-copy.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.refinish-an-edited-finished-entry",
+    "description": "A writer finishes a journal entry, reopens it with the pencil and chooses Edit, and can finish it again (#3447). The covering spec writes and finishes a page through the real client, presses the exit row's Edit, confirms Edit, types a line and waits for the real autosave, then finds Finish under the body with at least a 44px target, at 390x844, 1280x720 and 390px at 200% browser zoom (195x422 CSS px at device scale 2). No autosave PATCH during the edit sends status draft. Pressing Finish sends one PATCH /journal/{id} carrying the edited body and status finished, and the page returns to reading with the pencil back in the exit row and no body field. Jest pins that Finish stays withheld while the edited page is empty.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-refinish-edited-entry.browser.e2e.test.ts"
   }
 ]
