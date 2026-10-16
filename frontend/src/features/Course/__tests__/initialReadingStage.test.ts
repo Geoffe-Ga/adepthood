@@ -14,6 +14,7 @@ const session: CourseSession = {
   token: 'captured-token',
   owner: 1,
   generation: 0,
+  session: 0,
   current: jest.fn(() => true),
 };
 const available = [{ stage_number: 5, is_unlocked: true }] as Stage[];

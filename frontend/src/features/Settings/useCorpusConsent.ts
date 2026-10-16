@@ -4,7 +4,13 @@ import { create } from 'zustand';
 import { CORPUS_CONSENT_FAILURE } from './corpusConsentCopy';
 
 import { captureSessionToken, corpusConsent, type CorpusConsent } from '@/api';
-import { getActiveUser, getActiveUserGeneration, parseUserId } from '@/storage/userScope';
+import { captureAuthScope, hasOnlySessionEnded, isAuthScopeCurrent } from '@/api/sessionToken';
+import {
+  getActiveUser,
+  getActiveUserGeneration,
+  isAccountScopeCurrent,
+  parseUserId,
+} from '@/storage/userScope';
 import { registerStoreReset } from '@/store/registry';
 import { decodeJwtPayload, isTokenExpired } from '@/utils/token';
 
@@ -61,15 +67,21 @@ function reset(): void {
 
 registerStoreReset(reset);
 
-function currentOperation(
-  epoch = generation,
-  owner = getActiveUser(),
-  accountGeneration = getActiveUserGeneration(),
-): () => boolean {
-  return () =>
-    generation === epoch &&
-    owner === getActiveUser() &&
-    accountGeneration === getActiveUserGeneration();
+interface Operation {
+  /** The store reset, account and session it began under all still hold. */
+  current: () => boolean;
+  /** Only the session ended: the same account's surface may release what it holds (#3423). */
+  sessionEnded: () => boolean;
+}
+
+/** Bind work to the store reset, account and authentication session live now. */
+function captureOperation(): Operation {
+  const epoch = generation;
+  const scope = captureAuthScope();
+  return {
+    current: () => generation === epoch && isAuthScopeCurrent(scope),
+    sessionEnded: () => generation === epoch && hasOnlySessionEnded(scope),
+  };
 }
 
 function mergeRead(rows: CorpusConsent[], startedWith: Record<string, number>): CorpusConsent[] {
@@ -105,7 +117,7 @@ function consentCredential(): string | null {
 /** Coalesce the visible Settings surfaces; failed reads remain retryable. */
 function load(): Promise<void> {
   if (read) return read;
-  const current = currentOperation();
+  const { current, sessionEnded } = captureOperation();
   const token = consentCredential();
   if (!token) {
     useConsentState.setState({ decisions: null, error: CORPUS_CONSENT_FAILURE });
@@ -116,11 +128,11 @@ function load(): Promise<void> {
   const request = corpusConsent
     .list(token)
     .then((rows) => {
-      if (!current()) return;
-      useConsentState.setState({ decisions: mergeRead(rows, startedWith) });
+      if (current()) useConsentState.setState({ decisions: mergeRead(rows, startedWith) });
+      else if (sessionEnded()) useConsentState.setState({ error: CORPUS_CONSENT_FAILURE });
     })
     .catch(() => {
-      if (current()) useConsentState.setState({ error: CORPUS_CONSENT_FAILURE });
+      if (current() || sessionEnded()) useConsentState.setState({ error: CORPUS_CONSENT_FAILURE });
     })
     .finally(() => {
       if (read === request) read = null;
@@ -133,7 +145,7 @@ function load(): Promise<void> {
 function decide(source: string, granted: boolean): void {
   const state = useConsentState.getState();
   if (state.pending.includes(source)) return;
-  const current = currentOperation();
+  const { current, sessionEnded } = captureOperation();
   const token = consentCredential();
   if (!token) {
     useConsentState.setState({ error: CORPUS_CONSENT_FAILURE });
@@ -144,14 +156,15 @@ function decide(source: string, granted: boolean): void {
   const request = corpusConsent.set(source, granted, token);
   void request
     .then((confirmed) => {
-      if (!current()) return;
-      confirmSource(source, confirmed);
+      if (current()) confirmSource(source, confirmed);
+      // Unconfirmed in this session: say so, so the person can check and decide again.
+      else if (sessionEnded()) useConsentState.setState({ error: CORPUS_CONSENT_FAILURE });
     })
     .catch(() => {
-      if (current()) useConsentState.setState({ error: CORPUS_CONSENT_FAILURE });
+      if (current() || sessionEnded()) useConsentState.setState({ error: CORPUS_CONSENT_FAILURE });
     })
     .finally(() => {
-      if (current()) clearPending(source);
+      if (current() || sessionEnded()) clearPending(source);
     });
 }
 
@@ -162,7 +175,10 @@ export function useCorpusConsent() {
   const owner = getActiveUser();
   const accountGeneration = getActiveUserGeneration();
   const callbacks = useMemo(() => {
-    const current = currentOperation(state.epoch, owner, accountGeneration);
+    // The account only: ``decide``/``load`` read the live session when they start,
+    // so these callbacks keep working after the same account signs back in.
+    const accountLive = (): boolean =>
+      generation === state.epoch && isAccountScopeCurrent(owner, accountGeneration);
     return {
       decide: (source: string, granted: boolean, question?: ConsentConfirmation) => {
         const latest = useConsentState.getState();
@@ -170,9 +186,9 @@ export function useCorpusConsent() {
           question === undefined ||
           (question.decision.source === source &&
             confirmationMatches(question, latest.epoch, latest.decisions));
-        if (valid && live.current && current()) decide(source, granted);
+        if (valid && live.current && accountLive()) decide(source, granted);
       },
-      retry: () => (live.current && current() ? load() : Promise.resolve()),
+      retry: () => (live.current && accountLive() ? load() : Promise.resolve()),
     };
     // The reset epoch and account bind retained UI callbacks to their session.
   }, [state.epoch, owner, accountGeneration]);

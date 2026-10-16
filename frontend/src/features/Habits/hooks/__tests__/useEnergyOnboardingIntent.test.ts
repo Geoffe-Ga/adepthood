@@ -7,7 +7,7 @@ import {
   type EnergyOnboardingParams,
 } from '../useEnergyOnboardingIntent';
 
-import { beginAuthSession } from '@/api/sessionToken';
+import { beginAuthSession, getAuthSession } from '@/api/sessionToken';
 import { getActiveUserGeneration, setActiveUser } from '@/storage/userScope';
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 import { useHabitStore } from '@/store/useHabitStore';
@@ -16,6 +16,7 @@ const request = (owner = 1): EnergyOnboardingParams => ({
   onboardingIntent: 'energy-scaffolding',
   onboardingOwner: owner,
   onboardingGeneration: getActiveUserGeneration(),
+  onboardingSession: getAuthSession(),
 });
 
 /** What a finished `refreshHabits` records for the account and session now live. */
@@ -178,5 +179,28 @@ describe('declining a held handoff', () => {
     expect(view.result.current.status).toBe('idle');
     settle('ok');
     expect(open).not.toHaveBeenCalled();
+  });
+});
+
+describe('the session a request was made in (#3423)', () => {
+  it('consumes but never opens a request that names no session', () => {
+    settle('ok');
+    const clear = jest.fn();
+    const open = jest.fn();
+    const sessionless: EnergyOnboardingParams = { ...request(), onboardingSession: undefined };
+    const view = renderHook(() => useEnergyOnboardingIntent(sessionless, clear, open));
+    expect(clear).toHaveBeenCalledTimes(1);
+    expect(open).not.toHaveBeenCalled();
+    expect(view.result.current.status).toBe('idle');
+  });
+
+  it('drops a held request once its session ends, even for the same account', () => {
+    const open = jest.fn();
+    const view = renderHook(() => useEnergyOnboardingIntent(request(), jest.fn(), open));
+    expect(view.result.current.status).toBe('waiting');
+    beginAuthSession();
+    settle('ok');
+    expect(open).not.toHaveBeenCalled();
+    expect(view.result.current.status).toBe('idle');
   });
 });

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { captureSessionToken, userPractices } from '@/api';
 import type { UserPractice } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
+import { captureAuthScope, hasOnlySessionEnded, isAuthScopeCurrent } from '@/api/sessionToken';
 import { getActiveUser, getActiveUserGeneration, parseUserId } from '@/storage/userScope';
 import { decodeJwtPayload } from '@/utils/token';
 
@@ -53,11 +54,11 @@ export function usePracticeHabitLink({ userPractice, onUpdated }: LinkParams): L
   const save = async (habitId: number | null): Promise<boolean> => {
     const token = ownerToken(owner);
     if (token === null || pending.current === identity) return false;
-    const isCurrent = (): boolean =>
-      mounted.current &&
-      current.current === identity &&
-      getActiveUser() === owner &&
-      getActiveUserGeneration() === generation;
+    const scope = { ...captureAuthScope(), owner, generation };
+    const onScreen = (): boolean => mounted.current && current.current === identity;
+    const isCurrent = (): boolean => onScreen() && isAuthScopeCurrent(scope);
+    // The same account signed back in: the old answer is dropped, but the control is freed (#3423).
+    const sessionEnded = (): boolean => onScreen() && hasOnlySessionEnded(scope);
     if (!isCurrent()) return false;
     pending.current = identity;
     setBusy(true);
@@ -72,7 +73,7 @@ export function usePracticeHabitLink({ userPractice, onUpdated }: LinkParams): L
       return false;
     } finally {
       if (pending.current === identity) pending.current = null;
-      if (isCurrent()) setBusy(false);
+      if (isCurrent() || sessionEnded()) setBusy(false);
     }
   };
   return { busy, error, save };

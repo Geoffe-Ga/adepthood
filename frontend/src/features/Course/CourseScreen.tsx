@@ -955,6 +955,7 @@ function StartHereLanding({
         onboardingIntent: 'energy-scaffolding',
         onboardingOwner: session.owner,
         onboardingGeneration: session.generation,
+        onboardingSession: session.session,
       });
     },
     [navigation],

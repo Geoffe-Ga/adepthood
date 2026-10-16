@@ -3,11 +3,11 @@ import { canConfigureWritingHabit, isLinkableHabit } from './writingHabitCheckOf
 
 import { goals, habits, toLocalHabit } from '@/api';
 import type { GoalUpdatePayload } from '@/api';
-import { captureSessionToken } from '@/api/sessionToken';
+import { captureAuthScope, captureSessionToken, isAuthScopeCurrent } from '@/api/sessionToken';
 import type { Goal, Habit, HabitGoalSetup } from '@/features/Habits/Habits.types';
 import { isServerIssuedId } from '@/features/Habits/services/serverIds';
 import { saveHabits } from '@/storage/habitStorage';
-import { getActiveUser, getActiveUserGeneration, parseUserId } from '@/storage/userScope';
+import { parseUserId } from '@/storage/userScope';
 import { useHabitStore } from '@/store/useHabitStore';
 import { decodeJwtPayload } from '@/utils/token';
 
@@ -66,14 +66,14 @@ function credentialBelongsTo(token: string | undefined, owner: number | null): t
   );
 }
 
+/** Pin the save to its account and session: a same-owner re-login ends it too (#3423). */
 function captureWritingGoalOwner(token?: string) {
-  const owner = getActiveUser();
+  const scope = captureAuthScope();
   const live = captureSessionToken();
-  if (!credentialBelongsTo(live, owner)) return null;
+  if (!credentialBelongsTo(live, scope.owner)) return null;
   const credential = token ?? live;
-  if (!credentialBelongsTo(credential, owner)) return null;
-  const generation = getActiveUserGeneration();
-  return { credential, current: () => generation === getActiveUserGeneration() };
+  if (!credentialBelongsTo(credential, scope.owner)) return null;
+  return { credential, current: () => isAuthScopeCurrent(scope) };
 }
 
 /** Link only after the API confirms every requested unit and target. A partial
