@@ -2392,6 +2392,20 @@ export const resonance = {
       schema: resonanceResponseSchema as unknown as z.ZodType<ResonanceResponse>,
     });
   },
+  /**
+   * Ask for a pass's free exits only (#3389): the private answer for an entry
+   * the server holds as intimate, care for a locally flagged one, or the payer
+   * refusal. Never a charge -- a payer that could now pay is answered
+   * ``409 resonance_payment_unconfirmed`` -- and never carries a key, which no
+   * free exit needs.
+   */
+  freeExits(entryId: number, token?: string): Promise<ResonanceResponse> {
+    return request<ResonanceResponse>(`/journal/${entryId}/resonance?free_only=true`, {
+      method: 'POST',
+      token,
+      schema: resonanceResponseSchema as unknown as z.ZodType<ResonanceResponse>,
+    });
+  },
   /** List an entry's margin notes (ordered by anchor position). */
   list(entryId: number, token?: string): Promise<MarginaliaListResponse> {
     return request<MarginaliaListResponse>(`/journal/${entryId}/marginalia`, { token });

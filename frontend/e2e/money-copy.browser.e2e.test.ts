@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Request } from '@playwright/test';
 
 import { backendUrl, frontendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 import { runBackendModule } from './laneDatabase';
@@ -252,6 +252,48 @@ async function vaultLedger(page: Page): Promise<VaultLedger> {
 function wallet(): { monthly_messages_used: number; offering_balance: number; rows: unknown[] } {
   return JSON.parse(
     runBackendModule('tests.e2e.wallet_audit', ['show', '--email', lane().vaultOwnerEmail]),
+  );
+}
+
+/** Control only affordability; the canonical route still comes from the real owner resolver. */
+async function serveEmptyVaultWallet(page: Page): Promise<void> {
+  await page.route('**/user/usage', async (route) => {
+    const actual = await route.fetch();
+    const usage = await actual.json();
+    expect(usage.resonance_route).toBe('vault_bound');
+    await route.fulfill({
+      response: actual,
+      json: { ...usage, monthly_messages_remaining: 0, offering_balance: 0 },
+    });
+  });
+}
+
+/** Every resonance POST for ``id``, whatever query string it carries. */
+function recordResonanceAsks(page: Page, id: number): Request[] {
+  const asks: Request[] = [];
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === `/journal/${id}/resonance`
+    )
+      asks.push(request);
+  });
+  return asks;
+}
+
+/** The single free-exits ask an empty-wallet press sends (#3389): no key, no charge. */
+async function expectOneFreeExitsAsk(asks: Request[], status: number): Promise<void> {
+  expect(asks).toHaveLength(1);
+  const [ask] = asks;
+  expect(new URL(ask!.url()).searchParams.get('free_only')).toBe('true');
+  expect(ask!.headers()['x-llm-api-key']).toBeUndefined();
+  expect((await ask!.response())?.status()).toBe(status);
+}
+
+/** The vault's generation traffic: a free answer must never dial it. */
+async function vaultReflections(page: Page): Promise<VaultLedger['received']> {
+  return (await vaultLedger(page)).received.filter(
+    (item) => item.path === '/v1/reflections' || item.path.startsWith('/v1/letters/'),
   );
 }
 
@@ -653,21 +695,9 @@ for (const width of WIDTHS) {
     await storeOwnKey(page);
     const id = await createPage(page, token);
     const before = wallet();
-    let asks = 0;
-    page.on('request', (request) => {
-      if (request.method() === 'POST' && request.url().endsWith(`/journal/${id}/resonance`))
-        asks += 1;
-    });
-    // Only affordability is a controlled client response. The canonical route still comes from the real owner resolver.
-    await page.route('**/user/usage', async (route) => {
-      const actual = await route.fetch();
-      const usage = await actual.json();
-      expect(usage.resonance_route).toBe('vault_bound');
-      await route.fulfill({
-        response: actual,
-        json: { ...usage, monthly_messages_remaining: 0, offering_balance: 0 },
-      });
-    });
+    const vaultBefore = await vaultReflections(page);
+    const asks = recordResonanceAsks(page, id);
+    await serveEmptyVaultWallet(page);
     await openPage(page, id);
     await page.getByRole('button', { name: 'Get resonance' }).click();
     const refill = page.getByTestId('journal-resonance-refill');
@@ -710,8 +740,101 @@ for (const width of WIDTHS) {
     await reachable(cancel);
     await cancel.click();
     await expect(refill).toHaveCount(0);
-    expect(asks).toBe(0);
+    // The press asked the server for free answers only. The real wallet is
+    // funded, so the server refused to turn that ask into an undisclosed
+    // charge (409), and the controlled reread still found it empty.
+    await expectOneFreeExitsAsk(asks, 409);
     expect(wallet()).toEqual(before);
+    expect(await vaultReflections(page)).toEqual(vaultBefore);
+  });
+}
+
+const DISTRESS_BODY = 'I keep thinking I want to kill myself and end my life tonight.';
+const INTIMATE_REASON =
+  "This entry stays private — it's not sent to any AI. Change its privacy to enable reflection.";
+
+for (const width of WIDTHS) {
+  test(`controlled empty vault wallet still shows a server-intimate page its privacy reason at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const token = await loginVaultOwner(page);
+    await storeOwnKey(page);
+    const id = await createPage(page, token);
+    await serveEmptyVaultWallet(page);
+    await openPage(page, id);
+    await expect(page.getByRole('button', { name: 'Get resonance' })).toBeEnabled();
+    // Another device makes the page intimate after this screen loaded it.
+    const narrowed = await page.request.patch(`${backendUrl()}/journal/${id}`, {
+      headers: bearer(token),
+      data: { classification: 'intimate' },
+    });
+    expect(narrowed.status()).toBe(200);
+    const before = wallet();
+    const vaultBefore = await vaultReflections(page);
+    const asks = recordResonanceAsks(page, id);
+
+    await page.getByRole('button', { name: 'Get resonance' }).click();
+
+    const reason = page.getByTestId('privacy-resonance-reason');
+    await expect(reason).toHaveText(INTIMATE_REASON);
+    await expect(page.getByTestId('journal-resonance-refill')).toHaveCount(0);
+    await expect(page.getByTestId('resonance-explainer')).toHaveCount(0);
+    await expectOneFreeExitsAsk(asks, 200);
+    expect(await asks[0]!.response().then((reply) => reply?.json())).toMatchObject({
+      private: true,
+      marginalia: [],
+      private_message: INTIMATE_REASON,
+    });
+    expect(wallet()).toEqual(before);
+    expect(await vaultReflections(page)).toEqual(vaultBefore);
+    await completeCopy(reason);
+    await capture(page, `vault-empty-intimate-${width}`, page.locator('body'));
+    await doubleText(page);
+    await completeCopy(reason);
+    await capture(page, `vault-empty-intimate-${width}-200-percent`, page.locator('body'));
+  });
+
+  test(`controlled empty vault wallet still gives a distressed page its care at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const token = await loginVaultOwner(page);
+    await storeOwnKey(page);
+    const created = await page.request.post(`${backendUrl()}/journal/`, {
+      headers: bearer(token),
+      data: { title: 'A heavy night', message: DISTRESS_BODY, classification: 'personal' },
+    });
+    expect(created.status()).toBe(201);
+    const id = ((await created.json()) as { id: number }).id;
+    const finished = await page.request.patch(`${backendUrl()}/journal/${id}`, {
+      headers: bearer(token),
+      data: { status: 'finished' },
+    });
+    expect(finished.status()).toBe(200);
+    await serveEmptyVaultWallet(page);
+    const before = wallet();
+    const vaultBefore = await vaultReflections(page);
+    const asks = recordResonanceAsks(page, id);
+    await openPage(page, id);
+
+    await page.getByRole('button', { name: 'Get resonance' }).click();
+
+    const card = page.getByTestId('care-support-card');
+    await expect(card).toBeVisible();
+    await expect(card).toContainText('988');
+    await expect(page.getByTestId('journal-resonance-refill')).toHaveCount(0);
+    await expectOneFreeExitsAsk(asks, 200);
+    const answer = await asks[0]!.response().then((reply) => reply?.json());
+    expect(answer).toMatchObject({ private: false, marginalia: [] });
+    expect(answer.care).not.toBeNull();
+    expect(wallet()).toEqual(before);
+    expect(await vaultReflections(page)).toEqual(vaultBefore);
+    await card.scrollIntoViewIfNeeded();
+    await capture(page, `vault-empty-care-${width}`, page.locator('body'));
+    await doubleText(page);
+    await card.scrollIntoViewIfNeeded();
+    await capture(page, `vault-empty-care-${width}-200-percent`, page.locator('body'));
   });
 }
 

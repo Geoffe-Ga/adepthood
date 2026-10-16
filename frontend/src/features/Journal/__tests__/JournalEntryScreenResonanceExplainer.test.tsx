@@ -23,6 +23,9 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 const mockGenerate = jest.fn() as jest.MockedFunction<
   (_id: number, _token?: string, _apiKey?: string | null) => Promise<ResonanceResponse>
 >;
+const mockFreeExits = jest.fn() as jest.MockedFunction<
+  (_id: number, _token?: string) => Promise<ResonanceResponse>
+>;
 const mockEssay = jest.fn() as jest.MockedFunction<
   (_id: number, _options?: { priceAcknowledged?: boolean }) => Promise<unknown>
 >;
@@ -120,6 +123,8 @@ jest.mock('@/api', () => ({
   resonance: {
     list: (...a: unknown[]) => (mockList as unknown as (...x: unknown[]) => unknown)(...a),
     generate: (...a: unknown[]) => (mockGenerate as unknown as (...x: unknown[]) => unknown)(...a),
+    freeExits: (...a: unknown[]) =>
+      (mockFreeExits as unknown as (...x: unknown[]) => unknown)(...a),
     essay: (...a: unknown[]) => (mockEssay as unknown as (...x: unknown[]) => unknown)(...a),
   },
   completionSuggestions: {
@@ -206,6 +211,10 @@ beforeEach(() => {
   mockGet.mockReset();
   mockList.mockReset();
   mockGenerate.mockReset();
+  mockFreeExits.mockReset();
+  // An exhausted wallet's free-exits request is refused like any empty wallet
+  // unless a spec says the server found a free answer (#3389).
+  mockFreeExits.mockRejectedValue(apiError(402, 'insufficient_offerings'));
   mockDetect.mockReset();
   mockEssay.mockReset();
   mockUsage.mockReset();
@@ -343,10 +352,13 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     expect(refill).not.toHaveTextContent(/Continue/u);
     expect(queryByTestId('resonance-explainer')).toBeNull();
     expect(mockGenerate).not.toHaveBeenCalled();
+    expect(mockFreeExits).toHaveBeenCalledTimes(1);
+    expect(mockFreeExits).toHaveBeenCalledWith(7);
   });
 
   it('does not promise a zero-cap deployment that messages return at reset', async () => {
-    mockUsage.mockResolvedValueOnce(
+    // Persistent: the refill remedy rereads the wallet after the server's 402.
+    mockUsage.mockResolvedValue(
       usageSnapshot({ monthly_cap: 0, monthly_messages_remaining: 0, offering_balance: 0 }),
     );
     const { findByTestId } = await openEntryAndAsk();
@@ -440,6 +452,27 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     await waitFor(() =>
       expect(mockGenerate).toHaveBeenCalledWith(7, undefined, 'sk-key-added-after-open'),
     );
+  });
+
+  it('asks only for free answers when a payer change on Continue finds the wallet empty', async () => {
+    const view = await openEntryAndAsk();
+    await waitFor(() =>
+      expect(
+        view.getByTestId('resonance-explainer-continue').props.accessibilityState.disabled,
+      ).toBe(false),
+    );
+
+    mockApiKeyState.apiKey = 'sk-key-added-after-open'; // pragma: allowlist secret
+    mockUsage.mockResolvedValue(usageSnapshot({ monthly_messages_remaining: 0 }));
+    await act(async () => view.rerender(screenElement()));
+    await act(async () => {
+      fireEvent.press(view.getByTestId('resonance-explainer-continue'));
+    });
+
+    expect(await view.findByTestId('journal-resonance-refill')).toBeTruthy();
+    expect(view.queryByTestId('resonance-explainer')).toBeNull();
+    expect(mockFreeExits).toHaveBeenCalledWith(7);
+    expect(mockGenerate).not.toHaveBeenCalled();
   });
 
   it('coalesces a pending preflight and rechecks the payer before publishing it', async () => {
@@ -602,6 +635,111 @@ describe('JournalEntryScreen — a reader who already dismissed it', () => {
     const { findByTestId } = await openEntryAndAsk();
 
     expect(await findByTestId('journal-resonance-refill')).toBeTruthy();
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(mockFreeExits).toHaveBeenCalledWith(7);
+  });
+});
+
+describe('JournalEntryScreen — an exhausted wallet still reaches the free answers (#3389)', () => {
+  const PRIVATE_MESSAGE =
+    "This entry stays private — it's not sent to any AI. Change its privacy to enable reflection.";
+  const exhausted = (): UsageSnapshot =>
+    usageSnapshot({ monthly_messages_used: 7, monthly_messages_remaining: 0 });
+
+  function freeAnswer(overrides: Partial<ResonanceResponse>): ResonanceResponse {
+    return {
+      marginalia: [],
+      suggestions: [],
+      remaining_messages: 0,
+      remaining_balance: 0,
+      monthly_reset_date: '2026-07-01T00:00:00Z',
+      care: null,
+      private: false,
+      private_message: null,
+      ...overrides,
+    } as ResonanceResponse;
+  }
+
+  beforeEach(() => {
+    mockUsage.mockResolvedValueOnce(exhausted());
+  });
+
+  it('shows the privacy message for an entry the server holds as intimate', async () => {
+    mockFreeExits.mockResolvedValueOnce(
+      freeAnswer({ private: true, private_message: PRIVATE_MESSAGE }),
+    );
+    const view = await openEntryAndAsk();
+
+    expect(await view.findByTestId('privacy-resonance-reason')).toHaveTextContent(PRIVATE_MESSAGE);
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+    expect(view.queryByTestId('resonance-explainer')).toBeNull();
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(mockDetect).not.toHaveBeenCalled();
+  });
+
+  it('shows the reviewed care surface for a locally flagged entry', async () => {
+    mockFreeExits.mockResolvedValueOnce(
+      freeAnswer({
+        care: {
+          title: "You're not alone in this",
+          message: 'What you shared sounds heavy. Here are some people who can help right now.',
+          resources: [
+            {
+              kind: 'hotline',
+              name: '988 Suicide & Crisis Lifeline',
+              contact: '988',
+              what_it_is: 'Free, confidential crisis support — call or text anytime.',
+            },
+          ],
+        },
+      }),
+    );
+    const view = await openEntryAndAsk();
+
+    const card = await view.findByTestId('care-support-card');
+    expect(card).toHaveTextContent(/988 Suicide & Crisis Lifeline/u);
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it('opens the refill remedy for an ordinary entry without asking for completion detection', async () => {
+    const view = await openEntryAndAsk();
+
+    expect(await view.findByTestId('journal-resonance-refill')).toBeTruthy();
+    expect(view.queryByTestId('journal-resonance-error')).toBeNull();
+    expect(mockDetect).not.toHaveBeenCalled();
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it('never sends a saved key with the free-exits request', async () => {
+    mockApiKeyState.apiKey = 'sk-saved-key-the-vault-never-uses'; // pragma: allowlist secret
+    const view = await openEntryAndAsk();
+
+    expect(await view.findByTestId('journal-resonance-refill')).toBeTruthy();
+    expect(mockFreeExits).toHaveBeenCalledWith(7);
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
+  it('discloses the price instead of charging when the wallet was refilled meanwhile', async () => {
+    mockFreeExits.mockRejectedValueOnce(apiError(409, 'resonance_payment_unconfirmed'));
+    mockUsage.mockResolvedValueOnce(usageSnapshot({ monthly_messages_remaining: 4 }));
+    const view = await openEntryAndAsk();
+
+    const cost = await view.findByTestId('resonance-explainer-cost');
+    await waitFor(() => expect(cost).toHaveTextContent(/BotMason/u));
+    expect(view.queryByTestId('journal-resonance-refill')).toBeNull();
+    expect(view.queryByTestId('journal-resonance-error')).toBeNull();
+    expect(mockGenerate).not.toHaveBeenCalled();
+    expect(mockFreeExits).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the refill remedy, without asking again, when the reread is still empty', async () => {
+    mockFreeExits.mockRejectedValueOnce(apiError(409, 'resonance_payment_unconfirmed'));
+    mockUsage.mockResolvedValueOnce(exhausted());
+    const view = await openEntryAndAsk();
+
+    expect(await view.findByTestId('journal-resonance-refill')).toBeTruthy();
+    expect(mockFreeExits).toHaveBeenCalledTimes(1);
     expect(mockGenerate).not.toHaveBeenCalled();
   });
 });

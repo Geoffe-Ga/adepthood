@@ -227,6 +227,40 @@ describe('resonance.generate', () => {
   });
 });
 
+describe('resonance.freeExits', () => {
+  test('asks the same route for its free exits only, with no key a later load could add', async () => {
+    setLlmApiKeyGetter(() => 'sk-saved-key-the-vault-never-uses');
+    mockFetch.mockReturnValueOnce(
+      jsonResponse(
+        {
+          ...resonancePayload(),
+          marginalia: [],
+          private: true,
+          private_message: 'This entry stays private.',
+        },
+        200,
+      ),
+    );
+
+    const result = await resonance.freeExits(7, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/journal/7/resonance?free_only=true');
+    expect(init.method).toBe('POST');
+    expect(init.headers[LLM_API_KEY_HEADER]).toBeUndefined();
+    expect(result.private).toBe(true);
+  });
+
+  test('surfaces the unconfirmed-payment refusal as an ApiError', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'resonance_payment_unconfirmed' }, 409));
+    await expect(resonance.freeExits(7, 'tok')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 409,
+      detail: 'resonance_payment_unconfirmed',
+    });
+  });
+});
+
 describe('resonance.list', () => {
   test('GETs the marginalia list and parses items', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ items: [marginalia(), marginalia({ id: 2 })] }));

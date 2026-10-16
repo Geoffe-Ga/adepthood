@@ -2848,8 +2848,14 @@ interface ResonanceAction {
   disabled: boolean;
   loading: boolean;
   checking: boolean;
-  /** Why resonance is withheld, shown only while it is disabled. */
+  /** Why resonance is withheld, shown while it is disabled or the server withheld it. */
   reason: string;
+  /**
+   * The server answered the latest press with its privacy floor: it holds the
+   * entry as intimate even though this screen's copy does not, so the reason
+   * is shown with the button still enabled (#3389).
+   */
+  withheld: boolean;
   onPress: () => Promise<void>;
 }
 
@@ -3538,7 +3544,7 @@ interface ResonanceSeamInput {
  */
 function useResonanceSeam({ routeEntryId, autosave, ctx, isIdle, justSaved }: ResonanceSeamInput) {
   const { resonance, userTimezone } = useEntryResonance(routeEntryId, autosave.flushForPass);
-  const explainer = useResonanceExplainer(resonance.requestResonance);
+  const explainer = useResonanceExplainer(resonance.requestResonance, resonance.requestFreeExits);
   const gate = deriveResonanceGate({
     // A photograph-capture handoff (justSaved) offers resonance immediately,
     // without waiting for the usual post-typing idle pause.
@@ -3629,6 +3635,7 @@ function resonanceActionFor(ctl: Controller): ResonanceAction {
     loading: ctl.resonance.loading,
     checking: ctl.explainer.pending,
     reason: ctl.resonanceReason,
+    withheld: ctl.resonance.privateMessage != null,
     onPress: ctl.explainer.onPress,
   };
 }
@@ -4516,13 +4523,13 @@ function EntryOverlays({
  * reach, so the margin keeps no phantom gap.
  */
 function ResonanceControls({ action }: { action: ResonanceAction }): React.JSX.Element {
-  const { visible, disabled } = action;
+  const { visible, disabled, withheld } = action;
   return (
     <View
       style={visible ? styles.marginResonanceControls : styles.marginResonanceControlsHidden}
       testID="journal-margin-resonance-controls"
     >
-      <PrivacyResonanceReason visible={visible && disabled} reason={action.reason} />
+      <PrivacyResonanceReason visible={visible && (disabled || withheld)} reason={action.reason} />
       <GetResonanceButton
         visible={visible}
         loading={action.loading}

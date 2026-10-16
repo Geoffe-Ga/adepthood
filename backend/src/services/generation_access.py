@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Final
 from fastapi import HTTPException, status
 
 from domain.entitlements import AI_ACCESS_REVOKED, refuse_if_ai_access_revoked
-from errors import payment_required
+from errors import conflict, payment_required
 from services.account_egress_barrier import ensure_account_live
 from services.botmason import (
     KEY_REQUIRED_DETAIL,
@@ -66,6 +66,9 @@ KEY_REQUIRED: Final = KEY_REQUIRED_DETAIL
 #: 402: no personal key, and no credits left in either wallet bucket. The same
 #: detail :func:`services.wallet.preflight_deduction` refuses an empty wallet with.
 CREDITS_OR_KEY_REQUIRED: Final = "insufficient_offerings"
+#: 409: a ``free_only`` resonance request found a payer that could now pay, but
+#: the writer was shown no price for this pass (#3389).
+RESONANCE_PAYMENT_UNCONFIRMED: Final = "resonance_payment_unconfirmed"
 
 
 async def require_ai_payer(
@@ -135,6 +138,21 @@ async def payer_refusal(
             raise
         return refusal
     return None
+
+
+def free_only_refusal(refusal: HTTPException | None, *, free_only: bool) -> HTTPException | None:
+    """Refuse an admitted ``free_only`` request; otherwise keep :func:`payer_refusal`'s verdict.
+
+    An ordinary request is refused only when nobody can pay (#3096). A
+    ``free_only`` request is never admitted (#3389): its client read an empty
+    wallet and disclosed no price, so a wallet refilled since then -- or a key
+    the app provider would now take -- must not pay for an undisclosed pass.
+    The route's free exits still apply: it answers either refusal with care
+    when its local screen flags the entry, and its private exit runs first.
+    """
+    if refusal is None and free_only:
+        return conflict(RESONANCE_PAYMENT_UNCONFIRMED)
+    return refusal
 
 
 def _is_payer_refusal(refusal: HTTPException) -> bool:

@@ -11,6 +11,7 @@ const mockAuth = {
 };
 const mockLoadDismissed = jest.fn<() => Promise<boolean>>();
 const mockUsage = jest.fn<() => Promise<Record<string, unknown>>>();
+const freeExits = jest.fn<() => Promise<'funding_required' | 'completed'>>();
 jest.mock('@/context/AuthContext', () => ({ useAuth: () => mockAuth }));
 jest.mock('@/context/ApiKeyContext', () => ({
   useApiKey: () => ({ apiKey: null, isLoading: false }),
@@ -26,6 +27,7 @@ beforeEach(() => {
   mockAuth.token = 'test.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test';
   mockAuth.authStatus = 'authenticated';
   mockUsage.mockReset();
+  freeExits.mockReset().mockResolvedValue('funding_required');
   mockLoadDismissed.mockReset().mockResolvedValue(false);
 });
 
@@ -37,7 +39,7 @@ it('discards a held owner A route after reauthentication as B with the same key 
     }),
   );
   const run = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-  const { result, rerender } = renderHook(() => useResonanceExplainer(run));
+  const { result, rerender } = renderHook(() => useResonanceExplainer(run, freeExits));
   await act(async () => undefined);
   let pending: Promise<void> = Promise.resolve();
   await act(async () => {
@@ -66,6 +68,7 @@ it('discards a held owner A route after reauthentication as B with the same key 
   expect(result.current.continueDisabled).toBe(true);
   expect(result.current.cost).not.toMatch(/spends|balance has run out/u);
   expect(run).not.toHaveBeenCalled();
+  expect(freeExits).not.toHaveBeenCalled();
 });
 
 it('cannot activate owner A disclosure after owner B replaces the mounted session', async () => {
@@ -78,7 +81,7 @@ it('cannot activate owner A disclosure after owner B replaces the mounted sessio
     monthly_reset_date: '2026-11-01T00:00:00Z',
   });
   const run = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-  const { result, rerender } = renderHook(() => useResonanceExplainer(run));
+  const { result, rerender } = renderHook(() => useResonanceExplainer(run, freeExits));
   await act(async () => {
     await result.current.onPress();
   });
@@ -92,6 +95,7 @@ it('cannot activate owner A disclosure after owner B replaces the mounted sessio
     staleContinue();
   });
   expect(run).not.toHaveBeenCalled();
+  expect(freeExits).not.toHaveBeenCalled();
   expect(result.current.visible).toBe(false);
 });
 
@@ -106,7 +110,7 @@ it('reads B dismissal independently rather than reusing A automatic continuation
     monthly_reset_date: '2026-11-01T00:00:00Z',
   });
   const run = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-  const { result, rerender } = renderHook(() => useResonanceExplainer(run));
+  const { result, rerender } = renderHook(() => useResonanceExplainer(run, freeExits));
   await act(async () => undefined);
   setActiveUser(2);
   mockAuth.token = 'test.eyJzdWIiOiIyIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test';
@@ -117,17 +121,19 @@ it('reads B dismissal independently rather than reusing A automatic continuation
   expect(mockLoadDismissed).toHaveBeenCalledTimes(2);
   expect(result.current.visible).toBe(true);
   expect(run).not.toHaveBeenCalled();
+  expect(freeExits).not.toHaveBeenCalled();
 });
 
 it('does not start a new payment lookup while reauthentication is required', async () => {
   mockAuth.authStatus = 'reauth-required';
   const run = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-  const { result } = renderHook(() => useResonanceExplainer(run));
+  const { result } = renderHook(() => useResonanceExplainer(run, freeExits));
   await act(async () => {
     await result.current.onPress();
   });
   expect(mockUsage).not.toHaveBeenCalled();
   expect(run).not.toHaveBeenCalled();
+  expect(freeExits).not.toHaveBeenCalled();
 });
 
 it.each([{ owners: [2] }, { owners: [2, 1] }])(
@@ -140,7 +146,7 @@ it.each([{ owners: [2] }, { owners: [2, 1] }])(
       }),
     );
     const run = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-    const { result } = renderHook(() => useResonanceExplainer(run));
+    const { result } = renderHook(() => useResonanceExplainer(run, freeExits));
     await act(async () => undefined);
     let pending: Promise<void> = Promise.resolve();
     await act(async () => {
@@ -161,12 +167,14 @@ it.each([{ owners: [2] }, { owners: [2, 1] }])(
     expect(result.current.refillVisible).toBe(false);
     expect(result.current.visible).toBe(false);
     expect(run).not.toHaveBeenCalled();
+    expect(freeExits).not.toHaveBeenCalled();
+    expect(freeExits).not.toHaveBeenCalled();
   },
 );
 
 it('does not start a cost read when the new namespace and rendered credential disagree', async () => {
   const run = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-  const { result, rerender } = renderHook(() => useResonanceExplainer(run));
+  const { result, rerender } = renderHook(() => useResonanceExplainer(run, freeExits));
   await act(async () => undefined);
   setActiveUser(2);
   rerender({});
@@ -174,5 +182,40 @@ it('does not start a cost read when the new namespace and rendered credential di
     await result.current.onPress();
   });
   expect(mockUsage).not.toHaveBeenCalled();
+  expect(run).not.toHaveBeenCalled();
+  expect(freeExits).not.toHaveBeenCalled();
+});
+
+it('drops an owner A free-exits refusal that settles after owner B takes the session', async () => {
+  mockUsage.mockResolvedValue({
+    resonance_route: 'vault_bound',
+    monthly_messages_remaining: 0,
+    monthly_messages_used: 20,
+    monthly_cap: 20,
+    offering_balance: 0,
+    monthly_reset_date: '2026-11-01T00:00:00Z',
+  });
+  let settle = (_outcome: 'funding_required'): void => undefined;
+  freeExits.mockReturnValue(
+    new Promise((resolve) => {
+      settle = resolve;
+    }),
+  );
+  const run = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  const { result, rerender } = renderHook(() => useResonanceExplainer(run, freeExits));
+  let pending: Promise<void> = Promise.resolve();
+  await act(async () => {
+    pending = result.current.onPress();
+  });
+  expect(freeExits).toHaveBeenCalledTimes(1);
+  setActiveUser(2);
+  mockAuth.token = 'test.eyJzdWIiOiIyIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test';
+  rerender({});
+  await act(async () => {
+    settle('funding_required');
+    await pending;
+  });
+  expect(result.current.refillVisible).toBe(false);
+  expect(result.current.visible).toBe(false);
   expect(run).not.toHaveBeenCalled();
 });

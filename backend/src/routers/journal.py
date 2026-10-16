@@ -179,7 +179,7 @@ from services.essay_settlement import (
     keep_letter,
     log_settled_essay,
 )
-from services.generation_access import payer_refusal, require_ai_payer
+from services.generation_access import free_only_refusal, payer_refusal, require_ai_payer
 from services.generation_guardrails import (
     consume_generation_minute,
     generation_slot,
@@ -2257,13 +2257,15 @@ class _ReflectionClients:
     ``vault_client`` is the optional Creek Vault client; ``boundary`` is which of
     them this caller's AI operations may use (see
     :func:`~dependencies.creek_vault.resolve_reflection_boundary`), never taken
-    from the request. Bundling them into one injected value keeps the handler's
-    dependency signature small.
+    from the request. ``free_only`` is the caller's word that it may answer only
+    with the pass's free exits (#3389). Bundling them into one injected value
+    keeps the handler's dependency signature small.
     """
 
     api_key: str | None = field(repr=False)
     vault_client: CreekVaultClient
     boundary: ReflectionBoundary
+    free_only: bool = False
 
 
 def _reflection_clients(
@@ -2272,6 +2274,10 @@ def _reflection_clients(
     x_llm_api_key: Annotated[
         str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
     ] = None,
+    *,
+    free_only: Annotated[
+        bool, Query(description="Answer only with free exits: privacy, care, or a refusal.")
+    ] = False,
 ) -> _ReflectionClients:
     """Bundle the BYOK key, the vault client and the boundary for the resonance handler.
 
@@ -2280,7 +2286,9 @@ def _reflection_clients(
     dependencies stay independently overridable, so a test can swap either
     through ``dependency_overrides``.
     """
-    return _ReflectionClients(api_key=x_llm_api_key, vault_client=vault_client, boundary=boundary)
+    return _ReflectionClients(
+        api_key=x_llm_api_key, vault_client=vault_client, boundary=boundary, free_only=free_only
+    )
 
 
 async def _resonance_payment(
@@ -2360,6 +2368,12 @@ async def run_resonance(
     reflection — never a 502, and never the cloud's answer, since falling back
     would hand the writer exactly the model prose the guard refused. The
     any committed BotMason deduction is refunded, so the pass costs them nothing.
+
+    ``?free_only=true`` asks for the free exits alone (#3389): the private
+    answer, care for a locally flagged entry, or the payer refusal. A client
+    whose preflight read an empty wallet sends it, so the server can answer what
+    only it can see without the request ever becoming a charge. Where a payer
+    could now pay, it is answered ``409 resonance_payment_unconfirmed`` instead.
     """
     entry = await _require_user_entry(session, entry_id, current_user)
     await refuse_if_deletion_pending(session, entry)
@@ -2386,12 +2400,14 @@ async def run_resonance(
         return await care_or_refusal(session, current_user, message, suspended)
     # No personal key and nothing to pay with is refused here, free (#3096); a
     # vault-bound pass is answered by the vault, so it needs no server provider.
+    # A ``free_only`` request is refused here whatever it could pay (#3389).
     refusal = await payer_refusal(
         session,
         current_user,
         clients.api_key,
         app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
     )
+    refusal = free_only_refusal(refusal, free_only=clients.free_only)
     if refusal is not None:
         return await care_or_refusal(session, current_user, message, refusal)
     require_generation_minute_available(current_user)
