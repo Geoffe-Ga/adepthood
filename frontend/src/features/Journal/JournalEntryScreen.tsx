@@ -4407,6 +4407,7 @@ function ResonanceOverlays({
         onCancel={explainer.onCancel}
         keyNeeded={explainer.keyNeeded}
         onOpenSettings={openSettingsFromExplainer}
+        payerChanged={explainer.payerChanged}
       />
       <ResonanceRefillDialog
         visible={explainer.refillVisible}

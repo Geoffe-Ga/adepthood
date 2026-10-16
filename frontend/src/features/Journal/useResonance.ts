@@ -35,6 +35,7 @@ import type {
   RelatedEddy,
   RelatedPraxis,
   ResonanceResponse,
+  ResonanceRoute,
 } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { readPassProvenance } from '@/api/schemas';
@@ -175,7 +176,11 @@ export interface UseResonanceResult {
   completedPasses: number;
   loading: boolean;
   error: string | null;
-  requestResonance: (_apiKey?: string | null) => Promise<ResonanceRequestOutcome>;
+  /** Run the pass; ``_disclosedRoute`` is the payer route the writer was shown (#3385). */
+  requestResonance: (
+    _apiKey?: string | null,
+    _disclosedRoute?: ResonanceRoute,
+  ) => Promise<ResonanceRequestOutcome>;
   /**
    * Ask the server for the pass's free exits only (#3389): its privacy answer,
    * care, or the payer refusal. Shares the pass's one-at-a-time latch, and
@@ -367,7 +372,10 @@ async function runAccept(id: number, deps: AcceptDeps): Promise<void> {
 
 interface GeneratePass {
   loading: boolean;
-  requestResonance: (_apiKey?: string | null) => Promise<ResonanceRequestOutcome>;
+  requestResonance: (
+    _apiKey?: string | null,
+    _disclosedRoute?: ResonanceRoute,
+  ) => Promise<ResonanceRequestOutcome>;
   requestFreeExits: () => Promise<ResonanceRequestOutcome>;
 }
 
@@ -379,7 +387,10 @@ interface GeneratePass {
 export type ResonanceRequestOutcome =
   'completed' | 'funding_required' | 'key_required' | 'payment_unconfirmed' | 'failed' | 'ignored';
 
-/** The 409 a free-exits request gets when a payer could now pay (#3389). */
+/**
+ * The 409 a free-exits request gets when a payer could now pay (#3389), and a
+ * pass gets when the route it disclosed is no longer the account's (#3385).
+ */
 const PAYMENT_UNCONFIRMED_DETAIL = 'resonance_payment_unconfirmed';
 
 function paymentUnconfirmed(error: unknown): boolean {
@@ -551,7 +562,8 @@ async function settlePassFailure(
   return 'failed';
 }
 
-function generateForPayer(entryId: number, apiKey?: string | null) {
+function generateForPayer(entryId: number, apiKey?: string | null, route?: ResonanceRoute) {
+  if (route !== undefined) return resonance.generate(entryId, undefined, apiKey, route);
   return apiKey === undefined
     ? resonance.generate(entryId)
     : resonance.generate(entryId, undefined, apiKey);
@@ -642,8 +654,11 @@ function usePassRunner(deps: GeneratePassDeps): {
 function useGeneratePass(deps: GeneratePassDeps): GeneratePass {
   const { loading, runPass } = usePassRunner(deps);
   const requestResonance = useCallback(
-    (apiKey?: string | null): Promise<ResonanceRequestOutcome> =>
-      runPass({ call: (entryId) => generateForPayer(entryId, apiKey), detectOnFailure: true }),
+    (apiKey?: string | null, route?: ResonanceRoute): Promise<ResonanceRequestOutcome> =>
+      runPass({
+        call: (entryId) => generateForPayer(entryId, apiKey, route),
+        detectOnFailure: true,
+      }),
     [runPass],
   );
   const requestFreeExits = useCallback(

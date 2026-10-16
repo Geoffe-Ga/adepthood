@@ -217,6 +217,25 @@ describe('resonance.generate', () => {
     expect(mockFetch.mock.calls[0][1].headers[LLM_API_KEY_HEADER]).toBeUndefined();
   });
 
+  test('names the payer route the writer was shown, so a changed route is refused (#3385)', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse(resonancePayload(), 200));
+
+    await resonance.generate(7, 'tok', 'sk-byok', 'app_provider');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://test/journal/7/resonance?disclosed_route=app_provider');
+    expect(init.headers[LLM_API_KEY_HEADER]).toBe('sk-byok');
+  });
+
+  test('surfaces a changed route as the unconfirmed-payment ApiError (#3385)', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'resonance_payment_unconfirmed' }, 409));
+    await expect(resonance.generate(7, 'tok', null, 'vault_bound')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 409,
+      detail: 'resonance_payment_unconfirmed',
+    });
+  });
+
   test('surfaces a 402 as an ApiError', async () => {
     mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'insufficient_offerings' }, 402));
     await expect(resonance.generate(7, 'tok')).rejects.toMatchObject({
@@ -313,6 +332,17 @@ describe('resonance.essay', () => {
 
     expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ price_acknowledged: true });
     expect(JSON.parse(mockFetch.mock.calls[1][1].body)).toEqual({ price_acknowledged: false });
+  });
+
+  test('sends the disclosed payer route beside the acknowledgement when given (#3385)', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...marginalia(), ...ESSAY_BALANCES }));
+
+    await resonance.essay(1, { priceAcknowledged: true, disclosedRoute: 'vault_bound' });
+
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+      price_acknowledged: true,
+      disclosed_route: 'vault_bound',
+    });
   });
 
   test('rejects an answer without balances instead of pretending it is free', async () => {

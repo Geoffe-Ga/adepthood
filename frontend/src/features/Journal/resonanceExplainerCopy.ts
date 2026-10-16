@@ -146,6 +146,15 @@ export const RESONANCE_EXPLAINER_DONT_SHOW_A11Y =
 
 export const RESONANCE_EXPLAINER_SCRIM_A11Y = 'Dismiss the resonance note';
 
+/**
+ * Shown above a price disclosed again because the server refused a request
+ * whose payer had changed since the writer last saw it (#3385): a vault
+ * connected or disconnected on another device, or a wallet refilled. Says that
+ * nothing was spent, so asking again is a fresh, informed choice.
+ */
+export const PAYER_CHANGED_NOTICE =
+  'Nothing was charged. How this would be paid for changed since you looked, so here it is again.';
+
 /*
  * The essay offer (#623). A note's first letter is a charged depth too, so it
  * is offered with its price on it rather than written the moment the note is

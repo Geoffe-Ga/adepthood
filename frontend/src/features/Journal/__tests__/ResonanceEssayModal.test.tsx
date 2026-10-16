@@ -10,7 +10,10 @@ import type { BotmasonUsageT as UsageResponse } from '@/api/schemas';
 import { setActiveUser } from '@/storage/userScope';
 
 const mockEssay = jest.fn() as jest.MockedFunction<
-  (_id: number, _options?: { priceAcknowledged?: boolean }) => Promise<Marginalia>
+  (
+    _id: number,
+    _options?: { priceAcknowledged?: boolean; disclosedRoute?: string },
+  ) => Promise<Marginalia>
 >;
 const mockUsage = jest.fn() as jest.MockedFunction<(_token?: string) => Promise<UsageResponse>>;
 
@@ -164,7 +167,10 @@ describe('ResonanceEssayModal', () => {
     const text = await findByTestId('essay-text');
     expect(text.props.children).toBe('A warm letter about bending.');
     expect(mockEssay).toHaveBeenCalledTimes(1);
-    expect(mockEssay).toHaveBeenCalledWith(4, { priceAcknowledged: true });
+    expect(mockEssay).toHaveBeenCalledWith(4, {
+      priceAcknowledged: true,
+      disclosedRoute: 'app_provider',
+    });
     expect(onEssayLoaded).toHaveBeenCalledTimes(1);
   });
 
@@ -450,7 +456,10 @@ describe('ResonanceEssayModal reopened after a letter that never arrived', () =>
     await askForTheLetter(findByTestId);
 
     expect(mockEssay).toHaveBeenCalledTimes(2);
-    expect(mockEssay).toHaveBeenLastCalledWith(9, { priceAcknowledged: true });
+    expect(mockEssay).toHaveBeenLastCalledWith(9, {
+      priceAcknowledged: true,
+      disclosedRoute: 'app_provider',
+    });
     expect((await findByTestId('essay-text')).props.children).toBe('A letter for the other note.');
   });
 
@@ -925,10 +934,63 @@ describe('vault-bound first letters use the actual server boundary (#3262/#3346)
         'A letter written by the vault.',
       );
       expect(mockEssay).toHaveBeenCalledTimes(1);
-      expect(mockEssay).toHaveBeenCalledWith(4, { priceAcknowledged: true });
+      expect(mockEssay).toHaveBeenCalledWith(4, {
+        priceAcknowledged: true,
+        disclosedRoute: 'vault_bound',
+      });
       expect(onOpenSettings).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('a letter is asked for on the route its price was disclosed for (#3385)', () => {
+  it('offers the new price again, charging nothing, when the route changed before the ask', async () => {
+    mockUsage
+      .mockResolvedValueOnce(usage(20, 12))
+      .mockResolvedValueOnce({ ...usage(20, 12), resonance_route: 'vault_bound' });
+    mockEssay
+      .mockRejectedValueOnce(new ApiError(409, 'essay_price_unacknowledged'))
+      .mockResolvedValueOnce(note({ id: 4, essay: 'A letter written by the vault.' }));
+    const onFundingRequired = jest.fn();
+    const view = render(
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+        onFundingRequired={onFundingRequired}
+      />,
+    );
+    await waitFor(() =>
+      expect(view.getByTestId('essay-ask-cost')).toHaveTextContent(/Your own API key pays/u),
+    );
+    expect(view.queryByTestId('essay-payer-changed')).toBeNull();
+
+    await askForTheLetter(view.findByTestId);
+
+    expect(await view.findByTestId('essay-payer-changed')).toBeTruthy();
+    await waitFor(() =>
+      expect(view.getByTestId('essay-ask-cost')).toHaveTextContent(/This letter spends one/u),
+    );
+    expect(view.queryByTestId('essay-error')).toBeNull();
+    expect(onFundingRequired).not.toHaveBeenCalled();
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+    expect(mockEssay).toHaveBeenLastCalledWith(4, {
+      priceAcknowledged: true,
+      disclosedRoute: 'app_provider',
+    });
+
+    await askForTheLetter(view.findByTestId);
+
+    expect((await view.findByTestId('essay-text')).props.children).toBe(
+      'A letter written by the vault.',
+    );
+    expect(mockEssay).toHaveBeenCalledTimes(2);
+    expect(mockEssay).toHaveBeenLastCalledWith(4, {
+      priceAcknowledged: true,
+      disclosedRoute: 'vault_bound',
+    });
+  });
 });
 
 describe('letter payment scope follows the authenticated owner (#3262)', () => {

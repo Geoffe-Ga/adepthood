@@ -330,7 +330,8 @@ for (const width of WIDTHS) {
     expect(await (await usage()).json()).toEqual(before);
     const settled = page.waitForResponse(
       (reply) =>
-        reply.request().method() === 'POST' && reply.url().endsWith(`/journal/${id}/resonance`),
+        reply.request().method() === 'POST' &&
+        new URL(reply.url()).pathname === `/journal/${id}/resonance`,
     );
     const invitationRead = page.waitForResponse(
       (reply) =>
@@ -382,7 +383,10 @@ for (const width of WIDTHS) {
     const written = await letterResponse;
     expect(written.status()).toBe(200);
     expect(written.request().headers()['x-llm-api-key']).toBeUndefined();
-    expect(written.request().postDataJSON()).toEqual({ price_acknowledged: true });
+    expect(written.request().postDataJSON()).toEqual({
+      price_acknowledged: true,
+      disclosed_route: 'app_provider',
+    });
     expect((await written.json()).essay_source).toBe('demo');
     await expect(page.getByTestId('essay-source')).toHaveText('Demo — not a real reflection');
     await expect(page.getByTestId('essay-text')).toBeVisible();
@@ -430,7 +434,11 @@ for (const width of WIDTHS) {
     });
     let asks = 0;
     page.on('request', (request) => {
-      if (request.method() === 'POST' && /\/resonance$|\/essay$/u.test(request.url())) asks += 1;
+      if (
+        request.method() === 'POST' &&
+        /\/resonance$|\/essay$/u.test(new URL(request.url()).pathname)
+      )
+        asks += 1;
     });
     await openPage(page, id);
     await page.getByRole('button', { name: 'Get resonance' }).click();
@@ -512,7 +520,7 @@ for (const width of WIDTHS) {
       ).json();
       const settled = page.waitForResponse(
         (response) =>
-          response.url().endsWith(`/journal/${id}/resonance`) &&
+          new URL(response.url()).pathname === `/journal/${id}/resonance` &&
           response.request().method() === 'POST',
       );
       const invitationRead = page.waitForResponse(
@@ -576,7 +584,10 @@ for (const width of WIDTHS) {
       await ask.press('Enter');
       const written = await letterResponse;
       expect(written.status()).toBe(200);
-      expect(written.request().postDataJSON()).toEqual({ price_acknowledged: true });
+      expect(written.request().postDataJSON()).toEqual({
+        price_acknowledged: true,
+        disclosed_route: 'vault_bound',
+      });
       expect(Boolean(written.request().headers()['x-llm-api-key'])).toBe(hasKey);
       await expect(page.getByTestId('essay-text')).toHaveText(
         'The lane vault wrote this letter back to you.',
@@ -652,7 +663,10 @@ for (const width of WIDTHS) {
         const response = await refused;
         expect(response.status()).toBe(503);
         expect(await response.json()).toMatchObject({ detail: 'reflection_source_unavailable' });
-        expect(response.request().postDataJSON()).toEqual({ price_acknowledged: true });
+        expect(response.request().postDataJSON()).toEqual({
+          price_acknowledged: true,
+          disclosed_route: 'vault_bound',
+        });
         await expect(page.getByTestId('essay-error')).toContainText('nothing was charged');
         await doubleText(page);
         await page.getByTestId('essay-error').scrollIntoViewIfNeeded();
@@ -838,6 +852,166 @@ for (const width of WIDTHS) {
   });
 }
 
+const PAYER_CHANGED =
+  'Nothing was charged. How this would be paid for changed since you looked, so here it is again.';
+
+/**
+ * Serve ``app_provider`` as the disclosed route while ``stale()`` holds: the
+ * price a writer read before another device connected this vault (#3385).
+ * Only that field changes; the real owner resolver still decides every POST.
+ */
+async function serveRouteReadBeforeVaultConnected(page: Page, stale: () => boolean): Promise<void> {
+  await page.route('**/user/usage', async (route) => {
+    const actual = await route.fetch();
+    const usage = await actual.json();
+    expect(usage.resonance_route).toBe('vault_bound');
+    const served = stale() ? { ...usage, resonance_route: 'app_provider' } : usage;
+    await route.fulfill({ response: actual, json: served });
+  });
+}
+
+/** Read the notice and the price at normal and doubled text, with both arms reachable. */
+async function payerChangedFrames(
+  page: Page,
+  name: string,
+  notice: Locator,
+  arms: Locator[],
+): Promise<void> {
+  await expect(notice).toHaveText(PAYER_CHANGED);
+  await completeCopy(notice);
+  await capture(page, `${name}-normal`);
+  await doubleText(page);
+  await completeCopy(notice);
+  for (const arm of arms) await reachable(arm);
+  await capture(page, `${name}-200-percent`);
+}
+
+for (const width of WIDTHS) {
+  test(`controlled route change after a key-funded disclosure asks again before any charge at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const token = await loginVaultOwner(page);
+    await storeOwnKey(page);
+    const id = await createPage(page, token);
+    const asks = recordResonanceAsks(page, id);
+    let letterAsks = 0;
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/essay'))
+        letterAsks += 1;
+    });
+    let staleFor: 'reading' | 'letter' | null = 'reading';
+    await serveRouteReadBeforeVaultConnected(
+      page,
+      () =>
+        (staleFor === 'reading' && asks.length === 0) ||
+        (staleFor === 'letter' && letterAsks === 0),
+    );
+    const providerAttempts = async (): Promise<unknown> =>
+      (await page.request.get(`${lane().providerUrl}/__lane/attempts`)).json();
+    const before = wallet();
+    const vaultBefore = await vaultReflections(page);
+    const providerBefore = await providerAttempts();
+
+    await openPage(page, id);
+    await page.getByRole('button', { name: 'Get resonance' }).click();
+    const cost = page.getByTestId('resonance-explainer-cost');
+    await expect(cost).toHaveText(
+      'Your own API key pays for this reading. Nothing is drawn from your BotMason messages.',
+    );
+    await expect(page.getByTestId('resonance-explainer-payer-changed')).toHaveCount(0);
+    const refused = page.waitForResponse(
+      (reply) =>
+        reply.request().method() === 'POST' &&
+        new URL(reply.url()).pathname === `/journal/${id}/resonance`,
+    );
+    await page.getByTestId('resonance-explainer-continue').click();
+    const refusal = await refused;
+    expect(refusal.status()).toBe(409);
+    expect(await refusal.json()).toEqual({ detail: 'resonance_payment_unconfirmed' });
+    expect(new URL(refusal.url()).searchParams.get('disclosed_route')).toBe('app_provider');
+    await expect(cost).toContainText('BotMason');
+    expect(wallet()).toEqual(before);
+    expect(await vaultReflections(page)).toEqual(vaultBefore);
+    expect(await providerAttempts()).toEqual(providerBefore);
+    await payerChangedFrames(
+      page,
+      `route-changed-reading-${width}`,
+      page.getByTestId('resonance-explainer-payer-changed'),
+      [
+        page.getByTestId('resonance-explainer-continue'),
+        page.getByTestId('resonance-explainer-cancel'),
+      ],
+    );
+
+    // Confirmed on the route now in force: one vault reading, one credit.
+    const settled = page.waitForResponse(
+      (reply) =>
+        reply.request().method() === 'POST' &&
+        new URL(reply.url()).pathname === `/journal/${id}/resonance`,
+    );
+    await page.getByTestId('resonance-explainer-continue').click();
+    const reading = await settled;
+    expect(reading.status()).toBe(200);
+    expect(new URL(reading.url()).searchParams.get('disclosed_route')).toBe('vault_bound');
+    expect(asks).toHaveLength(2);
+    const paid = wallet();
+    expect(paid.monthly_messages_used).toBe(before.monthly_messages_used + 1);
+    expect(paid.rows.length).toBe(before.rows.length + 1);
+    const note = ((await reading.json()) as { marginalia: { id: number }[] }).marginalia[0];
+    expect(note).toBeDefined();
+
+    // The letter: its offer was priced before the vault connected too.
+    staleFor = 'letter';
+    await openPage(page, id);
+    const invitation = page.getByTestId('journal-corpus-invitation-dismiss');
+    if (await invitation.isVisible()) await invitation.click();
+    await page.getByTestId(`margin-note-open-${note!.id}`).click();
+    const letterCost = page.getByTestId('essay-ask-cost');
+    await expect(letterCost).toHaveText(
+      'Your own API key pays for this letter. Nothing is drawn from your BotMason messages.',
+    );
+    const letterRefused = page.waitForResponse(
+      (reply) =>
+        reply.request().method() === 'POST' &&
+        reply.url().endsWith(`/marginalia/${note!.id}/essay`),
+    );
+    await page.getByTestId('essay-ask').click();
+    const letterRefusal = await letterRefused;
+    expect(letterRefusal.status()).toBe(409);
+    expect(await letterRefusal.json()).toEqual({ detail: 'essay_price_unacknowledged' });
+    expect(letterRefusal.request().postDataJSON()).toEqual({
+      price_acknowledged: true,
+      disclosed_route: 'app_provider',
+    });
+    await expect(letterCost).toContainText('This letter spends one');
+    expect(wallet()).toEqual(paid);
+    await payerChangedFrames(
+      page,
+      `route-changed-letter-${width}`,
+      page.getByTestId('essay-payer-changed'),
+      [page.getByTestId('essay-ask'), page.getByTestId('essay-not-now')],
+    );
+    const written = page.waitForResponse(
+      (reply) =>
+        reply.request().method() === 'POST' &&
+        reply.url().endsWith(`/marginalia/${note!.id}/essay`),
+    );
+    await page.getByTestId('essay-ask').click();
+    const letter = await written;
+    expect(letter.status()).toBe(200);
+    expect(letter.request().postDataJSON()).toEqual({
+      price_acknowledged: true,
+      disclosed_route: 'vault_bound',
+    });
+    await expect(page.getByTestId('essay-text')).toHaveText(
+      'The lane vault wrote this letter back to you.',
+    );
+    expect(wallet().monthly_messages_used).toBe(paid.monthly_messages_used + 1);
+    expect(await providerAttempts()).toEqual(providerBefore);
+  });
+}
+
 for (const width of WIDTHS) {
   test(`real app-provider own key pays without a wallet debit at ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
@@ -860,7 +1034,7 @@ for (const width of WIDTHS) {
     await capture(page, `app-own-key-reading-${width}-200-percent`);
     const settled = page.waitForResponse(
       (response) =>
-        response.url().endsWith(`/journal/${id}/resonance`) &&
+        new URL(response.url()).pathname === `/journal/${id}/resonance` &&
         response.request().method() === 'POST',
     );
     expect(
@@ -900,7 +1074,10 @@ for (const width of WIDTHS) {
     ).json();
     let asks = 0;
     page.on('request', (request) => {
-      if (request.method() === 'POST' && request.url().endsWith(`/journal/${id}/resonance`))
+      if (
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === `/journal/${id}/resonance`
+      )
         asks += 1;
     });
     // A rolling server may not yet expose route metadata. This controlled response

@@ -33,7 +33,8 @@ function recordPasses(page: Page, entryId: number): { readonly length: number } 
   const sent: string[] = [];
   const route = `/journal/${String(entryId)}/resonance`;
   page.on('request', (request) => {
-    if (request.method() === 'POST' && request.url().endsWith(route)) sent.push(request.url());
+    if (request.method() === 'POST' && new URL(request.url()).pathname === route)
+      sent.push(request.url());
   });
   return sent;
 }

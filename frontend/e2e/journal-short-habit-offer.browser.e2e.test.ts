@@ -90,13 +90,16 @@ test('a failed short-entry reflection still offers and checks off a completed ha
   // Reproduce the production failure boundary deterministically: only the
   // literary pass is refused. The follow-up completion check, suggestion row,
   // acceptance, and habit check-in all continue over the real wire.
-  await page.route(`**/journal/${entryId}/resonance`, async (route) => {
-    await route.fulfill({
-      status: 502,
-      contentType: 'application/json',
-      body: JSON.stringify({ detail: 'llm_provider_error' }),
-    });
-  });
+  await page.route(
+    (url) => url.pathname === `/journal/${entryId}/resonance`,
+    async (route) => {
+      await route.fulfill({
+        status: 502,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'llm_provider_error' }),
+      });
+    },
+  );
   await page.reload();
   await page.getByTestId(`journal-shelf-open-${entryId}`).click();
   await askForResonance(page);

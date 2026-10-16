@@ -27,7 +27,10 @@ const mockFreeExits = jest.fn() as jest.MockedFunction<
   (_id: number, _token?: string) => Promise<ResonanceResponse>
 >;
 const mockEssay = jest.fn() as jest.MockedFunction<
-  (_id: number, _options?: { priceAcknowledged?: boolean }) => Promise<unknown>
+  (
+    _id: number,
+    _options?: { priceAcknowledged?: boolean; disclosedRoute?: string },
+  ) => Promise<unknown>
 >;
 const mockDetect = jest.fn() as jest.MockedFunction<
   (_id: number) => Promise<{ checked: boolean; items: unknown[] }>
@@ -403,7 +406,12 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
     );
     fireEvent.press(await view.findByTestId('resonance-explainer-continue'));
     await waitFor(() =>
-      expect(mockGenerate).toHaveBeenCalledWith(7, undefined, 'sk-key-loaded-from-device'),
+      expect(mockGenerate).toHaveBeenCalledWith(
+        7,
+        undefined,
+        'sk-key-loaded-from-device',
+        'app_provider',
+      ),
     );
   });
 
@@ -450,7 +458,12 @@ describe('JournalEntryScreen — nothing is charged before the cost is disclosed
 
     fireEvent.press(view.getByTestId('resonance-explainer-continue'));
     await waitFor(() =>
-      expect(mockGenerate).toHaveBeenCalledWith(7, undefined, 'sk-key-added-after-open'),
+      expect(mockGenerate).toHaveBeenCalledWith(
+        7,
+        undefined,
+        'sk-key-added-after-open',
+        'app_provider',
+      ),
     );
   });
 
@@ -744,6 +757,73 @@ describe('JournalEntryScreen — an exhausted wallet still reaches the free answ
   });
 });
 
+describe('JournalEntryScreen — Continue is bound to the route it disclosed (#3385)', () => {
+  it('sends the disclosed route with the pass it confirms', async () => {
+    const view = await openEntryAndAsk();
+    await waitFor(() =>
+      expect(view.getByTestId('resonance-explainer-cost')).toHaveTextContent(/BotMason/u),
+    );
+
+    fireEvent.press(view.getByTestId('resonance-explainer-continue'));
+
+    await waitFor(() =>
+      expect(mockGenerate).toHaveBeenCalledWith(7, undefined, null, 'vault_bound'),
+    );
+    expect(view.queryByTestId('resonance-explainer-payer-changed')).toBeNull();
+  });
+
+  it('discloses a route that changed after Continue again instead of charging it', async () => {
+    mockApiKeyState.apiKey = 'sk-key-the-vault-never-uses'; // pragma: allowlist secret
+    mockUsage.mockResolvedValueOnce(usageSnapshot({ resonance_route: 'app_provider' }));
+    mockGenerate.mockRejectedValueOnce(apiError(409, 'resonance_payment_unconfirmed'));
+    const view = await openEntryAndAsk();
+    expect(await view.findByTestId('resonance-explainer-cost')).toHaveTextContent(
+      /Your own API key pays/u,
+    );
+
+    await act(async () => {
+      fireEvent.press(view.getByTestId('resonance-explainer-continue'));
+    });
+
+    // Another device connected a vault: the refreshed disclosure names its price.
+    const cost = await view.findByTestId('resonance-explainer-cost');
+    await waitFor(() => expect(cost).toHaveTextContent(/BotMason/u));
+    expect(view.getByTestId('resonance-explainer-payer-changed')).toBeTruthy();
+    expect(view.queryByTestId('journal-resonance-error')).toBeNull();
+    expect(mockDetect).not.toHaveBeenCalled();
+    expect(mockGenerate).toHaveBeenCalledTimes(1);
+    expect(mockGenerate).toHaveBeenLastCalledWith(
+      7,
+      undefined,
+      'sk-key-the-vault-never-uses',
+      'app_provider',
+    );
+
+    fireEvent.press(view.getByTestId('resonance-explainer-continue'));
+    await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(2));
+    expect(mockGenerate).toHaveBeenLastCalledWith(
+      7,
+      undefined,
+      'sk-key-the-vault-never-uses',
+      'vault_bound',
+    );
+  });
+
+  it('shows a reader who dismissed the note the changed route before anything is charged', async () => {
+    mockLoadDismissed.mockResolvedValue(true);
+    mockGenerate.mockRejectedValueOnce(apiError(409, 'resonance_payment_unconfirmed'));
+    mockUsage
+      .mockResolvedValueOnce(usageSnapshot())
+      .mockResolvedValueOnce(usageSnapshot({ resonance_route: 'app_provider' }));
+    const view = await openEntryAndAsk();
+
+    expect(await view.findByTestId('resonance-explainer-payer-changed')).toBeTruthy();
+    expect(view.getByTestId('resonance-explainer-cost')).toHaveTextContent(/own API key/u);
+    expect(mockGenerate).toHaveBeenCalledTimes(1);
+    expect(mockGenerate).toHaveBeenCalledWith(7, undefined, null, 'vault_bound');
+  });
+});
+
 describe('JournalEntryScreen — a stale wallet read is corrected by the pass', () => {
   const fundingFailures: Array<[string, RegExp, RegExp | null]> = [
     ['insufficient_offerings', /BotMason balance has run out/u, null],
@@ -976,7 +1056,10 @@ describe('JournalEntryScreen — an essay 402 opens the same refill remedy', () 
       fireEvent.press(view.getByTestId('essay-ask'));
     });
 
-    expect(mockEssay).toHaveBeenCalledWith(ESSAY_NOTE.id, { priceAcknowledged: true });
+    expect(mockEssay).toHaveBeenCalledWith(ESSAY_NOTE.id, {
+      priceAcknowledged: true,
+      disclosedRoute: 'app_provider',
+    });
     expect(await view.findByTestId('journal-resonance-refill')).toHaveTextContent(copy);
     await waitFor(() => expect(view.queryByTestId('essay-offer')).toBeNull());
     expect(mockGenerate).not.toHaveBeenCalled();

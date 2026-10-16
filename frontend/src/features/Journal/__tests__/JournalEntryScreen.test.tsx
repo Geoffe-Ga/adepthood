@@ -756,7 +756,7 @@ describe('JournalEntryScreen', () => {
     const view = await renderFinished();
     fireEvent.press(within(marginResonanceControls(view)).getByTestId('get-resonance-button'));
     await waitFor(() => expect(mockGenerate).toHaveBeenCalledTimes(1));
-    expect(mockGenerate).toHaveBeenCalledWith(7, undefined, null);
+    expect(mockGenerate).toHaveBeenCalledWith(7, undefined, null, 'vault_bound');
   });
 
   it('still enters edit mode from the Edit door in the exit row', async () => {
