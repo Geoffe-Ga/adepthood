@@ -41,7 +41,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol
+from typing import NoReturn, Protocol
 from uuid import UUID
 
 # Semantic contract version adepthood presents at handshake and compares against
@@ -470,6 +470,65 @@ def wire_ceiling_for(ceiling: VaultTierCeiling) -> WireTierCeiling:
         raise CreekCeilingUnrepresentableError(_UNREPRESENTABLE_CEILING_MESSAGE) from None
 
 
+class VaultKeyProvider(enum.StrEnum):
+    """A vendor whose writer-supplied key a managed vault will spend (Creek contract 0.18).
+
+    Creek's ADR 0015 (Creek-Vault#1873) lets a managed vault answer OPEN and
+    PERSONAL work with the writer's own Anthropic or OpenAI key, sent per
+    request. A vault lists the vendors it accepts in its handshake's
+    ``request_key_providers``; anything else on the wire is dropped at the parse
+    boundary rather than trusted.
+    """
+
+    ANTHROPIC = "anthropic"
+    OPENAI = "openai"
+
+
+#: What every rendering of a :class:`VaultProviderKey` shows in place of the key.
+REDACTED_KEY = "<redacted>"
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class VaultProviderKey:
+    """A writer's own provider key, held for one request on its way to their vault (#3437).
+
+    ADR 0009's 2026-10-16 amendment: a vault-bound writer's BYOK key travels
+    device -> adepthood -> vault per request, so the vault's own grounding and
+    voice pipeline can write with it. This type is how it travels. ``repr`` and
+    ``str`` name the vendor and redact the key, it refuses to pickle so no
+    queue, cache or log record can carry it to disk, and only
+    :meth:`reveal` -- called by the one header builder in
+    :mod:`services.creek_vault_client` -- reads the value.
+
+    Attributes:
+        provider: The vendor the key belongs to.
+    """
+
+    provider: VaultKeyProvider
+    _secret: str = field(repr=False)
+
+    def reveal(self) -> str:
+        """Return the key, for the vault request header and nothing else."""
+        return self._secret
+
+    def __repr__(self) -> str:
+        """Name the vendor and redact the key."""
+        return f"VaultProviderKey(provider={self.provider.value!r}, key={REDACTED_KEY})"
+
+    def __str__(self) -> str:
+        """Render exactly as :meth:`__repr__` does."""
+        return self.__repr__()
+
+    def __reduce__(self) -> NoReturn:
+        """Refuse to pickle, so the key cannot be serialised anywhere.
+
+        Raises:
+            TypeError: Always.
+        """
+        msg = "a writer's provider key is never serialised"
+        raise TypeError(msg)
+
+
 @dataclass(frozen=True)
 class HandshakeResult:
     """Immutable outcome of a ``creek.handshake`` negotiation.
@@ -487,6 +546,14 @@ class HandshakeResult:
     ontology_version: str | None
     capabilities: frozenset[CreekCapability]
     attestation: Mapping[str, object] | None
+    #: The vendors whose writer-supplied key the vault will use for OPEN and
+    #: PERSONAL work (Creek contract 0.18). Empty for a self-connected vault, an
+    #: older vault, and every degraded handshake.
+    request_key_providers: frozenset[VaultKeyProvider] = frozenset()
+
+    def accepts_key(self, provider: VaultKeyProvider) -> bool:
+        """Whether this usable vault will spend a writer's ``provider`` key."""
+        return self.available and provider in self.request_key_providers
 
     @classmethod
     def unavailable(cls) -> HandshakeResult:

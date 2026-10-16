@@ -169,6 +169,7 @@ from services.creek_vault_payload import (
     _wheel_balance_from,
 )
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
+from services.creek_vault_relay import parse_request_key_providers, relay_headers
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
     VaultTelemetryOutcome,
@@ -745,6 +746,7 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
         ontology_version=_require_str(payload, "ontology_version"),
         capabilities=_parse_capabilities(payload["capabilities"]),
         attestation=_parse_attestation(payload.get("attestation")),
+        request_key_providers=parse_request_key_providers(payload.get("request_key_providers")),
     )
 
 
@@ -1082,10 +1084,15 @@ class _CallDepartures:
             :data:`_VAULT_TOTAL_DEADLINE_SECONDS`, for the one class of call that
             genuinely cannot fit inside it. ``None`` is not "no deadline" but
             "the standing one".
+        forwards_provider_key: Whether this route spends a writer's
+            request-scoped key (reflections, letters, the classification pass).
+            ``False`` by default, so a capability added later never carries a
+            key unless it says so.
     """
 
     contract_versioned: bool = True
     deadline: float | None = None
+    forwards_provider_key: bool = False
 
 
 #: The departures of a call that departs from nothing, and of the one call that
@@ -1093,6 +1100,7 @@ class _CallDepartures:
 #: each site, so the common case allocates nothing and reads as the default it is.
 _STANDING_CALL = _CallDepartures()
 _UNVERSIONED_CALL = _CallDepartures(contract_versioned=False)
+_KEYED_CALL = _CallDepartures(forwards_provider_key=True)
 
 
 def _widened_phase_budgets(deadline: float) -> httpx.Timeout:
@@ -1778,6 +1786,11 @@ class HttpCreekVaultClient:
         }
         if departures.contract_versioned:
             headers[_CONTRACT_VERSION_HEADER] = CONTRACT_MINOR
+        headers.update(
+            relay_headers(
+                spends_key=departures.forwards_provider_key, handshake=self._last_handshake
+            )
+        )
         client = self._active_client()
         deadline = departures.deadline
         if deadline is None:
@@ -2238,6 +2251,7 @@ class HttpCreekVaultClient:
                 f"{self._url}{_LETTERS_PATH}{segment}",
                 _letter_body(request, tier),
                 ceiling=tier,
+                departures=_KEYED_CALL,
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_LETTER_FAILED_MESSAGE) from None
@@ -2312,6 +2326,7 @@ class HttpCreekVaultClient:
                 f"{self._url}{_REFLECTIONS_PATH}",
                 _reflection_request_body(body),
                 ceiling=ceiling,
+                departures=_KEYED_CALL,
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_REFLECT_FAILED_MESSAGE) from None
@@ -2365,7 +2380,12 @@ class HttpCreekVaultClient:
         return reflection
 
     async def _post_pipeline(
-        self, path: str, body: Mapping[str, object], deadline: float | None
+        self,
+        path: str,
+        body: Mapping[str, object],
+        deadline: float | None,
+        *,
+        forwards_provider_key: bool = False,
     ) -> httpx.Response:
         """Ask for one pipeline pass, normalizing any transport failure.
 
@@ -2381,6 +2401,10 @@ class HttpCreekVaultClient:
         embedding stage is the expected shape of a first pass over a cold vault
         rather than a fault: the work it performed lands in Creek's cache
         regardless, so the next pass resumes from it.
+
+        ``forwards_provider_key`` is the classification pass's alone: it is the
+        one pipeline route that calls a model, so the only one that may carry a
+        writer's key (#3437).
         """
         try:
             return await self._authorized_request(
@@ -2388,7 +2412,9 @@ class HttpCreekVaultClient:
                 f"{self._url}{path}",
                 body,
                 ceiling=_PIPELINE_WIRE_CEILING,
-                departures=_CallDepartures(deadline=deadline),
+                departures=_CallDepartures(
+                    deadline=deadline, forwards_provider_key=forwards_provider_key
+                ),
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_PIPELINE_FAILED_MESSAGE) from None
@@ -2436,7 +2462,10 @@ class HttpCreekVaultClient:
         """
         self._pipeline_gate()
         response = await self._post_pipeline(
-            _CLASSIFICATIONS_PATH, _classification_request_body(), None
+            _CLASSIFICATIONS_PATH,
+            _classification_request_body(),
+            None,
+            forwards_provider_key=True,
         )
         if not response.is_success:
             raise _read_failure(CreekCapability.PIPELINE, response) from None
