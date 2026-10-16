@@ -92,7 +92,20 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   unsupported_format: 'Nothing here reads this kind of file, so it was never sent.',
   too_large: `Larger than ${MAX_SEED_DOCUMENT_LABEL}, which is as much as one document can carry.`,
   unreadable: "This file wouldn't open on this device.",
+  // Decided on device from the platform's own connectivity signal, before any
+  // request was made, so "wasn't sent" is a fact rather than a guess.
+  offline: "This device was offline, so this wasn't sent. Send it again once you're connected.",
+  // Only a 4xx answer to the one attempt there was: the server turned the
+  // document away, so nothing was kept (#3239).
   failed: "This didn't get through, and nothing was stored. You can send it again.",
+  // The request left the device and its answer was lost on the way back: a
+  // timeout, a dropped connection, a server error, or a reply this app could
+  // not read. The server may already have kept it, so this says only what is
+  // known, and names no destination because which one answered is what was
+  // lost. Sending again is safe, as for `degraded` (#3238).
+  unconfirmed:
+    "No clear answer came back, so we couldn't confirm this arrived. Send it again — the same " +
+    'file updates in place rather than making a second copy.',
   // Not a refusal by anything. The run was stopped while this one was still
   // waiting its turn, so it was never sent and nothing anywhere changed.
   cancelled:
@@ -140,10 +153,15 @@ export function seedSummaryLine(tally: SeedRunTally): string | null {
   if (tally.waiting > 0) {
     return `${tally.landed} of ${tally.total} have landed so far.`;
   }
-  if (tally.refused === 0) {
+  if (tally.refused === 0 && tally.unconfirmed === 0) {
     return `All ${tally.total} have landed.`;
   }
-  return `${tally.landed} of ${tally.total} landed. ${tally.refused} didn't go over.`;
+  // An unconfirmed upload may have landed, so it is never counted among those
+  // that "didn't go over" (#3239); each clause appears only when it has a count.
+  const clauses = [`${tally.landed} of ${tally.total} landed.`];
+  if (tally.refused > 0) clauses.push(`${tally.refused} didn't go over.`);
+  if (tally.unconfirmed > 0) clauses.push(`${tally.unconfirmed} couldn't be confirmed.`);
+  return clauses.join(' ');
 }
 
 /**

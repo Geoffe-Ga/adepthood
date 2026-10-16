@@ -45,15 +45,29 @@ export type CorpusSeedStatus =
   | 'vault_required';
 
 /**
- * The outcomes decided on device, before or instead of a request.
+ * The outcomes decided on device, before or instead of a server answer.
  *
  * `cancelled` is the one of these that is nobody's refusal: the run was stopped
  * while the document was still waiting its turn, so it never reached the
  * network at all. It is a settled status rather than a return to `queued`
  * because the run that would have sent it is over.
+ *
+ * `offline`, `failed` and `unconfirmed` split what used to be one status by
+ * what the device can actually know (#3239). `offline` was never sent, because
+ * the platform said the device was offline before the request was made.
+ * `failed` was turned away by the server with a 4xx, the answer to the only
+ * attempt there was, so nothing was kept. `unconfirmed` left the device and
+ * its answer was lost -- a timeout, a dropped connection, a server error, or a
+ * reply the app could not read -- so it may already be stored.
  */
 export type LocalSeedStatus =
-  'unsupported_format' | 'too_large' | 'unreadable' | 'failed' | 'cancelled';
+  | 'unsupported_format'
+  | 'too_large'
+  | 'unreadable'
+  | 'offline'
+  | 'failed'
+  | 'unconfirmed'
+  | 'cancelled';
 
 /**
  * A settled document's outcome: what its destination said, or what the device
@@ -95,7 +109,10 @@ export interface SeedRunTally {
   /** Durably kept, wherever this account's writing lives. */
   landed: number;
   waiting: number;
+  /** Settled, and definitely not kept. */
   refused: number;
+  /** Settled, but nobody could confirm whether it was kept (#3239). */
+  unconfirmed: number;
 }
 
 /**
@@ -105,6 +122,14 @@ export interface SeedRunTally {
  * it — the per-document line is where the destination is named.
  */
 const LANDED_STATUSES: readonly SeedItemStatus[] = ['ingested', 'in_corpus'];
+
+/**
+ * The two ways a document may have been kept without anyone being able to say
+ * so: the vault's `degraded`, answered after the document went over, and a
+ * request whose own answer was lost. Counted apart from the refusals because
+ * "didn't go over" would be a claim about these that nothing can check.
+ */
+const UNCONFIRMED_STATUSES: readonly SeedItemStatus[] = ['degraded', 'unconfirmed'];
 
 /** A run with nothing in it — the state before the first pick. */
 export const EMPTY_SEED_RUN: SeedRunState = { order: [], items: {} };
@@ -216,13 +241,20 @@ export function selectNextQueued(state: SeedRunState): SeedItem | null {
   return null;
 }
 
-/** What the run currently holds: how much landed, waits, or did not land. */
+/** What the run currently holds: how much landed, waits, did not land, or is unknown. */
 export function seedRunTally(state: SeedRunState): SeedRunTally {
-  const tally: SeedRunTally = { total: state.order.length, landed: 0, waiting: 0, refused: 0 };
+  const tally: SeedRunTally = {
+    total: state.order.length,
+    landed: 0,
+    waiting: 0,
+    refused: 0,
+    unconfirmed: 0,
+  };
   for (const id of state.order) {
     const status = state.items[id]?.status;
     if (status === undefined) continue;
     if (LANDED_STATUSES.includes(status)) tally.landed += 1;
+    else if (UNCONFIRMED_STATUSES.includes(status)) tally.unconfirmed += 1;
     else if (isSettled(status)) tally.refused += 1;
     else tally.waiting += 1;
   }

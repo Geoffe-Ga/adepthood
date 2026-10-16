@@ -272,7 +272,9 @@ describe('per-document status', () => {
 
     await waitFor(() => {
       expect(getByText(SEED_STATUS_LINES.ingested)).toBeTruthy();
-      expect(getByText(SEED_STATUS_LINES.failed)).toBeTruthy();
+      // #3239: a server error after the document went over is unconfirmed,
+      // never "nothing was stored".
+      expect(getByText(SEED_STATUS_LINES.unconfirmed)).toBeTruthy();
     });
   });
 
