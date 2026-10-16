@@ -121,6 +121,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-section-course-review.browser.e2e.test.ts',
   'journal-short-habit-offer.browser.e2e.test.ts',
   'journal-sources-panel.browser.e2e.test.ts',
+  'journal-stat-tiles-wrap.browser.e2e.test.ts',
   'journal-title-single-line.browser.e2e.test.ts',
   'journal-title-wrap.browser.e2e.test.ts',
   'journal-unlinked-timer-nudge.browser.e2e.test.ts',

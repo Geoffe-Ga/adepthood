@@ -2779,5 +2779,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-refinish-edited-entry.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.stat-tiles-wrap-at-200-percent",
+    "description": "A writer opens the Journal home on a 390px phone at 200% browser zoom (195x422 CSS px at device scale 2) and reads the Today's habits and Practices stat tiles without a word split across lines (#3440). The covering spec signs up through the real client, waits for both tiles to show their real counts from GET /habits/ and GET /practice-sessions/insights, and measures every word of each tile's title, stat and cue with a Range: all of a word's client rects share one line top. It does so at 390x844 and 1280x800, each at normal size and at 200% zoom, plus 390px with the tiles' text doubled; no tile glyph leaves its tile and the page never scrolls sideways. The same word measurement sweeps every visible text node on the Journal home and in the Notification Center, which hosts the same tiles, so any other row that splits a word fails too. At 1280px the tiles stay two-up on one line; when two will not fit side by side they stack in one column. Saved frames are inspected by hand. Targeted text doubling does not establish physical OS zoom or native geometry.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/StatTileRow.tsx",
+      "client": ["auth", "habits", "practiceSessions"],
+      "routes": ["POST /auth/signup", "GET /habits/", "GET /practice-sessions/insights"],
+      "tables": ["user", "habit", "practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-stat-tiles-wrap.browser.e2e.test.ts"
   }
 ]
