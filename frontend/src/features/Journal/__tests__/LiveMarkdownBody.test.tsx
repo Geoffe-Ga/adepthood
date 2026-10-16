@@ -200,6 +200,30 @@ describe('LiveMarkdownBody on web', () => {
     expect(mirrorColumns).toEqual(readColumns);
   });
 
+  it('draws a heading faux-bold at body size, with its ## dimmed and kept', () => {
+    const { getByTestId } = render(<Harness initial={'x\n## Tuesday'} />);
+    expect(renderedText(getByTestId('journal-live-heading-2'))).toBe('## Tuesday');
+    expect(renderedText(getByTestId('journal-live-marker-2'))).toBe('## ');
+    const content = getByTestId('journal-live-heading-content-5');
+    expect(renderedText(content)).toBe('Tuesday');
+    const style = StyleSheet.flatten(content.props.style);
+    expect(style.textShadowColor).toBe(colors.paper.ink);
+    expect(style.fontSize).toBeUndefined();
+    expect(style.fontWeight).toBeUndefined();
+  });
+
+  it.each([
+    ['1. walked', 'ordered', '1. '],
+    ['- [x] called Sam', 'task', '- [x] '],
+    ['---', 'rule', '---'],
+  ])('keeps every character of %j and dims its prefix', (body, kind, marker) => {
+    const { getByTestId } = render(<Harness initial={body} />);
+    expect(renderedText(getByTestId(`journal-live-${kind}-0`))).toBe(body);
+    const prefix = getByTestId('journal-live-marker-0');
+    expect(renderedText(prefix)).toBe(marker);
+    expect(StyleSheet.flatten(prefix.props.style).color).toBe(colors.paper.inkSoft);
+  });
+
   it('keeps a quote marker in the source and draws the line as a quote', () => {
     const onChangeBody = jest.fn();
     const { getByTestId } = render(<Harness initial="x" onChangeBody={onChangeBody} />);

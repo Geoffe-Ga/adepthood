@@ -358,13 +358,19 @@ test('the live mirror stays in register with the real textarea at every width an
   await signUp(page, 'journal-live-geometry');
   const wrapped = 'a long line that has to wrap across the writing column '.repeat(10);
   const filler = Array.from({ length: 30 }, (_, line) => `filler line ${line}`).join('\n');
-  const text = `Open **bold words** and _soft italics_ and <u>under words</u>.\n${wrapped}\n> a quote\n- item\n  - nested\n${filler}\nTail **bold** end`;
+  // The block dialect (#3251): a heading's faux bold, a two-digit ordinal and a
+  // task checkbox must each leave every later glyph exactly under the caret.
+  const blocks = '## Tuesday heading\n10. walked far\n- [x] called Sam\n---';
+  const text = `Open **bold words** and _soft italics_ and <u>under words</u>.\n${wrapped}\n> a quote\n- item\n  - nested\n${blocks}\n${filler}\nTail **bold** end`;
   const probes = [
     text.indexOf('bold words') + 2,
     text.indexOf('soft italics') + 1,
     text.indexOf('under words') + 3,
     text.indexOf('a quote'),
     text.indexOf('nested') + 2,
+    text.indexOf('Tuesday heading') + 9,
+    text.indexOf('walked far') + 4,
+    text.indexOf('called Sam') + 7,
     // Well into the wrapped line, several visual lines down.
     text.indexOf(wrapped) + Math.floor(wrapped.length * 0.8),
   ];

@@ -100,6 +100,16 @@ const liveStyles = StyleSheet.create({
     textShadowOffset: { width: FAUX_BOLD_OFFSET, height: 0 },
     textShadowRadius: 0,
   },
+  /**
+   * A heading's text. Read mode sets it on the type ramp; the mirror cannot
+   * change a size, weight or face without drifting off the caret, so it draws
+   * the heading at body size in the same faux bold.
+   */
+  heading: {
+    textShadowColor: colors.paper.ink,
+    textShadowOffset: { width: FAUX_BOLD_OFFSET, height: 0 },
+    textShadowRadius: 0,
+  },
   italic: {
     color: accent.strong,
   },

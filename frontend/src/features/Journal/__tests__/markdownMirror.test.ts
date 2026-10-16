@@ -67,4 +67,47 @@ describe('buildMirrorModel', () => {
     const runs = buildMirrorModel(document, { start: 0, end: 7 }).flatMap((line) => line.runs);
     expect(runs.filter((run) => run.revealed).every((run) => run.role === 'delimiter')).toBe(true);
   });
+
+  it.each([
+    [
+      '## Tuesday',
+      'heading',
+      [
+        ['## ', 'marker'],
+        ['Tuesday', 'content'],
+      ],
+    ],
+    [
+      '  10. ten',
+      'ordered',
+      [
+        ['  ', 'indent'],
+        ['10. ', 'marker'],
+        ['ten', 'content'],
+      ],
+    ],
+    [
+      '- [x] **Sam**',
+      'task',
+      [
+        ['- [x] ', 'marker'],
+        ['**', 'delimiter'],
+        ['Sam', 'content'],
+        ['**', 'delimiter'],
+      ],
+    ],
+    [
+      ' *** ',
+      'rule',
+      [
+        [' ', 'indent'],
+        ['*** ', 'marker'],
+      ],
+    ],
+  ])('keeps every character of %j, its block prefix dimmed as a marker', (body, kind, runs) => {
+    const [line] = buildMirrorModel(parseJournalMarkdown(body), NO_SELECTION);
+    expect(line!.kind).toBe(kind);
+    expect(line!.runs.map((run) => [run.text, run.role])).toEqual(runs);
+    expect(line!.runs.some((run) => run.role === 'marker' && run.revealed)).toBe(false);
+  });
 });

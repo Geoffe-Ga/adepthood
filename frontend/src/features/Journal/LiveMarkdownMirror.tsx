@@ -20,13 +20,17 @@ import { buildMirrorModel, type MirrorLine, type MirrorRun } from './markdownMir
 
 import { decorativeHidden } from '@/components/a11yHidden';
 
-/** Content run: nested styled Text, one per style, each tagged by its source start. */
-function ContentRun({ run }: { run: MirrorRun }): React.ReactNode {
+/**
+ * Content run: nested styled Text, one per style, each tagged by its source
+ * start. A heading line's content gets one more layer, its faux bold.
+ */
+function ContentRun({ run, heading }: { run: MirrorRun; heading: boolean }): React.ReactNode {
   let node: React.ReactNode = run.text;
-  const layers: [boolean, 'italic' | 'underline' | 'bold', TextStyle][] = [
+  const layers: [boolean, 'italic' | 'underline' | 'bold' | 'heading-content', TextStyle][] = [
     [run.italic, 'italic', liveStyles.italic],
     [run.underline, 'underline', liveStyles.underline],
     [run.bold, 'bold', liveStyles.bold],
+    [heading, 'heading-content', liveStyles.heading],
   ];
   for (const [applies, style, textStyle] of layers) {
     if (!applies) continue;
@@ -39,8 +43,8 @@ function ContentRun({ run }: { run: MirrorRun }): React.ReactNode {
   return node;
 }
 
-function MirrorRunText({ run }: { run: MirrorRun }): React.ReactNode {
-  if (run.role === 'content') return <ContentRun run={run} />;
+function MirrorRunText({ run, heading }: { run: MirrorRun; heading: boolean }): React.ReactNode {
+  if (run.role === 'content') return <ContentRun run={run} heading={heading} />;
   return (
     <Text
       style={run.revealed ? liveStyles.revealed : liveStyles.dimmed}
@@ -52,7 +56,10 @@ function MirrorRunText({ run }: { run: MirrorRun }): React.ReactNode {
 }
 
 function MirrorLineText({ line }: { line: MirrorLine }): React.JSX.Element {
-  const runs = line.runs.map((run) => <MirrorRunText key={run.start} run={run} />);
+  const heading = line.kind === 'heading';
+  const runs = line.runs.map((run) => (
+    <MirrorRunText key={run.start} run={run} heading={heading} />
+  ));
   if (line.kind === 'quote') {
     return (
       <Text style={liveStyles.quoteLine} testID={`journal-live-quote-${line.start}`}>

@@ -144,6 +144,18 @@ describe('shiftListLines -- the caret line', () => {
   it('keeps the typed marker', () => {
     expect(shiftListLines('+ a\n* b', { start: 7, end: 7 }, 'indent')?.text).toBe('+ a\n  * b');
   });
+
+  it('nests a task item like a bullet, keeping its checkbox', () => {
+    expect(shiftListLines('- [ ] a\n- [x] b', { start: 15, end: 15 }, 'indent')?.text).toBe(
+      '- [ ] a\n  - [x] b',
+    );
+    expect(listLevelAt('- [ ] a\n  - [x] b', 17)).toBe(1);
+  });
+
+  it('never moves a heading, an ordered item or a rule', () => {
+    // Hanging indent for ordered items is a sibling issue in #3249.
+    expect(shiftListLines('## h\n1. one\n---', { start: 0, end: 15 }, 'indent')).toBeNull();
+  });
 });
 
 describe('shiftListLines -- a selection across lines', () => {

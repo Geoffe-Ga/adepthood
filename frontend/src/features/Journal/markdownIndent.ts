@@ -3,7 +3,8 @@
  * of indent is in this document, and how to move items between levels.
  *
  * Only LIST lines nest -- a ``-``, ``*`` or ``+`` marker separated from its
- * content by a space or a tab, the same lines Return continues. A quote does
+ * content by a space or a tab, the same lines Return continues, task items
+ * (``- [x] done``) included. A quote does
  * not: an indented ``>`` renders as prose, so indenting or outdenting one would
  * silently change what the writer sees.
  *
@@ -26,8 +27,12 @@ export const WIDE_INDENT_UNIT = ' '.repeat(JOURNAL_TAB_COLUMNS);
 /** A tab unit, taken when every indented list line is indented with tabs only. */
 export const TAB_INDENT_UNIT = '\t';
 
-/** A list item: a bullet marker separated from its content by a space or a tab. */
+/**
+ * A list item: a task (``- [ ] x``), or any bullet marker separated from its
+ * content by a space or a tab.
+ */
 export function isListLine(line: JournalMarkdownLine): boolean {
+  if (line.kind === 'task') return true;
   return (
     line.marker != null &&
     BULLET_MARKERS.includes(line.marker) &&

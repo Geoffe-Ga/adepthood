@@ -24,7 +24,14 @@ import {
   type JournalMarkdownLine,
 } from './journalMarkdown';
 import { useMarginNavigation } from './marginNavigation';
-import { bulletDecoration, renderMarkdownRun, webRole } from './ReadOnlyMarkdownText';
+import {
+  JOURNAL_RULE_STYLE,
+  headingProps,
+  headingStyle,
+  renderDecoratedLine,
+  renderMarkdownRun,
+  webRole,
+} from './ReadOnlyMarkdownText';
 import { lineSlice } from './renderedSpans';
 import StaleQuoteNotes from './StaleQuoteNotes';
 
@@ -284,9 +291,29 @@ function renderBlockLines(
 ): React.ReactNode[] {
   return block.lines.flatMap((line, index) => [
     ...(index === 0 ? [] : [`\n`]),
-    ...bulletDecoration(block, line),
-    ...renderLine(line, segments, render),
+    ...renderDecoratedLine(render.document, block, line, renderLine(line, segments, render)),
   ]);
+}
+
+/** Kinds drawn as a list container: one indented item per line. */
+const LIST_BLOCK_KINDS: ReadonlySet<JournalMarkdownBlock['kind']> = new Set([
+  'bullet',
+  'ordered',
+  'task',
+]);
+
+/**
+ * A rule's hairline. Its characters are hidden, so it normally draws nothing
+ * else -- unless an anchor owns only those characters, in which case the
+ * literal is kept (as for any hidden syntax) so the note stays reachable.
+ */
+function ruleBlock(block: JournalMarkdownBlock, content: React.ReactNode[]): React.JSX.Element {
+  return (
+    <>
+      <View role="separator" style={styles.rule} testID={`journal-markdown-rule-${block.start}`} />
+      {content.some((node) => node != null) ? <Text style={styles.body}>{content}</Text> : null}
+    </>
+  );
 }
 
 /** Wrap a block's content in the element its kind calls for. */
@@ -303,17 +330,31 @@ function wrapBlock(block: JournalMarkdownBlock, content: React.ReactNode[]): Rea
       </View>
     );
   }
-  if (block.kind === 'bullet') {
+  if (LIST_BLOCK_KINDS.has(block.kind)) {
     return (
       <View
         accessibilityLabel="List"
         style={styles.bulletBlock}
-        testID={`journal-markdown-bullet-${block.start}`}
+        testID={`journal-markdown-${block.kind}-${block.start}`}
       >
         <Text style={styles.body}>{content}</Text>
       </View>
     );
   }
+  // Only a heading line carries a level, and a heading is always its own block.
+  const level = block.lines[0]!.headingLevel;
+  if (level != null) {
+    return (
+      <Text
+        {...headingProps(level)}
+        style={[styles.body, headingStyle(level)]}
+        testID={`journal-markdown-heading-${block.start}`}
+      >
+        {content}
+      </Text>
+    );
+  }
+  if (block.kind === 'rule') return ruleBlock(block, content);
   return <Text style={styles.body}>{content}</Text>;
 }
 
@@ -367,10 +408,11 @@ function FocusAnchor({
 }
 
 /**
- * The block holding the focused quote, wrapped so it can be measured. A quote or
- * list block is wrapped whole (its container carries the styling); a prose
- * block -- which may be a whole long entry -- is split at the quote's line so
- * the measured anchor starts there rather than at the top of the entry.
+ * The block holding the focused quote, wrapped so it can be measured. A quote,
+ * list, heading or rule block is wrapped whole (its container carries the
+ * styling); a prose block -- which may be a whole long entry -- is split at the
+ * quote's line so the measured anchor starts there rather than at the top of
+ * the entry.
  */
 function renderFocusedBlock(
   block: JournalMarkdownBlock,
@@ -378,10 +420,7 @@ function renderFocusedBlock(
   render: RenderContext,
   focus: NonNullable<BodyFocus>,
 ): React.ReactNode {
-  const split =
-    block.kind === 'quote' || block.kind === 'bullet'
-      ? 0
-      : focusSplitIndex(block, focus.span.start);
+  const split = block.kind === 'plain' ? focusSplitIndex(block, focus.span.start) : 0;
   const before = block.lines.slice(0, split);
   const from = { ...block, lines: block.lines.slice(split) };
   return (
@@ -479,6 +518,7 @@ const styles = StyleSheet.create({
   bulletBlock: {
     paddingVertical: SPACING.xs,
   },
+  rule: JOURNAL_RULE_STYLE,
   quoteBlock: {
     backgroundColor: colors.paper.backgroundAlt,
     borderLeftWidth: JOURNAL_QUOTE_RULE_WIDTH,
