@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { mettaReturn, type MettaReturnState } from '@/api';
 import { useAuth } from '@/context/AuthContext';
+import { useAuthLineage } from '@/hooks/useAuthLineage';
 import { useMountedRef } from '@/hooks/useMountedRef';
 import {
   loadReturnOfferDismissed,
@@ -32,9 +33,10 @@ interface ReturnScope {
 }
 interface MountedReturnScope extends ReturnScope {
   /**
-   * Identifies the signed-in owner session, ``null`` while unauthorized. Unlike
-   * ``current`` it survives a same-account token renewal, so owner-bound
-   * transient UI resets on a genuine lifecycle change, not every rotation.
+   * Identifies the signed-in owner's session lineage, ``null`` while
+   * unauthorized. Like ``current`` it survives a same-account token renewal
+   * and moves on every session boundary, so owner-bound transient UI resets on
+   * a genuine lifecycle change, not every rotation.
    */
   session: string | null;
 }
@@ -53,11 +55,19 @@ function identityFor(scope: ReturnScope, state: MettaReturnState): ReturnOfferId
   return { userId: scope.credentials.userId, episode: state.offer_episode };
 }
 
-/** Keep credentials and namespace together, including an A → B → A without a render. */
+/**
+ * Keep credentials and namespace together, including an A → B → A without a render.
+ *
+ * ``current`` fences on the session lineage, not the exact token (#3452): a
+ * same-account renewal keeps it, so a start, a decline or a read that crossed
+ * a proactive refresh, or its own 401-refresh-retry, still lands. A sign-out,
+ * another account, an A → B → A switch or the same account signing back in
+ * after a 401 ends it. Requests carry the credential of the render that
+ * dispatched them; the client forwards a renewed one to its successor.
+ */
 function useReturnScope(): MountedReturnScope {
   const { token } = useAuth();
-  const latestToken = useRef(token);
-  latestToken.current = token;
+  const lineage = useAuthLineage();
   const owner = useActiveUser();
   const generation = useActiveUserGeneration();
   const mounted = useMountedRef();
@@ -69,18 +79,19 @@ function useReturnScope(): MountedReturnScope {
     owner !== null &&
     token !== null &&
     parseUserId(decodeJwtPayload(token)?.sub) === owner;
+  const lineageIsCurrent = lineage.isCurrent;
   const current = useCallback(
     () =>
       mounted.current &&
       authorized &&
-      latestToken.current === token &&
+      lineageIsCurrent() &&
       getActiveUser() === owner &&
       getActiveUserGeneration() === generation,
-    [mounted, authorized, owner, generation, token],
+    [mounted, authorized, lineageIsCurrent, owner, generation],
   );
   return {
     generation,
-    session: authorized ? `${owner}@${generation}` : null,
+    session: authorized ? `${owner}@${generation}#${lineage.epoch}` : null,
     current,
     credentials: authorized && owner !== null && token !== null ? { userId: owner, token } : null,
   };
@@ -140,6 +151,9 @@ function useObservation(scope: ReturnScope, { enabled = true, refreshKey = 0 }: 
   const credentials = scope.credentials;
   const token = credentials?.token;
   const userId = credentials?.userId;
+  // Read at dispatch: a renewal keeps the lineage (#3452), so it must not reread the state.
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
   const [observation, setObservation] = useState({ generation: -1, state: EMPTY });
   const latest = useRef(observation);
   latest.current = observation;
@@ -156,6 +170,7 @@ function useObservation(scope: ReturnScope, { enabled = true, refreshKey = 0 }: 
     if (!enabled) return;
     // Rebuild the immutable captured scope from primitive dependencies so state
     // updates do not start another read or replace an in-flight observation.
+    const token = tokenRef.current;
     void reload(
       {
         generation,
@@ -164,7 +179,7 @@ function useObservation(scope: ReturnScope, { enabled = true, refreshKey = 0 }: 
       },
       publish,
     );
-  }, [generation, current, userId, token, publish, enabled, refreshKey]);
+  }, [generation, current, userId, publish, enabled, refreshKey]);
   return {
     state: current() && observation.generation === generation ? observation.state : EMPTY,
     latest,

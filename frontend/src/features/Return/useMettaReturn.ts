@@ -47,10 +47,10 @@ interface LetGoActions {
 /**
  * Own the let-go / re-commit moment: its visibility and the release/recommit calls.
  *
- * Visibility resets with the owner ``session``, not with ``current``: a
- * same-account token renewal mints a new ``current`` fence, and keying the
- * reset to it closed the prompt mid-choice (#3374). Requests still capture the
- * latest credential and stay fenced by ``current``.
+ * Visibility resets with the owner ``session``, a primitive that moves only on
+ * a session boundary: keying it to the exact token closed the prompt mid-choice
+ * on a renewal (#3374), and a same-account re-login still closes it (#3452).
+ * Requests stay fenced by ``current``, which a renewal also keeps.
  */
 function useLetGoActions(
   current: () => boolean,

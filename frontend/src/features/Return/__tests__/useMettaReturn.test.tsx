@@ -11,11 +11,21 @@ const mockToken = [
   Buffer.from(JSON.stringify({ sub: '1', exp: 4102444800 })).toString('base64url'),
   'test-signature',
 ].join('.');
-jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: mockToken }) }));
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({
+    token: mockToken,
+    authStatus: mockToken === null ? 'anonymous' : 'authenticated',
+  }),
+}));
 jest.mock('@/storage/userScope', () => ({
   ...jest.requireActual<typeof UserScope>('@/storage/userScope'),
   getActiveUser: () => 1,
   getActiveUserGeneration: () => 1,
+  // The session-lineage fence (#3452) asks the account scope through this predicate.
+  isAccountScopeCurrent: (owner: number | null, generation: number) =>
+    !jest.requireActual<typeof UserScope>('@/storage/userScope').isActiveUserTransitioning() &&
+    owner === 1 &&
+    generation === 1,
 }));
 jest.mock('@/storage/useActiveUser', () => ({
   useActiveUser: () => 1,

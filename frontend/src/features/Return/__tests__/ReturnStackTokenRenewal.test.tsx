@@ -20,7 +20,12 @@ const mockStart = jest.fn<(..._args: unknown[]) => Promise<ReturnArc>>();
 const mockRelease = jest.fn<(..._args: unknown[]) => Promise<unknown>>();
 const mockListAll = jest.fn<() => Promise<ApiHabitWithGoals[]>>();
 
-jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: mockToken }) }));
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({
+    token: mockToken,
+    authStatus: mockToken === null ? 'anonymous' : 'authenticated',
+  }),
+}));
 jest.mock('@/utils/token', () => ({
   decodeJwtPayload: (token: string) =>
     token.startsWith('account-') ? { sub: token.slice('account-'.length).split(':')[0] } : null,
@@ -29,6 +34,11 @@ jest.mock('@/storage/userScope', () => ({
   ...jest.requireActual<typeof UserScope>('@/storage/userScope'),
   getActiveUser: () => mockOwner,
   getActiveUserGeneration: () => mockEpoch,
+  // The session-lineage fence (#3452) asks the account scope through this predicate.
+  isAccountScopeCurrent: (owner: number | null, generation: number) =>
+    !jest.requireActual<typeof UserScope>('@/storage/userScope').isActiveUserTransitioning() &&
+    owner === mockOwner &&
+    generation === mockEpoch,
 }));
 jest.mock('@/storage/useActiveUser', () => ({
   useActiveUser: () => mockOwner,
@@ -107,7 +117,9 @@ it('keeps the let-go card and its in-progress selection across a same-account re
   const view = await renderMidChoice();
   mockToken = 'account-1:renewed';
   view.rerender(<ReturnStack />);
-  await waitFor(() => expect(mockState).toHaveBeenCalledWith('account-1:renewed'));
+  await act(async () => Promise.resolve());
+  // A renewal keeps the session lineage (#3452): the observed state stands, unreread.
+  expect(mockState).not.toHaveBeenCalledWith('account-1:renewed');
   expect(view.getByTestId('return-letgo-card')).toBeTruthy();
   await act(async () => fireEvent.press(view.getByTestId('return-letgo-release')));
   expect(mockRelease).toHaveBeenCalledWith([2], 'account-1:renewed');
@@ -119,7 +131,9 @@ it('lets the person keep them all after a same-account renewal', async () => {
   const view = await renderMidChoice();
   mockToken = 'account-1:renewed';
   view.rerender(<ReturnStack />);
-  await waitFor(() => expect(mockState).toHaveBeenCalledWith('account-1:renewed'));
+  await act(async () => Promise.resolve());
+  // A renewal keeps the session lineage (#3452): the observed state stands, unreread.
+  expect(mockState).not.toHaveBeenCalledWith('account-1:renewed');
   fireEvent.press(view.getByTestId('return-letgo-skip'));
   expect(view.getByTestId('return-arc-card')).toBeTruthy();
   expect(mockRelease).not.toHaveBeenCalled();

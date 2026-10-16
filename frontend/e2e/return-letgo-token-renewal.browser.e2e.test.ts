@@ -50,6 +50,9 @@ const PAST_RENEWAL_DEADLINE_MS = (15 * 24 * 60 + 5) * 60 * 1000;
 /** Long enough ago that the quiet foundation names a contraction (the window is 14 days). */
 const QUIET_FOUNDATION_DAYS = 30;
 
+/** Long enough that a reread after the renewal, had one been sent, would have been seen. */
+const QUIET_MS = 500;
+
 const OK = 200;
 const CREATED = 201;
 const RETURN_OFFER_TITLE = 'The Return is open to you';
@@ -144,13 +147,6 @@ async function renewSameAccountToken(page: Page): Promise<string> {
     release = resolve;
   });
   const minted: string[] = [];
-  const reads: Promise<unknown> = page.waitForRequest(
-    (request) =>
-      request.method() === 'GET' &&
-      new URL(request.url()).pathname === '/metta-return' &&
-      minted.length === 1 &&
-      request.headers().authorization === `Bearer ${minted[0]}`,
-  );
   const held = new Promise<void>((arrived) => {
     void page.route('**/auth/refresh', async (route: Route) => {
       arrived();
@@ -164,9 +160,23 @@ async function renewSameAccountToken(page: Page): Promise<string> {
   await page.clock.fastForward(PAST_RENEWAL_DEADLINE_MS);
   await held;
   await page.clock.setSystemTime(present);
+  const rereads: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'GET' && new URL(request.url()).pathname === '/metta-return') {
+      rereads.push(request.url());
+    }
+  });
+  const renewed = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === '/auth/refresh',
+  );
   release();
-  // The renewed credential is in use once the Return surface re-reads with it.
-  await reads;
+  expect((await renewed).ok()).toBe(true);
+  // A renewal keeps the session lineage (#3452): the Return surface keeps what
+  // it read instead of reading it again.
+  await page.waitForTimeout(QUIET_MS);
+  expect(rereads).toHaveLength(0);
   await page.unroute('**/auth/refresh');
   return minted[0] ?? '';
 }

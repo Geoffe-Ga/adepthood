@@ -14,7 +14,12 @@ const mockRelease = jest.fn<(..._args: unknown[]) => Promise<unknown>>();
 const mockLoad = jest.fn<(..._args: unknown[]) => Promise<unknown>>();
 const mockSave = jest.fn<(..._args: unknown[]) => Promise<unknown>>();
 
-jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: mockToken }) }));
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({
+    token: mockToken,
+    authStatus: mockToken === null ? 'anonymous' : 'authenticated',
+  }),
+}));
 jest.mock('@/utils/token', () => ({
   decodeJwtPayload: (token: string) =>
     // ``account-<id>`` or a renewed ``account-<id>:<renewal>`` for the same subject.
@@ -24,6 +29,11 @@ jest.mock('@/storage/userScope', () => ({
   ...jest.requireActual<typeof UserScope>('@/storage/userScope'),
   getActiveUser: () => mockOwner,
   getActiveUserGeneration: () => mockEpoch,
+  // The session-lineage fence (#3452) asks the account scope through this predicate.
+  isAccountScopeCurrent: (owner: number | null, generation: number) =>
+    !jest.requireActual<typeof UserScope>('@/storage/userScope').isActiveUserTransitioning() &&
+    owner === mockOwner &&
+    generation === mockEpoch,
 }));
 // Controlled account transitions rerender the consumer; browser proof exercises the real subscription.
 jest.mock('@/storage/useActiveUser', () => ({
@@ -233,7 +243,9 @@ it('keeps the let-go moment open across a same-account token renewal', async () 
   const { result, rerender } = await renderStartedReturn();
   mockToken = 'account-1:renewed';
   rerender({});
-  await waitFor(() => expect(mockState).toHaveBeenCalledWith('account-1:renewed'));
+  await act(async () => Promise.resolve());
+  // A renewal keeps the session lineage (#3452): the observed state stands, unreread.
+  expect(mockState).not.toHaveBeenCalledWith('account-1:renewed');
   expect(result.current.arc).toEqual(ARC);
   expect(result.current.letGoVisible).toBe(true);
   await act(async () => result.current.release([9]));
@@ -245,7 +257,9 @@ it('still lets the person skip the let-go moment after a same-account renewal', 
   const { result, rerender } = await renderStartedReturn();
   mockToken = 'account-1:renewed';
   rerender({});
-  await waitFor(() => expect(mockState).toHaveBeenCalledWith('account-1:renewed'));
+  await act(async () => Promise.resolve());
+  // A renewal keeps the session lineage (#3452): the observed state stands, unreread.
+  expect(mockState).not.toHaveBeenCalledWith('account-1:renewed');
   expect(result.current.letGoVisible).toBe(true);
   act(() => result.current.skipLetGo());
   expect(result.current.letGoVisible).toBe(false);
