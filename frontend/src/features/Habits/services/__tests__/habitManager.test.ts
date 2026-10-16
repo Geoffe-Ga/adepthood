@@ -1401,6 +1401,26 @@ describe('habitManager', () => {
       expect(Alert.alert).toHaveBeenCalled();
     });
 
+    it('hands a rejection to the caller instead of an Alert when one is given (#3154)', async () => {
+      useHabitStore.setState({ habits: [makeHabit()] });
+      const refusal = new ApiError(422, 'linked_habit_unit_not_allowed');
+      (
+        (habitsApi as unknown as { updateGoalUnits: jest.Mock }).updateGoalUnits as jest.Mock
+      ).mockRejectedValueOnce(refusal as never);
+      const { Alert } = jest.requireMock('react-native') as { Alert: { alert: jest.Mock } };
+      Alert.alert.mockClear();
+      const onFailure = jest.fn();
+
+      habitManager.updateGoalUnits(1, { target_unit: 'reps' }, onFailure);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(
+        useHabitStore.getState().habits[0]!.goals.every((g) => g.target_unit === 'units'),
+      ).toBe(true);
+      expect(onFailure).toHaveBeenCalledWith(refusal);
+      expect(Alert.alert).not.toHaveBeenCalled();
+    });
+
     it('does nothing when no habit matches the given id', () => {
       useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
 

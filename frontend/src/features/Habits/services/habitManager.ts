@@ -1496,6 +1496,10 @@ const loadHabits = async (tz?: string, options?: HabitRefreshOptions): Promise<v
   await refreshHabits(tz, options);
 };
 
+/** A unit change the server did not take, when it gave no reason of its own. */
+export const GOAL_UNITS_NOT_SAVED_COPY =
+  "We couldn't save those goal units. They're back to what they were — check your connection and try again.";
+
 /**
  * What the user is told when the server refuses to delete their habit.
  *
@@ -1809,10 +1813,15 @@ export const habitManager = {
    * Atomically update the shared unit fields across every tier goal of a
    * habit: one optimistic apply, one batch PUT, one rollback closure — so a
    * partial failure can never split tiers between old and new units.
+   *
+   * ``onFailure`` lets the caller say why the change did not stick (#3154):
+   * the habit actions hand the refusal to the toast, which renders on web
+   * where ``Alert`` is a no-op. Without it the rollback still alerts.
    */
   updateGoalUnits: (
     habitId: number,
     changes: Partial<Pick<Goal, 'target_unit' | 'frequency' | 'frequency_unit'>>,
+    onFailure?: (_err: unknown) => void,
   ): void => {
     const scope = captureHabitMutationScope();
     if (!scope.authorized) return;
@@ -1839,15 +1848,16 @@ export const habitManager = {
       frequency: changes.frequency ?? reference.frequency,
       frequency_unit: changes.frequency_unit ?? reference.frequency_unit,
     };
-    habitsApi
-      .updateGoalUnits(habitId, payload, ...scope.credentials)
-      .catch(
-        revertOnFailure(
-          prev,
-          "We couldn't save those goal units. They're back to what they were — check your connection and try again.",
-          scope,
-        ),
-      );
+    habitsApi.updateGoalUnits(habitId, payload, ...scope.credentials).catch((err: unknown) => {
+      if (!onFailure) {
+        revertOnFailure(prev, GOAL_UNITS_NOT_SAVED_COPY, scope)(err);
+        return;
+      }
+      if (!scope.current()) return;
+      setHabits(prev);
+      void persistHabits(prev);
+      onFailure(err);
+    });
   },
 
   updateHabit: (updatedHabit: Habit, tz?: string): void => {

@@ -324,6 +324,6 @@ describe('GoalModal star long-press fill', () => {
     advance(STAR_LONG_PRESS_MS / 4);
     releaseMarker(lowMarker);
 
-    expect(getByText('Set Low Grit to 1 session, 3 times per week?')).toBeTruthy();
+    expect(getByText('Set Low Grit to 1 session, 3 times a week?')).toBeTruthy();
   });
 });

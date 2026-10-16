@@ -35,6 +35,7 @@ jest.mock('../../../../api', () => {
       create: jest.fn(() => Promise.resolve({})),
       update: jest.fn(() => Promise.resolve({})),
       delete: jest.fn(() => Promise.resolve({})),
+      updateGoalUnits: jest.fn(() => Promise.resolve([])),
     },
     goalCompletions: {
       create: jest.fn(() =>
@@ -603,6 +604,56 @@ describe('useHabitActions.logUnit on a client-minted scaffold tile', () => {
     } finally {
       commitSpy.mockRestore();
     }
+  });
+});
+
+describe('useHabitActions.updateGoalUnits (#3154)', () => {
+  it('surfaces a refused unit change as a toast carrying the server reason, and rolls back', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (habitsApi.updateGoalUnits as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new MockApiError(422, 'linked_habit_unit_not_allowed')),
+    );
+    mockAlert.mockClear();
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.updateGoalUnits(1, { target_unit: 'reps' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(useHabitStore.getState().habits[0]!.goals.every((g) => g.target_unit === 'units')).toBe(
+      true,
+    );
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          'A timer logs this habit, so it counts in minutes or sessions only. Choose one of those.',
+        color: colors.danger,
+      }),
+    );
+    expect(mockAlert).not.toHaveBeenCalled();
+  });
+
+  it('names the cadence rule when the refused field is the cadence', async () => {
+    useHabitStore.setState({ habits: [makeHabit()] });
+    (habitsApi.updateGoalUnits as jest.Mock).mockImplementationOnce(() =>
+      Promise.reject(new MockApiError(422, 'linked_habit_frequency_unit_not_allowed')),
+    );
+    const { result, showToast } = renderActions();
+
+    await act(async () => {
+      result.current.actions.updateGoalUnits(1, { frequency_unit: 'per_month' });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(showToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message:
+          'A timer logs this habit, so its goal counts per day or per week only. Choose one of those.',
+      }),
+    );
   });
 });
 
