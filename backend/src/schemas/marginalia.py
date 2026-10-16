@@ -17,6 +17,7 @@ from models.marginalia import (
     MarginaliaSource,
     MarginaliaStatus,
 )
+from schemas.botmason import PayerRoute
 from schemas.completion_suggestion import CompletionSuggestionResponse
 
 
@@ -79,9 +80,16 @@ class EssayRequest(BaseModel):
     server refuses to charge without it rather than trusting every installed
     client to have stopped asking on open. Cached, BYOK and intimate requests
     are never charged and need no body at all.
+
+    ``disclosed_route`` is the ``resonance_route`` the price was disclosed for
+    (#3385). When it is sent and the caller's route has changed since, the
+    letter is refused with the same 409 before anything is dialled or charged,
+    so the writer is shown the price that now applies. Omitting it keeps the
+    older contract.
     """
 
     price_acknowledged: bool = False
+    disclosed_route: PayerRoute | None = None
 
 
 class EssayResponse(MarginaliaResponse):

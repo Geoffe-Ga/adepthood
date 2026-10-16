@@ -91,6 +91,7 @@ from models.wallet_audit import (
 )
 from rate_limit import limiter
 from routers.auth import get_current_user
+from schemas.botmason import PayerRoute
 from schemas.completion_suggestion import (
     AcceptSuggestionResponse,
     CompletionDetectionResponse,
@@ -179,7 +180,13 @@ from services.essay_settlement import (
     keep_letter,
     log_settled_essay,
 )
-from services.generation_access import free_only_refusal, payer_refusal, require_ai_payer
+from services.generation_access import (
+    disclosed_route_changed,
+    free_only_refusal,
+    payer_refusal,
+    require_ai_payer,
+    stale_route_refusal,
+)
 from services.generation_guardrails import (
     consume_generation_minute,
     generation_slot,
@@ -2258,14 +2265,16 @@ class _ReflectionClients:
     them this caller's AI operations may use (see
     :func:`~dependencies.creek_vault.resolve_reflection_boundary`), never taken
     from the request. ``free_only`` is the caller's word that it may answer only
-    with the pass's free exits (#3389). Bundling them into one injected value
-    keeps the handler's dependency signature small.
+    with the pass's free exits (#3389), and ``disclosed_route`` the payer route
+    its disclosure showed the writer (#3385). Bundling them into one injected
+    value keeps the handler's dependency signature small.
     """
 
     api_key: str | None = field(repr=False)
     vault_client: CreekVaultClient
     boundary: ReflectionBoundary
     free_only: bool = False
+    disclosed_route: PayerRoute | None = None
 
 
 def _reflection_clients(
@@ -2278,6 +2287,10 @@ def _reflection_clients(
     free_only: Annotated[
         bool, Query(description="Answer only with free exits: privacy, care, or a refusal.")
     ] = False,
+    disclosed_route: Annotated[
+        PayerRoute | None,
+        Query(description="The resonance_route the writer was shown; a changed route is a 409."),
+    ] = None,
 ) -> _ReflectionClients:
     """Bundle the BYOK key, the vault client and the boundary for the resonance handler.
 
@@ -2287,7 +2300,11 @@ def _reflection_clients(
     through ``dependency_overrides``.
     """
     return _ReflectionClients(
-        api_key=x_llm_api_key, vault_client=vault_client, boundary=boundary, free_only=free_only
+        api_key=x_llm_api_key,
+        vault_client=vault_client,
+        boundary=boundary,
+        free_only=free_only,
+        disclosed_route=disclosed_route,
     )
 
 
@@ -2374,6 +2391,11 @@ async def run_resonance(
     whose preflight read an empty wallet sends it, so the server can answer what
     only it can see without the request ever becoming a charge. Where a payer
     could now pay, it is answered ``409 resonance_payment_unconfirmed`` instead.
+
+    ``?disclosed_route=`` is the ``resonance_route`` the writer's payer
+    disclosure showed (#3385). A pass whose route has changed since -- a vault
+    connected or disconnected from another client -- is answered the same 409,
+    before any charge or dial, so the client discloses the route that applies.
     """
     entry = await _require_user_entry(session, entry_id, current_user)
     await refuse_if_deletion_pending(session, entry)
@@ -2408,6 +2430,10 @@ async def run_resonance(
         app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
     )
     refusal = free_only_refusal(refusal, free_only=clients.free_only)
+    # So is a pass whose disclosed payer route is no longer this caller's (#3385).
+    refusal = stale_route_refusal(
+        refusal, disclosed_route=clients.disclosed_route, boundary=clients.boundary
+    )
     if refusal is not None:
         return await care_or_refusal(session, current_user, message, refusal)
     require_generation_minute_available(current_user)
@@ -3221,13 +3247,15 @@ class _EssayClients:
     The cloud credential and optional vault, plus ``price_acknowledged``: the
     caller's word that the writer saw the letter's price before asking (#623),
     and ``boundary``: whether this caller's AI operations may reach the app
-    provider at all, resolved from server state (#3156).
+    provider at all, resolved from server state (#3156). ``disclosed_route`` is
+    the payer route the price was disclosed for (#3385).
     """
 
     api_key: str | None = field(repr=False)
     vault_client: CreekVaultPipelineClient
     boundary: ReflectionBoundary
     price_acknowledged: bool = False
+    disclosed_route: PayerRoute | None = None
 
 
 def _essay_clients(
@@ -3244,6 +3272,7 @@ def _essay_clients(
         vault_client=vault_client,
         boundary=boundary,
         price_acknowledged=payload is not None and payload.price_acknowledged,
+        disclosed_route=None if payload is None else payload.disclosed_route,
     )
 
 
@@ -3282,6 +3311,8 @@ async def expand_marginalia_essay(
     ``user_id`` (404 otherwise). A server-paid first letter costs
     ``ESSAY_PRICE_UNITS`` wallet unit and must carry ``price_acknowledged``
     (409 otherwise, before any charge); a failed or empty letter is refunded.
+    A first letter whose ``disclosed_route`` is no longer the caller's gets the
+    same 409, before the vault handshake or any dial (#3385).
 
     A note with no ``essay`` on the response is the no-letter state, not an
     error: the entry is intimate, or the provider's completion was not a letter
@@ -3332,6 +3363,19 @@ def _log_essay_cache_hit(note: Marginalia, stage: str) -> None:
     )
 
 
+def _refuse_stale_route(clients: _EssayClients) -> None:
+    """Refuse a first letter whose price was disclosed for a route that has since changed.
+
+    A vault connected from another client turns a key-funded letter into a
+    credit; one disconnected sends a vault-disclosed letter to the app provider
+    (#3385). Either way the acknowledged price is not the one in force, so this
+    answers the same 409 as an unacknowledged price -- before the vault
+    handshake, the payer gate or any charge -- and the client discloses again.
+    """
+    if disclosed_route_changed(clients.disclosed_route, clients.boundary):
+        raise conflict(ESSAY_PRICE_UNACKNOWLEDGED)
+
+
 def _require_price_acknowledged(clients: _EssayClients) -> None:
     """Refuse a server-paid first letter the writer was not shown the price of.
 
@@ -3374,6 +3418,7 @@ async def _expand_essay(
     if not admits_egress(entry.classification):
         return note
     require_external_ai_available()
+    _refuse_stale_route(clients)
     # Before the payer gate: asking a vault-bound writer for a key or a price
     # would be a false next step when no source may answer them (#3156).
     await require_vault_letters(session, note, clients.vault_client, clients.boundary)

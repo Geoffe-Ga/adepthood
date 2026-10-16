@@ -1585,8 +1585,23 @@
         "type": "string"
       },
       "EssayRequest": {
-        "description": "Optional body for ``POST /journal/marginalia/{id}/essay`` (#623).\n\n``price_acknowledged`` is the client saying \"the writer saw the price and\nasked\". A server-paid first letter costs one wallet unit, and the in-repo\nrule is that a charged depth is offered with its price on it -- so the\nserver refuses to charge without it rather than trusting every installed\nclient to have stopped asking on open. Cached, BYOK and intimate requests\nare never charged and need no body at all.",
+        "description": "Optional body for ``POST /journal/marginalia/{id}/essay`` (#623).\n\n``price_acknowledged`` is the client saying \"the writer saw the price and\nasked\". A server-paid first letter costs one wallet unit, and the in-repo\nrule is that a charged depth is offered with its price on it -- so the\nserver refuses to charge without it rather than trusting every installed\nclient to have stopped asking on open. Cached, BYOK and intimate requests\nare never charged and need no body at all.\n\n``disclosed_route`` is the ``resonance_route`` the price was disclosed for\n(#3385). When it is sent and the caller's route has changed since, the\nletter is refused with the same 409 before anything is dialled or charged,\nso the writer is shown the price that now applies. Omitting it keeps the\nolder contract.",
         "properties": {
+          "disclosed_route": {
+            "anyOf": [
+              {
+                "enum": [
+                  "vault_bound",
+                  "app_provider"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclosed Route"
+          },
           "price_acknowledged": {
             "default": false,
             "title": "Price Acknowledged",
@@ -18250,7 +18265,7 @@
     },
     "/journal/marginalia/{marginalia_id}/essay": {
       "post": {
-        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call or charge. Ownership is enforced via the marginalia's own\n``user_id`` (404 otherwise). A server-paid first letter costs\n``ESSAY_PRICE_UNITS`` wallet unit and must carry ``price_acknowledged``\n(409 otherwise, before any charge); a failed or empty letter is refunded.\n\nA note with no ``essay`` on the response is the no-letter state, not an\nerror: the entry is intimate, or the provider's completion was not a letter\n(:func:`domain.resonance.generate_essay`). Either way nothing is cached and\nthe writer can ask again. Every answer carries the wallet balances.",
+        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call or charge. Ownership is enforced via the marginalia's own\n``user_id`` (404 otherwise). A server-paid first letter costs\n``ESSAY_PRICE_UNITS`` wallet unit and must carry ``price_acknowledged``\n(409 otherwise, before any charge); a failed or empty letter is refunded.\nA first letter whose ``disclosed_route`` is no longer the caller's gets the\nsame 409, before the vault handshake or any dial (#3385).\n\nA note with no ``essay`` on the response is the no-letter state, not an\nerror: the entry is intimate, or the provider's completion was not a letter\n(:func:`domain.resonance.generate_essay`). Either way nothing is cached and\nthe writer can ask again. Every answer carries the wallet balances.",
         "operationId": "expand_marginalia_essay_journal_marginalia__marginalia_id__essay_post",
         "parameters": [
           {
@@ -20184,7 +20199,7 @@
     },
     "/journal/{entry_id}/resonance": {
       "post": {
-        "description": "Run a resonance pass, charging BotMason only when it pays the provider.\n\nA validated caller-owned key bypasses both BotMason wallet buckets when the\napp provider answers. Otherwise -- no key, or a vault-bound caller, whose\nkey the vault never uses (#3258) -- wallet pre-flight deducts one message\n(402 when out of capacity). That\ndeduction commits with every read the pass depends on before the first\noutbound call, so no pooled connection is held across the vault probe,\nreflection pass, or completion detection. A failed server-paid pass is\nsettled by a compensating credit; a failed BYOK pass merely rolls back its\nstaged writes because there is no wallet spend to reverse.\n\nA pass that *succeeds* and still persists no notes is neither an error nor a\nnon-event: it is a writer who waited and received nothing. Those get the\nserver's own explanation in ``no_notes_message`` — never an empty 200 the\nclient has to interpret — and the deduction is reversed in the bucket it\ncame from, so silence costs the writer nothing. The reversal is a crediting\nentry rather than a rollback on purpose: the provider call really happened,\nand rolling back would erase the usage record of what it cost us along with\nany completion suggestions the same pass legitimately found.\n\nThe entry is first screened for an acute-distress signal with a pure, local\ncheck; on an elevated signal the response carries a ``care`` surface (human +\nprofessional support) that accompanies — never replaces — the reflection, and\nis returned even if the LLM pass fails, so care never depends on the LLM\n(NORTH-STAR §10). An ordinary entry behaves exactly as before (``care`` None).\n\nAfter the pass commits, a read-only, deterministic contraction check may add a\nwarm, declinable reflection when the habit foundation has thinned. It runs\nonly on this non-intimate happy path — never for an intimate entry, whose\nprivacy floor returns above — and never mutates progression.\n\nWhich model may answer is decided once, server-side, by the caller's\nboundary (#3061). With no vault, the app provider answers the reflection and\ncompletion detection exactly as before. With a vault -- connected, still\nprovisioning, or currently undialable -- the vault answers the reflection or\nnothing does: a vault with nothing to say is a refunded zero-note pass, a\nvault that cannot answer is a refunded, retryable 503\n``reflection_source_unavailable``, a locally flagged entry gets the care\nsurface alone, and completion detection is skipped (``checked`` false on the\nstandalone route). None of those reaches the app provider, whatever key the\nrequest carries.\n\nThe context that accompanies the entry is chosen by\n:func:`~services.higher_self_grounding.gather_grounding` — the account's own\nontologized corpus where it holds anything, the recency window where it does\nnot. Only the app provider's prompt carries it; a vault builds its own.\n\nA vault may answer that request with its own care escalation, meaning its\ncare guard read acute distress in writing adepthood's local screen did not\nflag. That is a 200 carrying adepthood's own reviewed care surface and no\nreflection — never a 502, and never the cloud's answer, since falling back\nwould hand the writer exactly the model prose the guard refused. The\nany committed BotMason deduction is refunded, so the pass costs them nothing.\n\n``?free_only=true`` asks for the free exits alone (#3389): the private\nanswer, care for a locally flagged entry, or the payer refusal. A client\nwhose preflight read an empty wallet sends it, so the server can answer what\nonly it can see without the request ever becoming a charge. Where a payer\ncould now pay, it is answered ``409 resonance_payment_unconfirmed`` instead.",
+        "description": "Run a resonance pass, charging BotMason only when it pays the provider.\n\nA validated caller-owned key bypasses both BotMason wallet buckets when the\napp provider answers. Otherwise -- no key, or a vault-bound caller, whose\nkey the vault never uses (#3258) -- wallet pre-flight deducts one message\n(402 when out of capacity). That\ndeduction commits with every read the pass depends on before the first\noutbound call, so no pooled connection is held across the vault probe,\nreflection pass, or completion detection. A failed server-paid pass is\nsettled by a compensating credit; a failed BYOK pass merely rolls back its\nstaged writes because there is no wallet spend to reverse.\n\nA pass that *succeeds* and still persists no notes is neither an error nor a\nnon-event: it is a writer who waited and received nothing. Those get the\nserver's own explanation in ``no_notes_message`` — never an empty 200 the\nclient has to interpret — and the deduction is reversed in the bucket it\ncame from, so silence costs the writer nothing. The reversal is a crediting\nentry rather than a rollback on purpose: the provider call really happened,\nand rolling back would erase the usage record of what it cost us along with\nany completion suggestions the same pass legitimately found.\n\nThe entry is first screened for an acute-distress signal with a pure, local\ncheck; on an elevated signal the response carries a ``care`` surface (human +\nprofessional support) that accompanies — never replaces — the reflection, and\nis returned even if the LLM pass fails, so care never depends on the LLM\n(NORTH-STAR §10). An ordinary entry behaves exactly as before (``care`` None).\n\nAfter the pass commits, a read-only, deterministic contraction check may add a\nwarm, declinable reflection when the habit foundation has thinned. It runs\nonly on this non-intimate happy path — never for an intimate entry, whose\nprivacy floor returns above — and never mutates progression.\n\nWhich model may answer is decided once, server-side, by the caller's\nboundary (#3061). With no vault, the app provider answers the reflection and\ncompletion detection exactly as before. With a vault -- connected, still\nprovisioning, or currently undialable -- the vault answers the reflection or\nnothing does: a vault with nothing to say is a refunded zero-note pass, a\nvault that cannot answer is a refunded, retryable 503\n``reflection_source_unavailable``, a locally flagged entry gets the care\nsurface alone, and completion detection is skipped (``checked`` false on the\nstandalone route). None of those reaches the app provider, whatever key the\nrequest carries.\n\nThe context that accompanies the entry is chosen by\n:func:`~services.higher_self_grounding.gather_grounding` — the account's own\nontologized corpus where it holds anything, the recency window where it does\nnot. Only the app provider's prompt carries it; a vault builds its own.\n\nA vault may answer that request with its own care escalation, meaning its\ncare guard read acute distress in writing adepthood's local screen did not\nflag. That is a 200 carrying adepthood's own reviewed care surface and no\nreflection — never a 502, and never the cloud's answer, since falling back\nwould hand the writer exactly the model prose the guard refused. The\nany committed BotMason deduction is refunded, so the pass costs them nothing.\n\n``?free_only=true`` asks for the free exits alone (#3389): the private\nanswer, care for a locally flagged entry, or the payer refusal. A client\nwhose preflight read an empty wallet sends it, so the server can answer what\nonly it can see without the request ever becoming a charge. Where a payer\ncould now pay, it is answered ``409 resonance_payment_unconfirmed`` instead.\n\n``?disclosed_route=`` is the ``resonance_route`` the writer's payer\ndisclosure showed (#3385). A pass whose route has changed since -- a vault\nconnected or disconnected from another client -- is answered the same 409,\nbefore any charge or dial, so the client discloses the route that applies.",
         "operationId": "run_resonance_journal__entry_id__resonance_post",
         "parameters": [
           {
@@ -20208,6 +20223,28 @@
               "description": "Answer only with free exits: privacy, care, or a refusal.",
               "title": "Free Only",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "The resonance_route the writer was shown; a changed route is a 409.",
+            "in": "query",
+            "name": "disclosed_route",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "vault_bound",
+                    "app_provider"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The resonance_route the writer was shown; a changed route is a 409.",
+              "title": "Disclosed Route"
             }
           },
           {

@@ -61,13 +61,16 @@ from services.wallet import has_generation_capacity
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from services.reflection_boundary import ReflectionBoundary
+
 #: 402: no personal key, and nothing on the server that credits could buy.
 KEY_REQUIRED: Final = KEY_REQUIRED_DETAIL
 #: 402: no personal key, and no credits left in either wallet bucket. The same
 #: detail :func:`services.wallet.preflight_deduction` refuses an empty wallet with.
 CREDITS_OR_KEY_REQUIRED: Final = "insufficient_offerings"
 #: 409: a ``free_only`` resonance request found a payer that could now pay, but
-#: the writer was shown no price for this pass (#3389).
+#: the writer was shown no price for this pass (#3389). Also the answer to an
+#: ordinary request whose disclosed payer route is no longer the caller's (#3385).
 RESONANCE_PAYMENT_UNCONFIRMED: Final = "resonance_payment_unconfirmed"
 
 
@@ -151,6 +154,36 @@ def free_only_refusal(refusal: HTTPException | None, *, free_only: bool) -> HTTP
     when its local screen flags the entry, and its private exit runs first.
     """
     if refusal is None and free_only:
+        return conflict(RESONANCE_PAYMENT_UNCONFIRMED)
+    return refusal
+
+
+def disclosed_route_changed(disclosed_route: str | None, boundary: ReflectionBoundary) -> bool:
+    """Whether the payer route a client disclosed is no longer the one this request takes (#3385).
+
+    The usage GET discloses ``resonance_route``, and a charged request echoes it.
+    Another client may connect or disconnect a vault in between, which turns a
+    key-funded reading into a wallet credit or sends a vault-disclosed page to
+    the app provider. ``None`` is a client that disclosed no route, kept on the
+    older contract.
+    """
+    return disclosed_route is not None and disclosed_route != boundary
+
+
+def stale_route_refusal(
+    refusal: HTTPException | None,
+    *,
+    disclosed_route: str | None,
+    boundary: ReflectionBoundary,
+) -> HTTPException | None:
+    """Refuse an admitted resonance pass whose disclosed route has changed; else keep ``refusal``.
+
+    The same 409 as :func:`free_only_refusal`, for the same reason: the writer
+    was not shown the price this pass would now take, so the client rereads
+    the route and discloses again. A refusal already in hand wins, because it
+    charges nothing either, and the route's free exits still apply.
+    """
+    if refusal is None and disclosed_route_changed(disclosed_route, boundary):
         return conflict(RESONANCE_PAYMENT_UNCONFIRMED)
     return refusal
 
