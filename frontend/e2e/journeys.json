@@ -1743,7 +1743,7 @@
   },
   {
     "id": "return.let-go-survives-same-account-renewal",
-    "description": "A person begins a Return from the Journal shelf's offer card and is asked which habits to set down; while they are choosing, the app's own proactive timer renews the same account's token (#3374). Before the fix the let-go card's visibility reset on every credential rotation, because the Return hook mints a new staleness fence per token, so the renewal unmounted the card mid-choice and the active-arc card offered no way back. The covering spec reaches the offer honestly (eligibility via the program anchor, a contraction from a real resonance pass), chooses a habit, then jumps the page clock past the sliding-renewal deadline so the real AuthContext issues POST /auth/refresh against the live server, holding the response only while the clock is set back to the present. It asserts the card and the half-made choice survive the renewal (Release stays live), that the release then leaves with the renewed bearer and exactly the chosen habit id and is recorded on the server, and that Keep them all still closes the moment without a release. Account replacement (A to B, A to B to A) and session teardown still close the card and fence old callbacks; those halves are pinned in Jest (useMettaReturnOwnership.test.tsx, ReturnStackTokenRenewal.test.tsx). Frames at 390 and 1280 px, normal and doubled card text, are written to e2e/artifacts/return-letgo-renewal-3374.",
+    "description": "A person begins a Return from the Journal shelf's offer card and is asked which habits to set down; while they are choosing, the app's own proactive timer renews the same account's token (#3374). Before the fix the let-go card's visibility reset on every credential rotation, because the Return hook mints a new staleness fence per token, so the renewal unmounted the card mid-choice and the active-arc card offered no way back. The covering spec reaches the offer honestly (eligibility via the program anchor, a contraction from a real resonance pass), chooses a habit, then jumps the page clock past the sliding-renewal deadline so the real AuthContext issues POST /auth/refresh against the live server, holding the response only while the clock is set back to the present. It asserts the card and the half-made choice survive the renewal (Release stays live), that the release then leaves with the renewed bearer and exactly the chosen habit id and is recorded on the server, and that Keep them all still closes the moment without a release. Account replacement (A to B, A to B to A) and session teardown still close the card and fence old callbacks; those halves are pinned in Jest (useMettaReturnOwnership.test.tsx, ReturnStackTokenRenewal.test.tsx). Frames at 390 and 1280 px, normal and doubled card text, are written to e2e/artifacts/return-letgo-renewal-3374. Since #3452 the Return surface fences on the session lineage, so the renewal also leaves its observed state in place: the spec asserts no GET /metta-return follows the renewal.",
     "crosses": {
       "screen": "frontend/src/features/Return/ReturnLetGoCard.tsx",
       "client": ["auth", "habits", "journal", "resonance", "stages", "mettaReturn"],
@@ -1793,6 +1793,54 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-payment-token-renewal.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.held-work-survives-same-account-renewal",
+    "description": "A writer's held work on three more surfaces crosses a same-account token renewal and still lands where they asked for it (#3452). Settings' writing-habit picker saves a habit's timer goals and links it even though the confirming habit read crossed the renewal; a finished writing session's linked-habit check-in is logged and its 'Logged 20 minutes' note shown; and a Return 'Begin' opens the arc and its let-go moment instead of leaving the offer on screen. Each case refuses one request's first attempt 401 at the browser's edge, the production client renews the token against the live server, and the request is resent exactly once with the renewed bearer. The three surfaces now fence on the shared session lineage (useAuthLineage: credential owner, account generation, auth session) rather than the exact JWT, so the same account signing back in after a 401, a sign-out, an account switch, an A to B to A switch and a 401 that lands before anything renders still refuse held work; those halves and the proactive renewal are pinned through the real AuthProvider and API client in WritingHabitPickerLineage.integration.test.tsx, useLinkedHabitCheckOffLineage.integration.test.tsx and returnOfferLineage.integration.test.tsx, and every fence term one at a time in src/hooks/__tests__/useAuthLineage.test.tsx. Frames at 390 and 1280 px are written to e2e/artifacts/session-lineage-renewal.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/WritingHabitPicker.tsx",
+      "client": [
+        "auth",
+        "habits",
+        "goals",
+        "uiFlags",
+        "goalCompletions",
+        "journal",
+        "resonance",
+        "stages",
+        "mettaReturn"
+      ],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /auth/refresh",
+        "POST /habits/",
+        "GET /habits/",
+        "PUT /habits/{habit_id}/goals/units",
+        "PUT /goals/{goal_id}",
+        "GET /ui-flags",
+        "PATCH /ui-flags",
+        "POST /goal_completions/",
+        "GET /stages",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "POST /journal/{entry_id}/resonance",
+        "GET /metta-return",
+        "POST /metta-return/arc"
+      ],
+      "tables": [
+        "user",
+        "habit",
+        "goal",
+        "goalcompletion",
+        "useruiflags",
+        "stageprogress",
+        "journalentry",
+        "mettareturnarc"
+      ]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/session-lineage-token-renewal.browser.e2e.test.ts"
   },
   {
     "id": "return.begin-a-return-from-the-journal-entry",
