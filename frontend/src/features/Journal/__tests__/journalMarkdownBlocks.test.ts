@@ -48,6 +48,47 @@ describe('bullet blocks', () => {
   });
 });
 
+describe('heading, ordered, task and rule blocks', () => {
+  const TUESDAY = '## Tuesday\n1. walked\n2. wrote\n- [x] called Sam\n- [ ] book the room\n---';
+
+  it('groups adjacent ordered and task lines, and gives each heading and rule its own block', () => {
+    const document = parseJournalMarkdown(`# A\n## B\n${TUESDAY}\n***`);
+    expect(document.blocks.map((block) => [block.kind, block.lines.length])).toEqual([
+      ['heading', 1],
+      ['heading', 1],
+      ['heading', 1],
+      ['ordered', 2],
+      ['task', 2],
+      ['rule', 1],
+      ['rule', 1],
+    ]);
+  });
+
+  it('hides each block prefix and every rule character without removing one', () => {
+    const document = parseJournalMarkdown(TUESDAY);
+    const visible = document.chars.filter((_, index) => document.formats[index]!.visible).join('');
+    expect(visible).toBe('Tuesday\nwalked\nwrote\ncalled Sam\nbook the room\n');
+    expect(document.chars.join('')).toBe(TUESDAY);
+  });
+
+  it('applies no inline emphasis inside a rule', () => {
+    const document = parseJournalMarkdown('***\n___');
+    expect(document.inlineSpans).toEqual([]);
+    expect(markdownRuns(document, 0, document.chars.length)).toEqual([
+      expect.objectContaining({ text: '\n', bold: false, italic: false }),
+    ]);
+  });
+
+  it('still styles emphasis inside a heading and a task', () => {
+    const document = parseJournalMarkdown('## a **b**\n- [ ] _c_');
+    expect(document.inlineSpans.map((span) => span.style)).toEqual(['bold', 'italic']);
+  });
+
+  it('counts an indented task among the list indent widths', () => {
+    expect(parseJournalMarkdown('- [ ] a\n  - [x] b').indentWidths).toEqual([2]);
+  });
+});
+
 describe('underline', () => {
   it('renders <u>x</u> as an underlined run, leaving the other delimiters alone', () => {
     const body = 'a <u>und</u> b';
