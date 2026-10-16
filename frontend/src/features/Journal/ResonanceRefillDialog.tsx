@@ -9,7 +9,7 @@
  * says nothing about buying credits.
  */
 import React, { useCallback } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import {
   CREDIT_PACK_LINK,
@@ -97,16 +97,35 @@ function RefillMessage({
       </Text>
     );
   }
-  const credits = packUrl === null ? '' : ', or add more BotMason credits';
   return (
     <>
       <Text style={styles.body}>
-        Your BotMason balance has run out, so nothing was charged. Add your own API key and it pays
-        for the reading instead{credits}. {resetCopy}
+        Your BotMason balance has run out, so nothing was charged. Readings your vault answers use
+        BotMason credits, even when an API key is saved. {resetCopy}
       </Text>
       {packUrl === null ? null : <CreditPackOffer url={packUrl} />}
     </>
   );
+}
+
+function KeyAction({
+  keyRequired,
+  onAddKey,
+}: {
+  keyRequired: boolean;
+  onAddKey: () => void;
+}): React.JSX.Element | null {
+  return keyRequired ? (
+    <TouchableOpacity
+      style={[styles.action, styles.addKey]}
+      onPress={onAddKey}
+      accessibilityRole="button"
+      accessibilityLabel="Add your API key"
+      testID="journal-resonance-refill-add-key"
+    >
+      <Text style={styles.addKeyLabel}>{ADD_KEY}</Text>
+    </TouchableOpacity>
+  ) : null;
 }
 
 export default function ResonanceRefillDialog({
@@ -132,36 +151,32 @@ export default function ResonanceRefillDialog({
       cardTestID="journal-resonance-refill-card"
       cardStyle={styles.card}
     >
-      <Text style={styles.title} accessibilityRole="header">
-        {keyRequired ? 'API key needed for Resonance' : TITLE}
-      </Text>
-      <RefillMessage reason={reason} resetCopy={resetCopy} packUrl={packUrl} />
-      <View style={styles.actions}>
-        <TouchableOpacity
-          style={styles.action}
-          onPress={onCancel}
-          accessibilityRole="button"
-          accessibilityLabel="Not now — do not add an API key"
-          testID="journal-resonance-refill-cancel"
-        >
-          <Text style={styles.cancelLabel}>{NOT_NOW}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.action, styles.addKey]}
-          onPress={onAddKey}
-          accessibilityRole="button"
-          accessibilityLabel="Add your API key"
-          testID="journal-resonance-refill-add-key"
-        >
-          <Text style={styles.addKeyLabel}>{ADD_KEY}</Text>
-        </TouchableOpacity>
-      </View>
+      <ScrollView style={styles.scroll}>
+        <Text style={styles.title} accessibilityRole="header">
+          {keyRequired ? 'API key needed for Resonance' : TITLE}
+        </Text>
+        <RefillMessage reason={reason} resetCopy={resetCopy} packUrl={packUrl} />
+        <View style={styles.actions}>
+          <TouchableOpacity
+            style={styles.action}
+            onPress={onCancel}
+            accessibilityRole="button"
+            accessibilityLabel="Not now — do not add an API key"
+            testID="journal-resonance-refill-cancel"
+          >
+            <Text style={styles.cancelLabel}>{NOT_NOW}</Text>
+          </TouchableOpacity>
+          <KeyAction keyRequired={keyRequired} onAddKey={onAddKey} />
+        </View>
+      </ScrollView>
     </JournalModalShell>
   );
 }
 
 const styles = StyleSheet.create({
+  scroll: { flexShrink: 1 },
   card: {
+    maxHeight: '90%',
     width: '100%',
     maxWidth: journalLayout.pageMaxWidth,
     alignSelf: 'center',

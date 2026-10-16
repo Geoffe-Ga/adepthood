@@ -172,16 +172,28 @@ it('hands a failed attempt its context and resends that same context on retry', 
     throw new Error('offline');
   });
   await logCompletedPracticeHabit({ ...p, onFailed });
-  expect(onFailed).toHaveBeenCalledWith(ctx);
+  expect(onFailed).toHaveBeenCalledWith({ ctx, unit: 'minutes' });
   const retry = input();
-  await expect(logCompletedPracticeHabit({ ...retry, prepared: ctx })).resolves.toBe('logged');
+  const prepared = { ctx, unit: 'minutes' } as const;
+  await expect(logCompletedPracticeHabit({ ...retry, prepared })).resolves.toBe('logged');
   expect(retry.manager.prepareLogUnit).not.toHaveBeenCalled();
   expect(retry.manager.commitLogUnitContext).toHaveBeenCalledWith(ctx, expect.anything());
 });
 it('never resends a prepared context to a different habit', async () => {
   const p = input();
   p.habit.id = 6;
-  await expect(logCompletedPracticeHabit({ ...p, prepared: ctx })).resolves.toBe('ignored');
+  const prepared = { ctx, unit: 'minutes' } as const;
+  await expect(logCompletedPracticeHabit({ ...p, prepared })).resolves.toBe('ignored');
   expect(p.manager.reserveLogUnitContext).not.toHaveBeenCalled();
   expect(p.manager.commitLogUnitContext).not.toHaveBeenCalled();
+});
+it('never resends a context prepared for minutes to a habit that now counts sessions', async () => {
+  const p = input();
+  p.habit.unit = 'sessions';
+  const prepared = { ctx, unit: 'minutes' } as const;
+  await expect(logCompletedPracticeHabit({ ...p, prepared })).resolves.toBe('ignored');
+  expect(p.manager.prepareLogUnit).not.toHaveBeenCalled();
+  expect(p.manager.reserveLogUnitContext).not.toHaveBeenCalled();
+  expect(p.manager.commitLogUnitContext).not.toHaveBeenCalled();
+  expect(p.onNotice).not.toHaveBeenCalled();
 });

@@ -41,6 +41,7 @@ import ContentViewer from './ContentViewer';
 import styles from './Course.styles';
 import CourseDrawer, { useCourseDrawerBodies, useCourseDrawerContent } from './CourseDrawer';
 import { captureCourseSession, type CourseSession } from './courseSession';
+import { useCourseSessionKey, useEachCourseSession } from './courseSessionLifecycle';
 import { loadInitialReadingStage } from './initialReadingStage';
 import ReadNextButton, { useNextUnread, type NextUnreadState } from './ReadNextButton';
 import ResourceViewer, { type ResourceTarget } from './ResourceViewer';
@@ -85,15 +86,35 @@ async function loadCourseEntry(
   return { stagesList, initialStage };
 }
 
+/**
+ * A warm Course tab stays mounted, so a later Map->Course deep-link changes
+ * only the route param. Follow a changed non-null incoming stage number here;
+ * a null param (no deep-link) leaves the derived default untouched, and a
+ * same-number re-navigation is a no-op because the effect keys on the number.
+ */
+function useFollowRouteStage(
+  routeStageNumber: number | null,
+  setSelectedStage: (_stageNumber: number) => void,
+): void {
+  useEffect(() => {
+    if (routeStageNumber !== null) {
+      setSelectedStage(routeStageNumber);
+    }
+  }, [routeStageNumber, setSelectedStage]);
+}
+
 function useStagesLoader() {
   const route = useAppRoute<'Course'>();
   const routeStageNumber = route.params?.stageNumber ?? null;
   const programAnchor = useProgramStore((s) => s.programStartDate);
+  const sessionKey = useCourseSessionKey();
 
   const [allStages, setAllStages] = useState<Stage[]>([]);
   const [selectedStage, setSelectedStage] = useState(routeStageNumber ?? DEFAULT_STAGE_NUMBER);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  // The lifecycle the current stages/loading/error describe (#3343).
+  const [settledKey, setSettledKey] = useState(sessionKey);
   const requestSeq = useRef(0);
 
   const init = useCallback(async () => {
@@ -115,29 +136,33 @@ function useStagesLoader() {
       reportDiagnostic('course_load_failed');
       setError(true);
     } finally {
-      if (isLatest()) setLoading(false);
+      if (isLatest()) {
+        setSettledKey(sessionKey);
+        setLoading(false);
+      }
     }
-  }, [routeStageNumber, programAnchor]);
+  }, [routeStageNumber, programAnchor, sessionKey]);
 
-  useEffect(() => {
-    void init();
-    return () => {
-      // A route/anchor change or unmount supersedes every older async load.
-      requestSeq.current += 1;
-    };
-  }, [init]);
+  // A route, anchor or account change, or unmount, supersedes every older load.
+  const start = useCallback(() => void init(), [init]);
+  const supersede = useCallback(() => {
+    requestSeq.current += 1;
+  }, []);
+  useEachCourseSession(sessionKey, start, supersede);
 
-  // A warm Course tab stays mounted, so a later Map->Course deep-link changes
-  // only the route param. Follow a changed non-null incoming stage number here;
-  // a null param (no deep-link) leaves the derived default untouched, and a
-  // same-number re-navigation is a no-op because the effect keys on the number.
-  useEffect(() => {
-    if (routeStageNumber !== null) {
-      setSelectedStage(routeStageNumber);
-    }
-  }, [routeStageNumber]);
+  useFollowRouteStage(routeStageNumber, setSelectedStage);
 
-  return { allStages, selectedStage, setSelectedStage, loading, error, retry: init };
+  // An incoming account never paints the outgoing account's stages, even for
+  // the frame before its own load starts.
+  const stale = sessionKey !== null && settledKey !== sessionKey;
+  return {
+    allStages,
+    selectedStage,
+    setSelectedStage,
+    loading: loading || stale,
+    error: error && !stale,
+    retry: init,
+  };
 }
 
 // --- Hook: load content for selected stage ---
@@ -622,7 +647,7 @@ function useReadNext(
   openResource: (_resource: ResourceTarget) => void,
 ) {
   const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList, 'Course'>>();
-  const nextUnread = useNextUnread();
+  const nextUnread = useNextUnread(useCourseSessionKey());
 
   const openNext = useCallback(
     (target: NextUnread) => {

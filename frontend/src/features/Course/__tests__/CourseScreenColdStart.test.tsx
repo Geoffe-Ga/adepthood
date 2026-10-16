@@ -36,6 +36,8 @@ const mockProgramCalendar = jest.fn(() =>
   }),
 );
 
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('../../../api', () => ({
   captureSessionToken: () => 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature',
   uiFlags: { get: () => Promise.resolve({ course_last_stage: null }) },

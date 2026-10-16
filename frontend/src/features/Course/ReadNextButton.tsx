@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { View } from 'react-native';
 
 import { course as courseApi, type NextUnread } from '../../api';
 import { Button } from '../../components/Button';
 
 import styles from './Course.styles';
+import { useEachCourseSession } from './courseSessionLifecycle';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
 
@@ -27,33 +28,47 @@ export type NextUnreadState =
  * keeps the previous answer on screen while the new one is in flight, so the
  * button does not flash back to its loading state on every mark. Only the
  * newest request may settle, and unmounting supersedes any in flight.
+ * ``sessionKey`` (from ``useCourseSessionKey``) re-asks for each newly
+ * authenticated account; ``null`` keeps the mount-time ask alone.
  */
-export function useNextUnread(): { state: NextUnreadState; refresh: () => void } {
-  const [state, setState] = useState<NextUnreadState>({ status: 'loading' });
+const LOADING: NextUnreadState = { status: 'loading' };
+
+export function useNextUnread(sessionKey: string | null = null): {
+  state: NextUnreadState;
+  refresh: () => void;
+} {
+  const [answer, setAnswer] = useState<{ key: string | null; state: NextUnreadState }>({
+    key: sessionKey,
+    state: LOADING,
+  });
   const requestSeq = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (key: string | null) => {
     const requestId = (requestSeq.current += 1);
     try {
       const target = await courseApi.nextUnread();
-      if (requestId === requestSeq.current) setState({ status: 'ready', target });
+      if (requestId === requestSeq.current) setAnswer({ key, state: { status: 'ready', target } });
     } catch {
       reportDiagnostic('course_load_failed');
-      if (requestId === requestSeq.current) setState({ status: 'error' });
+      if (requestId === requestSeq.current) setAnswer({ key, state: { status: 'error' } });
     }
   }, []);
 
-  useEffect(() => {
-    void load();
-    return () => {
-      requestSeq.current += 1;
-    };
-  }, [load]);
+  // An incoming account (#3343) never sees the previous lifecycle's answer:
+  // that ask is superseded at the switch, and until the incoming account's own
+  // answer lands the button reads as loading -- even for the frame before the
+  // new ask starts.
+  const start = useCallback(() => void load(sessionKey), [load, sessionKey]);
+  const supersede = useCallback(() => {
+    requestSeq.current += 1;
+  }, []);
+  useEachCourseSession(sessionKey, start, supersede);
 
   const refresh = useCallback(() => {
-    void load();
-  }, [load]);
+    void load(sessionKey);
+  }, [load, sessionKey]);
 
+  const state = sessionKey === null || answer.key === sessionKey ? answer.state : LOADING;
   return { state, refresh };
 }
 

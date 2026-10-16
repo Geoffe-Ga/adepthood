@@ -255,7 +255,16 @@ test('a sessions habit counts one full session and no early-stopped session', as
       })
     ).ok(),
   ).toBe(true);
-  await openEntry(page);
+  // Observe the persisted link before jumping five minutes: the fake clock also
+  // advances fetch timeouts, so it must not outrun initial link hydration.
+  await page.reload();
+  await page.getByRole('button', { name: 'Open settings', exact: true }).click();
+  await expect(page.getByTestId('settings-row-writing-habit')).toHaveAccessibleName(
+    'Writing timer → Writing sessions',
+  );
+  await page.goBack();
+  await page.getByTestId('journal-new-entry').click();
+  await page.getByTestId('journal-body-input').fill(BODY);
   const requests: unknown[] = [];
   page.on('request', (request) => {
     if (new URL(request.url()).pathname === '/goal_completions/')

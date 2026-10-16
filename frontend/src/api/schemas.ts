@@ -1340,6 +1340,10 @@ export const resonanceResponseSchema = z.object({
 
 /** Current BotMason wallet policy and balances, as served for this deployment. */
 export const botmasonUsageSchema = z.object({
+  // Missing or invalid routes fail validation; callers must not infer a payer from a key or balance.
+  resonance_route: z.enum(['vault_bound', 'app_provider']),
+  // Older servers omit this capability; only an explicit boolean true admits a demo.
+  resonance_demo_available: z.boolean().optional(),
   monthly_messages_used: z.number().int().nonnegative(),
   monthly_messages_remaining: z.number().int().nonnegative(),
   monthly_cap: z.number().int().nonnegative(),

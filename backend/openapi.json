@@ -8622,6 +8622,19 @@
           "offering_balance": {
             "title": "Offering Balance",
             "type": "integer"
+          },
+          "resonance_demo_available": {
+            "default": false,
+            "title": "Resonance Demo Available",
+            "type": "boolean"
+          },
+          "resonance_route": {
+            "enum": [
+              "vault_bound",
+              "app_provider"
+            ],
+            "title": "Resonance Route",
+            "type": "string"
           }
         },
         "required": [
@@ -8629,7 +8642,8 @@
           "monthly_messages_remaining",
           "monthly_cap",
           "monthly_reset_date",
-          "offering_balance"
+          "offering_balance",
+          "resonance_route"
         ],
         "title": "UsageResponse",
         "type": "object"

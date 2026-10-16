@@ -154,6 +154,8 @@ const mockStageIntroBody = (jest.fn() as any).mockResolvedValue({
   body_markdown: '# Welcome to Beige\n\nintro\n',
 });
 
+jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
+
 jest.mock('../../../api', () => ({
   captureSessionToken: () => mockSessionToken,
   uiFlags: { get: (...args: unknown[]) => mockUiFlags(...args) },
@@ -296,30 +298,47 @@ describe('CourseScreen', () => {
     expect(mockStageContent).not.toHaveBeenCalled();
   });
 
-  it.each([false, true])(
-    'drops held account A reading flags after an owner transition (ABA=%s)',
-    async (aba) => {
-      let finish!: (_flags: { course_last_stage: number }) => void;
-      mockUiFlags.mockReturnValueOnce(
-        new Promise((resolve) => {
-          finish = resolve;
-        }),
-      );
-      const view = render(<CourseScreen />);
-      await settle();
-      expect(mockUiFlags).toHaveBeenCalledTimes(1);
-      require('@/storage/userScope').setActiveUser(2);
-      mockSessionToken = mockTokenB;
-      if (aba) {
-        require('@/storage/userScope').setActiveUser(1);
-        mockSessionToken = mockTokenA;
-      }
-      await act(async () => finish({ course_last_stage: 2 }));
-      await settle();
-      expect(view.queryByTestId('stage-cover')).toBeNull();
-      expect(mockStageContent).not.toHaveBeenCalled();
-    },
-  );
+  const holdFirstReadingFlags = (): ((_flags: { course_last_stage: number }) => void) => {
+    let finish!: (_flags: { course_last_stage: number }) => void;
+    mockUiFlags.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    return (flags) => finish(flags);
+  };
+
+  it('drops held account A reading flags after an owner transition', async () => {
+    const finish = holdFirstReadingFlags();
+    const view = render(<CourseScreen />);
+    await settle();
+    expect(mockUiFlags).toHaveBeenCalledTimes(1);
+    require('@/storage/userScope').setActiveUser(2);
+    mockSessionToken = mockTokenB;
+    await act(async () => finish({ course_last_stage: 2 }));
+    await settle();
+    expect(view.queryByTestId('stage-cover')).toBeNull();
+    expect(mockStageContent).not.toHaveBeenCalled();
+  });
+
+  it('drops held account A reading flags after an A-to-B-to-A transition', async () => {
+    const finish = holdFirstReadingFlags();
+    // The returning account is a new lifecycle that reloads its own reading
+    // state (#3343); only that fresh answer may choose the Frequency.
+    mockUiFlags.mockResolvedValueOnce({ course_last_stage: 1 });
+    const view = render(<CourseScreen />);
+    await settle();
+    expect(mockUiFlags).toHaveBeenCalledTimes(1);
+    require('@/storage/userScope').setActiveUser(2);
+    mockSessionToken = mockTokenB;
+    require('@/storage/userScope').setActiveUser(1);
+    mockSessionToken = mockTokenA;
+    await act(async () => finish({ course_last_stage: 2 }));
+    await settle();
+    expect(mockUiFlags).toHaveBeenCalledTimes(2);
+    expect(view.getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+    expect(mockStageContent).not.toHaveBeenCalledWith(2);
+  });
 
   it('shows loading spinner initially', () => {
     mockStagesList.mockReturnValue(new Promise(() => {}));

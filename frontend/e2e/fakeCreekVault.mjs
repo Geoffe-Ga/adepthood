@@ -111,6 +111,8 @@ const fragments = new Map();
 let voiceDraftDeleteFailuresRemaining = 0;
 /** Held until a journey releases it, so retained copies can be observed directly. */
 let journalWithdrawalsHeld = false;
+/** An authenticated journey can model a vault that lacks letters. */
+let lettersHeld = false;
 
 function requiredFile(name) {
   const path = process.env[name];
@@ -147,7 +149,7 @@ function digestOf(contentBase64) {
 
 function capabilities(response) {
   send(response, HTTP_OK, {
-    capabilities: ADVERTISED_CAPABILITIES,
+    capabilities: ADVERTISED_CAPABILITIES.filter((name) => !lettersHeld || name !== 'letters'),
     contract_minor: CONTRACT_MINOR,
     contract_version: CONTRACT_VERSION,
     ontology_version: ONTOLOGY_VERSION,
@@ -515,6 +517,15 @@ const server = createServer((request, response) => {
     if (request.method === 'GET' && pathname === '/__lane/uploads') {
       request.resume();
       send(response, HTTP_OK, { received, fragments: [...fragments.values()] });
+      return;
+    }
+    if (
+      request.method === 'POST' &&
+      (pathname === '/__lane/hold-letters' || pathname === '/__lane/release-letters')
+    ) {
+      request.resume();
+      lettersHeld = pathname === '/__lane/hold-letters';
+      send(response, HTTP_OK, { status: 'ok' });
       return;
     }
     if (request.method === 'POST' && pathname === '/__lane/fail-next-voice-draft-delete') {

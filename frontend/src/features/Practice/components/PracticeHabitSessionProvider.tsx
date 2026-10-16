@@ -13,12 +13,12 @@ import {
 } from '@/api';
 import { editorialType, onShowcase, SPACING } from '@/design/tokens';
 import type { Habit } from '@/features/Habits/Habits.types';
-import type { LogUnitContext } from '@/features/Habits/services/habitManager';
 import { usePracticeHabitLink } from '@/features/Practice/hooks/usePracticeHabitLink';
 import type { UseSaveSessionMutationParams } from '@/features/Practice/hooks/useSaveSessionMutation';
 import {
   logCompletedPracticeHabit,
   type PracticeHabitLogInput,
+  type PreparedPracticeHabitLog,
   type TimerHabitLogService,
 } from '@/features/Practice/practiceHabitLogging';
 import { useActiveUserGeneration } from '@/storage/useActiveUser';
@@ -116,7 +116,7 @@ interface Sitting {
   /** The habit's name as this screen last knew it, for a notice when it cannot be read now. */
   name: string;
   /** A failed attempt's prepared log, retried under its original operation id and unit. */
-  failed?: { ctx: LogUnitContext; unit: PracticeHabitOption['unit'] };
+  failed?: PreparedPracticeHabitLog;
 }
 const SAVED = 'Your practice is saved.';
 const unavailableNotice = (name: string) =>
@@ -183,7 +183,7 @@ function logInput(
     timezone: props.timezone,
     viaTimer: sitting.viaTimer,
     manager: props.bindings.manager,
-    prepared: sitting.failed?.ctx,
+    prepared: sitting.failed,
     // The commit waits its turn in the habit/day queue; the unit must still hold then.
     isCurrent: () =>
       scope.current() &&
@@ -220,8 +220,8 @@ function useSittingLog(
     await logCompletedPracticeHabit({
       ...logInput(props, scope, sitting, habit),
       onNotice: (message) => tell(message),
-      onFailed: (ctx) => {
-        const again = { ...sitting, name: habit.name, failed: { ctx, unit: habit.unit } };
+      onFailed: (failed) => {
+        const again = { ...sitting, name: habit.name, failed };
         tell(`Couldn't log to ${habit.name}`, () => retryOnce(again));
       },
     });

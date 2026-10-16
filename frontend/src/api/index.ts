@@ -130,6 +130,7 @@ import {
   type FeedbackTriageSummaryT,
 } from './schemas';
 import {
+  beginAuthSession,
   captureAnonymousScope,
   captureSessionToken,
   installSessionTokenGetter,
@@ -945,6 +946,8 @@ const REFRESH_FAILED_DETAIL = 'refresh_failed';
  */
 export function resetTokenRotations(): void {
   rotation.reset();
+  // The same boundary ends every captured mutation of the old session (#3326).
+  beginAuthSession();
 }
 
 /**
