@@ -141,6 +141,7 @@ import { classifyTranscription } from './transcriptionContract';
 import { API_BASE_URL, KEYLESS_PAGE_READ_REACHES_SERVER } from '@/config';
 import type { Habit as LocalHabit, HabitGoalSetup } from '@/features/Habits/Habits.types';
 import { aiAccessRevoked } from '@/features/Journal/aiAccessRevoked';
+import { type VaultKeyVendor, vaultKeyVendorFor } from '@/features/Journal/vaultKeyCopy';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 import {
   diagnosticRoute,
@@ -509,7 +510,29 @@ export function setLlmApiKeyReset(reset: (() => void) | null) {
  * no-op when no provider has registered a reset.
  */
 export function resetLlmApiKey(): void {
+  vaultKeyVendors = [];
   llmApiKeyReset?.();
+}
+
+/**
+ * The vendors whose writer key this account's vault said, on its last usage
+ * read, that it writes with (#3437). Cleared with the key on session teardown,
+ * so one account's answer never decides where another's key goes.
+ */
+let vaultKeyVendors: readonly VaultKeyVendor[] = [];
+
+/**
+ * The key header for a request that hands the vault new writing -- a journal
+ * save or a document import -- whose onboarding classification a managed vault
+ * runs with the writer's own key (#3437). Attached only when the stored key's
+ * vendor is one the vault said it writes with, so the key travels only when a
+ * feature uses it; every other save carries no key at all.
+ */
+function onboardingKeyHeaders(): Record<string, string> | undefined {
+  const key = llmApiKeyGetter?.() ?? null;
+  const vendor = vaultKeyVendorFor(key);
+  if (key === null || vendor === null || !vaultKeyVendors.includes(vendor)) return undefined;
+  return { [LLM_API_KEY_HEADER]: key };
 }
 
 /** How a successful response body is read. */
@@ -2090,6 +2113,7 @@ export const corpus = {
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
         body: { filename, content_base64: contentBase64, classification },
+        headers: onboardingKeyHeaders(),
         token,
         timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
         schema: documentImportSchema as unknown as z.ZodType<DocumentImportT>,
@@ -2154,13 +2178,15 @@ export const journal = {
     options: { token?: string; idempotencyKey?: string } = {},
   ): Promise<JournalMessage> {
     // Trailing slash — the collection POST route is `/journal/` (#790).
+    const idempotency = options.idempotencyKey
+      ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
+      : undefined;
+    const onboarding = onboardingKeyHeaders();
     return request<JournalMessage>('/journal/', {
       method: 'POST',
       body: entry,
       token: options.token,
-      headers: options.idempotencyKey
-        ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
-        : undefined,
+      headers: idempotency || onboarding ? { ...idempotency, ...onboarding } : undefined,
     });
   },
   /**
@@ -2484,11 +2510,13 @@ export const voiceDrafts = {
 
 /** Read the deployment's allowance policy and this account's wallet state. */
 export const botmasonUsage = {
-  get(token?: string): Promise<BotmasonUsageT> {
-    return request<BotmasonUsageT>('/user/usage', {
+  async get(token?: string): Promise<BotmasonUsageT> {
+    const usage = await request<BotmasonUsageT>('/user/usage', {
       token,
       schema: botmasonUsageSchema as unknown as z.ZodType<BotmasonUsageT>,
     });
+    vaultKeyVendors = usage.vault_key_vendors ?? [];
+    return usage;
   },
 };
 

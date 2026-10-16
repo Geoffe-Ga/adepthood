@@ -113,6 +113,22 @@ let voiceDraftDeleteFailuresRemaining = 0;
 let journalWithdrawalsHeld = false;
 /** An authenticated journey can model a vault that lacks letters. */
 let lettersHeld = false;
+/**
+ * A journey can model a managed vault (Creek ADR 0015, #3437): one that lists
+ * the vendors whose writer key it will spend in `request_key_providers`. Off by
+ * default, so every other journey still sees a vault that is never sent a key.
+ */
+let requestKeysAdvertised = false;
+/** The vendors a managed Creek vault spends a writer's own key for. */
+const REQUEST_KEY_PROVIDERS = ['anthropic', 'openai'];
+const PROVIDER_HEADER = 'x-creek-provider';
+const PROVIDER_KEY_HEADER = 'x-creek-provider-key';
+/**
+ * Every request that carried a writer's key, by route, vendor and a digest of
+ * the key -- never the key itself -- so a journey can prove which call the key
+ * rode, and that it was exactly the writer's, without this process holding it.
+ */
+const keyed = [];
 
 function requiredFile(name) {
   const path = process.env[name];
@@ -149,6 +165,7 @@ function digestOf(contentBase64) {
 
 function capabilities(response) {
   send(response, HTTP_OK, {
+    ...(requestKeysAdvertised ? { request_key_providers: REQUEST_KEY_PROVIDERS } : {}),
     capabilities: ADVERTISED_CAPABILITIES.filter((name) => !lettersHeld || name !== 'letters'),
     contract_minor: CONTRACT_MINOR,
     contract_version: CONTRACT_VERSION,
@@ -516,8 +533,27 @@ const server = createServer((request, response) => {
     // reports, or a spec comparing two snapshots would see its own question.
     if (request.method === 'GET' && pathname === '/__lane/uploads') {
       request.resume();
-      send(response, HTTP_OK, { received, fragments: [...fragments.values()] });
+      send(response, HTTP_OK, { received, fragments: [...fragments.values()], keyed });
       return;
+    }
+    if (
+      request.method === 'POST' &&
+      (pathname === '/__lane/advertise-request-keys' ||
+        pathname === '/__lane/withdraw-request-keys')
+    ) {
+      request.resume();
+      requestKeysAdvertised = pathname === '/__lane/advertise-request-keys';
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    const providerKey = request.headers[PROVIDER_KEY_HEADER];
+    if (typeof providerKey === 'string') {
+      keyed.push({
+        method: request.method,
+        path: pathname,
+        provider: request.headers[PROVIDER_HEADER] ?? null,
+        keyDigest: createHash('sha256').update(providerKey, 'utf8').digest('hex'),
+      });
     }
     if (
       request.method === 'POST' &&

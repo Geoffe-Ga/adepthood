@@ -124,6 +124,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-title-wrap.browser.e2e.test.ts',
   'journal-unlinked-timer-nudge.browser.e2e.test.ts',
   'journal-writing-timer.browser.e2e.test.ts',
+  'managed-vault-own-key.browser.e2e.test.ts',
   'map-continue-course.browser.e2e.test.ts',
   'map-legibility.browser.e2e.test.ts',
   'map-stage-persona.browser.e2e.test.ts',

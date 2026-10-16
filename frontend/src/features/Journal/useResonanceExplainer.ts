@@ -50,6 +50,7 @@ import { loadCostState, UNKNOWN_COST_STATE, type ResonanceCostState } from './re
 import { usePaymentScope } from './usePaymentScope';
 import type { ResonanceRequestOutcome } from './useResonance';
 import { useStoredDismissal, type StoredDismissal } from './useStoredDismissal';
+import { vaultKeyVendorFor } from './vaultKeyCopy';
 
 import type { ResonanceRoute } from '@/api';
 import { useApiKey } from '@/context/ApiKeyContext';
@@ -128,7 +129,12 @@ function useResonanceCost(scopeIsCurrent: () => boolean): {
         scopeIsCurrent,
         value: { ...UNKNOWN_COST_STATE, canContinue: false, loading: true },
       });
-      const next = await loadCostState(apiKey !== null, undefined, token);
+      const next = await loadCostState(
+        apiKey !== null,
+        undefined,
+        token,
+        vaultKeyVendorFor(apiKey),
+      );
       if (!mountedRef.current || generationRef.current !== generation || !scopeIsCurrent())
         return null;
       setSnapshot({ scopeIsCurrent, value: next });

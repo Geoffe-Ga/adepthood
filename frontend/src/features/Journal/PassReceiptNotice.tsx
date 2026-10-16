@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import InferenceReceiptDetails from './InferenceReceiptDetails';
 import { isDemoSource, sourceLabel } from './sourceLabel';
+import { vaultKeyReceiptLabel } from './vaultKeyCopy';
 
 import type { PassProvenanceT } from '@/api/schemas';
 import { colors, editorialType, spacing } from '@/design/tokens';
@@ -20,7 +21,16 @@ const unrecordedPass: PassProvenanceT = {
   detection: null,
   detection_checked: null,
   paid_by: null,
+  own_key_vendor: null,
 };
+
+/** Who paid, named per use: a vault that wrote with the writer's key says whose (#3437). */
+function payerLabel(receipt: PassProvenanceT): string {
+  const { paid_by: payer, own_key_vendor: vendor } = receipt;
+  if (payer == null) return 'Payment route not recorded';
+  if (payer === 'own_key' && vendor) return vaultKeyReceiptLabel(vendor);
+  return payerLabels[payer];
+}
 
 function completionStatus(receipt: OperationReceipt, checked: boolean | null): string | null {
   if (receipt?.source === 'none') return null;
@@ -69,7 +79,7 @@ export default function PassReceiptNotice({
 }): React.JSX.Element | null {
   if (provenance === undefined) return null;
   const receipt = provenance ?? unrecordedPass;
-  const { notes, detection, paid_by: payer } = receipt;
+  const { notes, detection } = receipt;
   const status = completionStatus(detection, receipt.detection_checked);
   return (
     <View style={styles.receipt} testID="resonance-pass-receipt" accessibilityLiveRegion="polite">
@@ -89,7 +99,7 @@ export default function PassReceiptNotice({
       <View>
         <Text style={styles.title}>Payment route</Text>
         <Text style={styles.caption} testID="resonance-pass-payer">
-          {payer == null ? 'Payment route not recorded' : payerLabels[payer]}
+          {payerLabel(receipt)}
         </Text>
       </View>
     </View>

@@ -1,6 +1,7 @@
 /** Payment copy follows the server's reading route, never key presence alone. */
 import { resonanceExplainerCanContinue, resonanceExplainerCost } from './resonanceExplainerCopy';
 import { SOURCE_LABEL_COPY } from './sourceLabel';
+import { vaultKeyCost, type VaultKeyVendor } from './vaultKeyCopy';
 
 import { botmasonUsage, type ResonanceRoute } from '@/api';
 
@@ -53,10 +54,33 @@ function ownKeyCost(hasKey: boolean, noun: string): ResonanceCostState {
   };
 }
 
-function costStateFromUsage(usage: Usage, hasKey: boolean, noun: string): ResonanceCostState {
+/** A managed vault writes with the writer's own key, which pays (#3437). */
+function vaultOwnKeyCost(vendor: VaultKeyVendor, noun: string): ResonanceCostState {
+  return {
+    route: 'vault_bound',
+    keyNeeded: false,
+    copy: vaultKeyCost(vendor, noun),
+    canContinue: true,
+    fundingRequired: null,
+    loading: false,
+    monthlyResetDate: null,
+    monthlyCap: null,
+  };
+}
+
+function costStateFromUsage(
+  usage: Usage,
+  hasKey: boolean,
+  noun: string,
+  keyVendor: VaultKeyVendor | null,
+): ResonanceCostState {
   if (usage.resonance_route === 'app_provider') return appProviderCost(usage, hasKey, noun);
   if (usage.resonance_route !== 'vault_bound') return unknownCostState(noun);
-  // Vault readings and first letters spend credits even with an own key (#3281/#3346).
+  // Only a vendor the server said this vault writes with makes the key the payer.
+  if (hasKey && keyVendor && usage.vault_key_vendors?.includes(keyVendor)) {
+    return vaultOwnKeyCost(keyVendor, noun);
+  }
+  // Any other vault reading or first letter spends credits even with an own key (#3281/#3346).
   const canContinue = resonanceExplainerCanContinue(
     false,
     usage.monthly_messages_remaining,
@@ -104,9 +128,10 @@ export async function loadCostState(
   hasKey: boolean,
   noun: string = READING,
   token?: string,
+  keyVendor: VaultKeyVendor | null = null,
 ): Promise<ResonanceCostState> {
   try {
-    return costStateFromUsage(await botmasonUsage.get(token), hasKey, noun);
+    return costStateFromUsage(await botmasonUsage.get(token), hasKey, noun, keyVendor);
   } catch {
     return unknownCostState(noun);
   }
