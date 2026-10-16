@@ -75,18 +75,20 @@ import hashlib
 import logging
 import os
 from contextvars import ContextVar
+from dataclasses import dataclass, field
 from typing import Annotated
 from urllib.parse import urlsplit, urlunsplit
 
-from fastapi import Depends
+from fastapi import Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from domain.creek_vault import CreekVaultPipelineClient, resolve_vault_owner
+from domain.creek_vault import CreekVaultPipelineClient, VaultProviderKey, resolve_vault_owner
 from models.journal_entry import VAULT_DESTINATION_WIDTH
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivationState
 from routers.auth import get_current_user
+from services.botmason import LLM_API_KEY_MAX_LENGTH
 from services.creek_provisioning import load_vault_activation
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
@@ -101,6 +103,7 @@ from services.creek_vault_url_user import vault_url_host
 from services.journal_withdrawal_note import DetachedVault
 from services.reflection_boundary import ReflectionBoundary
 from services.user_vault_config import has_vault_config, load_vault_config
+from services.vault_byok import relayable_key
 
 logger = logging.getLogger(__name__)
 
@@ -529,3 +532,27 @@ def detached_vaults() -> tuple[DetachedVault, ...]:
     deployment_url = os.getenv(_VAULT_URL_ENV_VAR, "")
     destination = _destination_digest(owner, _SOURCE_DEPLOYMENT, deployment_url)
     return (DetachedVault(destination=destination, connect=lambda: deployment_vault_client(owner)),)
+
+
+@dataclass(frozen=True)
+class OnboardingVault:
+    """The vault a save or an import hands new writing to, and the key its onboarding may use.
+
+    ``relay_key`` is the writer's own key, read from the optional
+    ``X-LLM-API-Key`` header, for the classification pass that onboards the new
+    writing (#3437). It is a candidate only: the vault client attaches it to that
+    one call, and only when the vault's handshake advertised the key's vendor.
+    """
+
+    client: CreekVaultPipelineClient
+    relay_key: VaultProviderKey | None = field(default=None, repr=False)
+
+
+def get_onboarding_vault(
+    client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    x_llm_api_key: Annotated[
+        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
+    ] = None,
+) -> OnboardingVault:
+    """Bundle the caller's vault client with the key its onboarding pass may relay."""
+    return OnboardingVault(client=client, relay_key=relayable_key(x_llm_api_key))

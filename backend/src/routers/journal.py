@@ -6,7 +6,7 @@ import enum
 import logging
 from collections.abc import Sequence
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import Annotated, cast
 
@@ -19,7 +19,9 @@ from sqlmodel import col, select
 from bounds import INT32_MAX, MAX_PAGE_OFFSET, MIN_ROW_ID, RowIdPath
 from database import get_session
 from dependencies.creek_vault import (
+    OnboardingVault,
     get_creek_vault_client,
+    get_onboarding_vault,
     get_reflection_boundary,
     resolve_reflection_boundary,
     resolved_vault_destination,
@@ -36,6 +38,7 @@ from domain.creek_vault import (
     CreekVaultCareEscalationError,
     CreekVaultClient,
     CreekVaultPipelineClient,
+    VaultProviderKey,
     VaultTierCeiling,
     tier_ceiling_for,
 )
@@ -163,6 +166,7 @@ from services.creek_vault_reflect import (
     related_surfaces,
     select_reflection_llm,
 )
+from services.creek_vault_relay import forwarding_provider_key
 from services.creek_vault_voice_drafts import (
     VoiceDraftCopy,
     mark_entry_retractions_pending,
@@ -251,6 +255,7 @@ from services.resonance_care import (
 )
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
+from services.vault_byok import paying_key, vault_provider_key
 from services.voice_draft_privacy import journal_vault_mutations, voice_draft_privacy
 from services.wallet import (
     SpendResult,
@@ -755,7 +760,7 @@ async def create_journal_entry(
     payload: JournalMessageCreate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    vault: Annotated[OnboardingVault, Depends(get_onboarding_vault)],
     idempotency_key: Annotated[
         str | None,
         Header(alias="Idempotency-Key", max_length=IDEMPOTENCY_KEY_MAX_LENGTH),
@@ -781,6 +786,11 @@ async def create_journal_entry(
     body of the retry is not compared -- a client whose retry carries newer text
     must PATCH it -- and a key whose entry was since deleted is a 404. An
     unkeyed create is always a new entry.
+
+    The optional ``X-LLM-API-Key`` is relayed to the writer's vault only for the
+    classification pass that onboards the new entry, and only when the vault
+    advertised that vendor (#3437); a malformed header relays nothing and never
+    fails the save.
     """
     await _authorize_practice_links(session, payload, current_user)
     hashed = hash_idem_key(current_user, idempotency_key) if idempotency_key else None
@@ -811,7 +821,8 @@ async def create_journal_entry(
         current = await _load_user_entry(session, entry_id, current_user)
         if current is not None:
             entry = current
-            await _record_vault_outcome(session, entry, vault_client)
+            with forwarding_provider_key(vault.relay_key):
+                await _record_vault_outcome(session, entry, vault.client)
             await _record_corpus_fragment(session, entry)
     logger.info("journal_entry_created", extra={"user_id": current_user, "entry_id": entry.id})
     return entry
@@ -2268,6 +2279,10 @@ class _ReflectionClients:
     with the pass's free exits (#3389), and ``disclosed_route`` the payer route
     its disclosure showed the writer (#3385). Bundling them into one injected
     value keeps the handler's dependency signature small.
+
+    ``vault_key`` is set by the handler, never by the request: the caller's own
+    key when their vault will spend it (#3437, :func:`vault_provider_key`), so
+    the pass relays it to the vault and the key pays instead of credits.
     """
 
     api_key: str | None = field(repr=False)
@@ -2275,6 +2290,7 @@ class _ReflectionClients:
     boundary: ReflectionBoundary
     free_only: bool = False
     disclosed_route: PayerRoute | None = None
+    vault_key: VaultProviderKey | None = field(default=None, repr=False)
 
 
 def _reflection_clients(
@@ -2311,13 +2327,9 @@ def _reflection_clients(
 async def _resonance_payment(
     session: AsyncSession, user_id: int, clients: _ReflectionClients
 ) -> tuple[str | None, SpendResult | None]:
-    """Resolve the payer, charging BotMason unless a BYOK key pays the app provider.
-
-    The key pays only when the app's own provider answers. A vault-bound pass
-    never uses it, so it is charged whatever key header it carries (#3258).
-    """
-    byok_key = resolve_chat_api_key(clients.api_key)
-    if byok_key is not None and clients.boundary is ReflectionBoundary.APP_PROVIDER:
+    """Resolve the payer, charging BotMason unless a BYOK key pays (:func:`paying_key`)."""
+    byok_key = paying_key(clients.api_key, clients.boundary, clients.vault_key)
+    if byok_key is not None:
         return byok_key, None
     return None, await preflight_deduction(session, user_id)
 
@@ -2423,11 +2435,21 @@ async def run_resonance(
     # No personal key and nothing to pay with is refused here, free (#3096); a
     # vault-bound pass is answered by the vault, so it needs no server provider.
     # A ``free_only`` request is refused here whatever it could pay (#3389).
+    # A vault-bound writer's own key pays when their vault will spend it
+    # (#3437). Decided before the payer gate, so a writer with a key and no
+    # credits is admitted, and committed before the probe it needs.
+    clients = replace(
+        clients,
+        vault_key=await vault_provider_key(
+            session, clients.vault_client, clients.boundary, clients.api_key
+        ),
+    )
     refusal = await payer_refusal(
         session,
         current_user,
         clients.api_key,
         app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
+        vault_spends_key=clients.vault_key is not None,
     )
     refusal = free_only_refusal(refusal, free_only=clients.free_only)
     # So is a pass whose disclosed payer route is no longer this caller's (#3385).
@@ -2523,24 +2545,26 @@ async def _run_admitted_resonance(
             await _refund_failed_pass(session, current_user, spent, trace=trace)
             return await care_only_response(session, current_user, care)
         grounding, prior_letters = await _pass_context_under_hold(session, entry)
-        reflected = await _reflect_or_answer(
-            _ReflectionRequest(
-                entry_id=entry_id,
-                message=message,
-                classification=entry.classification,
-                prior=list(grounding.bodies),
-                prior_letters=prior_letters,
-            ),
-            clients.vault_client,
-            app_llm,
-            _ResonancePassContext(
-                session=session,
-                care=care,
-                user_id=current_user,
-                spent=spent,
-                trace=trace,
-            ),
-        )
+        # The writer's key rides only this dial, and only to their own vault.
+        with forwarding_provider_key(clients.vault_key):
+            reflected = await _reflect_or_answer(
+                _ReflectionRequest(
+                    entry_id=entry_id,
+                    message=message,
+                    classification=entry.classification,
+                    prior=list(grounding.bodies),
+                    prior_letters=prior_letters,
+                ),
+                clients.vault_client,
+                app_llm,
+                _ResonancePassContext(
+                    session=session,
+                    care=care,
+                    user_id=current_user,
+                    spent=spent,
+                    trace=trace,
+                ),
+            )
         if isinstance(reflected, _CareInstead):
             return await care_only_response(session, current_user, reflected.care)
         anchored, reflection_llm = reflected
@@ -2574,7 +2598,10 @@ async def _run_admitted_resonance(
         no_notes_message=settled.no_notes_message,
         related=related_surfaces(reflection_llm),
         provenance=pass_provenance(
-            receipts, byok=byok_key is not None, charge_kept=_charge_kept(spent, settled)
+            receipts,
+            byok=byok_key is not None,
+            charge_kept=_charge_kept(spent, settled),
+            vault_key=clients.vault_key,
         ),
     )
     return _resonance_response(
@@ -3256,6 +3283,9 @@ class _EssayClients:
     boundary: ReflectionBoundary
     price_acknowledged: bool = False
     disclosed_route: PayerRoute | None = None
+    #: Set by the route, never the request: the caller's own key when their
+    #: vault will write the letter with it (#3437).
+    vault_key: VaultProviderKey | None = field(default=None, repr=False)
 
 
 def _essay_clients(
@@ -3370,12 +3400,12 @@ def _require_price_acknowledged(clients: _EssayClients) -> None:
     still asks on open is answered 409 with nothing spent and nothing dialled.
     A valid BYOK key pays its own provider and is never charged here -- but
     only when that provider answers: a vault-written letter takes a credit
-    whatever key header rides along (#3258), so it is priced like one.
+    whatever key header rides along (#3258), so it is priced like one, unless
+    the vault writes it with that key (#3437).
     """
     if not ESSAY_PRICE_UNITS or clients.price_acknowledged:
         return
-    key_pays = clients.boundary is ReflectionBoundary.APP_PROVIDER
-    if not key_pays or resolve_chat_api_key(clients.api_key) is None:
+    if paying_key(clients.api_key, clients.boundary, clients.vault_key) is None:
         raise conflict(ESSAY_PRICE_UNACKNOWLEDGED)
 
 
@@ -3410,14 +3440,23 @@ async def _expand_essay(
     # Before the payer gate: asking a vault-bound writer for a key or a price
     # would be a false next step when no source may answer them (#3156).
     await require_vault_letters(session, note, clients.vault_client, clients.boundary)
+    # A vault that writes with the caller's own key is paid by it (#3437).
+    clients = replace(
+        clients,
+        vault_key=await vault_provider_key(
+            session, clients.vault_client, clients.boundary, clients.api_key
+        ),
+    )
     # Before the price gate: asking a writer with no way to pay to acknowledge
-    # a price would be a false next step (#3096). A key pays only when the app
-    # provider answers; a vault letter needs credits (#3258).
+    # a price would be a false next step (#3096). A key pays when the app
+    # provider answers or the vault spends it; any other vault letter needs
+    # credits (#3258).
     await require_ai_payer(
         session,
         user_id,
         clients.api_key,
         app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
+        vault_spends_key=clients.vault_key is not None,
     )
     _require_price_acknowledged(clients)
     # A first letter is about to be asked for: the per-user guardrails (#623)
@@ -3599,13 +3638,16 @@ async def _cache_vault_letter(
     The vault-bound twin of :func:`_cache_essay`, under the same account hold
     that just re-read the entry's tier and liveness. The economy is the app
     provider's (#623, #3062): one unit, deducted before the commit that precedes
-    the call -- whatever key header rode along, since the vault never uses it
-    (#3258) -- kept when a letter is cached, and refunded on every other ending
+    the call -- whatever key header rode along, unless the vault writes with the
+    caller's own key (#3437), which then pays instead (#3258) -- kept when a
+    letter is cached, and refunded on every other ending
     by :func:`services.creek_vault_letters.settle_vault_letter`. The receipt is
     the vault's, so a vault letter is never billed as a demo.
     """
     destination = await resolved_vault_destination(session, entry.user_id)
-    spent = await preflight_deduction(session, note.user_id) if ESSAY_PRICE_UNITS else None
+    # The caller's own key pays a vault that writes with it (#3437).
+    charged = ESSAY_PRICE_UNITS and clients.vault_key is None
+    spent = await preflight_deduction(session, note.user_id) if charged else None
     # The minute hit, after the charge is staged and before it commits, as on
     # the app-provider path.
     consume_generation_minute(note.user_id)
@@ -3622,12 +3664,14 @@ async def _cache_vault_letter(
             session, note.user_id, spent, reason=REASON_REFUND_FAILED_ESSAY, trace=trace
         )
 
-    answer = await settle_vault_letter(
-        session,
-        clients.vault_client,
-        letter_ask(note, entry, _sanitize_message(entry.message)),
-        VaultLetterSettlement(entry=entry, destination=destination, keep=keep, refund=refund),
-    )
+    # The writer's key rides only this dial, and only to their own vault.
+    with forwarding_provider_key(clients.vault_key):
+        answer = await settle_vault_letter(
+            session,
+            clients.vault_client,
+            letter_ask(note, entry, _sanitize_message(entry.message)),
+            VaultLetterSettlement(entry=entry, destination=destination, keep=keep, refund=refund),
+        )
     return await answer_vault_letter(session, note, answer)
 
 

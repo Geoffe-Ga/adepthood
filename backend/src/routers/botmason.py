@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.auth import require_admin
-from dependencies.creek_vault import get_reflection_boundary
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
+from domain.creek_vault import CreekVaultClient, VaultKeyProvider
 from error_responses import build_router
 from errors import forbidden
 from models.user import User
@@ -57,6 +58,7 @@ async def get_usage(
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
+    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
 ) -> UsageResponse:
     """Return the authenticated user's message-credit usage for the current month.
 
@@ -64,7 +66,14 @@ async def get_usage(
     mutate persistent state. The UPDATE runs inside the session so the response
     reflects the post-reset values, but the transaction lifecycle stays
     consistent with the rest of the service (the rollover UPDATE is idempotent).
+
+    ``vault_key_vendors`` tells a vault-bound client which vendors' keys its
+    vault would write with (#3437), so a writer whose own key will pay is shown
+    that rather than a credit price. It is read first, before the rollover is
+    staged, and the read-only transaction the dependencies opened is ended
+    before the probe so no pooled connection is held across it.
     """
+    vendors = await _vault_key_vendors(session, vault_client, boundary)
     await reset_monthly_usage_if_due(session, current_user, datetime.now(UTC))
     # No session.commit() — BUG-BM-015.
 
@@ -82,7 +91,25 @@ async def get_usage(
         resonance_demo_available=(
             boundary is ReflectionBoundary.APP_PROVIDER and server_generation_available()
         ),
+        vault_key_vendors=vendors,
     )
+
+
+async def _vault_key_vendors(
+    session: AsyncSession, vault_client: CreekVaultClient, boundary: ReflectionBoundary
+) -> list[VaultKeyProvider]:
+    """The vendors whose writer key this caller's vault would write with, if any (#3437).
+
+    Empty for an app-provider caller, who has no vault to ask, and for a vault
+    that is unreachable or advertises none.
+    """
+    if boundary is not ReflectionBoundary.VAULT_BOUND:
+        return []
+    # Nothing is staged yet: end the dependencies' read-only transaction so
+    # the probe holds no pooled connection.
+    await session.commit()
+    handshake = await vault_client.handshake()
+    return sorted(provider for provider in VaultKeyProvider if handshake.accepts_key(provider))
 
 
 @router.post("/user/balance/add", response_model=BalanceAddResponse)
