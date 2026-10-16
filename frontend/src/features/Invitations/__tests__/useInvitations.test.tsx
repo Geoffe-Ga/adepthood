@@ -343,3 +343,25 @@ it('old-account cleanup cannot unlock the new account pending guard for a reused
     await newWork;
   });
 });
+
+describe('useInvitations refresh (#3142)', () => {
+  it('re-reads the list when its refresh key moves, and not otherwise', async () => {
+    mockList.mockResolvedValue([invitation({ id: 1 }), invitation({ id: 2 })]);
+    const { result, rerender } = renderHook(({ key }: { key: number }) => useInvitations(key), {
+      initialProps: { key: 0 },
+    });
+    await waitFor(() => expect(result.current.invitations).toHaveLength(2));
+    expect(mockList).toHaveBeenCalledTimes(1);
+
+    rerender({ key: 0 });
+    expect(mockList).toHaveBeenCalledTimes(1);
+
+    // Dismissed elsewhere (the Notification Center): the next read omits it.
+    mockList.mockResolvedValue([invitation({ id: 2 })]);
+    rerender({ key: 1 });
+    await waitFor(() =>
+      expect(result.current.invitations.map((i: Invitation) => i.id)).toEqual([2]),
+    );
+    expect(mockList).toHaveBeenCalledTimes(2);
+  });
+});

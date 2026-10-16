@@ -3,7 +3,21 @@ import React from 'react';
 import InvitationNote from './InvitationNote';
 import { useInvitations } from './useInvitations';
 
-import { RING_FOR_TARGET, useEnabledRings } from '@/features/Depth/depthRings';
+import type { Invitation } from '@/api';
+import { RING_FOR_TARGET, useEnabledRings, type DepthRing } from '@/features/Depth/depthRings';
+import { useReportNotificationPresence } from '@/features/Journal/notificationPresence';
+
+/**
+ * The invitations a writer is offered: those into rings still on. Shared with
+ * the Notification Center's count (#3142), so a card dropped here is never
+ * counted there.
+ */
+export function visibleInvitations(
+  invitations: readonly Invitation[],
+  enabled: Readonly<Record<DepthRing, boolean>>,
+): Invitation[] {
+  return invitations.filter((invitation) => enabled[RING_FOR_TARGET[invitation.target_type]]);
+}
 
 /**
  * The pending invitations (NORTH-STAR §6): silent when empty, one card each.
@@ -16,9 +30,8 @@ import { RING_FOR_TARGET, useEnabledRings } from '@/features/Depth/depthRings';
 const InvitationStack = (): React.JSX.Element | null => {
   const { invitations, dismiss } = useInvitations();
   const enabled = useEnabledRings();
-  const shown = invitations.filter(
-    (invitation) => enabled[RING_FOR_TARGET[invitation.target_type]],
-  );
+  const shown = visibleInvitations(invitations, enabled);
+  useReportNotificationPresence('invitations', shown.length > 0, shown.length);
   if (shown.length === 0) return null;
   return (
     <>

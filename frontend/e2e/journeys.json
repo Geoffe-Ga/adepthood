@@ -498,6 +498,26 @@
     "coveredBy": "frontend/e2e/journal-promoted-quotes-screen.browser.e2e.test.ts"
   },
   {
+    "id": "journal.notification-center-opens",
+    "description": "From the Journal home a writer opens the Notification Center (#3142) through the tertiary 'Notifications (N)' door in the action row beside Past prompts -- a plain count of waiting items in the label, no badge or colour -- and sees one quiet inbox: the stat tiles under 'Today' first (counters, which never count), then Return behind the habits ring, the ring-filtered invitations, the stage's prompts under \"This week's prompts\", and the voice-readiness band, each heading shown only over a section with something in it. The fresh account's real Beige prompts render from GET /prompts/stage/1; setting the first aside is one tap through POST /prompts/stage/1/1/dismiss, the card leaves and the eyebrow reads '1 set aside', and back on the home the door re-reads its sources on refocus and reads exactly one fewer. The Journal drawer's count-free 'Notifications' row opens the same screen; setting the remaining prompts aside and declining the voice band leaves only the counters, the screen says 'Nothing waiting.' once, and the home's door drops to a bare 'Notifications'. Screenshots are captured at 390px and 1280px, at normal size and at 200% browser zoom, where the door must stay on screen. Not asserted in the browser, and pinned only by Jest: the count arithmetic (Return 0/1, invitations in kept rings, prompts not set aside, voice band 0/1), the empty note's settle window, the declined-habits-ring quieting of Return, and the voice band's refocus re-reading only its device-local set-aside flag.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/NotificationCenterScreen.tsx",
+      "client": ["prompts", "invitations", "mettaReturn", "corpus"],
+      "routes": [
+        "GET /prompts/current",
+        "GET /prompts/history",
+        "GET /prompts/stage/{stage_number}",
+        "POST /prompts/stage/{stage_number}/{prompt_ordinal}/dismiss",
+        "GET /invitations",
+        "GET /metta-return",
+        "GET /corpus/voice-readiness"
+      ],
+      "tables": ["promptdismissal", "promptresponse"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-notification-center.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.fold-promoted-quote-into-reopened-reflection",
     "description": "A due weekly review is opened from the Journal shelf, saved with its hierarchical identity (tag hierarchical_reflection, level week, scope key c1:w1), closed, and reopened as an ordinary saved entry. Its Sources affordance survives that reopen, and the panel names THAT review's own period -- read from the window the sources endpoint declares it filtered on -- so a reopen can never quietly present another review's material. Selecting a pending promoted quote folds it into the body, autosaves the reflection, and marks the quote included on the server. The spec drives the WEEK level only and asserts no title text. Review titles in the program's words are asserted elsewhere: the weekly titles under journal.review-from-the-shelf-cta, the section and course invitations and titles under journal.section-and-course-review-invitations; the stage invitation is pinned only by Jest. The sheet renders each source body through the journal Markdown model -- a '**Me:**' speaker prefix reads as bold 'Me:' and no raw marker ever appears in the collapsed excerpt or the expanded body -- and closes with an icon-only X whose accessible name is 'Done'. That the body grows to hold folded quotes at phone width, instead of painting them over the footer and rail, is asserted under journal.fold-selected-promoted-quotes (#3001).",
     "crosses": {

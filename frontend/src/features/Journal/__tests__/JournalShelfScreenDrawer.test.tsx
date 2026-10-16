@@ -70,6 +70,13 @@ jest.mock('@react-navigation/native', () => {
   };
 });
 
+// The Notification Center's count reads five sources of its own; it has its
+// own suite, so the shelf's suites pin only the number it shows.
+let mockNotificationCount = 0;
+jest.mock('../useNotificationCount', () => ({
+  useNotificationCount: () => mockNotificationCount,
+}));
+
 jest.mock('../SearchBar', () => {
   const { TextInput } = require('react-native');
   const Stub = ({ onSearch }: { onSearch: (_q: string) => void }) => (
@@ -287,6 +294,21 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     });
 
     expect(mockNavigate).toHaveBeenCalledWith('PromotedQuotes');
+    expect(queryByTestId('screen-drawer')).toBeNull();
+  });
+
+  it('opens the Notification Center from the drawer and closes the drawer behind it', async () => {
+    const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
+    await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
+
+    fireEvent.press(getByLabelText('Open Journal menu'));
+    await waitFor(() => expect(getByTestId('journal-drawer-notifications')).toBeTruthy());
+
+    await act(async () => {
+      fireEvent.press(getByTestId('journal-drawer-notifications'));
+    });
+
+    expect(mockNavigate).toHaveBeenCalledWith('JournalNotifications');
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 

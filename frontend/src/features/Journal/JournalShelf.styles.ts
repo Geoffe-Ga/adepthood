@@ -94,6 +94,9 @@ const styles = StyleSheet.create({
   // now carrying "New entry" alone, with no display-scale title above it.
   actionRow: {
     flexDirection: 'row',
+    // Three doors share the row (#3142); at a phone width with enlarged text
+    // they wrap onto a second line rather than run off the edge.
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
     alignItems: 'center',
     gap: SPACING.sm,

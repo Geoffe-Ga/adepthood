@@ -2,7 +2,9 @@
  * ``JournalShelfScreen`` — the journal's landing surface, restyled as an
  * editorial library: a warm ``ScreenScaffold`` whose scrolling top matter stacks
  * the ``JournalHero``, ``StatTileRow``, ``ReturnStack``, ``InvitationStack``, a
- * "New entry" action row, the current stage's prompts, the
+ * "New entry" action row (with "Past prompts" and the Notification Center's
+ * "Notifications" door, #3142), the current stage's prompts
+ * (``StagePromptSection``), the
  * ``JournalPrimaryInvitation`` (a due review or the daily page, plus the
  * early-review link), a ``VoiceReadinessBand``, and ``SearchBar`` on the warm
  * palette. Below it, entries group by recency (This
@@ -12,8 +14,7 @@
  */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { ChevronRight } from 'lucide-react-native';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, SectionList, Text, TouchableOpacity, View } from 'react-native';
 import type { SectionListData, SectionListRenderItemInfo } from 'react-native';
 
@@ -28,35 +29,32 @@ import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
 import PromptHistoryModal from './PromptHistoryModal';
 import { formatDate, groupByRecency, MONTH_DAYS, type ShelfSection } from './recency';
-import ReflectionDismiss from './ReflectionDismiss';
 import SearchBar from './SearchBar';
+import StagePromptSection, {
+  useOpenStagePrompt,
+  useStagePromptPlace,
+  useStagePrompts,
+  type StagePromptsBand,
+} from './StagePromptSection';
 import StatTileRow from './StatTileRow';
 import UnreachableVaultChoice from './UnreachableVaultChoice';
 import { useEntryDeletion, type EntryDeletion } from './useEntryDeletion';
+import { useNotificationCount } from './useNotificationCount';
 import { usePagedJournal } from './usePagedJournal';
 import VoiceReadinessBand from './VoiceReadinessBand';
 import { countWords } from './wordCount';
 
-import { prompts } from '@/api';
-import type { JournalMessage, PromptDetail, StagePromptDetail, StagePromptsResponse } from '@/api';
-import { decorativeHidden } from '@/components/a11yHidden';
+import type { JournalMessage, StagePromptDetail } from '@/api';
 import { Button } from '@/components/Button';
 import { useScreenDrawer } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { BottomFade } from '@/components/layout/BottomFade';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import { accent, uiType } from '@/design/tokens';
 import DepthGate from '@/features/Depth/DepthGate';
 import InvitationStack from '@/features/Invitations/InvitationStack';
 import ReturnStack from '@/features/Return/ReturnStack';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
-import {
-  programStage,
-  programStageForWeek,
-  programWeek,
-  useProgramStore,
-} from '@/store/useProgramStore';
 import { MS_PER_DAY } from '@/utils/dateUtils';
 
 const SEARCH_MIN_LENGTH = 3;
@@ -67,36 +65,21 @@ const WORDS_PER_MINUTE = 200;
 // A single curated opening invitation for a brand-new journal (no rotation).
 const FIRST_PROMPT = 'What brought you here?';
 
-// Said of a prompt already written to. Deliberately a note, not a reward: the
-// prompt stays open because several of them are meant to be returned to.
-const ANSWERED_NOTE = 'Answered';
-
-// Said once the week holds its one response. The server keeps a single response
-// per week, so this names the rhythm rather than reporting a refusal — the whole
-// set stays readable, just not writable until the week turns over.
-const WEEK_WRITTEN_NOTE = "This week's prompt is written — the next one opens next week.";
-
-// Declining a prompt, said as a choice rather than as a failure to do it. Not
-// "skip", not "dismiss", and never a count of what went unwritten: the depths
-// are declinable invitations, so the way out of one is offered in the same
-// register the invitation was.
-const SET_ASIDE_LABEL = 'Set aside';
-const SET_ASIDE_HINT = 'Set this prompt aside; you can bring it back later.';
-const BRING_BACK_LABEL = 'Bring it back';
-const BRING_BACK_HINT = 'Bring this prompt back; it will appear with the others again.';
-const SHOW_SET_ASIDE_HINT = 'Show the prompts you have set aside';
-
-/** The chevron beside the set-aside count, sized to its label's face. */
-const SET_ASIDE_CHEVRON_SIZE = uiType.button.fontSize;
+const NOTIFICATIONS_LABEL = 'Notifications';
 
 /**
- * "1 set aside" / "N set aside" — the count folds into the band's eyebrow row
- * (#2949): the eyebrow already says these are prompts, and the chevron says
- * it opens, so the label carries only the number. The full sentence is the
- * control's accessible name (``SHOW_SET_ASIDE_HINT``).
+ * The door to the Notification Center (#3142): its name, and the number of
+ * items waiting once some are — a plain count in the label, never a badge,
+ * a colour or a streak, and nothing at all when nothing waits.
  */
-function setAsideCountLabel(count: number): string {
-  return `${count} set aside`;
+function notificationsDoor(count: number): { label: string; accessibilityLabel: string } {
+  if (count === 0) {
+    return { label: NOTIFICATIONS_LABEL, accessibilityLabel: 'Open notifications' };
+  }
+  return {
+    label: `${NOTIFICATIONS_LABEL} (${count})`,
+    accessibilityLabel: `Open notifications, ${count} waiting`,
+  };
 }
 
 type ShelfNavigation = NativeStackNavigationProp<RootStackParamList>;
@@ -323,396 +306,12 @@ function ShelfEmpty({
   );
 }
 
-/** The current week's prompt, or null while it loads (or after a load error).
- *
- * Read only to learn which program week a response belongs to — the cards below
- * come from the stage endpoint. Re-fetched on every focus (not just mount): the
- * shelf stays mounted while the user pushes to the entry screen, so a week that
- * turned over in between would otherwise keep composing against the old one.
- */
-function useCurrentPrompt(): PromptDetail | null {
-  const [prompt, setPrompt] = useState<PromptDetail | null>(null);
-  useFocusEffect(
-    useCallback(() => {
-      let active = true;
-      void prompts
-        .current()
-        .then((p) => {
-          if (active) setPrompt(p);
-        })
-        .catch(() => {
-          // A prompt fetch failure shouldn't block the shelf; the week falls back.
-        });
-      return () => {
-        active = false;
-      };
-    }, []),
-  );
-  return prompt;
-}
-
-/** A stage's prompts, plus the ordinals of the ones already written to. */
-interface StagePromptsState {
-  stage: StagePromptsResponse | null;
-  answered: ReadonlySet<number>;
-  /** False once this week already holds its one response.
-   *
-   * The server stores at most one response per (reader, week), whichever of the
-   * stage's prompts it answers. Offering a second tap in the same week would
-   * send the reader to a page whose every save is refused and whose writing is
-   * therefore stored nowhere, so the band stops inviting one and says why.
-   */
-  writable: boolean;
-}
-
-/** The stage's prompts plus the two ways a reader changes what is offered. */
-interface StagePromptsBand extends StagePromptsState {
-  /** Stop offering this prompt, reversibly. */
-  setAside: (_ordinal: number) => void;
-  /** Offer it again. */
-  bringBack: (_ordinal: number) => void;
-}
-
-const NO_STAGE_PROMPTS: StagePromptsState = {
-  stage: null,
-  answered: new Set<number>(),
-  writable: true,
-};
-
-/** Ordinals of *this* stage's prompts the reader has already answered.
- *
- * Read from the response history rather than from the stage payload, which
- * describes the curriculum and knows nothing about this reader. Ordinals repeat
- * across stages, so a stored response only counts when its week falls inside
- * this stage; a response with no ordinal predates individually addressable
- * prompts and is skipped rather than credited to a prompt it may not answer.
- */
-function answeredOrdinals(items: readonly PromptDetail[], stage: number): ReadonlySet<number> {
-  const answered = new Set<number>();
-  for (const item of items) {
-    const ordinal = item.prompt_ordinal;
-    if (ordinal != null && programStageForWeek(item.week_number) === stage) answered.add(ordinal);
-  }
-  return answered;
-}
-
-/** The current stage's whole prompt set, re-read on focus.
- *
- * A stage the reader has not reached is refused server-side, and any refusal
- * simply hides the section — the shelf never fails to render because prompts
- * did not load. The history read is allowed to fail on its own: the prompts
- * still appear, merely unmarked and still writable, rather than vanishing
- * because one of two reads failed.
- */
-function useStagePrompts(stage: number | null, week: number | null): StagePromptsBand {
-  const [state, setState] = useState<StagePromptsState>(NO_STAGE_PROMPTS);
-  useFocusEffect(
-    useCallback(() => {
-      // Neither read fires until the reader's place is actually known: a guessed
-      // week would fetch — and offer — some other stage's prompts.
-      if (stage === null || week === null) return undefined;
-      let active = true;
-      const load = async (): Promise<void> => {
-        // Read together, not in sequence: the history is only used to mark the
-        // cards, so making it wait on the curriculum read would delay the whole
-        // section behind a request nothing renders directly.
-        const [stagePrompts, history] = await Promise.all([
-          prompts.stage(stage),
-          prompts.history().catch(() => null),
-        ]);
-        if (!active) return;
-        const items = history?.items ?? [];
-        setState({
-          stage: stagePrompts,
-          answered: answeredOrdinals(items, stage),
-          writable: !items.some((item) => item.week_number === week),
-        });
-      };
-      void load().catch(() => {
-        // A prompt fetch failure shouldn't block the shelf; just hide the section.
-      });
-      return () => {
-        active = false;
-      };
-    }, [stage, week]),
-  );
-
-  // The server answers each mutation with the whole band, so the reply *is*
-  // the new state and there is nothing to reconcile.
-  const applyStage = useCallback((fresh: StagePromptsResponse) => {
-    setState((prev) => ({ ...prev, stage: fresh }));
-  }, []);
-  return { ...state, ...useStagePromptChoice(stage, applyStage) };
-}
-
-/** One of the two stage-scoped mutations, as the band's handler for it. */
-type StagePromptMutation = (
-  _stageNumber: number,
-  _promptOrdinal: number,
-) => Promise<StagePromptsResponse>;
-
-/** Setting a prompt aside and bringing it back, bound to one stage.
- *
- * Both are the same shape and differ only in which route they call, so they
- * are built from one factory rather than written twice. Nothing is hidden
- * optimistically: a card that vanished on a request that failed would report a
- * preference the server never recorded, and the reader would find it back on
- * the next focus with no idea why. A refusal therefore leaves the band exactly
- * as it was, which is already the truth.
- */
-function useStagePromptChoice(
-  stage: number | null,
-  applyStage: (_fresh: StagePromptsResponse) => void,
-): Pick<StagePromptsBand, 'setAside' | 'bringBack'> {
-  const handlerFor = useCallback(
-    (mutate: StagePromptMutation) => (ordinal: number) => {
-      if (stage === null) return;
-      void mutate(stage, ordinal)
-        .then(applyStage)
-        .catch(() => {
-          // Refused: the band already shows what the server still holds.
-        });
-    },
-    [stage, applyStage],
-  );
-  return {
-    setAside: useMemo(() => handlerFor(prompts.setAside), [handlerFor]),
-    bringBack: useMemo(() => handlerFor(prompts.bringBack), [handlerFor]),
-  };
-}
-
-/** What a prompt card says: the prompt, its cadence, and whether it is answered. */
-function StagePromptFace({
-  prompt,
-  answered,
-}: {
-  prompt: StagePromptDetail;
-  answered: boolean;
-}): React.JSX.Element {
-  const { ordinal, title, cadence } = prompt;
-  return (
-    <>
-      <Text style={styles.promptQuestion}>{title}</Text>
-      {cadence == null ? null : (
-        <Text style={styles.promptLabel} testID={`journal-stage-prompt-cadence-${ordinal}`}>
-          {cadence}
-        </Text>
-      )}
-      {answered ? (
-        <Text style={styles.promptAnswered} testID={`journal-stage-prompt-answered-${ordinal}`}>
-          {ANSWERED_NOTE}
-        </Text>
-      ) : null}
-    </>
-  );
-}
-
-/** The prompt itself, as either a reading surface or a way into the page.
- *
- * Pressable only while the week can still take a response. Once it holds one,
- * the card is a plain reading surface rather than a button that leads to a page
- * the server refuses to save — the section says why just above it.
- */
-function StagePromptBody({
-  prompt,
-  answered,
-  writable,
-  onOpen,
-}: {
-  prompt: StagePromptDetail;
-  answered: boolean;
-  writable: boolean;
-  onOpen: (_prompt: StagePromptDetail) => void;
-}): React.JSX.Element {
-  const { ordinal, title } = prompt;
-  const testID = `journal-stage-prompt-${ordinal}`;
-  if (!writable) {
-    return (
-      <View accessibilityLabel={`The prompt: ${title}`} testID={testID}>
-        <StagePromptFace prompt={prompt} answered={answered} />
-      </View>
-    );
-  }
-  return (
-    <TouchableOpacity
-      onPress={() => onOpen(prompt)}
-      accessibilityRole="button"
-      accessibilityLabel={`${answered ? 'Write again to' : 'Write to'} the prompt: ${title}`}
-      testID={testID}
-    >
-      <StagePromptFace prompt={prompt} answered={answered} />
-    </TouchableOpacity>
-  );
-}
-
-/** The declinable half of a prompt: set it aside, or bring it back.
- *
- * Sits below the prompt rather than inside its press target, so declining a
- * prompt can never be mistaken for opening it. Setting one aside is a
- * preference and not a completion — it neither marks the prompt answered nor
- * changes whether any other prompt can still be written to this week.
- */
-function StagePromptChoice({
-  ordinal,
-  setAside,
-  onSetAside,
-  onBringBack,
-}: {
-  ordinal: number;
-  setAside: boolean;
-  onSetAside: (_ordinal: number) => void;
-  onBringBack: (_ordinal: number) => void;
-}): React.JSX.Element {
-  return setAside ? (
-    <ReflectionDismiss
-      variant="reopen"
-      label={BRING_BACK_LABEL}
-      accessibilityLabel={BRING_BACK_HINT}
-      testID={`journal-stage-prompt-bring-back-${ordinal}`}
-      onPress={() => onBringBack(ordinal)}
-    />
-  ) : (
-    <ReflectionDismiss
-      label={SET_ASIDE_LABEL}
-      accessibilityLabel={SET_ASIDE_HINT}
-      testID={`journal-stage-prompt-set-aside-${ordinal}`}
-      onPress={() => onSetAside(ordinal)}
-    />
-  );
-}
-
-/** One of the stage's prompts, with the choice of whether to keep being offered it. */
-function StagePromptCard({
-  prompt,
-  answered,
-  writable,
-  onOpen,
-  onSetAside,
-  onBringBack,
-}: {
-  prompt: StagePromptDetail;
-  answered: boolean;
-  writable: boolean;
-  onOpen: (_prompt: StagePromptDetail) => void;
-  onSetAside: (_ordinal: number) => void;
-  onBringBack: (_ordinal: number) => void;
-}): React.JSX.Element {
-  const setAside = prompt.dismissed === true;
-  return (
-    <View
-      style={[
-        styles.promptCard,
-        answered ? styles.promptCardAnswered : null,
-        setAside ? styles.promptCardSetAside : null,
-      ]}
-      testID={`journal-stage-prompt-card-${prompt.ordinal}`}
-    >
-      <StagePromptBody prompt={prompt} answered={answered} writable={writable} onOpen={onOpen} />
-      <StagePromptChoice
-        ordinal={prompt.ordinal}
-        setAside={setAside}
-        onSetAside={onSetAside}
-        onBringBack={onBringBack}
-      />
-    </View>
-  );
-}
-
-/**
- * The band's eyebrow row (#2949): the stage's name, upper-cased, on the left,
- * and — while some prompts are set aside and not yet shown — the count as a
- * compact control in the trailing slot. The count folds into the row its
- * label names rather than hanging under the cards as a sentence of its own.
- */
-function StagePromptEyebrow({
-  stageName,
-  setAsideCount,
-  onReveal,
-}: {
-  stageName: string;
-  setAsideCount: number;
-  onReveal: () => void;
-}): React.JSX.Element {
-  return (
-    <View style={styles.promptSectionEyebrow} testID="journal-stage-prompts-eyebrow">
-      <Text style={styles.promptSectionLabel}>{`${stageName} prompts`}</Text>
-      {setAsideCount === 0 ? null : (
-        <TouchableOpacity
-          style={styles.promptSetAsideControl}
-          onPress={onReveal}
-          accessibilityRole="button"
-          accessibilityLabel={SHOW_SET_ASIDE_HINT}
-          testID="journal-stage-prompts-set-aside-footer"
-        >
-          <Text style={styles.promptSetAsideLabel}>{setAsideCountLabel(setAsideCount)}</Text>
-          <ChevronRight
-            color={accent.primary}
-            size={SET_ASIDE_CHEVRON_SIZE}
-            {...decorativeHidden()}
-          />
-        </TouchableOpacity>
-      )}
-    </View>
-  );
-}
-
-/** The stage's prompts as one band, in curriculum order — the order matters,
- *  since some stages' prompts are a sequence where each feeds the next. Renders
- *  nothing at all until a stage has loaded, so the shelf never shows a
- *  placeholder standing in for a prompt the server has not named yet. */
-function StagePromptSection({
-  band,
-  onOpen,
-}: {
-  band: StagePromptsBand;
-  onOpen: (_prompt: StagePromptDetail) => void;
-}): React.JSX.Element | null {
-  const { stage, answered, writable, setAside, bringBack } = band;
-  // Whether the set-aside prompts are on screen is a per-visit choice, not a
-  // preference: the reader asked to see them now, and next time they arrive
-  // the band is again the one they curated.
-  const [revealed, setRevealed] = useState(false);
-  const reveal = useCallback(() => setRevealed(true), []);
-  if (stage === null || stage.prompts.length === 0) return null;
-  const setAsideCount = stage.prompts.filter((prompt) => prompt.dismissed === true).length;
-  const shown = revealed
-    ? stage.prompts
-    : stage.prompts.filter((prompt) => prompt.dismissed !== true);
-  return (
-    <View style={styles.promptSection} testID="journal-stage-prompts">
-      <StagePromptEyebrow
-        stageName={stage.stage_name}
-        // Once revealed there is nothing left to offer back, so the slot empties.
-        setAsideCount={revealed ? 0 : setAsideCount}
-        onReveal={reveal}
-      />
-      {writable ? null : (
-        <Text style={styles.promptSectionNote} testID="journal-stage-prompts-week-written">
-          {WEEK_WRITTEN_NOTE}
-        </Text>
-      )}
-      {shown.map((prompt) => (
-        <StagePromptCard
-          key={prompt.ordinal}
-          prompt={prompt}
-          answered={answered.has(prompt.ordinal)}
-          writable={writable}
-          onOpen={onOpen}
-          onSetAside={setAside}
-          onBringBack={bringBack}
-        />
-      ))}
-    </View>
-  );
-}
-
 interface TopMatterProps {
   notices: React.ReactNode;
   stagePrompts: StagePromptsBand;
-  onPrompt: (_prompt: StagePromptDetail) => void;
+  /** The shelf's destinations: a prompt, a new or morning page, the Notification Center. */
+  nav: Pick<ShelfNav, 'openPrompt' | 'newEntry' | 'newMorningPage' | 'openNotifications'>;
   onPastPrompts: () => void;
-  onNew: () => void;
-  onMorningPage: (_prefillTitle: string) => void;
   onSearch: (_query: string) => void;
   query: string;
   resultCount?: number;
@@ -727,14 +326,13 @@ interface TopMatterProps {
 function ShelfTopMatter({
   notices,
   stagePrompts,
-  onPrompt,
+  nav,
   onPastPrompts,
-  onNew,
-  onMorningPage,
   onSearch,
   query,
   resultCount,
 }: TopMatterProps): React.JSX.Element {
+  const door = notificationsDoor(useNotificationCount());
   return (
     <View>
       {notices}
@@ -755,10 +353,17 @@ function ShelfTopMatter({
           accessibilityLabel="Read the weekly prompts you have already answered"
           testID="journal-past-prompts"
         />
-        <Button label="New entry" onPress={onNew} testID="journal-new-entry" />
+        <Button
+          label={door.label}
+          variant="tertiary"
+          onPress={nav.openNotifications}
+          accessibilityLabel={door.accessibilityLabel}
+          testID="journal-notifications-open"
+        />
+        <Button label="New entry" onPress={nav.newEntry} testID="journal-new-entry" />
       </View>
-      <StagePromptSection band={stagePrompts} onOpen={onPrompt} />
-      <JournalPrimaryInvitation onBeginPage={onMorningPage} />
+      <StagePromptSection band={stagePrompts} onOpen={nav.openPrompt} />
+      <JournalPrimaryInvitation onBeginPage={nav.newMorningPage} />
       <VoiceReadinessBand />
       <View style={styles.searchRow}>
         <SearchBar onSearch={onSearch} searchQuery={query || undefined} resultCount={resultCount} />
@@ -777,6 +382,7 @@ interface ShelfNav {
   openCorpus: (_destination: CorpusDestination) => void;
   openVoiceDrafts: () => void;
   openPromotedQuotes: () => void;
+  openNotifications: () => void;
 }
 
 /** Memoized navigation callbacks for the shelf's three destinations. */
@@ -799,28 +405,15 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
   );
   const openVoiceDrafts = useCallback(() => navigation.navigate('VoiceDrafts'), [navigation]);
   const openPromotedQuotes = useCallback(() => navigation.navigate('PromotedQuotes'), [navigation]);
+  const openNotifications = useCallback(
+    () => navigation.navigate('JournalNotifications'),
+    [navigation],
+  );
   const openWithPrompt = useCallback(
     () => navigation.navigate('JournalEntry', { promptQuestion: FIRST_PROMPT }),
     [navigation],
   );
-  // Compose against *this* prompt: its ordinal is what tells the server which of
-  // the stage's prompts the page answers, and its own curriculum headline is the
-  // title — the server owns both strings, so the client derives neither. A null
-  // week means the reader's place is unknown, in which case no prompt card is on
-  // screen to press; filing the page under a guessed week would be worse than
-  // doing nothing.
-  const openPrompt = useCallback(
-    (prompt: StagePromptDetail) => {
-      if (week === null) return;
-      navigation.navigate('JournalEntry', {
-        weekNumber: week,
-        promptOrdinal: prompt.ordinal,
-        promptQuestion: prompt.body,
-        prefillTitle: prompt.title,
-      });
-    },
-    [navigation, week],
-  );
+  const openPrompt = useOpenStagePrompt(navigation, week);
   return {
     openEntry,
     newEntry,
@@ -831,6 +424,7 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
     openCorpus,
     openVoiceDrafts,
     openPromotedQuotes,
+    openNotifications,
   };
 }
 
@@ -850,6 +444,7 @@ interface ShelfDrawer {
   onOpenCorpus: (_destination: CorpusDestination) => void;
   onOpenVoiceDrafts: () => void;
   onOpenPromotedQuotes: () => void;
+  onOpenNotifications: () => void;
 }
 
 /** The header drawer's open state plus its open-then-close row callbacks. From
@@ -879,6 +474,10 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     nav.openPromotedQuotes();
     drawer.close();
   }, [nav, drawer]);
+  const onOpenNotifications = useCallback(() => {
+    nav.openNotifications();
+    drawer.close();
+  }, [nav, drawer]);
   return {
     drawer,
     onSelectEntry,
@@ -887,6 +486,7 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     onOpenCorpus: nav.openCorpus,
     onOpenVoiceDrafts,
     onOpenPromotedQuotes,
+    onOpenNotifications,
   };
 }
 
@@ -948,10 +548,8 @@ function ShelfBody({
         <ShelfTopMatter
           notices={notices}
           stagePrompts={stagePrompts}
-          onPrompt={nav.openPrompt}
+          nav={nav}
           onPastPrompts={onPastPrompts}
-          onNew={nav.newEntry}
-          onMorningPage={nav.newMorningPage}
           onSearch={onSearch}
           query={query}
           resultCount={resultCount}
@@ -1032,15 +630,7 @@ function DeletionNotices({
 function JournalShelfScreen(): React.JSX.Element {
   const navigation = useNavigation<ShelfNavigation>();
   const shelf = useShelf();
-  const prompt = useCurrentPrompt();
-  const anchor = useProgramStore((s) => s.programStartDate);
-  // The local program anchor decides the week and stage when there is one; the
-  // server's current week stands in until (and if) that anchor is set. With
-  // neither — no anchor, and a refused ``/prompts/current`` — the place stays
-  // null instead of falling back to week 1, because that guess would show
-  // another stage's prompts and file the response under a week nobody is in.
-  const week = programWeek(anchor) ?? prompt?.week_number ?? null;
-  const stage = week === null ? null : (programStage(anchor) ?? programStageForWeek(week));
+  const { week, stage } = useStagePromptPlace();
   const stagePrompts = useStagePrompts(stage, week);
   const nav = useShelfNavigation(navigation, week);
   const shelfDrawer = useShelfDrawer(nav);
@@ -1070,6 +660,7 @@ function JournalShelfScreen(): React.JSX.Element {
         onOpenCorpus={shelfDrawer.onOpenCorpus}
         onOpenVoiceDrafts={shelfDrawer.onOpenVoiceDrafts}
         onOpenPromotedQuotes={shelfDrawer.onOpenPromotedQuotes}
+        onOpenNotifications={shelfDrawer.onOpenNotifications}
       />
       <DeleteEntryDialog
         visible={deletion.pending !== null}

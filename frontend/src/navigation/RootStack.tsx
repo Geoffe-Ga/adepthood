@@ -6,6 +6,7 @@ import AdminFeedbackScreen from '../features/AdminFeedback/AdminFeedbackScreen';
 import FeedbackComposerScreen from '../features/Feedback/FeedbackComposerScreen';
 import JournalEntryScreen from '../features/Journal/JournalEntryScreen';
 import JournalPhotographScreen from '../features/Journal/JournalPhotographScreen';
+import NotificationCenterScreen from '../features/Journal/NotificationCenterScreen';
 import PromotedQuotesScreen from '../features/Journal/PromotedQuotesScreen';
 import VoiceDraftsShelfScreen from '../features/Journal/VoiceDraftsShelfScreen';
 import { CreatePracticeWizard } from '../features/Practice/screens/CreatePracticeWizard';
@@ -81,6 +82,11 @@ export type RootStackParamList = {
    * the screen offers no fold-in, only "Write a review with N quotes".
    */
   PromotedQuotes: { injectInto?: string } | undefined;
+  /**
+   * The Notification Center (#3142): the stat tiles, Return, invitations, the
+   * stage's prompts and the voice band in one quiet inbox. A place, no params.
+   */
+  JournalNotifications: undefined;
   /** The operator's beta feedback inbox (#2900). Server-gated; no params. */
   AdminFeedback: undefined;
   JournalPhotograph:
@@ -204,6 +210,11 @@ const JournalScreens = (): React.JSX.Element => (
       name="PromotedQuotes"
       component={PromotedQuotesScreen}
       options={{ title: 'Promoted quotes' }}
+    />
+    <Stack.Screen
+      name="JournalNotifications"
+      component={NotificationCenterScreen}
+      options={{ title: 'Notifications' }}
     />
   </>
 );

@@ -159,6 +159,15 @@ const EXTRA_ROUTES: readonly Route[] = [
       await page.getByRole('dialog').getByTestId('journal-drawer-promoted-quotes').click();
     },
   },
+  {
+    name: 'JournalNotifications',
+    label: 'Notification Center',
+    anchor: 'journal-notification-center',
+    open: async (page) => {
+      await page.goto(`${frontendUrl()}/journal`);
+      await page.getByTestId('journal-notifications-open').click();
+    },
+  },
 ];
 
 const SKIPPED_NAMES = new Set(SKIPPED_ROUTES.map((route) => route.name));
