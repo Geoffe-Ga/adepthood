@@ -29,6 +29,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { corpusDestinationForReadiness, type CorpusDestination } from './corpusDestination';
+import { useReportNotificationPresence } from './notificationPresence';
 import ReflectionDismiss, { closeCornerReserve } from './ReflectionDismiss';
 
 import { corpus } from '@/api';
@@ -77,7 +78,7 @@ type BandNavigation = NativeStackNavigationProp<RootStackParamList>;
  * A readiness the band will actually render: not ready (``ready`` renders
  * nothing at all), with a sentence and a door.
  */
-interface SpeakingReadiness {
+export interface SpeakingReadiness {
   message: string;
   destination: CorpusDestination;
 }
@@ -123,15 +124,26 @@ async function resolveBand(): Promise<SpeakingReadiness | null> {
   }
 }
 
+/** The band's state and its setter. */
+export interface VoiceReadinessState {
+  band: SpeakingReadiness | null;
+  setBand: (_band: SpeakingReadiness | null) => void;
+}
+
 /**
- * Owns the band state, the fetch-on-mount, and the open/dismiss actions.
+ * Owns the band state and the fetch-on-mount.
  *
  * ``useEffect`` and deliberately **not** ``useFocusEffect``, which this screen
  * imports and uses elsewhere. Readiness moves on the scale of days; refetching
  * it on every tab return would be a poll wearing a different name, and would
  * re-request on each of the shelf's paginated loads besides.
+ *
+ * ``refreshKey`` keeps to that: the Notification Center's count (#3142) moves
+ * it on refocus, and a move re-reads only the device-local set-aside flag, so a
+ * band declined inside the Notification Center leaves the count without the
+ * readiness route being asked again.
  */
-function useVoiceReadiness(navigation: BandNavigation) {
+export function useVoiceReadinessState(refreshKey = 0): VoiceReadinessState {
   const [band, setBand] = useState<SpeakingReadiness | null>(null);
 
   useEffect(() => {
@@ -143,6 +155,28 @@ function useVoiceReadiness(navigation: BandNavigation) {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (refreshKey === 0) return undefined;
+    let active = true;
+    void loadVoiceReadinessDismissed()
+      .then((dismissed) => {
+        if (active && dismissed) setBand(null);
+      })
+      .catch(() => {
+        // An unreadable flag changes nothing: the band stays as last resolved.
+      });
+    return () => {
+      active = false;
+    };
+  }, [refreshKey]);
+
+  return { band, setBand };
+}
+
+/** The band state plus the open/dismiss actions. */
+function useVoiceReadiness(navigation: BandNavigation) {
+  const { band, setBand } = useVoiceReadinessState();
 
   const onOpen = useCallback(() => {
     if (band == null) return;
@@ -156,7 +190,7 @@ function useVoiceReadiness(navigation: BandNavigation) {
   const onDismiss = useCallback(() => {
     void saveVoiceReadinessDismissed(true);
     setBand(null);
-  }, []);
+  }, [setBand]);
 
   return { band, onOpen, onDismiss };
 }
@@ -164,6 +198,7 @@ function useVoiceReadiness(navigation: BandNavigation) {
 function VoiceReadinessBand(): React.JSX.Element | null {
   const navigation = useNavigation<BandNavigation>();
   const { band, onOpen, onDismiss } = useVoiceReadiness(navigation);
+  useReportNotificationPresence('voice', band != null, band == null ? 0 : 1);
   if (band == null) return null;
 
   const cta = CORPUS_CTA_BY_DESTINATION[band.destination];

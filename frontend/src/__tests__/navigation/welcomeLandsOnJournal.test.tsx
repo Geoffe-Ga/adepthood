@@ -137,6 +137,13 @@ jest.mock('@/features/Journal/JournalEntryScreen', () => {
   return { __esModule: true, default: Stub };
 });
 
+jest.mock('@/features/Journal/NotificationCenterScreen', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+  const Stub = () => React.createElement(Text, null, 'JournalNotifications');
+  return { __esModule: true, default: Stub };
+});
+
 // Habit modals BottomTabs may import.
 jest.mock('@/features/Habits/components/GoalModal', () => () => null);
 jest.mock('@/features/Habits/components/HabitSettingsModal', () => () => null);

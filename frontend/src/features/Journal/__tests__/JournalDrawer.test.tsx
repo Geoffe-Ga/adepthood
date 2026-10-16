@@ -7,7 +7,7 @@
 // close/reopen (mirrors useCourseDrawerContent in Course/CourseDrawer.tsx).
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
-import { Camera, Library, Quote, ScrollText, SquarePen } from 'lucide-react-native';
+import { Camera, Inbox, Library, Quote, ScrollText, SquarePen } from 'lucide-react-native';
 import React, { useState } from 'react';
 import { TouchableOpacity, View } from 'react-native';
 
@@ -96,6 +96,7 @@ interface DrawerHarness {
   onOpenCorpus?: () => void;
   onOpenVoiceDrafts?: () => void;
   onOpenPromotedQuotes?: () => void;
+  onOpenNotifications?: () => void;
   corpusOpenState?: 'idle' | 'pending' | 'error';
 }
 
@@ -130,6 +131,7 @@ function renderDrawer(props: Partial<DrawerHarness> = {}) {
       onOpenCorpus={onOpenCorpus}
       onOpenVoiceDrafts={onOpenVoiceDrafts}
       onOpenPromotedQuotes={onOpenPromotedQuotes}
+      onOpenNotifications={props.onOpenNotifications}
       corpusOpenState={props.corpusOpenState ?? 'idle'}
       onLoadMore={onLoadMore}
       onRetry={onRetry}
@@ -387,6 +389,30 @@ describe('JournalDrawer (presentational)', () => {
     expect(getByTestId('journal-drawer-promoted-quotes').findByType(Quote).props.color).toBe(
       ink.muted,
     );
+  });
+
+  it('offers Notifications as a door with no count, after Promoted quotes (#3142)', () => {
+    // The count lives on the home's button; the drawer row stays a plain door.
+    const onOpenNotifications = jest.fn();
+    const { getByRole, getByTestId, toJSON } = renderDrawer({ items: [], onOpenNotifications });
+
+    const row = getByRole('button', { name: 'Notifications' });
+    expect(within(row).getByText(/^Notifications$/)).toBeTruthy();
+    expect(within(row).queryByText(/\d/)).toBeNull();
+    const order = JSON.stringify(toJSON());
+    expect(order.indexOf('journal-drawer-promoted-quotes')).toBeLessThan(
+      order.indexOf('journal-drawer-notifications'),
+    );
+    fireEvent.press(getByTestId('journal-drawer-notifications'));
+    expect(onOpenNotifications).toHaveBeenCalledTimes(1);
+    expect(getByTestId('journal-drawer-notifications').findByType(Inbox).props.color).toBe(
+      ink.muted,
+    );
+  });
+
+  it('leaves the Notifications row out where no screen offers the door', () => {
+    const { queryByTestId } = renderDrawer({ items: [] });
+    expect(queryByTestId('journal-drawer-notifications')).toBeNull();
   });
 
   it('fires onPhotograph when the Photograph row is pressed', () => {

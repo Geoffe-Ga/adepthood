@@ -76,6 +76,13 @@ jest.mock('@react-navigation/native', () => {
   };
 });
 
+// The Notification Center's count reads five sources of its own; it has its
+// own suite, so the shelf's suites pin only the number it shows.
+let mockNotificationCount = 0;
+jest.mock('../useNotificationCount', () => ({
+  useNotificationCount: () => mockNotificationCount,
+}));
+
 jest.mock('../SearchBar', () => {
   const { TextInput, View } = require('react-native');
   const Stub = ({ onSearch }: { onSearch: (_q: string) => void }) => (

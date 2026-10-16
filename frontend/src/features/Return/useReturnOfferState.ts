@@ -129,7 +129,13 @@ async function acceptState(
   if (pending) await confirmChoice(scope, identity, publish);
 }
 
-function useObservation(scope: ReturnScope) {
+/** Whether to read the state at all, and a key that asks for a fresh read. */
+interface ReadOptions {
+  enabled?: boolean;
+  refreshKey?: number;
+}
+
+function useObservation(scope: ReturnScope, { enabled = true, refreshKey = 0 }: ReadOptions) {
   const { generation, current } = scope;
   const credentials = scope.credentials;
   const token = credentials?.token;
@@ -146,6 +152,8 @@ function useObservation(scope: ReturnScope) {
     [current, generation],
   );
   useEffect(() => {
+    // A disabled read stays EMPTY: a declined ring costs no request at all.
+    if (!enabled) return;
     // Rebuild the immutable captured scope from primitive dependencies so state
     // updates do not start another read or replace an in-flight observation.
     void reload(
@@ -156,7 +164,7 @@ function useObservation(scope: ReturnScope) {
       },
       publish,
     );
-  }, [generation, current, userId, token, publish]);
+  }, [generation, current, userId, token, publish, enabled, refreshKey]);
   return {
     state: current() && observation.generation === generation ? observation.state : EMPTY,
     latest,
@@ -213,9 +221,9 @@ function useStateWriters(
 }
 
 /** Load and decline only an observed server episode, never a guessed coordinate. */
-export function useReturnOfferState() {
+export function useReturnOfferState(options: ReadOptions = {}) {
   const scope = useReturnScope();
-  const observation = useObservation(scope);
+  const observation = useObservation(scope, options);
   const dismissOffer = useDeclineEpisode(scope, observation);
   const writers = useStateWriters(scope, observation.setObservation);
   const state = observation.state;

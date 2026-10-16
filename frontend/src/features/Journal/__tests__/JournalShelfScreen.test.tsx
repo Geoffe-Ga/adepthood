@@ -71,6 +71,13 @@ jest.mock('@react-navigation/native', () => {
 });
 
 // Isolate the shelf's search wiring from SearchBar's own debounce/expand UI.
+// The Notification Center's count reads five sources of its own; it has its
+// own suite, so the shelf's suites pin only the number it shows.
+let mockNotificationCount = 0;
+jest.mock('../useNotificationCount', () => ({
+  useNotificationCount: () => mockNotificationCount,
+}));
+
 jest.mock('../SearchBar', () => {
   const { Text, TextInput, View } = require('react-native');
   const Stub = ({
@@ -194,6 +201,7 @@ function stagePrompts(): StagePromptsResponse {
 }
 
 beforeEach(() => {
+  mockNotificationCount = 0;
   setActiveUser(1);
   mockList.mockReset();
   mockNavigate.mockReset();
@@ -690,5 +698,34 @@ describe('JournalShelfScreen', () => {
     });
     await waitFor(() => expect(mockPromptHistory.mock.calls.length).toBeGreaterThan(beforeOpen));
     expect(await findByTestId('prompt-history-row-2')).toBeTruthy();
+  });
+});
+
+describe('JournalShelfScreen — the Notifications door (#3142)', () => {
+  it('sits in the action row beside Past prompts, as a quiet tertiary door', async () => {
+    mockList.mockResolvedValue(page([]));
+    const { findByTestId, toJSON } = render(<JournalShelfScreen />);
+    const door = await findByTestId('journal-notifications-open');
+    expect(within(door).getByText('Notifications')).toBeTruthy();
+    const order = flattenOrder(toJSON() as unknown as RenderedNode);
+    const at = (id: string): number => order.indexOf(`#${id}`);
+    expect(at('journal-past-prompts')).toBeLessThan(at('journal-notifications-open'));
+    expect(at('journal-notifications-open')).toBeLessThan(at('journal-new-entry'));
+  });
+
+  it('says how many items wait, in plain words, only when some do', async () => {
+    mockNotificationCount = 3;
+    mockList.mockResolvedValue(page([]));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    const door = await findByTestId('journal-notifications-open');
+    expect(within(door).getByText('Notifications (3)')).toBeTruthy();
+    expect(door.props.accessibilityLabel).toBe('Open notifications, 3 waiting');
+  });
+
+  it('opens the Notification Center', async () => {
+    mockList.mockResolvedValue(page([]));
+    const { findByTestId } = render(<JournalShelfScreen />);
+    fireEvent.press(await findByTestId('journal-notifications-open'));
+    expect(mockNavigate).toHaveBeenCalledWith('JournalNotifications');
   });
 });

@@ -564,3 +564,38 @@ describe('useMettaReturn — let-go and re-commit', () => {
     ]);
   });
 });
+
+describe('useMettaReturn read options (#3142)', () => {
+  it('reads nothing while disabled, and reads once enabled', async () => {
+    mockState.mockResolvedValue(stateResult({ arc: arc() }));
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useMettaReturn({ enabled }),
+      { initialProps: { enabled: false } },
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockState).not.toHaveBeenCalled();
+    expect(result.current.arc).toBeNull();
+
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.arc).not.toBeNull());
+    expect(mockState).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-reads the state when the refresh key moves', async () => {
+    mockState.mockResolvedValue(stateResult({ arc: arc() }));
+    const { result, rerender } = renderHook(
+      ({ refreshKey }: { refreshKey: number }) => useMettaReturn({ refreshKey }),
+      { initialProps: { refreshKey: 0 } },
+    );
+    await waitFor(() => expect(result.current.arc).not.toBeNull());
+    expect(mockState).toHaveBeenCalledTimes(1);
+
+    // Left elsewhere (the Notification Center): the next read has no arc.
+    mockState.mockResolvedValue(stateResult({ arc: null }));
+    rerender({ refreshKey: 1 });
+    await waitFor(() => expect(result.current.arc).toBeNull());
+    expect(mockState).toHaveBeenCalledTimes(2);
+  });
+});

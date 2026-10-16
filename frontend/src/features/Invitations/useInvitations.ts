@@ -102,7 +102,12 @@ function loadRows(state: InvitationState, publish: (_next: Invitation[]) => void
   };
 }
 
-export function useInvitations(): UseInvitationsResult {
+/**
+ * @param refreshKey - Re-read the list whenever this changes. The shelf's stack
+ *   reads once per owner; the Notification Center's count (#3142) passes a key
+ *   that moves on refocus, so a card dismissed elsewhere leaves its count.
+ */
+export function useInvitations(refreshKey = 0): UseInvitationsResult {
   const { token } = useAuth();
   const [items, setItems] = useState<Invitation[]>([]);
   const itemsRef = useRef<Invitation[]>([]);
@@ -127,7 +132,7 @@ export function useInvitations(): UseInvitationsResult {
   }, []);
 
   // A token refresh keeps this account's pending choices; a different owner starts afresh.
-  useEffect(() => loadRows(state.current, publish), [owner, publish]);
+  useEffect(() => loadRows(state.current, publish), [owner, publish, refreshKey]);
   const dismiss = useCallback((id: number) => dismissRow(id, state.current, publish), [publish]);
   return { invitations: items, dismiss };
 }

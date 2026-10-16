@@ -10,7 +10,7 @@
  * ``useJournalDrawerEntries`` hook, which lives above the ``ScreenDrawer`` panel
  * so its cache survives close/reopen (mirrors ``useCourseDrawerContent``).
  */
-import { Camera, Library, Quote, ScrollText, SquarePen } from 'lucide-react-native';
+import { Camera, Inbox, Library, Quote, ScrollText, SquarePen } from 'lucide-react-native';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -67,6 +67,12 @@ const VOICE_DRAFTS_LABEL = 'Voice drafts';
  * because the writer went looking, and never on a number beside this row.
  */
 export const PROMOTED_QUOTES_LABEL = 'Promoted quotes';
+/**
+ * Door to the Notification Center (#3142). A door with no count, for the reason
+ * ``VOICE_DRAFTS_LABEL`` gives: the home's own button already carries the
+ * number of items waiting, once, in plain words.
+ */
+export const NOTIFICATIONS_LABEL = 'Notifications';
 const CORPUS_ERROR = "Couldn't open your writing just now. Check your connection and try again.";
 /** Row that fetches and appends the next page of older entries. */
 const LOAD_MORE_LABEL = 'Load older entries';
@@ -381,6 +387,8 @@ export interface JournalDrawerProps {
   onOpenVoiceDrafts: () => void;
   /** Open the Promoted quotes screen. Carries no count — see ``PROMOTED_QUOTES_LABEL``. */
   onOpenPromotedQuotes: () => void;
+  /** Open the Notification Center. Omitted where the screen offers no such door. */
+  onOpenNotifications?: () => void;
   /** Status of the readiness lookup started by the corpus row. */
   corpusOpenState: CorpusOpenState;
   /** Fetch and append the next older page. */
@@ -426,6 +434,7 @@ function DrawerActions({
   onOpenCorpus,
   onOpenVoiceDrafts,
   onOpenPromotedQuotes,
+  onOpenNotifications,
   corpusOpenState,
 }: {
   onNewEntry: () => void;
@@ -433,6 +442,7 @@ function DrawerActions({
   onOpenCorpus: () => void;
   onOpenVoiceDrafts: () => void;
   onOpenPromotedQuotes: () => void;
+  onOpenNotifications?: () => void;
   corpusOpenState: CorpusOpenState;
 }): React.JSX.Element {
   return (
@@ -458,12 +468,38 @@ function DrawerActions({
         icon={<ScrollText color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
         onPress={onOpenVoiceDrafts}
       />
+      <DrawerDoors
+        onOpenPromotedQuotes={onOpenPromotedQuotes}
+        onOpenNotifications={onOpenNotifications}
+      />
+    </>
+  );
+}
+
+/** The count-free doors to whole-journal screens: Promoted quotes, then Notifications. */
+function DrawerDoors({
+  onOpenPromotedQuotes,
+  onOpenNotifications,
+}: {
+  onOpenPromotedQuotes: () => void;
+  onOpenNotifications?: () => void;
+}): React.JSX.Element {
+  return (
+    <>
       <DrawerItem
         testID="journal-drawer-promoted-quotes"
         label={PROMOTED_QUOTES_LABEL}
         icon={<Quote color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
         onPress={onOpenPromotedQuotes}
       />
+      {onOpenNotifications ? (
+        <DrawerItem
+          testID="journal-drawer-notifications"
+          label={NOTIFICATIONS_LABEL}
+          icon={<Inbox color={ink.muted} size={NAV_ICON_SIZE} strokeWidth={NAV_ICON_STROKE} />}
+          onPress={onOpenNotifications}
+        />
+      ) : null}
     </>
   );
 }
@@ -518,6 +554,7 @@ export default function JournalDrawer(props: JournalDrawerProps): React.JSX.Elem
         onOpenCorpus={props.onOpenCorpus}
         onOpenVoiceDrafts={props.onOpenVoiceDrafts}
         onOpenPromotedQuotes={props.onOpenPromotedQuotes}
+        onOpenNotifications={props.onOpenNotifications}
         corpusOpenState={props.corpusOpenState}
       />
       <DrawerSearchField
@@ -570,6 +607,8 @@ export interface JournalScreenDrawerProps {
   onOpenVoiceDrafts: () => void;
   /** Open the Promoted quotes screen, closing the drawer behind it. */
   onOpenPromotedQuotes: () => void;
+  /** Open the Notification Center, closing the drawer behind it. Omitted: no row. */
+  onOpenNotifications?: () => void;
 }
 
 type CorpusOpenState = 'idle' | 'pending' | 'error';
@@ -636,6 +675,7 @@ export function JournalScreenDrawer({
   onOpenCorpus,
   onOpenVoiceDrafts,
   onOpenPromotedQuotes,
+  onOpenNotifications,
 }: JournalScreenDrawerProps): React.JSX.Element {
   const { items, loading, error, hasMore, loadMore, retry, confirmBodySearch } =
     useJournalDrawerEntries(drawer.isOpen);
@@ -662,6 +702,7 @@ export function JournalScreenDrawer({
         onOpenCorpus={corpusAction.open}
         onOpenVoiceDrafts={onOpenVoiceDrafts}
         onOpenPromotedQuotes={onOpenPromotedQuotes}
+        onOpenNotifications={onOpenNotifications}
         corpusOpenState={corpusAction.state}
         onLoadMore={loadMore}
         onRetry={retry}

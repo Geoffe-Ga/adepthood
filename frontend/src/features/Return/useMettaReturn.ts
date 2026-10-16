@@ -143,8 +143,16 @@ function useArcLifecycle(
   return { start, pause, resume, leave };
 }
 
-export function useMettaReturn(): UseMettaReturnResult {
-  const loaded = useReturnOfferState();
+/** How a caller wants the Return state read. */
+export interface UseMettaReturnOptions {
+  /** False skips the read entirely, e.g. while the habits ring is declined. */
+  enabled?: boolean;
+  /** Re-read the state whenever this changes. */
+  refreshKey?: number;
+}
+
+export function useMettaReturn(options: UseMettaReturnOptions = {}): UseMettaReturnResult {
+  const loaded = useReturnOfferState(options);
   const contractionActive = useContractionSignalActive();
   const { letGoVisible, markStarted, skipLetGo, release, recommit } = useLetGoActions(
     loaded.current,

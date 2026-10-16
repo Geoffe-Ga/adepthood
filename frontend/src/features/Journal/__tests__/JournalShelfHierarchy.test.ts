@@ -40,7 +40,16 @@ const HOME_STACK = [
   'ReflectionInvitationBand.tsx',
   'ReviewScopePicker.tsx',
   'JournalShelfScreen.tsx',
+  // Moved out of the shelf screen (#3142); still stacked on the home.
+  'StagePromptSection.tsx',
 ];
+
+/**
+ * The Notification Center (#3142) takes the home's above-the-fold sections, so
+ * it inherits their budget: the sections keep their own pins above, and the
+ * screen adds exactly one voice of its own, its section heading.
+ */
+const NOTIFICATION_CENTER = ['NotificationCenterScreen.tsx'];
 
 const UPPERCASE_USAGE = /textTransform:\s*'uppercase'/;
 const EMPHATIC_FACE = /\.\.\.editorialType\.(title|display|heading)\b/;
@@ -58,10 +67,10 @@ function resolveKey(lines: string[], lineIndex: number): string | null {
   return null;
 }
 
-/** `file::styleKey` for every line of the home stack matching `pattern`. */
-function usagesMatching(pattern: RegExp): string[] {
+/** `file::styleKey` for every line of `files` matching `pattern`. */
+function usagesMatching(pattern: RegExp, files: readonly string[] = HOME_STACK): string[] {
   const found: string[] = [];
-  for (const file of HOME_STACK) {
+  for (const file of files) {
     const lines = readFileSync(path.join(FEATURE_ROOT, file), 'utf8').split('\n');
     lines.forEach((line, index) => {
       if (!pattern.test(line)) return;
@@ -121,5 +130,14 @@ describe('the Journal home screen reads as a library, not a stack of headings', 
     // `ScreenHeader` renders `type(width).display` -- 34/700 on a phone, a
     // second display moment directly under the hero greeting.
     expect(screen).not.toMatch(/ScreenHeader/);
+  });
+});
+
+describe('the Notification Center reads as a quiet inbox, not a scoreboard', () => {
+  it('adds one heading voice and no tracked small caps', () => {
+    expect(usagesMatching(UPPERCASE_USAGE, NOTIFICATION_CENTER)).toEqual([]);
+    expect(usagesMatching(EMPHATIC_FACE, NOTIFICATION_CENTER)).toEqual([
+      'NotificationCenterScreen.tsx::sectionHeading',
+    ]);
   });
 });

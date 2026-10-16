@@ -7,6 +7,7 @@ import React from 'react';
 import { View } from 'react-native';
 
 import HabitsStatTile from './HabitsStatTile';
+import { useReportNotificationPresence } from './notificationPresence';
 import PracticesStatTile from './PracticesStatTile';
 import s from './StatTile.styles';
 
@@ -19,6 +20,8 @@ import {
 const StatTileRow = (): React.JSX.Element | null => {
   const habitsOn = useDepthPreferencesStore(selectEnableHabits);
   const practicesOn = useDepthPreferencesStore(selectEnablePractices);
+  // Counters, not items: the row shows in the Notification Center but never counts.
+  useReportNotificationPresence('today', habitsOn || practicesOn, 0);
 
   if (!habitsOn && !practicesOn) return null;
 
