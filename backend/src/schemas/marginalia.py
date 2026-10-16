@@ -92,20 +92,6 @@ class EssayRequest(BaseModel):
     disclosed_route: PayerRoute | None = None
 
 
-class EssayResponse(MarginaliaResponse):
-    """A margin note after an essay request, plus the wallet it left behind.
-
-    The balances mirror :class:`ResonanceResponse` so a client reads one shape
-    for "what this cost me" on both charged journal depths. They sit on a
-    subclass rather than on :class:`MarginaliaResponse` itself so note listings
-    do not grow a wallet read per row.
-    """
-
-    remaining_messages: int
-    remaining_balance: int
-    monthly_reset_date: datetime
-
-
 class VoiceDraftResponse(BaseModel):
     """One expanded essay on the Voice Drafts shelf.
 
@@ -164,6 +150,26 @@ class CareResponse(BaseModel):
     title: str = Field(min_length=1)
     message: str
     resources: list[CareResourceResponse]
+
+
+class EssayResponse(MarginaliaResponse):
+    """A margin note after an essay request, plus the wallet it left behind.
+
+    The balances mirror :class:`ResonanceResponse` so a client reads one shape
+    for "what this cost me" on both charged journal depths. They sit on a
+    subclass rather than on :class:`MarginaliaResponse` itself so note listings
+    do not grow a wallet read per row.
+
+    ``care`` is ``None`` on every ordinary answer. It carries adepthood's own
+    reviewed care surface only when a vault-bound writer's vault answered the
+    letter ask with its care escalation instead of a letter (#3380) -- the same
+    surface a resonance pass escalation returns, never the vault's own prose.
+    """
+
+    remaining_messages: int
+    remaining_balance: int
+    monthly_reset_date: datetime
+    care: CareResponse | None = None
 
 
 class ContractionReflectionResponse(BaseModel):
