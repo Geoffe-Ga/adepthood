@@ -7,7 +7,12 @@ import { colors } from '../../../design/tokens';
 import { useOptimisticMutation } from '../../../hooks/useOptimisticMutation';
 import { savePendingCheckIn } from '../../../storage/habitStorage';
 import type { HabitMergePlan, HabitsActions, OnboardingHabit } from '../Habits.types';
-import { habitManager, type LogUnitContext, type ShowToast } from '../services/habitManager';
+import {
+  GOAL_UNITS_NOT_SAVED_COPY,
+  habitManager,
+  type LogUnitContext,
+  type ShowToast,
+} from '../services/habitManager';
 import { ClientMintedIdError } from '../services/serverIds';
 
 import type { useHabitUI } from './useHabitUI';
@@ -202,6 +207,24 @@ const useLogUnitMutation = (
 };
 
 /**
+ * A refused unit change (a timer-fed habit asked for "reps", #3154) is told
+ * through the toast with the server's reason, not a native-only Alert.
+ */
+const useGoalUnitsAction = (showToast: ShowToast): HabitsActions['updateGoalUnits'] =>
+  useCallback(
+    (habitId, changes) =>
+      habitManager.updateGoalUnits(habitId, changes, (err) =>
+        showToast({
+          message: formatApiError(err, { fallback: GOAL_UNITS_NOT_SAVED_COPY }),
+          icon: SYNC_ERROR_ICON,
+          color: colors.danger,
+          duration: SYNC_ERROR_TOAST_DURATION_MS,
+        }),
+      ),
+    [showToast],
+  );
+
+/**
  * Binds stateful callbacks — ones that read UI state such as `selectedHabit`
  * — around the stateless `habitManager` service. Returns a stable
  * `HabitsActions` object suitable for passing to memoized child components.
@@ -240,12 +263,14 @@ export const useHabitActions = (
     [showToast, tz],
   );
 
+  const updateGoalUnits = useGoalUnitsAction(showToast);
+
   return useMemo(
     () => ({
       // Bound so retries replay queued check-ins against the stored zone (#269).
       loadHabits: () => habitManager.loadHabits(tz),
       updateGoal: habitManager.updateGoal,
-      updateGoalUnits: habitManager.updateGoalUnits,
+      updateGoalUnits,
       logUnit,
       updateHabit: (habit) => habitManager.updateHabit(habit, tz),
       deleteHabit: habitManager.deleteHabit,
@@ -258,6 +283,6 @@ export const useHabitActions = (
       lockUntouchedHabits: () => habitManager.lockUntouchedHabits(tz),
       unlockHabit: (habitId) => habitManager.unlockHabit(habitId, tz),
     }),
-    [logUnit, iconPress, emojiSelect, onboardingSave, tz],
+    [logUnit, iconPress, emojiSelect, onboardingSave, updateGoalUnits, tz],
   );
 };

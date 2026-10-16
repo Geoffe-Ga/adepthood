@@ -150,6 +150,12 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   // --- Admin -----------------------------------------------------------
   admin_required: 'Only admins can do this.',
 
+  // --- Timer-fed habits (#3150, #3154) ----------------------------------
+  linked_habit_unit_not_allowed:
+    'A timer logs this habit, so it counts in minutes or sessions only. Choose one of those.',
+  linked_habit_frequency_unit_not_allowed:
+    'A timer logs this habit, so its goal counts per day or per week only. Choose one of those.',
+
   // --- Resource not found ----------------------------------------------
   stage_not_found: `We couldn't find that stage. ${PULL_TO_REFRESH}`,
   content_not_found: `We couldn't find that lesson. Try opening it again from the stage overview.`,

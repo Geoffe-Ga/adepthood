@@ -129,6 +129,18 @@
     "issue": 2852
   },
   {
+    "id": "habits.linked-habit-units-are-minutes-or-sessions",
+    "description": "A user whose Journaling habit is linked to the writing timer opens its goal editor and is offered only minutes or sessions, per day or per week, under the note \u201cLogged automatically by the timer \u2014 minutes, or one session per sitting.\u201d A pick saves through the batch units PUT. A habit nothing is linked to keeps all twenty units. When a habit is linked elsewhere while its editor is open, the stale editor's \u201creps\u201d is refused by the backend guard with a 422, the toast carries the server's reason, and the tiers return to minutes (#3154). Practice links (UserPractice.habit_id) feed the same editor through useLinkedHabitIds and are pinned by GoalModal.linkedUnits.test.tsx and useLinkedHabitIds.test.tsx.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/components/GoalModal.tsx",
+      "client": ["uiFlags", "userPractices", "habits"],
+      "routes": ["GET /ui-flags", "GET /user-practices/", "PUT /habits/{habit_id}/goals/units"],
+      "tables": ["useruiflags", "userpractice", "goal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-linked-units.browser.e2e.test.ts"
+  },
+  {
     "id": "habits.set-a-weekly-cadence",
     "description": "A user opens a habit's goal editor, changes its cadence to three times per week, explicitly saves the number, and sees every tier restated in plain language. The same commit is available from Return and blur on web, iOS and Android, with the overlapping native events collapsed into one batch PUT. Uncovered because the current habits browser journey creates and checks in a habit but never opens GoalModal or changes the shared three-tier units; #2814 tracks the seam-crossing epic coverage. Pinned meanwhile by GoalModal.test.tsx for the Save/Return/blur event matrix, invalid and unchanged drafts, shared tooltip/tier copy, GoalModal.starLongPress.test.tsx for the drag-confirm copy and the long-press-fill arbitration, and \u2014 after #2884 \u2014 GoalModal.markerDrag.test.tsx for the value a marker drop actually saves, backed by markerDrag.test.ts for the drag geometry and HabitUtils.test.ts for the percent-to-target inverse. The drag writes PUT /goals/{goal_id} through the goals client, a different seam from the units batch PUT this journey's editor half uses; both are still mocked in the component lane, which is what 2814 tracks.",
     "crosses": {

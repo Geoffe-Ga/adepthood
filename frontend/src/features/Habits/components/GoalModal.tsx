@@ -22,6 +22,7 @@ import { Button } from '../../../components/Button';
 import { useAuth } from '../../../context/AuthContext';
 import {
   colors,
+  editorialType,
   spacing,
   SPACING,
   STAGE_COLORS,
@@ -30,7 +31,12 @@ import {
 } from '../../../design/tokens';
 import useResponsive from '../../../design/useResponsive';
 import { addDaysInTZ, dayKeyInTZ, todayInUserTZ } from '../../../utils/dateUtils';
-import { TARGET_UNITS, FREQUENCY_UNITS } from '../constants';
+import {
+  FREQUENCY_UNITS,
+  LINKED_HABIT_FREQUENCY_UNITS,
+  LINKED_HABIT_TARGET_UNITS,
+  TARGET_UNITS,
+} from '../constants';
 import { TIER_LABELS, type TierType } from '../goalMarker';
 import styles from '../Habits.styles';
 import type { GoalModalProps, Goal } from '../Habits.types';
@@ -44,6 +50,7 @@ import {
   targetForMarkerPercent,
   unitsInCurrentPeriod,
 } from '../HabitUtils';
+import { useLinkedHabitIds } from '../hooks/useLinkedHabitIds';
 import { useStarFill, type StarFill, type StarFillControls } from '../hooks/useStarFill';
 import { createMarkerPanResponder, type DraggableTier, type MarkerDragPort } from '../markerDrag';
 import { STAR_LONG_PRESS_MS } from '../starFill';
@@ -79,7 +86,10 @@ const targetPhrase = (goal: Goal, target: number): string => {
   return `${target} ${unit}`;
 };
 
-/** Describe a tier goal as one plain-language target-and-cadence sentence. */
+/**
+ * Describe a tier goal as one plain-language target-and-cadence sentence:
+ * "10 minutes a day", "1 session, 4 times a week" (#3154).
+ */
 export const describeCadence = (goal: Goal, target = goal.target): string => {
   const targetText = targetPhrase(goal, target);
   if (goal.frequency_unit === 'per_session') return `${targetText} per session`;
@@ -87,8 +97,23 @@ export const describeCadence = (goal: Goal, target = goal.target): string => {
 
   const period = goal.frequency_unit.replace(/^per_/, '').replace(/_/g, ' ');
   const repetition = goal.frequency === 1 ? 'once' : `${goal.frequency} times`;
-  return `${targetText}, ${repetition} per ${period}`;
+  return `${targetText}, ${repetition} a ${period}`;
 };
+
+/** Why a timer-fed habit's editor offers only two units (#3154). */
+export const LINKED_HABIT_UNITS_NOTE =
+  'Logged automatically by the timer — minutes, or one session per sitting.';
+
+/**
+ * The chips a timer-fed habit's row offers: the allowed values, plus the
+ * habit's current one when it predates the link (a legacy "reps" habit), so
+ * the user can see what it is and move it off. Kept in the canonical order.
+ */
+const timerFedOptions = (
+  all: readonly string[],
+  allowed: readonly string[],
+  selected: string,
+): string[] => all.filter((option) => allowed.includes(option) || option === selected);
 
 const cadenceAfterTarget = (goal: Goal): string =>
   describeCadence(goal).slice(String(goal.target).length + 1);
@@ -468,6 +493,9 @@ const goalEditorStyles = StyleSheet.create({
     fontSize: GOAL_UNIT_FONT_SIZE,
     color: colors.text.secondary,
     minWidth: GOAL_UNIT_MIN_WIDTH,
+    // Wrap "sessions a day" under itself at large text instead of running
+    // into the card edge.
+    flexShrink: 1,
   },
   fieldLabel: {
     fontSize: GOAL_FIELD_LABEL_FONT_SIZE,
@@ -476,6 +504,23 @@ const goalEditorStyles = StyleSheet.create({
     minWidth: GOAL_UNIT_MIN_WIDTH,
   },
   chipRow: {
+    paddingVertical: SPACING.xs,
+  },
+  rowWrap: {
+    flexWrap: 'wrap',
+  },
+  /**
+   * A timer-fed habit's rows hold only two chips, so they wrap onto a second
+   * line rather than scroll a whole chip out of sight at large text (#3154).
+   */
+  chipWrap: {
+    // Basis = the chips on one line: if that does not fit beside the label,
+    // the row wraps it to a line of its own, where it may wrap again.
+    flexGrow: 1,
+    flexShrink: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: SPACING.xs,
     paddingVertical: SPACING.xs,
   },
   // Trailing gap so the last chip clears the modal border with breathing room
@@ -528,6 +573,11 @@ const goalEditorStyles = StyleSheet.create({
     marginRight: SPACING.sm,
     color: colors.text.secondary,
     fontSize: GOAL_INPUT_FONT_SIZE,
+  },
+  timerNote: {
+    ...editorialType.note,
+    color: colors.text.secondary,
+    paddingTop: SPACING.xs,
   },
 });
 
@@ -711,6 +761,16 @@ const ChipScrollRow = ({ testID, children }: ChipScrollRowProps) => (
  * pinned to the formatted label so VoiceOver / TalkBack announce e.g.
  * "per day" rather than reading the raw "per_day" backend token.
  */
+/** The few chips of a timer-fed row wrap; the long list keeps its scroller. */
+const ChipRowFrame = ({ wrap, testID, children }: ChipScrollRowProps & { wrap: boolean }) =>
+  wrap ? (
+    <View testID={testID} style={goalEditorStyles.chipWrap}>
+      {children}
+    </View>
+  ) : (
+    <ChipScrollRow testID={testID}>{children}</ChipScrollRow>
+  );
+
 const UnitChipRow = ({
   options,
   selected,
@@ -718,7 +778,7 @@ const UnitChipRow = ({
   onSelect,
   timerOnly = false,
 }: UnitChipRowProps) => (
-  <ChipScrollRow testID={testID}>
+  <ChipRowFrame wrap={timerOnly} testID={testID}>
     {options.map((opt) => {
       const isSelected = opt === selected;
       const label = formatUnitLabel(opt);
@@ -744,7 +804,7 @@ const UnitChipRow = ({
         </TouchableOpacity>
       );
     })}
-  </ChipScrollRow>
+  </ChipRowFrame>
 );
 
 /**
@@ -758,6 +818,8 @@ type NonEmptyGoals = [Goal, ...Goal[]];
 
 interface GoalUnitEditorProps {
   timerOnly?: boolean;
+  /** Explain under the rows that the timer does the logging (#3154). */
+  showTimerNote?: boolean;
   /**
    * All tier goals belonging to the habit. Any one is a valid display
    * reference (units are normalized across tiers via ``normalizeGoalUnits``),
@@ -824,6 +886,29 @@ const FrequencyInput = ({
     </TouchableOpacity>
   );
 
+/** The unit and cadence chips the editor offers: every one, or a timer's two (#3154). */
+const unitEditorOptions = (reference: Goal, timerOnly: boolean) =>
+  timerOnly
+    ? {
+        unitOptions: timerFedOptions(
+          TARGET_UNITS,
+          LINKED_HABIT_TARGET_UNITS,
+          reference.target_unit,
+        ),
+        frequencyUnitOptions: timerFedOptions(
+          FREQUENCY_UNITS,
+          LINKED_HABIT_FREQUENCY_UNITS,
+          reference.frequency_unit,
+        ),
+      }
+    : { unitOptions: TARGET_UNITS, frequencyUnitOptions: FREQUENCY_UNITS };
+
+const TimerNote = () => (
+  <Text testID="goal-timer-note" style={goalEditorStyles.timerNote}>
+    {LINKED_HABIT_UNITS_NOTE}
+  </Text>
+);
+
 /**
  * Edits ``target_unit`` / ``frequency`` / ``frequency_unit`` for a habit's
  * goals. The fields are shared across tiers, so the editor surfaces them
@@ -835,8 +920,10 @@ const GoalUnitEditor = ({
   habitId,
   onUpdateGoalUnits,
   timerOnly = false,
+  showTimerNote = false,
 }: GoalUnitEditorProps) => {
   const reference = goals[0];
+  const { unitOptions, frequencyUnitOptions } = unitEditorOptions(reference, timerOnly);
 
   // Issue #289: ONE consolidated call — the backend updates every tier
   // inside a single transaction, so a failure can never strand tiers on
@@ -853,17 +940,17 @@ const GoalUnitEditor = ({
 
   return (
     <View testID="goal-unit-editor">
-      <View style={goalEditorStyles.row}>
+      <View style={[goalEditorStyles.row, timerOnly && goalEditorStyles.rowWrap]}>
         <Text style={goalEditorStyles.fieldLabel}>Unit</Text>
         <UnitChipRow
           timerOnly={timerOnly}
-          options={timerOnly ? ['minutes', 'sessions'] : TARGET_UNITS}
+          options={unitOptions}
           selected={reference.target_unit}
           testID="goal-target-unit"
           onSelect={(value) => commit({ target_unit: value })}
         />
       </View>
-      <View style={goalEditorStyles.row}>
+      <View style={[goalEditorStyles.row, timerOnly && goalEditorStyles.rowWrap]}>
         <Text style={goalEditorStyles.fieldLabel}>How often</Text>
         <FrequencyInput {...frequencyDraft} timerOnly={timerOnly} />
         <Text testID="goal-frequency-multiplier" style={goalEditorStyles.multiplier}>
@@ -871,12 +958,13 @@ const GoalUnitEditor = ({
         </Text>
         <UnitChipRow
           timerOnly={timerOnly}
-          options={timerOnly ? ['per_day', 'per_week'] : FREQUENCY_UNITS}
+          options={frequencyUnitOptions}
           selected={reference.frequency_unit}
           testID="goal-frequency-unit"
           onSelect={(value) => commit({ frequency_unit: value })}
         />
       </View>
+      {timerOnly && showTimerNote ? <TimerNote /> : null}
     </View>
   );
 };
@@ -937,6 +1025,8 @@ const buildDirectionChangePayloads = (goals: readonly Goal[], newIsAdditive: boo
 interface GoalTargetEditorProps {
   /** Timer linking can measure only additive minutes or complete sessions. */
   timerOnly?: boolean;
+  /** Say, under the units, that the timer logs this habit (#3154). */
+  showTimerNote?: boolean;
   habit: NonNullable<GoalModalProps['habit']>;
   onUpdateGoal: GoalModalProps['onUpdateGoal'];
   onUpdateGoalUnits: GoalModalProps['onUpdateGoalUnits'];
@@ -954,6 +1044,7 @@ export const GoalTargetEditor = ({
   onUpdateGoal,
   onUpdateGoalUnits,
   timerOnly = false,
+  showTimerNote = false,
 }: GoalTargetEditorProps) => {
   // ``== null`` (not ``!habit.id``) so a hypothetical future habit with id 0
   // still surfaces the editor — falsy-zero is a real concern even if the
@@ -991,6 +1082,7 @@ export const GoalTargetEditor = ({
       <GoalUnitEditor
         goals={nonEmptyGoals}
         timerOnly={timerOnly}
+        showTimerNote={showTimerNote}
         habitId={habitId}
         onUpdateGoalUnits={onUpdateGoalUnits}
       />
@@ -1418,6 +1510,33 @@ const useMarkersWithStarFill = (
   return { m, fill };
 };
 
+/**
+ * The pencil-revealed goal editor. A habit the journal or a practice logs to is
+ * fed by the timer, so its editor speaks only minutes or sessions (#3154); the
+ * links are read when the editor opens. The region scrolls inside the card's
+ * 80% cap rather than pushing the log row out of it on a short phone or at
+ * large text.
+ */
+const GoalEditRegion = ({
+  habit,
+  onUpdateGoal,
+  onUpdateGoalUnits,
+}: Pick<GoalModalBodyProps, 'habit' | 'onUpdateGoal' | 'onUpdateGoalUnits'>) => {
+  const linkedHabitIds = useLinkedHabitIds();
+  const timerFed = habit.id != null && linkedHabitIds.has(habit.id);
+  return (
+    <ScrollView testID="goal-modal-edit-region" style={editRegionStyles.region}>
+      <GoalTargetEditor
+        habit={habit}
+        timerOnly={timerFed}
+        showTimerNote
+        onUpdateGoal={onUpdateGoal}
+        onUpdateGoalUnits={onUpdateGoalUnits}
+      />
+    </ScrollView>
+  );
+};
+
 const GoalModalBody = ({
   habit,
   onClose,
@@ -1434,7 +1553,10 @@ const GoalModalBody = ({
   const log = useLogState(habit, onLogUnit, userTimezone);
 
   return (
-    <View style={[styles.modalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}>
+    <View
+      testID="goal-modal-card"
+      style={[styles.modalContent, { borderTopColor: STAGE_COLORS[habit.stage] }]}
+    >
       <GoalModalHeader
         habit={habit}
         goalGroup={goalGroup}
@@ -1448,13 +1570,11 @@ const GoalModalBody = ({
       {/* Progress bar stays visible; the pencil only collapses the editor. */}
       <GoalProgressBar {...buildProgressBarProps(habit, m, userTimezone, fill)} />
       {isEditing && (
-        <View testID="goal-modal-edit-region">
-          <GoalTargetEditor
-            habit={habit}
-            onUpdateGoal={onUpdateGoal}
-            onUpdateGoalUnits={onUpdateGoalUnits}
-          />
-        </View>
+        <GoalEditRegion
+          habit={habit}
+          onUpdateGoal={onUpdateGoal}
+          onUpdateGoalUnits={onUpdateGoalUnits}
+        />
       )}
       <LogUnitSection {...log} />
       <GoalEditConfirmDialog m={m} />
@@ -1511,6 +1631,10 @@ const goalGroupBadgeStyles = StyleSheet.create({
     color: '#555',
     fontStyle: 'italic',
   },
+});
+
+const editRegionStyles = StyleSheet.create({
+  region: { flexShrink: 1 },
 });
 
 const editToggleStyles = StyleSheet.create({
