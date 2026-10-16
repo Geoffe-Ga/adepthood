@@ -66,8 +66,8 @@ export async function loadRecentPractices(): Promise<RecentPractice[]> {
   if (raw === null) return [];
   try {
     return sanitize(JSON.parse(raw));
-  } catch (err) {
-    await resetCorruptKey(key, err);
+  } catch {
+    await resetCorruptKey(key);
     return [];
   }
 }

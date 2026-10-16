@@ -7,7 +7,7 @@ import { reportDiagnostic } from '@/observability/diagnostics';
  * (BUG-FRONTEND-INFRA-011). Shared by the storage modules that read JSON —
  * each previously carried a byte-identical copy of this helper.
  */
-export async function resetCorruptKey(key: string, _err: unknown): Promise<void> {
+export async function resetCorruptKey(key: string): Promise<void> {
   reportDiagnostic('storage_corrupt');
   try {
     await AsyncStorage.removeItem(key);
@@ -38,12 +38,12 @@ async function parseJsonArrayOrHeal<T>(key: string, raw: string | null): Promise
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) {
-      await resetCorruptKey(key, new Error('expected array'));
+      await resetCorruptKey(key);
       return null;
     }
     return parsed as T[];
-  } catch (err: unknown) {
-    await resetCorruptKey(key, err);
+  } catch {
+    await resetCorruptKey(key);
     return null;
   }
 }

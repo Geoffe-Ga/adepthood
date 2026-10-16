@@ -20,12 +20,12 @@ export async function loadEnergyScaffoldingArchived(): Promise<boolean> {
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (typeof parsed !== 'boolean') {
-      await resetCorruptKey(ARCHIVED_KEY, new Error('expected boolean'));
+      await resetCorruptKey(ARCHIVED_KEY);
       return false;
     }
     return parsed;
-  } catch (err: unknown) {
-    await resetCorruptKey(ARCHIVED_KEY, err);
+  } catch {
+    await resetCorruptKey(ARCHIVED_KEY);
     return false;
   }
 }

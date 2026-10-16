@@ -9,7 +9,8 @@
  * Nothing here ever logs the row. Every warning is a fixed string with no error
  * object attached: on the web a `JSON.parse` SyntaxError quotes a slice of the
  * text it choked on, and that text is somebody's unsent report. That is also
- * why this module does not use the shared `resetCorruptKey`, which logs `err`.
+ * why this module keeps its own corrupt-row handling instead of the shared
+ * `resetCorruptKey`.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { z } from 'zod';

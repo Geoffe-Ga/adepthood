@@ -373,7 +373,7 @@ async function adoptDeviceOwner(userId: number): Promise<boolean> {
  * the caller can decide whether to arm the BUG-FE-STATE-001 logout-pending
  * marker.
  */
-async function clearTokenSafely(_label: string): Promise<boolean> {
+async function clearTokenSafely(): Promise<boolean> {
   try {
     await clearToken();
     return true;
@@ -388,7 +388,7 @@ async function clearTokenSafely(_label: string): Promise<boolean> {
  * resurrect on cold start. Arm the logout-pending marker (best-effort) so the
  * next bootstrap retries the delete before hydrating.
  */
-async function armLogoutPending(_label: string): Promise<void> {
+async function armLogoutPending(): Promise<void> {
   try {
     await markLogoutPending();
   } catch {
@@ -417,8 +417,8 @@ async function clearTokenForReauth(
 ): Promise<void> {
   // The session is over: no request may be forwarded to one of its tokens.
   resetTokenRotations();
-  if (!(await clearTokenSafely('onUnauthorized'))) {
-    await armLogoutPending('onUnauthorized');
+  if (!(await clearTokenSafely())) {
+    await armLogoutPending();
   }
   mutators.setToken(null);
   mutators.setAuthStatus((prev) => {
@@ -463,7 +463,6 @@ async function saveTokenThenApply(
   newTimezone: string | undefined,
   mutators: AuthMutators,
   tokenRef: React.MutableRefObject<string | null>,
-  _warnLabel: string,
   expectedPriorToken: string,
 ): Promise<boolean> {
   if (tokenRef.current !== expectedPriorToken) {
@@ -508,7 +507,7 @@ function useApiCallbacks(
       void clearTokenForReauth(mutators, reason);
     });
     setOnTokenRefreshed((t: string, tz: string | undefined, prior: string) => {
-      void saveTokenThenApply(t, tz, mutators, tokenRef, 'onTokenRefreshed', prior);
+      void saveTokenThenApply(t, tz, mutators, tokenRef, prior);
     });
     return () => {
       setTokenGetter(null);
@@ -525,7 +524,7 @@ function useApiCallbacks(
  * launch. Either way the session lands ``'anonymous'``.
  */
 async function drainPendingLogout(mutators: AuthMutators): Promise<void> {
-  if (await clearTokenSafely('bootstrap')) {
+  if (await clearTokenSafely()) {
     try {
       await clearLogoutPending();
     } catch {
@@ -606,7 +605,7 @@ async function bootstrapStoredToken(
   if (stored) {
     // Expired token: discard without arming the marker — the user did not ask
     // to log out, so a failed clear should not force a wipe next launch.
-    await clearTokenSafely('bootstrap discard expired');
+    await clearTokenSafely();
   }
   mutators.setAuthStatus('anonymous');
 }
@@ -821,10 +820,10 @@ function useSocialLogins(mutators: AuthMutators): SocialLogins {
  * then clear in-memory state) lives here in one place rather than
  * duplicated across two callbacks.
  */
-async function tearDownSession(mutators: AuthMutators, where: string): Promise<void> {
+async function tearDownSession(mutators: AuthMutators): Promise<void> {
   resetTokenRotations();
-  if (!(await clearTokenSafely(where))) {
-    await armLogoutPending(where);
+  if (!(await clearTokenSafely())) {
+    await armLogoutPending();
   }
   await wipeUserState();
   // Release the scope only after the wipe, so the clears above target the
@@ -857,7 +856,7 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
 
   const socialLogins = useSocialLogins(mutators);
 
-  const logout = useCallback(() => tearDownSession(mutators, 'logout'), [mutators]);
+  const logout = useCallback(() => tearDownSession(mutators), [mutators]);
 
   // BUG-AUTH-005: mirror the persistence-first ordering used by the API-layer
   // onUnauthorized hook so callers of the context-exposed helper get the same
@@ -869,7 +868,7 @@ function useAuthActions(mutators: AuthMutators): AuthActions {
     void clearTokenForReauth(mutators, 'session_expired');
   }, [mutators]);
 
-  const dismissReauth = useCallback(() => tearDownSession(mutators, 'dismissReauth'), [mutators]);
+  const dismissReauth = useCallback(() => tearDownSession(mutators), [mutators]);
 
   const confirmPasswordReset = useCallback<ConfirmReset>(
     async (token, newPassword) => {
@@ -929,14 +928,7 @@ function useSessionRefresh(
   // session by re-applying its stale token.
   return useCallback(
     async (newToken: string, newTimezone: string | undefined, expectedPriorToken: string) => {
-      await saveTokenThenApply(
-        newToken,
-        newTimezone,
-        mutators,
-        tokenRef,
-        'applyNewToken',
-        expectedPriorToken,
-      );
+      await saveTokenThenApply(newToken, newTimezone, mutators, tokenRef, expectedPriorToken);
     },
     [mutators, tokenRef],
   );
