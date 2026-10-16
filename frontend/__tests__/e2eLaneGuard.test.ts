@@ -101,6 +101,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-margin-note-source.browser.e2e.test.ts',
   'journal-markdown.browser.e2e.test.ts',
   'journal-past-cycle-review-sources.browser.e2e.test.ts',
+  'journal-payment-token-renewal.browser.e2e.test.ts',
   'journal-morning-page-title.browser.e2e.test.ts',
   'journal-morning-pages-dismiss.browser.e2e.test.ts',
   'journal-morning-pages-never-offer.browser.e2e.test.ts',
