@@ -3192,7 +3192,8 @@ function useEditGate({ status, setStatus, finish, body, navigation, onConfirmEdi
     navigation.push('JournalEntry');
   }, [navigation]);
   // Only flip to finished once the single atomic write resolves; on failure the
-  // entry stays a draft (editable) and the error invites a retry.
+  // page stays editable (a draft stays a draft, a re-edited entry keeps its
+  // server status) and the error invites a retry.
   const markFinished = useCallback(async () => {
     setFinishError(null);
     setFinishing(true);
@@ -3207,7 +3208,10 @@ function useEditGate({ status, setStatus, finish, body, navigation, onConfirmEdi
     }
   }, [finish, setStatus]);
 
-  const canFinish = status === 'draft' && body.trim().length > 0;
+  // Finish is offered whenever the page is editable: a draft, or a finished
+  // entry the writer chose to edit (#3447). The edit never demotes the entry
+  // to a draft; Finish re-sends ``finished`` with the edited body and closes it.
+  const canFinish = editMode && body.trim().length > 0;
   return {
     editMode,
     confirmOpen,

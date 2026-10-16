@@ -1774,6 +1774,27 @@
     "coveredBy": "frontend/e2e/return-letgo-token-renewal.browser.e2e.test.ts"
   },
   {
+    "id": "journal.payment-work-survives-same-account-renewal",
+    "description": "A writer's paid Journal work crosses a same-account token renewal and still settles where they asked for it (#3387, #3409, #3411). Each case holds one request at the browser's edge, lets the app's own proactive timer renew the token against the live server, then releases it: the server has revoked the token it carried, so it is refused 401 and the client's refresh-retry resends it with the renewed bearer, exactly once. A note's first letter asked for across the renewal lands instead of spinning forever; a Get resonance press whose wallet read crosses it opens the payer disclosure instead of doing nothing; and a reading refused 402 on its renewed retry opens the refill remedy instead of swallowing the refusal (that 402 body is answered at the edge, since the lane's wallet is full). usePaymentScope fences on the authenticated session lineage (owner, account generation, auth session) rather than the exact JWT, so the same account signing back in after a 401, another account, an A to B to A switch and sign-out still refuse held work; those halves, and the success/failure/402/401-retry outcomes, are pinned through the real AuthProvider and API client in src/features/Journal/__tests__/paymentLineageRenewal.integration.test.tsx. Frames at 390 and 1280 px are written to e2e/artifacts/journal-payment-renewal.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/ResonanceEssayModal.tsx",
+      "client": ["auth", "journal", "resonance", "botmasonUsage"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /auth/refresh",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "GET /user/usage",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay"
+      ],
+      "tables": ["user", "journalentry", "marginalia"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-payment-token-renewal.browser.e2e.test.ts"
+  },
+  {
     "id": "return.begin-a-return-from-the-journal-entry",
     "description": "A journal entry whose resonance pass offers the Return is the card a person can begin one from: \"Begin the Return\" opens a confirmation naming the arc's five weekly foci as the server sent them, confirming opens an arc that lands on week one, and \"Not now\" persists the same decline the Journal shelf's offer card writes, so declining in the entry is honoured there. It runs in the browser lane because the journey is the card: the offer surfaces only while a resonance pass has just raised the in-memory contraction signal (src/store/useContractionSignalStore.ts) that useMettaReturn reads, and that store is fed by the screen's own pass -- the API lane cannot mount a screen at all, so a spec there could only call the two routes by hand. Both preconditions are arranged honestly: the contraction over the wire, from a habit whose foundation has been quiet past the detection window, and the Orange-stage eligibility by rewinding program_started_at through tests.e2e.program_anchor (no request schema accepts it) and then reading GET /stages, which is what records the entry -- eligibility is asserted false before and true after, so an arrange that did nothing fails rather than silently testing the simple_ease_off card. The double-tap latch is the one arm left to the Jest spec beside the component (src/features/Journal/__tests__/ContractionReflectionNote.test.tsx), which drives it deterministically; a browser cannot dispatch the second press without racing the first request. Verified to be a live gate: with confirmStart no longer calling start(), the spec fails on the arc POST that never leaves the browser. Return declines round-trip the opaque account-bound offer identity observed from the real server (#3299, a bounded child of #3073). The entry posts that exact identity and its observed browser credential. At 390 and 1280 pixels, targeted 200% Return-card text stays within the card and viewport, decline targets retain 44px geometry, and a focused keyboard Enter sets aside the card. Refusing only the real dismissal endpoint with 503 through all three normal transport attempts retains the exact account/episode local pending choice; after the interceptor is removed, returning to the shelf retries that same episode to a real 200, and the following real reload honors its confirmed choice without opening an arc. A held real POST reaches the normal server after the isolated database calendar advances and GET /stages records the later eligible stage; it receives 409, and the next real consumer mount observes the new episode undismissed and offers it through a fresh journal resonance pass. The entry decline unmounts its own hook, so this browser case does not claim an immediate refresh from that removed lifecycle. Real A/B/A/B sign-out and sign-in preserve A's confirmed episode choice while B remains offered its distinct episode. Eligibility is arranged only through the existing isolated program-anchor helper and verified through the real API, while contraction is produced by real habit/journal/resonance handlers. Backend controls cover stale, missing, cross-account, idempotent and commit-boundary progress changes; normal frontend controls cover unknown old global bytes, failed storage, captured identities, A-to-B-to-A late completions, retained callbacks and mounted-consumer 409 refresh. Those delayed-promise controls are not represented as browser-held account-response coverage. Existing server history, eligibility and cadence remain unchanged.",
     "crosses": {
@@ -2785,5 +2806,29 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/managed-vault-own-key.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.refinish-an-edited-finished-entry",
+    "description": "A writer finishes a journal entry, reopens it with the pencil and chooses Edit, and can finish it again (#3447). The covering spec writes and finishes a page through the real client, presses the exit row's Edit, confirms Edit, types a line and waits for the real autosave, then finds Finish under the body with at least a 44px target, at 390x844, 1280x720 and 390px at 200% browser zoom (195x422 CSS px at device scale 2). No autosave PATCH during the edit sends status draft. Pressing Finish sends one PATCH /journal/{id} carrying the edited body and status finished, and the page returns to reading with the pencil back in the exit row and no body field. Jest pins that Finish stays withheld while the edited page is empty.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-refinish-edited-entry.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.stat-tiles-wrap-at-200-percent",
+    "description": "A writer opens the Journal home on a 390px phone at 200% browser zoom (195x422 CSS px at device scale 2) and reads the Today's habits and Practices stat tiles without a word split across lines (#3440). The covering spec signs up through the real client, waits for both tiles to show their real counts from GET /habits/ and GET /practice-sessions/insights, and measures every word of each tile's title, stat and cue with a Range: all of a word's client rects share one line top. It does so at 390x844 and 1280x800, each at normal size and at 200% zoom, plus 390px with the tiles' text doubled; no tile glyph leaves its tile and the page never scrolls sideways. The same word measurement sweeps every visible text node on the Journal home and in the Notification Center, which hosts the same tiles, so any other row that splits a word fails too. At 1280px the tiles stay two-up on one line; when two will not fit side by side they stack in one column. Saved frames are inspected by hand. Targeted text doubling does not establish physical OS zoom or native geometry.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/StatTileRow.tsx",
+      "client": ["auth", "habits", "practiceSessions"],
+      "routes": ["POST /auth/signup", "GET /habits/", "GET /practice-sessions/insights"],
+      "tables": ["user", "habit", "practicesession"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-stat-tiles-wrap.browser.e2e.test.ts"
   }
 ]
