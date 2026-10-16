@@ -2596,7 +2596,7 @@
       "tables": ["user", "habit"]
     },
     "status": "uncovered",
-    "issue": 3334
+    "issue": 3433
   },
   {
     "id": "habits.pending-create-survives-same-owner-reauth",
