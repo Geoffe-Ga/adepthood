@@ -87,6 +87,7 @@ import {
   toApiPayload,
 } from './habitMerge';
 import { clampPosition, insertAt, stampPositionalOrder } from './habitOrdering';
+import { habitSyncScopeKey } from './habitSyncScope';
 import {
   clearLogUnitRollbackBaseline,
   enqueueLogUnit,
@@ -1006,6 +1007,8 @@ interface HabitMutationScope {
   credentials: [] | [string];
   current: () => boolean;
   authorized: boolean;
+  /** `habitSyncScopeKey` of the account and session captured (#3328). */
+  syncKey: string;
 }
 
 /**
@@ -1025,6 +1028,7 @@ const captureHabitMutationScope = (): HabitMutationScope => {
   return {
     credentials: token === undefined ? [] : [token],
     current: () => generation === getActiveUserGeneration() && session === getAuthSession(),
+    syncKey: habitSyncScopeKey(generation, session),
     authorized:
       !isActiveUserTransitioning() &&
       (owner === null
@@ -1431,12 +1435,33 @@ const refreshRecoveredHabits = async (
 const needsHabitRecovery = (result: FetchResult, cached: Habit[]): boolean =>
   result.kind === 'ok' && result.count === 0 && cached.length > 0;
 
+const confirmedFor = (scope: HabitMutationScope): boolean => {
+  const { serverSync } = useHabitStore.getState();
+  return serverSync?.scope === scope.syncKey && serverSync.status === 'ok';
+};
+
+/**
+ * A retry of a failed read is pending again, not failed, until it answers.
+ * A read this session already confirmed stays confirmed through a later
+ * refetch, failed or not: the rows it loaded are still the account's, and a
+ * warm tab is not made to wait on every return (#3328).
+ */
+const beginServerSync = (scope: HabitMutationScope): void => {
+  if (!confirmedFor(scope)) useHabitStore.getState().setServerSync(null);
+};
+
+const finishServerSync = (scope: HabitMutationScope, fresh: boolean): void => {
+  if (confirmedFor(scope)) return;
+  useHabitStore.getState().setServerSync({ scope: scope.syncKey, status: fresh ? 'ok' : 'failed' });
+};
+
 const refreshHabits = async (tz?: string, options: HabitRefreshOptions = {}): Promise<boolean> => {
   const scope = captureHabitMutationScope();
   if (!scope.authorized) return false;
   const { owner, calendar, zone, replayReady } = prepareRefreshCalendar(tz, options);
   setLoading(true);
   setError(null);
+  beginServerSync(scope);
   const cached = await loadCachedHabits();
   if (!scope.current()) return false;
   const recoverable = await hydrateRealHabitCache(cached, scope);
@@ -1450,6 +1475,7 @@ const refreshHabits = async (tz?: string, options: HabitRefreshOptions = {}): Pr
   }
   if (!scope.current()) return false;
   setLoading(false);
+  finishServerSync(scope, fresh);
 
   // Give Map/Practice/Course/Journal an anchor to read if none is stored yet,
   // by deriving one from the habits just loaded. A stored anchor is left alone:
