@@ -21,11 +21,22 @@ import {
   seedProgressLine,
   seedSummaryLine,
 } from '../seedCopy';
-import type { SeedItemStatus } from '../seedRun';
+import type { SeedItemStatus, SeedRunTally } from '../seedRun';
 
 import type { CorpusDestination } from '@/features/Journal/corpusDestination';
 import { ranksOrShames } from '@/features/Map/__tests__/copyIntentRule';
 import { VAULT_ROW_LABEL } from '@/features/Settings/vaultCopy';
+
+/** A run tally with no unconfirmed uploads unless one is named. */
+function tally(
+  total: number,
+  landed: number,
+  waiting: number,
+  refused: number,
+  unconfirmed = 0,
+): SeedRunTally {
+  return { total, landed, waiting, refused, unconfirmed };
+}
 
 const EVERY_STATUS: readonly SeedItemStatus[] = [
   'queued',
@@ -47,6 +58,8 @@ const EVERY_STATUS: readonly SeedItemStatus[] = [
   'too_large',
   'unreadable',
   'failed',
+  'unconfirmed',
+  'offline',
   'cancelled',
 ];
 
@@ -92,6 +105,35 @@ describe('what each outcome says', () => {
     expect(line.toLowerCase()).toContain('confirm');
     expect(line).not.toMatch(/nothing|wasn't stored|unchanged|never sent|wasn't sent/i);
     expect(line).not.toBe(SEED_STATUS_LINES.failed);
+  });
+
+  test('a lost answer says it could not be confirmed, never that nothing was stored', () => {
+    // #3239. A timeout, a dropped connection, or an answer the app cannot read
+    // can each follow a request the server already kept, so the line says the
+    // outcome is unconfirmed and that sending again is safe, as #3238 does.
+    const line = SEED_STATUS_LINES.unconfirmed;
+
+    expect(line.toLowerCase()).toContain('confirm');
+    expect(line.toLowerCase()).toContain('updates in place');
+    expect(line).not.toMatch(/nothing|wasn't stored|unchanged|never sent|wasn't sent/i);
+    // No destination is named: which one answered is exactly what was lost.
+    expect(line.toLowerCase()).not.toContain('vault');
+    expect(line).not.toBe(SEED_STATUS_LINES.degraded);
+    expect(ranksOrShames(line)).toBe(false);
+  });
+
+  test('a device that was offline says the document was never sent', () => {
+    const line = SEED_STATUS_LINES.offline;
+
+    expect(line.toLowerCase()).toContain('offline');
+    expect(line).toMatch(/wasn't sent/);
+    expect(ranksOrShames(line)).toBe(false);
+  });
+
+  test('a definite refusal keeps saying nothing was stored', () => {
+    // `failed` is now only a 4xx answer to the one attempt there was, where the
+    // server turned the document away, so "nothing was stored" is a fact.
+    expect(SEED_STATUS_LINES.failed).toContain('nothing was stored');
   });
 
   test('the size refusal names the limit', () => {
@@ -177,18 +219,37 @@ describe('the words a person reads beneath a document', () => {
 
 describe('the run summary', () => {
   test('says nothing before anything is picked', () => {
-    expect(seedSummaryLine({ total: 0, landed: 0, waiting: 0, refused: 0 })).toBeNull();
+    expect(seedSummaryLine(tally(0, 0, 0, 0))).toBeNull();
   });
 
   test('counts what is still going', () => {
-    expect(seedSummaryLine({ total: 3, landed: 1, waiting: 2, refused: 0 })).toContain('3');
+    expect(seedSummaryLine(tally(3, 1, 2, 0))).toContain('3');
   });
 
   test('names what landed and what did not, without dressing it up', () => {
-    const line = seedSummaryLine({ total: 3, landed: 2, waiting: 0, refused: 1 });
+    const line = seedSummaryLine(tally(3, 2, 0, 1));
 
     expect(line).toContain('2');
     expect(line).toContain('1');
+  });
+
+  test('counts unconfirmed uploads apart from those that did not go over', () => {
+    // #3239. "Didn't go over" would claim an unconfirmed upload never arrived.
+    const line = String(seedSummaryLine(tally(4, 1, 0, 1, 2)));
+
+    expect(line).toBe("1 of 4 landed. 1 didn't go over. 2 couldn't be confirmed.");
+  });
+
+  test('says only what is true when every miss is unconfirmed', () => {
+    const line = String(seedSummaryLine(tally(3, 2, 0, 0, 1)));
+
+    expect(line).toBe("2 of 3 landed. 1 couldn't be confirmed.");
+    expect(line).not.toContain("didn't go over");
+  });
+
+  test('keeps the plain count when nothing is unconfirmed', () => {
+    expect(seedSummaryLine(tally(3, 2, 0, 1))).toBe("2 of 3 landed. 1 didn't go over.");
+    expect(seedSummaryLine(tally(3, 3, 0, 0))).toBe('All 3 have landed.');
   });
 
   test('claims no destination it was not told', () => {
@@ -196,9 +257,10 @@ describe('the run summary', () => {
     // per request. A summary naming "your vault" would be the one sentence on
     // this screen that nothing could check.
     const lines = [
-      seedSummaryLine({ total: 3, landed: 1, waiting: 2, refused: 0 }),
-      seedSummaryLine({ total: 3, landed: 3, waiting: 0, refused: 0 }),
-      seedSummaryLine({ total: 3, landed: 2, waiting: 0, refused: 1 }),
+      seedSummaryLine(tally(3, 1, 2, 0)),
+      seedSummaryLine(tally(3, 3, 0, 0)),
+      seedSummaryLine(tally(3, 2, 0, 1)),
+      seedSummaryLine(tally(4, 1, 0, 1, 2)),
     ];
 
     for (const line of lines) {
@@ -220,25 +282,23 @@ describe('a document the run never got to', () => {
 
 describe('the line shown while documents are going over', () => {
   test('says nothing when nothing is in flight', () => {
-    expect(seedProgressLine({ total: 0, landed: 0, waiting: 0, refused: 0 })).toBeNull();
-    expect(seedProgressLine({ total: 3, landed: 3, waiting: 0, refused: 0 })).toBeNull();
+    expect(seedProgressLine(tally(0, 0, 0, 0))).toBeNull();
+    expect(seedProgressLine(tally(3, 3, 0, 0))).toBeNull();
   });
 
   test('names the position in the run and how long the run is', () => {
     // Two settled and one in flight of twelve: the third document.
-    expect(seedProgressLine({ total: 12, landed: 2, waiting: 10, refused: 0 })).toContain(
-      '3 of 12',
-    );
+    expect(seedProgressLine(tally(12, 2, 10, 0))).toContain('3 of 12');
   });
 
   test('counts the whole run rather than only the latest pick', () => {
     // A second pick appends, so the position has to include what a first pick
     // already sent -- otherwise the number restarts while the list does not.
-    expect(seedProgressLine({ total: 12, landed: 5, waiting: 7, refused: 0 })).toContain('6 of 12');
+    expect(seedProgressLine(tally(12, 5, 7, 0))).toContain('6 of 12');
   });
 
   test('claims no destination it was not told', () => {
-    const line = String(seedProgressLine({ total: 4, landed: 1, waiting: 3, refused: 0 }));
+    const line = String(seedProgressLine(tally(4, 1, 3, 0)));
 
     expect(line.toLowerCase()).not.toContain('vault');
     expect(line.toLowerCase()).not.toContain('corpus');

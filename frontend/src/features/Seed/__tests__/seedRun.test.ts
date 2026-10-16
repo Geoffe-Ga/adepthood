@@ -106,7 +106,13 @@ describe('one failure never abandons the rest', () => {
 
 describe('what the run reports', () => {
   test('has nothing to say about an empty run', () => {
-    expect(seedRunTally(EMPTY_SEED_RUN)).toEqual({ total: 0, landed: 0, waiting: 0, refused: 0 });
+    expect(seedRunTally(EMPTY_SEED_RUN)).toEqual({
+      total: 0,
+      landed: 0,
+      waiting: 0,
+      refused: 0,
+      unconfirmed: 0,
+    });
   });
 
   test('counts every unsent document as still waiting', () => {
@@ -115,6 +121,7 @@ describe('what the run reports', () => {
       landed: 0,
       waiting: 3,
       refused: 0,
+      unconfirmed: 0,
     });
   });
 
@@ -123,7 +130,13 @@ describe('what the run reports', () => {
     state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'ingested' });
     state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'vault_unavailable' });
 
-    expect(seedRunTally(state)).toEqual({ total: 3, landed: 1, waiting: 1, refused: 1 });
+    expect(seedRunTally(state)).toEqual({
+      total: 3,
+      landed: 1,
+      waiting: 1,
+      refused: 1,
+      unconfirmed: 0,
+    });
   });
 
   test('counts a document kept by the corpus as landed, exactly as a vault one', () => {
@@ -136,7 +149,30 @@ describe('what the run reports', () => {
     state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'in_corpus' });
     state = seedRunReducer(state, { type: 'settle', id: 'c', status: 'consent_required' });
 
-    expect(seedRunTally(state)).toEqual({ total: 3, landed: 2, waiting: 0, refused: 1 });
+    expect(seedRunTally(state)).toEqual({
+      total: 3,
+      landed: 2,
+      waiting: 0,
+      refused: 1,
+      unconfirmed: 0,
+    });
+  });
+
+  test('counts an upload nobody could confirm apart from one that did not go', () => {
+    // #3239. A degraded vault answer and a lost reply may both have been kept,
+    // so neither is counted with the documents that definitely did not go.
+    let state = withThreeQueued();
+    state = seedRunReducer(state, { type: 'settle', id: 'a', status: 'degraded' });
+    state = seedRunReducer(state, { type: 'settle', id: 'b', status: 'unconfirmed' });
+    state = seedRunReducer(state, { type: 'settle', id: 'c', status: 'offline' });
+
+    expect(seedRunTally(state)).toEqual({
+      total: 3,
+      landed: 0,
+      waiting: 0,
+      refused: 1,
+      unconfirmed: 2,
+    });
   });
 
   test('clears back to an empty run', () => {
@@ -177,6 +213,12 @@ describe('cancelling a run that is still going', () => {
   test('counts a cancelled document among what did not go over', () => {
     const cancelled = seedRunReducer(withThreeQueued(), { type: 'cancel' });
 
-    expect(seedRunTally(cancelled)).toEqual({ total: 3, landed: 0, waiting: 0, refused: 3 });
+    expect(seedRunTally(cancelled)).toEqual({
+      total: 3,
+      landed: 0,
+      waiting: 0,
+      refused: 3,
+      unconfirmed: 0,
+    });
   });
 });

@@ -31,6 +31,13 @@ import {
   type JournalClassification,
   type VaultUploadStatusT,
 } from '@/api';
+import { isDeviceKnownOffline } from '@/api/networkSignal';
+
+/** The 4xx range: the server's own answer that it turned the request away. */
+const HTTP_CLIENT_ERROR_MIN = 400;
+const HTTP_SERVER_ERROR_MIN = 500;
+/** A 4xx that says the server gave up waiting, not that it refused. */
+const HTTP_REQUEST_TIMEOUT = 408;
 
 /**
  * The vault's outcomes in the run's own vocabulary. `accepted` is renamed
@@ -63,29 +70,46 @@ const CORPUS_SEED_STATUS: Record<CorpusImportStatusT, CorpusSeedStatus> = {
   vault_required: 'vault_required',
 };
 
-/** Map a thrown import failure onto the run's vocabulary, bytes untouched. */
+/** Whether an HTTP status is the server definitely turning the request away. */
+function isDefiniteRefusal(status: number | null): boolean {
+  return (
+    status !== null &&
+    status >= HTTP_CLIENT_ERROR_MIN &&
+    status < HTTP_SERVER_ERROR_MIN &&
+    status !== HTTP_REQUEST_TIMEOUT
+  );
+}
+
+/**
+ * Map a thrown import failure onto the run's vocabulary, bytes untouched.
+ *
+ * The upload is a single POST the client never retries, so a 4xx is the answer
+ * to the only attempt there was: nothing was kept, and `failed` says so. Every
+ * other failure -- a timeout, a dropped connection, a 5xx, a reply that could
+ * not be read -- came after the document left the device, and the server may
+ * already have kept it, so it settles as `unconfirmed` (#3239).
+ */
 function statusForError(error: unknown): SettledSeedStatus {
-  if (error instanceof DocumentUploadError && error.kind === 'too_large') {
-    return 'too_large';
-  }
-  return 'failed';
+  if (!(error instanceof DocumentUploadError)) return 'unconfirmed';
+  if (error.kind === 'too_large') return 'too_large';
+  return isDefiniteRefusal(error.status) ? 'failed' : 'unconfirmed';
 }
 
 /**
  * The status a 202 settles on, read off the destination the server named.
  *
- * A destination whose own status field is missing is treated as no outcome at
- * all — `failed`, the same as a request that never produced one — rather than
- * guessed at from `stored`. A body that cannot say what happened is not a body
- * to render a sentence from.
+ * A destination whose own status field is missing is treated as `unconfirmed`
+ * rather than guessed at from `stored`: the server took the request, and a body
+ * that cannot say what happened to it cannot honestly be rendered as either
+ * "kept" or "nothing was stored".
  */
 function settledStatus(outcome: DocumentImportT): SettledSeedStatus {
   if (outcome.destination === 'vault') {
     const status = outcome.vault_status;
-    return status === null || status === undefined ? 'failed' : VAULT_SEED_STATUS[status];
+    return status === null || status === undefined ? 'unconfirmed' : VAULT_SEED_STATUS[status];
   }
   const status = outcome.corpus_status;
-  return status === null || status === undefined ? 'failed' : CORPUS_SEED_STATUS[status];
+  return status === null || status === undefined ? 'unconfirmed' : CORPUS_SEED_STATUS[status];
 }
 
 /**
@@ -102,6 +126,12 @@ export async function importSeedDocument(
   const read = await readSeedDocument(document);
   if (read.kind !== 'read') {
     return read.kind;
+  }
+  // Checked last, just before sending, so "wasn't sent" is true at the moment
+  // it would have gone. Only the platform's own signal counts; with none
+  // registered this is false and the request goes.
+  if (isDeviceKnownOffline()) {
+    return 'offline';
   }
   try {
     return settledStatus(

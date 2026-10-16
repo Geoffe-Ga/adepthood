@@ -1,5 +1,5 @@
 /* eslint-env jest */
-/* global describe, test, expect, beforeEach, jest */
+/* global describe, test, expect, beforeEach, afterEach, jest */
 import * as FileSystem from 'expo-file-system';
 
 import { importSeedDocument } from '../importSeedDocument';
@@ -7,6 +7,7 @@ import type { PickedDocument } from '../pickSeedDocuments';
 import { MAX_SEED_DOCUMENT_BYTES } from '../readSeedDocument';
 
 import { corpus } from '@/api';
+import { setNetworkOnlineGetter } from '@/api/networkSignal';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
@@ -60,6 +61,10 @@ function vaultReply(vaultStatus: string) {
     message: 'something honest',
   });
 }
+
+afterEach(() => {
+  setNetworkOnlineGetter(null);
+});
 
 beforeEach(() => {
   mockFetch.mockReset();
@@ -179,6 +184,26 @@ describe('what never reaches the network', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  test('a device known to be offline never sends, and says so', async () => {
+    // #3239. Only the platform's own connectivity signal may say "offline";
+    // with it, the request is never made, so "wasn't sent" is a fact.
+    setNetworkOnlineGetter(() => false);
+
+    const status = await importSeedDocument(document(), 'personal');
+
+    expect(status).toBe('offline');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  test('a device with no connectivity signal still sends', async () => {
+    // "We don't know" is not "offline": with no signal registered the request
+    // goes, rather than being refused on a guess.
+    mockFetch.mockReturnValueOnce(vaultReply('accepted'));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('ingested');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   test('a file that will not open is refused on device', async () => {
     mocked.__fileBase64.mockRejectedValue(new Error('gone'));
 
@@ -190,10 +215,32 @@ describe('what never reaches the network', () => {
 });
 
 describe('a request that produced no outcome', () => {
-  test('settles as failed rather than throwing at the run', async () => {
+  // #3239. A request that left the device and then lost its answer may already
+  // be stored: these settle as `unconfirmed`, never as a failure that claims
+  // nothing was kept.
+  test('a server error settles as unconfirmed rather than throwing at the run', async () => {
     mockFetch.mockReturnValue(accepted(500, { detail: 'boom' }));
 
-    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('failed');
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
+  });
+
+  test('a timeout settles as unconfirmed', async () => {
+    // The client's own clock aborting the fetch, which it reports as a timeout.
+    mockFetch.mockRejectedValue(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
+  });
+
+  test('a dropped connection settles as unconfirmed', async () => {
+    mockFetch.mockRejectedValue(new TypeError('Network request failed'));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
+  });
+
+  test('a 2xx the client cannot read settles as unconfirmed', async () => {
+    mockFetch.mockReturnValue(accepted(202, { destination: 'somewhere-new' }));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
   });
 
   test('keeps the size verdict when the server is the one who caught it', async () => {
@@ -202,10 +249,27 @@ describe('a request that produced no outcome', () => {
     await expect(importSeedDocument(document(), 'personal')).resolves.toBe('too_large');
   });
 
-  test('settles as failed when the answer names a destination but no outcome', async () => {
-    // A body that cannot say what happened is not a body to render a sentence
-    // from: "stored: false" alone is not one of the eight things that can be
-    // wrong, and guessing which would put a sentence on screen nobody wrote.
+  test.each([
+    [422, 'invalid_document'],
+    [429, 'rate_limited'],
+    [401, 'not_authenticated'],
+  ])('a definite %s refusal settles as failed', async (status, detail) => {
+    // The upload is a single, unretried POST, so a 4xx is the answer to the only
+    // attempt there was: the server turned it away and kept nothing.
+    mockFetch.mockReturnValue(accepted(status as number, { detail }));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('failed');
+  });
+
+  test('a request timeout answer is not treated as a definite refusal', async () => {
+    mockFetch.mockReturnValue(accepted(408, { detail: 'request_timeout' }));
+
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
+  });
+
+  test('settles as unconfirmed when the answer names a destination but no outcome', async () => {
+    // A 202 means the server took the request; a body that cannot say what
+    // happened to it cannot honestly be rendered as "nothing was stored".
     mockFetch.mockReturnValue(
       accepted(202, {
         destination: 'corpus',
@@ -216,10 +280,10 @@ describe('a request that produced no outcome', () => {
       }),
     );
 
-    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('failed');
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
   });
 
-  test('settles as failed when a vault answer carries no vault status', async () => {
+  test('settles as unconfirmed when a vault answer carries no vault status', async () => {
     mockFetch.mockReturnValue(
       accepted(202, {
         destination: 'vault',
@@ -230,7 +294,7 @@ describe('a request that produced no outcome', () => {
       }),
     );
 
-    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('failed');
+    await expect(importSeedDocument(document(), 'personal')).resolves.toBe('unconfirmed');
   });
 
   test('never writes the document bytes anywhere but the request body', async () => {
