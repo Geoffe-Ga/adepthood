@@ -13,5 +13,6 @@ module.exports = {
   scheduleNotificationAsync: jest.fn(() => Promise.resolve('notification-id')),
   cancelScheduledNotificationAsync: jest.fn(() => Promise.resolve()),
   getAllScheduledNotificationsAsync: jest.fn(() => Promise.resolve([])),
+  cancelAllScheduledNotificationsAsync: jest.fn(() => Promise.resolve()),
   SchedulableTriggerInputTypes: { DAILY: 'daily', WEEKLY: 'weekly' },
 };

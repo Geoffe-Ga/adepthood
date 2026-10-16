@@ -24,6 +24,8 @@ jest.mock('expo-notifications', () => ({
   },
 }));
 
+const NAMESPACE = { suffix: '' };
+
 jest.mock('../../../storage/notificationStorage', () => ({
   saveNotificationIds: jest.fn(() => Promise.resolve()),
   loadNotificationIds: jest.fn(() => Promise.resolve([])),
@@ -31,6 +33,7 @@ jest.mock('../../../storage/notificationStorage', () => ({
   loadAllNotificationMappings: jest.fn(() => Promise.resolve({})),
   savePushToken: jest.fn(() => Promise.resolve()),
   loadPushToken: jest.fn(() => Promise.resolve(null)),
+  captureNotificationNamespace: jest.fn(() => NAMESPACE),
 }));
 
 interface MockedNotifications {
@@ -333,7 +336,7 @@ describe('updateHabitNotifications', () => {
     };
 
     await updateHabitNotifications(habit);
-    expect(mockStorage.saveNotificationIds).toHaveBeenCalledWith(1, ['new-notif-id']);
+    expect(mockStorage.saveNotificationIds).toHaveBeenCalledWith(1, ['new-notif-id'], NAMESPACE);
   });
 
   it('clears persisted IDs when frequency is off', async () => {
@@ -345,7 +348,7 @@ describe('updateHabitNotifications', () => {
 
     const ids = await updateHabitNotifications(habit);
     expect(ids).toEqual([]);
-    expect(mockStorage.clearNotificationIds).toHaveBeenCalledWith(1);
+    expect(mockStorage.clearNotificationIds).toHaveBeenCalledWith(1, NAMESPACE);
   });
 
   it('returns empty array when no notification times', async () => {
@@ -402,7 +405,7 @@ describe('reconcileNotifications', () => {
     mockNotifications.getAllScheduledNotificationsAsync.mockResolvedValue([{ identifier: 'a' }]);
 
     await reconcileNotifications();
-    expect(mockStorage.saveNotificationIds).toHaveBeenCalledWith(1, ['a']);
+    expect(mockStorage.saveNotificationIds).toHaveBeenCalledWith(1, ['a'], NAMESPACE);
   });
 
   it('clears habit entry entirely when none of its notifications are scheduled', async () => {
@@ -410,7 +413,7 @@ describe('reconcileNotifications', () => {
     mockNotifications.getAllScheduledNotificationsAsync.mockResolvedValue([]);
 
     await reconcileNotifications();
-    expect(mockStorage.clearNotificationIds).toHaveBeenCalledWith(1);
+    expect(mockStorage.clearNotificationIds).toHaveBeenCalledWith(1, NAMESPACE);
   });
 
   it('does nothing when everything is in sync', async () => {
@@ -483,7 +486,7 @@ describe('cancelForHabit', () => {
     await cancelForHabit(42);
     expect(mockNotifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith('id-1');
     expect(mockNotifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith('id-2');
-    expect(mockStorage.clearNotificationIds).toHaveBeenCalledWith(42);
+    expect(mockStorage.clearNotificationIds).toHaveBeenCalledWith(42, NAMESPACE);
   });
 
   it('handles errors gracefully', async () => {
