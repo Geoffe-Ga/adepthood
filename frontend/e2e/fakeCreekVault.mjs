@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 /**
  * A Creek Vault that takes documents and journal replicas on the real wire.
@@ -35,6 +36,11 @@ import { createServer } from 'node:http';
  * contract-version header is a 409, an unrecognised bearer is a 401, a field
  * adepthood invented is a 400 -- so a mis-wired lane fails loudly instead of
  * quietly serving something that looks like success.
+ *
+ * `POST /__lane/escalate-next-letter` arms one care escalation: the next letter
+ * request is answered with Creek's own published `letters` care-escalation cell
+ * (read verbatim from the vendored bundle, never written here) and stores no
+ * Voice Draft, as Creek's acute-distress guard answers instead of writing.
  *
  * `GET /__lane/uploads` reports what actually arrived: every `/v1` request in
  * order, and the fragments the ledger holds. Requests are recorded by shape and
@@ -96,6 +102,22 @@ const LETTER_REQUEST_FIELDS = ['content', 'note', 'tier'];
 const LETTER_NOTE_FIELDS = ['anchor_text', 'kind', 'note'];
 /** The letter this vault writes; a lane sentinel, so no writer prose is ever held here. */
 const LANE_LETTER = 'The lane vault wrote this letter back to you.';
+/**
+ * Creek's published `letters` care-escalation cell, verbatim from the vendored
+ * bundle: the care guard's 200 answer *instead of* a letter. Adepthood drops
+ * its prose at the adapter, so a journey can prove none of it is shown.
+ */
+const LETTER_CARE_ESCALATION = JSON.parse(
+  readFileSync(
+    fileURLToPath(
+      new URL(
+        '../../backend/tests/fixtures/creek_v1/examples/letters/care-escalation.json',
+        import.meta.url,
+      ),
+    ),
+    'utf8',
+  ),
+);
 /** Creek's content-free placeholder title for a Voice Draft stored without one. */
 const VOICE_DRAFT_TITLE = 'Voice draft';
 
@@ -113,6 +135,8 @@ let voiceDraftDeleteFailuresRemaining = 0;
 let journalWithdrawalsHeld = false;
 /** An authenticated journey can model a vault that lacks letters. */
 let lettersHeld = false;
+/** One letter request a journey armed to meet the vault's care guard instead. */
+let letterEscalationArmed = false;
 
 function requiredFile(name) {
   const path = process.env[name];
@@ -388,6 +412,20 @@ async function writeLetter(request, response, externalId) {
     refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
     return;
   }
+  if (letterEscalationArmed) {
+    letterEscalationArmed = false;
+    received.push({
+      method: 'POST',
+      path: `/v1/letters/${externalId}`,
+      externalId,
+      tier: body.tier,
+      ceiling,
+      digest: createHash('sha256').update(body.content, 'utf8').digest('hex'),
+      action: 'escalated',
+    });
+    send(response, HTTP_OK, { ...LETTER_CARE_ESCALATION, tier_ceiling: ceiling });
+    return;
+  }
   const held = fragments.get(`voice-draft:${externalId}`);
   const { fragment, action } =
     held === undefined
@@ -525,6 +563,12 @@ const server = createServer((request, response) => {
     ) {
       request.resume();
       lettersHeld = pathname === '/__lane/hold-letters';
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/escalate-next-letter') {
+      request.resume();
+      letterEscalationArmed = true;
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }
