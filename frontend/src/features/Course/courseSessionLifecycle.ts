@@ -1,7 +1,11 @@
 import { useEffect, useRef } from 'react';
 
 import { useAuth } from '@/context/AuthContext';
-import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
+import {
+  useActiveUser,
+  useActiveUserGeneration,
+  useActiveUserTransitioning,
+} from '@/storage/useActiveUser';
 import { parseUserId } from '@/storage/userScope';
 import { decodeJwtPayload } from '@/utils/token';
 
@@ -13,14 +17,19 @@ import { decodeJwtPayload } from '@/utils/token';
  * in, so its loaders must notice the incoming owner themselves. Auth moves the
  * durable scope before it commits the new token, so the key settles only once
  * both agree. A same-session renewal changes the token but neither the owner
- * nor the generation, so it keeps the key and reloads nothing.
+ * nor the generation, so it keeps the key and reloads nothing. While account
+ * cleanup runs the key is ``null`` too (#3368): the outgoing token may still
+ * be in hand, but its namespace is being wiped, so no lifecycle starts there.
  */
 export function useCourseSessionKey(): string | null {
   const { token } = useAuth();
   const owner = useActiveUser();
   const generation = useActiveUserGeneration();
+  const transitioning = useActiveUserTransitioning();
   const credentialOwner = token ? parseUserId(decodeJwtPayload(token)?.sub) : null;
-  return owner !== null && credentialOwner === owner ? `${owner}:${generation}` : null;
+  return !transitioning && owner !== null && credentialOwner === owner
+    ? `${owner}:${generation}`
+    : null;
 }
 
 /**

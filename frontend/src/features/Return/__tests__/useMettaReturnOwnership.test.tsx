@@ -281,3 +281,26 @@ it('closes the let-go moment across A to B to A without an intermediate render',
   await act(async () => oldRelease([9]));
   expect(mockRelease).not.toHaveBeenCalled();
 });
+
+it('reads nothing for the outgoing account while its cleanup runs, then reads after commit (#3368)', async () => {
+  const scope = jest.requireActual<typeof UserScope>('@/storage/userScope');
+  const { result, rerender } = renderHook(() => useMettaReturn());
+  await waitFor(() => expect(result.current.offerVisible).toBe(true));
+  expect(mockState).toHaveBeenCalledTimes(1);
+  try {
+    // The logout wipe: the token and owner are still A's, only the generation moved.
+    scope.beginActiveUserTransition();
+    mockEpoch += 1;
+    rerender({});
+    await act(async () => Promise.resolve());
+    expect(mockState).toHaveBeenCalledTimes(1);
+    expect(result.current.offerVisible).toBe(false);
+  } finally {
+    // Same-owner commit (the cleanup ends back on A): one final read, no more.
+    scope.setActiveUser(scope.getActiveUser());
+  }
+  mockEpoch += 1;
+  rerender({});
+  await waitFor(() => expect(mockState).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(result.current.offerVisible).toBe(true));
+});
