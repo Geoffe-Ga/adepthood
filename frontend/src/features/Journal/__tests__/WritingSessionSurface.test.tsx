@@ -4,7 +4,11 @@ import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
-import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from '../JournalEntry.styles';
+import {
+  RESONANCE_BUTTON_CLEARANCE,
+  WRITING_BAND_LOWERED_CLEARANCE,
+  WRITING_TIMER_CLEARANCE,
+} from '../JournalEntry.styles';
 import { DEFAULT_WRITING_MINUTES, type WritingSessionResult } from '../writingSession';
 import WritingSessionSurface from '../WritingSessionSurface';
 
@@ -135,14 +139,66 @@ describe('WritingSessionSurface', () => {
       nativeEvent: { layout: { height: 172 } },
     });
     expect(getByTestId('writing-session-band-content').props.scrollEnabled).toBe(true);
+    // Content that overflows even a lowered band still lowers it, and the page
+    // reserves the band where it now sits.
     expect(onClearanceChange).toHaveBeenLastCalledWith(
-      54 + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
+      54 + WRITING_BAND_LOWERED_CLEARANCE + SPACING.md,
     );
     fireEvent(getByTestId('writing-session-band-content'), 'layout', {
       nativeEvent: { layout: { height: 87 } },
     });
     expect(onClearanceChange).toHaveBeenLastCalledWith(
-      87 + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
+      87 + WRITING_BAND_LOWERED_CLEARANCE + SPACING.md,
+    );
+  });
+
+  /**
+   * At 200% zoom on a phone the idle timer's presets wrap to a second row, and
+   * the lifted band is too short to show it (#3403). The band gives up its
+   * resonance-sized lift, which nothing floats in any more, before it hides a
+   * preset behind an inner scroll.
+   */
+  it('lowers the band to its page-edge gap when its content cannot fit above the lift', () => {
+    const onClearanceChange = jest.fn();
+    const { getByTestId } = render(<WritingSessionSurface onClearanceChange={onClearanceChange} />);
+    const band = () => getByTestId('writing-session-band');
+    const content = () => getByTestId('writing-session-band-content');
+    const bottom = () => StyleSheet.flatten(band().props.style).bottom;
+    const liftGiven = RESONANCE_BUTTON_CLEARANCE - WRITING_BAND_LOWERED_CLEARANCE;
+    const presetsHeight = 154;
+    const liftedHeight = 103;
+
+    fireEvent(content(), 'contentSizeChange', 195, presetsHeight);
+    fireEvent(band(), 'layout', { nativeEvent: { layout: { height: liftedHeight } } });
+    expect(bottom()).toBe(WRITING_BAND_LOWERED_CLEARANCE);
+
+    // Re-measured where it now sits, the band holds its content without
+    // scrolling, and stays lowered rather than flipping back up.
+    fireEvent(band(), 'layout', {
+      nativeEvent: { layout: { height: liftedHeight + liftGiven } },
+    });
+    expect(bottom()).toBe(WRITING_BAND_LOWERED_CLEARANCE);
+    expect(content().props.scrollEnabled).toBe(false);
+    // The page reserves the band's measured height above the lowered gap, not the lift.
+    fireEvent(content(), 'layout', { nativeEvent: { layout: { height: 2 * presetsHeight } } });
+    expect(onClearanceChange).toHaveBeenLastCalledWith(
+      2 * presetsHeight + WRITING_BAND_LOWERED_CLEARANCE + SPACING.md,
+    );
+
+    // A taller page has room above the lift again, so the band goes back up.
+    fireEvent(band(), 'layout', { nativeEvent: { layout: { height: 400 } } });
+    expect(bottom()).toBe(RESONANCE_BUTTON_CLEARANCE);
+    expect(content().props.scrollEnabled).toBe(false);
+  });
+
+  it('keeps the lift while the content fits above it', () => {
+    const { getByTestId } = renderSurface();
+    fireEvent(getByTestId('writing-session-band-content'), 'contentSizeChange', 390, 100);
+    fireEvent(getByTestId('writing-session-band'), 'layout', {
+      nativeEvent: { layout: { height: 100 } },
+    });
+    expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style).bottom).toBe(
+      RESONANCE_BUTTON_CLEARANCE,
     );
   });
 

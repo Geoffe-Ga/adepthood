@@ -144,6 +144,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'text-order.browser.e2e.test.ts',
   'welcome.browser.e2e.test.ts',
   'writing-timer-habit-link.browser.e2e.test.ts',
+  'writing-timer-presets-fit.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [
