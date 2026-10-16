@@ -1,5 +1,5 @@
 import { preserveLegacyDeclineOwner } from './declineOwnership';
-import { loadDeviceOwner, saveDeviceOwner } from './userScope';
+import { lookupDeviceOwner, saveDeviceOwner } from './userScope';
 
 import { reportDiagnostic } from '@/observability/diagnostics';
 
@@ -53,10 +53,19 @@ export interface OwnerReading {
  * ``liveOwner`` prefers an account this process could not stamp over the
  * stamp itself. A failed read still yields ``null``, which callers treat as
  * "not a match" so a read blip errs toward the wipe.
+ *
+ * A failed read records no provenance and reports it unsaved (#3367).
+ * Provenance is written once and never revisited, so recording the blip as
+ * ``owner: null`` would permanently strand the legacy choices of the account
+ * the intact stamp names. Reporting it unsaved also keeps the stamp from being
+ * replaced, so the retry at the next sign-in or cold start still reads the
+ * account that owned the legacy rows -- and no unattributed row is handed to
+ * the incoming user meanwhile.
  */
 export async function readDeviceOwner(): Promise<OwnerReading> {
-  const stamp = await loadDeviceOwner();
-  const provenanceSaved = await preserveLegacyDeclineOwner(stamp);
+  const lookup = await lookupDeviceOwner();
+  const stamp = lookup.ok ? lookup.owner : null;
+  const provenanceSaved = lookup.ok && (await preserveLegacyDeclineOwner(stamp));
   return { stamp, liveOwner: unstampedOwner ?? stamp, provenanceSaved };
 }
 

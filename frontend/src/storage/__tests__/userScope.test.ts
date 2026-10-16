@@ -5,6 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getActiveUser,
   loadDeviceOwner,
+  lookupDeviceOwner,
   parseUserId,
   saveDeviceOwner,
   scopedKey,
@@ -85,6 +86,26 @@ describe('the device-owner stamp', () => {
 
     expect(await loadDeviceOwner()).toBeNull();
     expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe('lookupDeviceOwner (#3367)', () => {
+  test('reports a recorded owner as a successful read', async () => {
+    mockAsyncStorage.getItem.mockResolvedValue('9');
+    expect(await lookupDeviceOwner()).toEqual({ ok: true, owner: 9 });
+  });
+
+  test('reports an unstamped or corrupt device as a successful read of no owner', async () => {
+    expect(await lookupDeviceOwner()).toEqual({ ok: true, owner: null });
+    mockAsyncStorage.getItem.mockResolvedValue('not-a-user');
+    expect(await lookupDeviceOwner()).toEqual({ ok: true, owner: null });
+  });
+
+  test('reports a rejected read as a failed lookup, not as an unstamped device', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    mockAsyncStorage.getItem.mockRejectedValue(new Error('disk busy'));
+    expect(await lookupDeviceOwner()).toEqual({ ok: false });
     warn.mockRestore();
   });
 });

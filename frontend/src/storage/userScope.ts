@@ -151,13 +151,41 @@ export function parseUserId(raw: unknown): number | null {
 }
 
 /**
+ * The outcome of reading the device-owner stamp: either the stamp was read
+ * (and ``owner`` is what it positively names, ``null`` for an unstamped or
+ * corrupt device), or the read itself failed and nothing is known (#3367).
+ */
+export type DeviceOwnerLookup =
+  { readonly ok: true; readonly owner: number | null } | { readonly ok: false };
+
+/**
+ * Read the stamp, keeping a failed read apart from an unstamped device.
+ *
+ * The two mean different things to anything that persists what it learns: an
+ * unstamped device positively has no recorded owner, while a failed read says
+ * nothing at all, and recording it as "no owner" would make a transient disk
+ * error permanent.
+ */
+export async function lookupDeviceOwner(): Promise<DeviceOwnerLookup> {
+  let raw: string | null;
+  try {
+    raw = await AsyncStorage.getItem(DEVICE_OWNER_KEY);
+  } catch {
+    reportDiagnostic('storage_read_failed', { storage: 'user_scope' });
+    return { ok: false };
+  }
+  return { ok: true, owner: parseUserId(raw) };
+}
+
+/**
  * Read the recorded owner of this device's caches.
  *
  * Returns ``null`` for "no owner positively established" — an unstamped
  * device, a corrupt value, or a transient read failure alike. Callers must
  * treat ``null`` as *not* a match for the incoming user: a read blip that
  * reported the wrong owner would otherwise skip the wipe, which is the whole
- * failure this module exists to prevent.
+ * failure this module exists to prevent. Anything that persists the answer
+ * must use ``lookupDeviceOwner`` instead, which keeps a failed read apart.
  *
  * This is the input to the *wipe decision* only. It is deliberately not the
  * input to the namespace decision for a session already in hand: the stamp is
@@ -165,14 +193,8 @@ export function parseUserId(raw: unknown): number | null {
  * session must take its namespace from the credential it is actually holding.
  */
 export async function loadDeviceOwner(): Promise<number | null> {
-  let raw: string | null;
-  try {
-    raw = await AsyncStorage.getItem(DEVICE_OWNER_KEY);
-  } catch {
-    reportDiagnostic('storage_read_failed', { storage: 'user_scope' });
-    return null;
-  }
-  return parseUserId(raw);
+  const lookup = await lookupDeviceOwner();
+  return lookup.ok ? lookup.owner : null;
 }
 
 /** Record ``userId`` as the owner of this device's caches. */

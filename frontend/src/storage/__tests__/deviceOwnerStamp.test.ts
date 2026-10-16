@@ -54,6 +54,22 @@ describe('readDeviceOwner', () => {
     });
     expect(mockRows.get(DEVICE_OWNER_KEY)).toBe(String(USER_A));
   });
+  it('records no provenance when the stamp cannot be read (#3367)', async () => {
+    mockRows.set(DEVICE_OWNER_KEY, String(USER_A));
+    jest.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('disk busy'));
+    expect(await readDeviceOwner()).toEqual({
+      stamp: null,
+      liveOwner: null,
+      provenanceSaved: false,
+    });
+    expect(mockRows.has(LEGACY_DECLINE_OWNER_KEY)).toBe(false);
+  });
+
+  it('keeps the unstamped live owner through a failed stamp read', async () => {
+    await stampDeviceOwner(USER_B, false);
+    jest.mocked(AsyncStorage.getItem).mockRejectedValueOnce(new Error('disk busy'));
+    expect((await readDeviceOwner()).liveOwner).toBe(USER_B);
+  });
 });
 
 describe('stampDeviceOwner', () => {
