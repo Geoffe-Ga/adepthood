@@ -13,6 +13,13 @@
  * unchanged, guarded — there is still exactly one charge path in the screen, and
  * ``useResonance``'s own in-flight latch still owns "one pass at a time".
  *
+ * An exhausted wallet does not end the press on the client (#3389). Only the
+ * server knows that it holds the entry as intimate, or what its care screen
+ * reads, and both of those answers are free. So the press sends
+ * ``requestFreeExits``, which the server never admits as a charge: a privacy
+ * answer or care renders as usual, the payer refusal opens the refill remedy,
+ * and a payer that could pay after all gets the price disclosed first.
+ *
  * A press that arrives before the stored flag has been read *waits* for it
  * rather than taking a default. The two possible defaults are not symmetric:
  * showing the note to someone who already dismissed it costs them a tap, while
@@ -125,13 +132,17 @@ function useResonanceCost(scopeIsCurrent: () => boolean): {
 /** The stored dismissal, as the gate needs to consult it. */
 type DismissedFlag = StoredDismissal;
 
+type PayerRef = MutableRefObject<{ apiKey: string | null; keyIsLoading: boolean }>;
+
 interface DisclosureDecisionInput {
   cost: ReturnType<typeof useResonanceCost>;
   scopeIsCurrent: () => boolean;
   disclosedKeyRef: MutableRefObject<string | null>;
-  payerRef: MutableRefObject<{ apiKey: string | null; keyIsLoading: boolean }>;
+  payerRef: PayerRef;
   flag: DismissedFlag;
   runRequest: (_apiKey: string | null) => Promise<void>;
+  /** An exhausted wallet asks the server for its free answers instead (#3389). */
+  runFreeExits: () => Promise<void>;
   show: () => void;
   showRefill: (
     _monthlyResetDate: string | null,
@@ -153,6 +164,9 @@ async function publishDecision(
   if (resolvedCost.keyNeeded) {
     input.disclosedKeyRef.current = payerKey;
     input.show();
+  } else if (resolvedCost.fundingRequired === 'wallet_exhausted') {
+    input.disclosedKeyRef.current = null;
+    await input.runFreeExits();
   } else if (resolvedCost.fundingRequired !== null) {
     input.disclosedKeyRef.current = null;
     input.showRefill(
@@ -281,31 +295,68 @@ function useShowRefillFor(
   );
 }
 
-function useFundingAwareRequest(
-  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
-  showRefillFor: (_reason: ResonanceRefillReason) => Promise<void>,
-  scopeIsCurrent: () => boolean,
-) {
+/**
+ * Disclose the price that applies now, after the server declined to answer a
+ * free-exits request free because a payer could pay (#3389). Never asks again
+ * by itself: an account the reread still finds empty gets the refill remedy.
+ */
+function useRedisclose(
+  cost: ReturnType<typeof useResonanceCost>,
+  surfaces: ReturnType<typeof useDisclosureSurfaces>,
+  payerRef: PayerRef,
+  disclosedKeyRef: MutableRefObject<string | null>,
+): () => Promise<void> {
+  const { show, showRefill } = surfaces;
+  return useCallback(async (): Promise<void> => {
+    const payerKey = payerRef.current.apiKey;
+    const latest = await cost.refresh(payerKey);
+    if (latest === null) return;
+    if (!latest.keyNeeded && latest.fundingRequired !== null) {
+      showRefill(latest.monthlyResetDate, latest.monthlyCap, latest.fundingRequired);
+      return;
+    }
+    disclosedKeyRef.current = payerKey;
+    show();
+  }, [cost, disclosedKeyRef, payerRef, show, showRefill]);
+}
+
+interface FundingAwareInput {
+  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>;
+  requestFreeExits: () => Promise<ResonanceRequestOutcome | void>;
+  showRefillFor: (_reason: ResonanceRefillReason) => Promise<void>;
+  redisclose: () => Promise<void>;
+  scopeIsCurrent: () => boolean;
+}
+
+function useFundingAwareRequest(input: FundingAwareInput) {
+  const { requestResonance, requestFreeExits, showRefillFor, redisclose, scopeIsCurrent } = input;
   const generationRef = useRef(0);
-  const run = useCallback(
-    async (payerKey: string | null): Promise<void> => {
+  const settle = useCallback(
+    async (request: () => Promise<ResonanceRequestOutcome | void>): Promise<void> => {
       if (!scopeIsCurrent()) return;
       const requestGeneration = ++generationRef.current;
-      const outcome = await requestResonance(payerKey);
-      if (
-        !scopeIsCurrent() ||
-        generationRef.current !== requestGeneration ||
-        (outcome !== 'funding_required' && outcome !== 'key_required')
-      )
-        return;
-      await showRefillFor(outcome === 'key_required' ? 'key_required' : 'wallet_exhausted');
+      const outcome = await request();
+      if (!scopeIsCurrent() || generationRef.current !== requestGeneration) return;
+      if (outcome === 'payment_unconfirmed') {
+        await redisclose();
+      } else if (outcome === 'funding_required' || outcome === 'key_required') {
+        await showRefillFor(outcome === 'key_required' ? 'key_required' : 'wallet_exhausted');
+      }
     },
-    [requestResonance, showRefillFor, scopeIsCurrent],
+    [redisclose, showRefillFor, scopeIsCurrent],
+  );
+  const run = useCallback(
+    (payerKey: string | null): Promise<void> => settle(() => requestResonance(payerKey)),
+    [requestResonance, settle],
+  );
+  const runFreeExits = useCallback(
+    (): Promise<void> => settle(requestFreeExits),
+    [requestFreeExits, settle],
   );
   const cancel = useCallback(() => {
     generationRef.current += 1;
   }, []);
-  return useMemo(() => ({ run, cancel }), [run, cancel]);
+  return useMemo(() => ({ run, runFreeExits, cancel }), [run, runFreeExits, cancel]);
 }
 
 interface ContinueInput {
@@ -314,7 +365,10 @@ interface ContinueInput {
   disclosedKeyRef: MutableRefObject<string | null>;
   cost: ReturnType<typeof useResonanceCost>;
   close: () => void;
+  /** Hide the disclosure without honouring its tick: no price was accepted. */
+  hide: () => void;
   runRequest: (_apiKey: string | null) => Promise<void>;
+  runFreeExits: () => Promise<void>;
   showRefill: (
     _monthlyResetDate: string | null,
     _monthlyCap: number | null,
@@ -322,22 +376,44 @@ interface ContinueInput {
   ) => number;
 }
 
+/** Route a reread that found no payer: free answers for an empty wallet, else refill. */
+function routeUnfunded(
+  latest: ResonanceCostState,
+  route: Pick<ContinueInput, 'hide' | 'runFreeExits' | 'showRefill'>,
+): void {
+  if (latest.fundingRequired === 'wallet_exhausted') {
+    route.hide();
+    void route.runFreeExits();
+  } else if (latest.fundingRequired !== null) {
+    route.showRefill(latest.monthlyResetDate, latest.monthlyCap, latest.fundingRequired);
+  }
+}
+
 function useContinue(input: ContinueInput): () => void {
-  const { apiKey, keyIsLoading, disclosedKeyRef, cost, close, runRequest, showRefill } = input;
+  const { apiKey, keyIsLoading, disclosedKeyRef, cost, close, hide, runRequest } = input;
+  const { runFreeExits, showRefill } = input;
   return useCallback((): void => {
     if (keyIsLoading || apiKey !== disclosedKeyRef.current) {
       disclosedKeyRef.current = apiKey;
       void cost.refresh(apiKey).then((latest) => {
-        if (latest !== null && latest.fundingRequired !== null) {
-          showRefill(latest.monthlyResetDate, latest.monthlyCap, latest.fundingRequired);
-        }
+        if (latest !== null) routeUnfunded(latest, { hide, runFreeExits, showRefill });
       });
       return;
     }
     if (cost.current.loading || !cost.current.canContinue) return;
     close();
     void runRequest(disclosedKeyRef.current);
-  }, [apiKey, close, cost, disclosedKeyRef, keyIsLoading, runRequest, showRefill]);
+  }, [
+    apiKey,
+    close,
+    cost,
+    disclosedKeyRef,
+    hide,
+    keyIsLoading,
+    runFreeExits,
+    runRequest,
+    showRefill,
+  ]);
 }
 
 function useRefillSurface() {
@@ -502,6 +578,7 @@ function usePayerRef(apiKey: string | null, keyIsLoading: boolean) {
 /** Resolve the current payer, disclosure preference, and one funding decision together. */
 function usePayerParts(
   requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
+  requestFreeExits: () => Promise<ResonanceRequestOutcome | void>,
   scopeIsCurrent: () => boolean,
 ) {
   const { apiKey, isLoading: keyIsLoading } = useApiKey();
@@ -515,7 +592,14 @@ function usePayerParts(
   const cost = useResonanceCost(scopeIsCurrent);
   const disclosedKeyRef = useRef<string | null>(null);
   const showRefillFor = useShowRefillFor(cost, surfaces);
-  const funding = useFundingAwareRequest(requestResonance, showRefillFor, scopeIsCurrent);
+  const redisclose = useRedisclose(cost, surfaces, payerRef, disclosedKeyRef);
+  const funding = useFundingAwareRequest({
+    requestResonance,
+    requestFreeExits,
+    showRefillFor,
+    redisclose,
+    scopeIsCurrent,
+  });
   const decision = useDisclosureDecision({
     cost,
     scopeIsCurrent,
@@ -523,6 +607,7 @@ function usePayerParts(
     payerRef,
     flag,
     runRequest: funding.run,
+    runFreeExits: funding.runFreeExits,
     show: surfaces.show,
     showRefill: surfaces.showRefill,
   });
@@ -541,6 +626,7 @@ function usePayerParts(
 /** Gate ``requestResonance`` behind disclosure pinned to the accepted payer. */
 export function useResonanceExplainer(
   requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
+  requestFreeExits: () => Promise<ResonanceRequestOutcome | void>,
 ): ResonanceExplainerGate {
   const scopeIsCurrent = usePaymentScope();
   const {
@@ -552,7 +638,7 @@ export function useResonanceExplainer(
     showRefillFor,
     funding,
     decision,
-  } = usePayerParts(requestResonance, scopeIsCurrent);
+  } = usePayerParts(requestResonance, requestFreeExits, scopeIsCurrent);
   const hydratedPress = useHydratedPress(decision.decide, apiKey, keyIsLoading);
   const onContinue = useContinue({
     apiKey,
@@ -560,7 +646,9 @@ export function useResonanceExplainer(
     disclosedKeyRef,
     cost,
     close: surfaces.close,
+    hide: surfaces.reset,
     runRequest: funding.run,
+    runFreeExits: funding.runFreeExits,
     showRefill: surfaces.showRefill,
   });
   const cancelPending = useCancelPayerWork(
