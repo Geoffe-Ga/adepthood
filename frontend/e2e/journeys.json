@@ -2587,6 +2587,18 @@
     "coveredBy": "frontend/e2e/habit-owner-switch.browser.e2e.test.ts"
   },
   {
+    "id": "habits.native-reminders-stay-with-their-account",
+    "description": "A user sets a daily reminder on a habit (PUT /habits/{habit_id} carries the cadence; the reminder itself is scheduled on the device through expo-notifications), then signs out or another account signs in on the same phone (#3334). Logout and account-switch cleanup cancel the reminders on the device as well as their on-device records; a reschedule that was still in flight when the account moved withdraws whatever it scheduled instead of recording it under the incoming account, including after A to B to A; and the next account's start-up reconcile cancels any reminder a failed logout cancel left behind. Uncovered because local notification scheduling is native-only: the web build has no scheduler, so no browser spec can observe a reminder being scheduled or cancelled, and no supported native runtime is in the e2e lane. Pinned meanwhile by src/features/Habits/__tests__/habitReminderOwnership.test.ts, which holds the native schedule, cancel and bookkeeping calls open over the real notification storage and account scope (A to B, A to B to A, mid-cleanup settle, cancellation failure, late scheduling success, bookkeeping failure, notification-off, logout and restart reconcile, plus same-account success and failure controls), and by src/features/Habits/__tests__/useHabitNotifications.test.ts. That is evidence about what the app asks the native module to do against a Jest mock, not certification of any OS scheduler's inventory.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/components/HabitSettingsModal.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/login", "PUT /habits/{habit_id}"],
+      "tables": ["user", "habit"]
+    },
+    "status": "uncovered",
+    "issue": 3334
+  },
+  {
     "id": "habits.pending-create-survives-same-owner-reauth",
     "description": "A real habit POST is held while the account's token is revoked on the real server; the running app's next read is refused, its refresh is refused, and the same account signs back in through the re-auth sheet without its id changing. The new session hydrates the account's real rows, then the held create's lost reply (phone) or success (desktop) is delivered: the row the new session shows never vanishes, and the ended session sends nothing further under its revoked credential. A reload shows the same single row. AuthProvider integration covers append, insert and logging across a real onUnauthorized and same-owner sign-in, the pending re-auth window, and controls for an uninterrupted session and a legitimate token refresh.",
     "crosses": {
