@@ -29,13 +29,16 @@ test('a refused check-off says so beside the card, which stays pressable', async
 
   // Refusing only the literary pass is how this lane reaches a suggestion card
   // without an LLM; detection, the row, and the accept stay real-wire.
-  await page.route(`**/journal/${entryId}/resonance`, async (route) => {
-    await route.fulfill({
-      status: 502,
-      contentType: 'application/json',
-      body: JSON.stringify({ detail: 'llm_provider_error' }),
-    });
-  });
+  await page.route(
+    (url) => url.pathname === `/journal/${entryId}/resonance`,
+    async (route) => {
+      await route.fulfill({
+        status: 502,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'llm_provider_error' }),
+      });
+    },
+  );
   // The refusal under test. A 500 stands in for the whole class the margin used
   // to swallow -- a 401, a 404, a 409 on an already-dismissed row, a request
   // that never arrives -- because every one of them reaches the same catch.

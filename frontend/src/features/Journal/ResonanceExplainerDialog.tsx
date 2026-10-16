@@ -20,6 +20,7 @@ import { ScrollView, StyleSheet, Text } from 'react-native';
 import {
   DontShowAgainCheckbox,
   ExplainerActionPair,
+  PayerChangedNotice,
   explainerStyles as styles,
 } from './ExplainerDialogParts';
 import JournalModalShell from './JournalModalShell';
@@ -59,6 +60,8 @@ export interface ResonanceExplainerDialogProps {
   keyNeeded?: boolean;
   /** Leave for Settings to add a key. Required for ``keyNeeded`` to act. */
   onOpenSettings?: () => void;
+  /** A request was refused because its payer changed; this price is the new one (#3385). */
+  payerChanged?: boolean;
 }
 
 const NO_SETTINGS = (): void => undefined;
@@ -130,6 +133,7 @@ function ResonanceExplainerDialog({
   onCancel,
   keyNeeded = false,
   onOpenSettings,
+  payerChanged = false,
 }: ResonanceExplainerDialogProps): React.JSX.Element {
   return (
     <JournalModalShell
@@ -148,6 +152,7 @@ function ResonanceExplainerDialog({
         <Text style={styles.body} testID="resonance-explainer-what">
           {RESONANCE_EXPLAINER_WHAT}
         </Text>
+        <PayerChangedNotice visible={payerChanged} testID="resonance-explainer-payer-changed" />
         <Text style={styles.body} testID="resonance-explainer-cost">
           {cost}
         </Text>

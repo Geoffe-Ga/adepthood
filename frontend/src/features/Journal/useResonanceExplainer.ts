@@ -20,6 +20,13 @@
  * answer or care renders as usual, the payer refusal opens the refill remedy,
  * and a payer that could pay after all gets the price disclosed first.
  *
+ * Continue is bound to the route it disclosed (#3385). The pass carries the
+ * ``resonance_route`` the price was read for, and the server refuses it with
+ * the same ``409 resonance_payment_unconfirmed`` when another device has since
+ * connected or disconnected a vault. The gate then rereads the route and shows
+ * the disclosure again, marked as changed, so nothing is charged on a payer
+ * the writer was never shown -- including a writer who dismissed the note.
+ *
  * A press that arrives before the stored flag has been read *waits* for it
  * rather than taking a default. The two possible defaults are not symmetric:
  * showing the note to someone who already dismissed it costs them a tap, while
@@ -44,6 +51,7 @@ import { usePaymentScope } from './usePaymentScope';
 import type { ResonanceRequestOutcome } from './useResonance';
 import { useStoredDismissal, type StoredDismissal } from './useStoredDismissal';
 
+import type { ResonanceRoute } from '@/api';
 import { useApiKey } from '@/context/ApiKeyContext';
 import { useAuth } from '@/context/AuthContext';
 import { useMountedRef } from '@/hooks/useMountedRef';
@@ -63,6 +71,8 @@ export interface ResonanceExplainerGate {
   cancelPending: () => void;
   /** Whether the disclosure is on screen. */
   visible: boolean;
+  /** This showing follows a request refused because its payer changed (#3385). */
+  payerChanged: boolean;
   /** Spend copy for the payer and deployment policy currently in force. */
   cost: string;
   keyNeeded: boolean;
@@ -134,13 +144,22 @@ type DismissedFlag = StoredDismissal;
 
 type PayerRef = MutableRefObject<{ apiKey: string | null; keyIsLoading: boolean }>;
 
+/** Run the pass for this payer on the route its price was disclosed for (#3385). */
+type RunRequest = (_apiKey: string | null, _route: ResonanceRoute | null) => Promise<void>;
+
+/** The screen's pass, sent with the route the writer confirmed. */
+type RequestResonance = (
+  _apiKey: string | null,
+  _route: ResonanceRoute,
+) => Promise<ResonanceRequestOutcome | void>;
+
 interface DisclosureDecisionInput {
   cost: ReturnType<typeof useResonanceCost>;
   scopeIsCurrent: () => boolean;
   disclosedKeyRef: MutableRefObject<string | null>;
   payerRef: PayerRef;
   flag: DismissedFlag;
-  runRequest: (_apiKey: string | null) => Promise<void>;
+  runRequest: RunRequest;
   /** An exhausted wallet asks the server for its free answers instead (#3389). */
   runFreeExits: () => Promise<void>;
   show: () => void;
@@ -175,7 +194,7 @@ async function publishDecision(
       resolvedCost.fundingRequired,
     );
   } else if (dismissed && resolvedCost.canContinue) {
-    await input.runRequest(payerKey);
+    await input.runRequest(payerKey, resolvedCost.route);
   } else {
     input.disclosedKeyRef.current = payerKey;
     input.show();
@@ -316,12 +335,12 @@ function useRedisclose(
       return;
     }
     disclosedKeyRef.current = payerKey;
-    show();
+    show(true);
   }, [cost, disclosedKeyRef, payerRef, show, showRefill]);
 }
 
 interface FundingAwareInput {
-  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>;
+  requestResonance: RequestResonance;
   requestFreeExits: () => Promise<ResonanceRequestOutcome | void>;
   showRefillFor: (_reason: ResonanceRefillReason) => Promise<void>;
   redisclose: () => Promise<void>;
@@ -345,8 +364,10 @@ function useFundingAwareRequest(input: FundingAwareInput) {
     },
     [redisclose, showRefillFor, scopeIsCurrent],
   );
-  const run = useCallback(
-    (payerKey: string | null): Promise<void> => settle(() => requestResonance(payerKey)),
+  // An unknown route authorizes no charge: nothing is asked without one.
+  const run = useCallback<RunRequest>(
+    (payerKey, route) =>
+      route === null ? Promise.resolve() : settle(() => requestResonance(payerKey, route)),
     [requestResonance, settle],
   );
   const runFreeExits = useCallback(
@@ -367,7 +388,7 @@ interface ContinueInput {
   close: () => void;
   /** Hide the disclosure without honouring its tick: no price was accepted. */
   hide: () => void;
-  runRequest: (_apiKey: string | null) => Promise<void>;
+  runRequest: RunRequest;
   runFreeExits: () => Promise<void>;
   showRefill: (
     _monthlyResetDate: string | null,
@@ -402,7 +423,7 @@ function useContinue(input: ContinueInput): () => void {
     }
     if (cost.current.loading || !cost.current.canContinue) return;
     close();
-    void runRequest(disclosedKeyRef.current);
+    void runRequest(disclosedKeyRef.current, cost.current.route);
   }, [
     apiKey,
     close,
@@ -461,14 +482,19 @@ function useRefillSurface() {
 
 function useDisclosureSurfaces(flag: DismissedFlag) {
   const [visible, setVisible] = useState(false);
+  const [payerChanged, setPayerChanged] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const refill = useRefillSurface();
   const { onCancelRefill, showRefill: openRefill } = refill;
-  const show = useCallback(() => {
-    setDontShowAgain(false);
-    onCancelRefill();
-    setVisible(true);
-  }, [onCancelRefill]);
+  const show = useCallback(
+    (changed = false) => {
+      setDontShowAgain(false);
+      setPayerChanged(changed);
+      onCancelRefill();
+      setVisible(true);
+    },
+    [onCancelRefill],
+  );
   const showRefill = useCallback(
     (resetDate: string | null, cap: number | null, reason: ResonanceRefillReason): number => {
       setVisible(false);
@@ -489,6 +515,7 @@ function useDisclosureSurfaces(flag: DismissedFlag) {
   return {
     ...refill,
     visible,
+    payerChanged,
     dontShowAgain,
     show,
     showRefill,
@@ -536,6 +563,7 @@ function gateFromParts(parts: GateParts): ResonanceExplainerGate {
     pending: decision.pending,
     cancelPending,
     visible: surfaces.visible,
+    payerChanged: surfaces.payerChanged,
     cost: cost.current.copy,
     keyNeeded: cost.current.keyNeeded,
     continueDisabled: cost.current.loading || !cost.current.canContinue,
@@ -577,7 +605,7 @@ function usePayerRef(apiKey: string | null, keyIsLoading: boolean) {
 
 /** Resolve the current payer, disclosure preference, and one funding decision together. */
 function usePayerParts(
-  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
+  requestResonance: RequestResonance,
   requestFreeExits: () => Promise<ResonanceRequestOutcome | void>,
   scopeIsCurrent: () => boolean,
 ) {
@@ -625,7 +653,7 @@ function usePayerParts(
 
 /** Gate ``requestResonance`` behind disclosure pinned to the accepted payer. */
 export function useResonanceExplainer(
-  requestResonance: (_apiKey: string | null) => Promise<ResonanceRequestOutcome | void>,
+  requestResonance: RequestResonance,
   requestFreeExits: () => Promise<ResonanceRequestOutcome | void>,
 ): ResonanceExplainerGate {
   const scopeIsCurrent = usePaymentScope();

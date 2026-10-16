@@ -364,24 +364,27 @@ async function controlledResponses(
   entryId: number,
   scenario: ControlledCase,
 ): Promise<void> {
-  await page.route(`**/journal/${entryId}/resonance`, async (route) => {
-    const response = await route.fetch();
-    const payload = await response.json();
-    await route.fulfill({
-      response,
-      json: {
-        ...payload,
-        marginalia: payload.marginalia.map((note: Record<string, unknown>) => ({
-          ...note,
-          ...scenario.noteMetadata,
-          essay: 'The letter has its own source.',
-          essay_source: 'demo',
-          essay_generated_at: '2026-10-01T00:00:00Z',
-        })),
-        provenance: scenario.provenance,
-      },
-    });
-  });
+  await page.route(
+    (url) => url.pathname === `/journal/${entryId}/resonance`,
+    async (route) => {
+      const response = await route.fetch();
+      const payload = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...payload,
+          marginalia: payload.marginalia.map((note: Record<string, unknown>) => ({
+            ...note,
+            ...scenario.noteMetadata,
+            essay: 'The letter has its own source.',
+            essay_source: 'demo',
+            essay_generated_at: '2026-10-01T00:00:00Z',
+          })),
+          provenance: scenario.provenance,
+        },
+      });
+    },
+  );
   await page.route(`**/journal/${entryId}/marginalia`, async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
@@ -521,10 +524,13 @@ for (const width of [390, 1280]) {
     expect(await monthlyUsed(page, token)).toBe(usedBefore);
     await frame(page, `empty-${width}`);
     let failedRequests = 0;
-    await page.route(`**/journal/${entryId}/resonance`, async (route) => {
-      failedRequests += 1;
-      await route.fulfill({ status: 503, json: { detail: 'reflection_source_unavailable' } });
-    });
+    await page.route(
+      (url) => url.pathname === `/journal/${entryId}/resonance`,
+      async (route) => {
+        failedRequests += 1;
+        await route.fulfill({ status: 503, json: { detail: 'reflection_source_unavailable' } });
+      },
+    );
     await page.getByRole('button', { name: 'Get resonance' }).click();
     const continueButton = page.getByTestId('resonance-explainer-continue');
     const error = page.getByTestId('journal-resonance-error');

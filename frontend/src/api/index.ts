@@ -1777,9 +1777,18 @@ export interface EssayRequestOptions {
    * so only the explicit Ask action sets it.
    */
   priceAcknowledged?: boolean;
+  /**
+   * The payer route the price was disclosed for (#3385). The server refuses a
+   * first letter whose route has changed since (409
+   * ``essay_price_unacknowledged``), so the writer is shown the price again.
+   */
+  disclosedRoute?: ResonanceRoute;
   token?: string;
   apiKey?: string;
 }
+
+/** Which side the payer disclosure named: the writer's key, or a vault credit (#3262). */
+export type ResonanceRoute = BotmasonUsageT['resonance_route'];
 
 export interface ResonanceResponse {
   marginalia: Marginalia[];
@@ -2383,9 +2392,21 @@ export const reflections = {
  * ``502 llm_provider_error`` as an ``ApiError``); ``list`` is a plain read.
  */
 export const resonance = {
-  /** Run a resonance pass over an entry: persists + returns notes and balances. */
-  generate(entryId: number, token?: string, apiKey?: string | null): Promise<ResonanceResponse> {
-    return request<ResonanceResponse>(`/journal/${entryId}/resonance`, {
+  /**
+   * Run a resonance pass over an entry: persists + returns notes and balances.
+   *
+   * ``disclosedRoute`` is the payer route the writer was shown (#3385); a pass
+   * whose route has changed since is refused ``409
+   * resonance_payment_unconfirmed`` before anything is charged or dialled.
+   */
+  generate(
+    entryId: number,
+    token?: string,
+    apiKey?: string | null,
+    disclosedRoute?: ResonanceRoute,
+  ): Promise<ResonanceResponse> {
+    const query = disclosedRoute === undefined ? '' : `?disclosed_route=${disclosedRoute}`;
+    return request<ResonanceResponse>(`/journal/${entryId}/resonance${query}`, {
       method: 'POST',
       token,
       headers: byokHeaders(apiKey),
@@ -2418,12 +2439,15 @@ export const resonance = {
    * the balances either way.
    */
   essay(marginaliaId: number, options: EssayRequestOptions = {}): Promise<EssayResponse> {
-    const { priceAcknowledged = false, token, apiKey } = options;
+    const { priceAcknowledged = false, disclosedRoute, token, apiKey } = options;
     return request<EssayResponse>(`/journal/marginalia/${marginaliaId}/essay`, {
       method: 'POST',
       token,
       headers: byokHeaders(apiKey),
-      body: { price_acknowledged: priceAcknowledged },
+      body:
+        disclosedRoute === undefined
+          ? { price_acknowledged: priceAcknowledged }
+          : { price_acknowledged: priceAcknowledged, disclosed_route: disclosedRoute },
       schema: essayResponseSchema as unknown as z.ZodType<EssayResponse>,
     });
   },

@@ -2,7 +2,7 @@
 import { resonanceExplainerCanContinue, resonanceExplainerCost } from './resonanceExplainerCopy';
 import { SOURCE_LABEL_COPY } from './sourceLabel';
 
-import { botmasonUsage } from '@/api';
+import { botmasonUsage, type ResonanceRoute } from '@/api';
 
 const READING = 'reading';
 
@@ -14,6 +14,12 @@ export interface ResonanceCostState {
   loading: boolean;
   monthlyResetDate: string | null;
   monthlyCap: number | null;
+  /**
+   * The payer route this copy discloses, sent with the request it confirms so
+   * the server refuses a route that has changed since (#3385). ``null`` while
+   * the route is unknown, when nothing may be asked at all.
+   */
+  route: ResonanceRoute | null;
 }
 
 /** An absent/failed route read records no payer and authorizes no charge. */
@@ -26,6 +32,7 @@ export function unknownCostState(noun: string = READING): ResonanceCostState {
     loading: false,
     monthlyResetDate: null,
     monthlyCap: null,
+    route: null,
   };
 }
 
@@ -35,6 +42,7 @@ type Usage = Awaited<ReturnType<typeof botmasonUsage.get>>;
 
 function ownKeyCost(hasKey: boolean, noun: string): ResonanceCostState {
   return {
+    route: 'app_provider',
     keyNeeded: !hasKey,
     copy: resonanceExplainerCost(hasKey, null, null, null, noun),
     canContinue: hasKey,
@@ -55,6 +63,7 @@ function costStateFromUsage(usage: Usage, hasKey: boolean, noun: string): Resona
     usage.offering_balance,
   );
   return {
+    route: 'vault_bound',
     keyNeeded: false,
     copy: resonanceExplainerCost(
       hasKey,
@@ -79,6 +88,7 @@ function appProviderCost(usage: Usage, hasKey: boolean, noun: string): Resonance
     resonanceExplainerCanContinue(false, usage.monthly_messages_remaining, usage.offering_balance);
   if (hasKey || !demoCanContinue) return ownKeyCost(hasKey, noun);
   return {
+    route: 'app_provider',
     copy: `${SOURCE_LABEL_COPY.demo}. No Adepthood wallet charge.`,
     keyNeeded: false,
     canContinue: true,

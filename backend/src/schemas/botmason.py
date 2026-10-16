@@ -7,6 +7,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+#: Which side a generation's payer disclosure named (#3262): the writer's own key
+#: on the app provider, or a wallet credit when their vault answers. A charged
+#: request echoes the route it disclosed so admission can refuse a stale one (#3385).
+PayerRoute = Literal["vault_bound", "app_provider"]
+
 # Bound credit grants so a single call can neither zero-out the ledger nor
 # mint billion-credit wallets.  One million is far above any legitimate gift.
 BALANCE_ADD_MIN = 1
@@ -51,6 +56,6 @@ class UsageResponse(BaseModel):
     monthly_reset_date: datetime
     offering_balance: int
     # Local routing eligibility only; a bound vault may be unavailable or unable to answer.
-    resonance_route: Literal["vault_bound", "app_provider"]
+    resonance_route: PayerRoute
     # Only the explicitly armed test seam can generate a keyless app-provider demo.
     resonance_demo_available: bool = False

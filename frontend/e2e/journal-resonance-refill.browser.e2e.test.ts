@@ -89,15 +89,18 @@ async function holdFundingFailure(page: Page): Promise<{
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route('**/journal/*/resonance', async (route) => {
-    markRequested();
-    await held;
-    await route.fulfill({
-      status: 402,
-      contentType: 'application/json',
-      body: JSON.stringify({ detail: 'llm_key_required' }),
-    });
-  });
+  await page.route(
+    (url) => /^\/journal\/\d+\/resonance$/u.test(url.pathname),
+    async (route) => {
+      markRequested();
+      await held;
+      await route.fulfill({
+        status: 402,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'llm_key_required' }),
+      });
+    },
+  );
   return { requested, release };
 }
 
@@ -162,14 +165,17 @@ test('a stale wallet read that receives a 402 replaces the spend dialog with ref
   await serveUsage(page, { monthly_messages_remaining: 4, offering_balance: 0 });
 
   let passCount = 0;
-  await page.route(`**/journal/${String(entryId)}/resonance`, async (route) => {
-    passCount += 1;
-    await route.fulfill({
-      status: 402,
-      contentType: 'application/json',
-      body: JSON.stringify({ detail: 'insufficient_offerings' }),
-    });
-  });
+  await page.route(
+    (url) => url.pathname === `/journal/${String(entryId)}/resonance`,
+    async (route) => {
+      passCount += 1;
+      await route.fulfill({
+        status: 402,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'insufficient_offerings' }),
+      });
+    },
+  );
   await page.goto(`${frontendUrl()}/journal`);
   await page.getByTestId(`journal-shelf-open-${String(entryId)}`).click();
   await page.getByRole('button', { name: 'Get resonance' }).click();

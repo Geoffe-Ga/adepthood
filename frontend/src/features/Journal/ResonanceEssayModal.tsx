@@ -10,6 +10,11 @@
  * letter already written opens straight to the letter, because reopening it is
  * free. A 402 is not rendered as an error: it is handed to ``onFundingRequired``
  * so the screen can show the same refill remedy a resonance pass gets.
+ *
+ * The ask carries the payer route its price was disclosed for (#3385). When
+ * another device has connected or disconnected a vault since, the server
+ * refuses it with ``409 essay_price_unacknowledged`` before anything is
+ * charged, and the card returns to the offer with the price that applies now.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -22,7 +27,7 @@ import {
 } from 'react-native';
 
 import { aiAccessRevoked } from './aiAccessRevoked';
-import { ExplainerActionPair, explainerStyles } from './ExplainerDialogParts';
+import { ExplainerActionPair, PayerChangedNotice, explainerStyles } from './ExplainerDialogParts';
 import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
 import JournalModalShell from './JournalModalShell';
@@ -40,7 +45,7 @@ import { sourceLabel } from './sourceLabel';
 import { usePaymentScope } from './usePaymentScope';
 
 import { resonance } from '@/api';
-import type { Marginalia } from '@/api';
+import type { Marginalia, ResonanceRoute } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
 import { colors, editorialType, spacing, touchTarget } from '@/design/tokens';
@@ -73,10 +78,22 @@ interface EssayState {
   offer: boolean;
   /** Which side wrote the letter, as the server recorded it (#3062). */
   essaySource?: unknown;
+  /** The offer is back because the ask's payer route changed (#3385). */
+  payerChanged?: boolean;
 }
 
 const OFFER_STATE: EssayState = { essay: null, loading: false, error: null, offer: true };
+const PAYER_CHANGED_STATE: EssayState = { ...OFFER_STATE, payerChanged: true };
 const LOADING_STATE: EssayState = { essay: null, loading: true, error: null, offer: false };
+
+/** The 409 an ask gets when the price it acknowledged is not the one in force (#3385). */
+const PRICE_UNACKNOWLEDGED_DETAIL = 'essay_price_unacknowledged';
+
+function priceUnacknowledged(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const response = error as { status?: unknown; detail?: unknown };
+  return response.status === 409 && response.detail === PRICE_UNACKNOWLEDGED_DETAIL;
+}
 
 /**
  * Why an ask for a note's letter settled without one, keyed by note id.
@@ -131,12 +148,14 @@ interface EssaySettlers {
   onUnanswered: (_unanswered: Unanswered) => void;
   /** The ask was refused for want of a payer; nothing was spent. */
   onFunding: (_outcome: FundingOutcome) => void;
+  /** The payer route changed since the price was shown; nothing was spent. */
+  onPayerChanged: () => void;
 }
 
-/** Ask the server for one note's letter, price acknowledged, and route the outcome. */
-function askForEssay(noteId: number, settlers: EssaySettlers): void {
+/** Ask for one note's letter on the disclosed route, price acknowledged, and route the outcome. */
+function askForEssay(noteId: number, route: ResonanceRoute, settlers: EssaySettlers): void {
   resonance
-    .essay(noteId, { priceAcknowledged: true })
+    .essay(noteId, { priceAcknowledged: true, disclosedRoute: route })
     .then((updated) => {
       if (updated.essay) {
         settlers.onLetter(updated);
@@ -145,6 +164,10 @@ function askForEssay(noteId: number, settlers: EssaySettlers): void {
       settlers.onUnanswered({ message: BLANK_ESSAY_MESSAGE, retryable: true });
     })
     .catch((err: unknown) => {
+      if (priceUnacknowledged(err)) {
+        settlers.onPayerChanged();
+        return;
+      }
       const funding = fundingOutcome(err);
       if (funding !== null) {
         settlers.onFunding(funding);
@@ -212,12 +235,33 @@ function useShowingGeneration(note: Marginalia | null): React.MutableRefObject<n
   return showingRef;
 }
 
+/** The card showing a letter that just arrived. */
+function letterState(updated: Marginalia): EssayState {
+  return {
+    ...LOADING_STATE,
+    essay: updated.essay,
+    loading: false,
+    essaySource: updated.essay_source,
+  };
+}
+
+/** The card after an ask that produced no letter. */
+function unansweredState(unanswered: Unanswered): EssayState {
+  return {
+    essay: null,
+    loading: false,
+    error: unanswered.message,
+    retryable: unanswered.retryable,
+    offer: false,
+  };
+}
+
 /** The note's letter: shown, offered at its price, or asked for on purpose. */
 function useEssay(
   note: Marginalia | null,
   callbacks: EssayCallbacks,
   scopeIsCurrent: () => boolean,
-): EssayState & { ask: () => void; retry: () => void } {
+): EssayState & { ask: (_route: ResonanceRoute) => void; retry: () => void; costRevision: number } {
   // Notes already asked about, that came back with no letter (#2435). A ref, so
   // it survives closing and reopening the modal and dies with the screen:
   // reopening shows that outcome rather than the offer again, while ``retry``
@@ -226,62 +270,63 @@ function useEssay(
   const [state, setState] = useShownState(note, unansweredRef.current);
   const showingRef = useShowingGeneration(note);
   const callbacksRef = useLatest(callbacks);
+  // Bumped when the payer changed under an ask, so the offer rereads its price.
+  const [costRevision, setCostRevision] = useState(0);
 
-  const ask = useCallback(() => {
-    if (note == null) return;
-    const showing = showingRef.current;
-    const isCurrent = (): boolean => showingRef.current === showing && scopeIsCurrent();
-    setState(LOADING_STATE);
-    askForEssay(note.id, {
-      onLetter: (updated) => {
-        if (!isCurrent()) return;
-        // The note carries the letter from here on, via ``onEssayLoaded``.
-        setState({
-          ...LOADING_STATE,
-          essay: updated.essay,
-          loading: false,
-          essaySource: updated.essay_source,
-        });
-        callbacksRef.current.onEssayLoaded?.(updated);
-      },
-      // Remembered even if the modal has since closed: the ask did happen and
-      // produced nothing, so reopening should show that, not offer again.
-      onUnanswered: (unanswered) => {
-        if (!scopeIsCurrent()) return;
-        unansweredRef.current.set(note.id, unanswered);
-        if (!isCurrent()) return;
-        setState({
-          essay: null,
-          loading: false,
-          error: unanswered.message,
-          retryable: unanswered.retryable,
-          offer: false,
-        });
-      },
-      onFunding: (outcome) => {
-        if (!isCurrent()) return;
-        setState(OFFER_STATE);
-        callbacksRef.current.onFundingRequired?.(outcome);
-      },
-    });
-  }, [callbacksRef, note, setState, showingRef, scopeIsCurrent]);
+  const ask = useCallback(
+    (route: ResonanceRoute) => {
+      if (note == null) return;
+      const showing = showingRef.current;
+      const isCurrent = (): boolean => showingRef.current === showing && scopeIsCurrent();
+      setState(LOADING_STATE);
+      askForEssay(note.id, route, {
+        onLetter: (updated) => {
+          if (!isCurrent()) return;
+          // The note carries the letter from here on, via ``onEssayLoaded``.
+          setState(letterState(updated));
+          callbacksRef.current.onEssayLoaded?.(updated);
+        },
+        // Remembered even if the modal has since closed: the ask did happen and
+        // produced nothing, so reopening should show that, not offer again.
+        onUnanswered: (unanswered) => {
+          if (!scopeIsCurrent()) return;
+          unansweredRef.current.set(note.id, unanswered);
+          if (isCurrent()) setState(unansweredState(unanswered));
+        },
+        onFunding: (outcome) => {
+          if (!isCurrent()) return;
+          setState(OFFER_STATE);
+          callbacksRef.current.onFundingRequired?.(outcome);
+        },
+        // Back to the offer, which rereads the route and shows its price.
+        onPayerChanged: () => {
+          if (!isCurrent()) return;
+          setState(PAYER_CHANGED_STATE);
+          setCostRevision((n) => n + 1);
+        },
+      });
+    },
+    [callbacksRef, note, setState, showingRef, scopeIsCurrent],
+  );
 
   const retry = useCallback(() => {
     if (note != null) unansweredRef.current.delete(note.id);
     setState(OFFER_STATE);
   }, [note, setState]);
 
-  return { ...state, ask, retry };
+  return { ...state, ask, retry, costRevision };
 }
 
 /** The priced offer: what a letter is, what it costs, and two equal arms. */
 function EssayOffer({
   cost,
+  payerChanged = false,
   onOpenSettings,
   onAsk,
   onDecline,
 }: {
   cost: ResonanceCostState;
+  payerChanged?: boolean;
   onOpenSettings: () => void;
   onAsk: () => void;
   onDecline: () => void;
@@ -291,6 +336,7 @@ function EssayOffer({
       <Text style={explainerStyles.body} testID="essay-ask-what">
         {ESSAY_ASK_WHAT}
       </Text>
+      <PayerChangedNotice visible={payerChanged} testID="essay-payer-changed" />
       <Text style={explainerStyles.body} testID="essay-ask-cost">
         {cost.copy}
       </Text>
@@ -393,21 +439,26 @@ function EssayBody({
   );
 }
 
-/** Resolve only an uncached offer; responses belong to one note/key showing. */
+/**
+ * Resolve only an uncached offer; responses belong to one note/key showing.
+ * A new ``revision`` rereads the route for the same showing (#3385).
+ */
 function useEssayCost(
   note: Marginalia | null,
   hasOwnKey: boolean,
   scopeIsCurrent: () => boolean,
+  revision: number,
 ): ResonanceCostState {
   const { token } = useAuth();
-  const [snapshot, setSnapshot] = useState({ note, hasOwnKey, scopeIsCurrent });
+  const [snapshot, setSnapshot] = useState({ note, hasOwnKey, scopeIsCurrent, revision });
   const [cost, setCost] = useState(() => unknownCostState(ESSAY_NOUN));
   if (
     snapshot.note !== note ||
     snapshot.hasOwnKey !== hasOwnKey ||
-    snapshot.scopeIsCurrent !== scopeIsCurrent
+    snapshot.scopeIsCurrent !== scopeIsCurrent ||
+    snapshot.revision !== revision
   ) {
-    setSnapshot({ note, hasOwnKey, scopeIsCurrent });
+    setSnapshot({ note, hasOwnKey, scopeIsCurrent, revision });
     setCost(unknownCostState(ESSAY_NOUN));
   }
   useEffect(() => {
@@ -424,7 +475,7 @@ function useEssayCost(
     return () => {
       current = false;
     };
-  }, [note, hasOwnKey, scopeIsCurrent, token]);
+  }, [note, hasOwnKey, scopeIsCurrent, token, revision]);
   return cost;
 }
 
@@ -456,15 +507,13 @@ function ResonanceEssayModal({
   onFundingRequired,
 }: ResonanceEssayModalProps): React.JSX.Element {
   const scopeIsCurrent = usePaymentScope();
-  const { essay, loading, error, retryable, offer, essaySource, ask, retry } = useEssay(
-    note,
-    {
-      onEssayLoaded,
-      onFundingRequired,
-    },
+  const shown = useEssay(note, { onEssayLoaded, onFundingRequired }, scopeIsCurrent);
+  const cost = useEssayCost(
+    shown.offer ? note : null,
+    hasOwnKey,
     scopeIsCurrent,
+    shown.costRevision,
   );
-  const cost = useEssayCost(offer ? note : null, hasOwnKey, scopeIsCurrent);
 
   return (
     <JournalModalShell
@@ -480,17 +529,20 @@ function ResonanceEssayModal({
         “{note?.anchor_text}”
       </Text>
       <ScrollView contentContainerStyle={styles.bodyScroll}>
-        {offer ? (
+        {shown.offer ? (
           <EssayOffer
             cost={cost}
+            payerChanged={shown.payerChanged}
             onOpenSettings={onOpenSettings}
             onAsk={() => {
-              if (scopeIsCurrent() && cost.canContinue) ask();
+              if (scopeIsCurrent() && cost.canContinue && cost.route !== null) {
+                shown.ask(cost.route);
+              }
             }}
             onDecline={onClose}
           />
         ) : (
-          <EssayBody {...{ essay, loading, error, retryable, retry, essaySource }} />
+          <EssayBody {...shown} />
         )}
       </ScrollView>
     </JournalModalShell>

@@ -422,7 +422,9 @@ async def test_client_cannot_supply_provenance(
     assert row.source == MarginaliaSource.DEMO
     assert row.essay_source == MarginaliaSource.DEMO
     essay_request = app.openapi()["components"]["schemas"]["EssayRequest"]
-    assert set(essay_request["properties"]) == {"price_acknowledged"}
+    # The body names the price and payer route the writer accepted (#3385), never provenance.
+    assert set(essay_request["properties"]) == {"price_acknowledged", "disclosed_route"}
+    assert not set(essay_request["properties"]) & set(spoof)
 
 
 # --------------------------------------------------------------------------- essays
