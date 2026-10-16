@@ -61,23 +61,42 @@ export function subscribeActiveUser(listener: () => void): () => void {
   };
 }
 
+function notifyActiveUserListeners(): void {
+  activeUserListeners.forEach((listener) => listener());
+}
+
 /**
  * Point the device-local caches at ``userId``'s namespace, or at the legacy
  * unscoped namespace when ``null`` (anonymous, and on a device whose owner
  * was never recorded).
+ *
+ * Committing the scope that ends a cleanup always moves the generation and
+ * notifies, even when the owner did not change: mounted consumers spent the
+ * cleanup unresolved (#3368), and the final notification is what tells them
+ * to read again. A same-owner set with no cleanup in flight stays silent.
  */
 export function setActiveUser(userId: number | null): void {
+  const endingTransition = activeUserTransitioning;
   activeUserTransitioning = false;
-  if (activeUserId === userId) return;
+  if (activeUserId === userId && !endingTransition) return;
   activeUserId = userId;
   activeUserGeneration += 1;
-  activeUserListeners.forEach((listener) => listener());
+  notifyActiveUserListeners();
 }
 
-/** Reject old and newly-started authenticated work until cleanup commits its scope. */
+/**
+ * Reject old and newly-started authenticated work until cleanup commits its scope.
+ *
+ * The namespace deliberately stays on the departing account so the clears
+ * still running reach its rows; only the generation moves. Subscribers are
+ * told at once (#3368), so mounted UI drops the outgoing account's answers
+ * and shows itself unresolved instead of offering controls whose taps the new
+ * generation would silently refuse.
+ */
 export function beginActiveUserTransition(): void {
   activeUserTransitioning = true;
   activeUserGeneration += 1;
+  notifyActiveUserListeners();
 }
 
 export function isActiveUserTransitioning(): boolean {
@@ -94,9 +113,12 @@ export function getActiveUser(): number | null {
  *
  * The owner alone is not enough: an A to B to A switch puts A back in charge,
  * and A's old read must still be refused, so the generation is checked too.
+ * Nothing is current while cleanup runs: the namespace still names the
+ * departing account, so work captured at the cleanup generation would read or
+ * write rows that are being wiped.
  */
 export function isAccountScopeCurrent(owner: number | null, epoch: number): boolean {
-  return activeUserId === owner && activeUserGeneration === epoch;
+  return !activeUserTransitioning && activeUserId === owner && activeUserGeneration === epoch;
 }
 
 /**

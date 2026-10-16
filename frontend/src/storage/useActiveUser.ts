@@ -4,6 +4,7 @@ import {
   getActiveUser,
   getActiveUserGeneration,
   isAccountScopeCurrent,
+  isActiveUserTransitioning,
   subscribeActiveUser,
 } from './userScope';
 
@@ -18,6 +19,18 @@ export function useActiveUserGeneration(): number {
     subscribeActiveUser,
     getActiveUserGeneration,
     getActiveUserGeneration,
+  );
+}
+
+/**
+ * Whether account cleanup is running, so a render can stay unresolved rather
+ * than start a lifecycle for the departing namespace (#3368).
+ */
+export function useActiveUserTransitioning(): boolean {
+  return useSyncExternalStore(
+    subscribeActiveUser,
+    isActiveUserTransitioning,
+    isActiveUserTransitioning,
   );
 }
 

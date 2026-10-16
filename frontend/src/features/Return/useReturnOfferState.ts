@@ -9,7 +9,12 @@ import {
   type ReturnOfferIdentity,
 } from '@/storage/returnOfferStorage';
 import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
-import { getActiveUser, getActiveUserGeneration, parseUserId } from '@/storage/userScope';
+import {
+  getActiveUser,
+  getActiveUserGeneration,
+  isActiveUserTransitioning,
+  parseUserId,
+} from '@/storage/userScope';
 import { decodeJwtPayload } from '@/utils/token';
 
 const EMPTY: MettaReturnState = {
@@ -56,8 +61,14 @@ function useReturnScope(): MountedReturnScope {
   const owner = useActiveUser();
   const generation = useActiveUserGeneration();
   const mounted = useMountedRef();
+  // Cleanup moves the generation (and re-renders this hook) while the outgoing
+  // token and namespace are still in hand; nothing is authorized until the
+  // incoming scope is committed (#3368).
   const authorized =
-    owner !== null && token !== null && parseUserId(decodeJwtPayload(token)?.sub) === owner;
+    !isActiveUserTransitioning() &&
+    owner !== null &&
+    token !== null &&
+    parseUserId(decodeJwtPayload(token)?.sub) === owner;
   const current = useCallback(
     () =>
       mounted.current &&
