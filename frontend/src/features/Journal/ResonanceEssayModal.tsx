@@ -418,7 +418,7 @@ function EssayBody({
   if (care !== undefined) {
     // The vault's care guard answered instead of a letter (#3380): only the
     // server's reviewed copy, and no nudge to ask for the letter again.
-    return <CareSupportNote care={care} />;
+    return <CareSupportNote care={care} flush />;
   }
   if (error != null) {
     // Announced as it appears, like the margin's own error line: a writer on a
