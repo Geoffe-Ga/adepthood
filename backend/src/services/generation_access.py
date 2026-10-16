@@ -170,6 +170,22 @@ def disclosed_route_changed(disclosed_route: str | None, boundary: ReflectionBou
     return disclosed_route is not None and disclosed_route != boundary
 
 
+def refuse_stale_route(
+    disclosed_route: str | None, boundary: ReflectionBoundary, *, detail: str
+) -> None:
+    """Raise a 409 ``detail`` when the disclosed payer route has changed (#3385).
+
+    For a route with no free exits left to answer first -- a first letter, past
+    its cached and intimate exits -- so the client discloses the price again
+    before the vault handshake, the payer gate or any charge.
+
+    Raises:
+        HTTPException: The 409 ``detail``.
+    """
+    if disclosed_route_changed(disclosed_route, boundary):
+        raise conflict(detail)
+
+
 def stale_route_refusal(
     refusal: HTTPException | None,
     *,

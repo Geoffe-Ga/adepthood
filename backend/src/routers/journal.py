@@ -181,9 +181,9 @@ from services.essay_settlement import (
     log_settled_essay,
 )
 from services.generation_access import (
-    disclosed_route_changed,
     free_only_refusal,
     payer_refusal,
+    refuse_stale_route,
     require_ai_payer,
     stale_route_refusal,
 )
@@ -3363,19 +3363,6 @@ def _log_essay_cache_hit(note: Marginalia, stage: str) -> None:
     )
 
 
-def _refuse_stale_route(clients: _EssayClients) -> None:
-    """Refuse a first letter whose price was disclosed for a route that has since changed.
-
-    A vault connected from another client turns a key-funded letter into a
-    credit; one disconnected sends a vault-disclosed letter to the app provider
-    (#3385). Either way the acknowledged price is not the one in force, so this
-    answers the same 409 as an unacknowledged price -- before the vault
-    handshake, the payer gate or any charge -- and the client discloses again.
-    """
-    if disclosed_route_changed(clients.disclosed_route, clients.boundary):
-        raise conflict(ESSAY_PRICE_UNACKNOWLEDGED)
-
-
 def _require_price_acknowledged(clients: _EssayClients) -> None:
     """Refuse a server-paid first letter the writer was not shown the price of.
 
@@ -3418,7 +3405,8 @@ async def _expand_essay(
     if not admits_egress(entry.classification):
         return note
     require_external_ai_available()
-    _refuse_stale_route(clients)
+    # A price disclosed for another payer route is no price at all (#3385).
+    refuse_stale_route(clients.disclosed_route, clients.boundary, detail=ESSAY_PRICE_UNACKNOWLEDGED)
     # Before the payer gate: asking a vault-bound writer for a key or a price
     # would be a false next step when no source may answer them (#3156).
     await require_vault_letters(session, note, clients.vault_client, clients.boundary)
