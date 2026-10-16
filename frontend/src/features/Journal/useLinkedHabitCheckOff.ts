@@ -22,6 +22,7 @@ import type { LoggedWritingSession, WritingSessionResult } from './writingSessio
 
 import { useToast } from '@/components/ToastProvider';
 import { useAuth } from '@/context/AuthContext';
+import { useAuthLineage } from '@/hooks/useAuthLineage';
 import { getActiveUserGeneration } from '@/storage/userScope';
 import {
   getWritingHabitLinkGeneration,
@@ -35,10 +36,11 @@ export function useLinkedHabitCheckOff(
   onLogged?: (_notice: LoggedWritingSession) => void,
 ): SessionHandler {
   const { token, userTimezone } = useAuth();
+  // The writer's session lineage, not the exact token: a renewal mid-check-off
+  // keeps it, so the confirmed check-in still reports (#3452).
+  const { isCurrent: lineageIsCurrent } = useAuthLineage();
   const ownerGeneration = getActiveUserGeneration();
   const { showToast } = useToast();
-  const latestToken = useRef(token);
-  latestToken.current = token;
   const latestResult = useRef<WritingSessionResult | null>(null);
   const mounted = useRef(false);
   useEffect(() => {
@@ -69,7 +71,7 @@ export function useLinkedHabitCheckOff(
         tz: userTimezone,
         showToast,
         isCurrent: () =>
-          latestToken.current === token &&
+          lineageIsCurrent() &&
           getActiveUserGeneration() === ownerGeneration &&
           getWritingHabitLinkGeneration() === linkGeneration,
         onLogged: (message) => {
@@ -77,6 +79,6 @@ export function useLinkedHabitCheckOff(
         },
       });
     },
-    [inner, onLogged, ownerGeneration, showToast, token, userTimezone],
+    [inner, onLogged, lineageIsCurrent, ownerGeneration, showToast, userTimezone],
   );
 }

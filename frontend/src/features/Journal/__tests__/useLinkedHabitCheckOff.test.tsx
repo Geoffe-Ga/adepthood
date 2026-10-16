@@ -26,8 +26,14 @@ jest.mock('@/api', () => ({
   uiFlags: { get: (token?: string) => mockFlagsGet(token), update: jest.fn() },
 }));
 
+// A signed-in writer: the check-off fences on the session lineage (#3452).
+const mockLinkToken = `e30.${btoa(JSON.stringify({ sub: '1', exp: 4_000_000_000 })).replaceAll('=', '')}.sig`;
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ token: 'link-tok', userTimezone: 'America/Chicago' }),
+  useAuth: () => ({
+    token: mockLinkToken,
+    authStatus: 'authenticated',
+    userTimezone: 'America/Chicago',
+  }),
 }));
 
 jest.mock('../writingHabitCheckOff', () => ({
@@ -74,7 +80,7 @@ describe('useLinkedHabitCheckOff', () => {
     renderHook(() => useLinkedHabitCheckOff(jest.fn()));
     await flush();
 
-    expect(mockFlagsGet).toHaveBeenCalledWith('link-tok');
+    expect(mockFlagsGet).toHaveBeenCalledWith(mockLinkToken);
   });
 
   it('always hands the session to the handler it wraps', async () => {
