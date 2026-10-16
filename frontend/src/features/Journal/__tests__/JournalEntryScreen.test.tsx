@@ -1077,6 +1077,58 @@ describe('JournalEntryScreen', () => {
       expect(queryByTestId('edit-confirm-dialog')).toBeNull();
     });
 
+    it('offers Finish again while a finished entry is edited, and re-finishes it (#3447)', async () => {
+      jest.useFakeTimers();
+      try {
+        mockGet.mockResolvedValue(entry({ id: 7, message: 'I walked.', status: 'finished' }));
+        mockList.mockResolvedValue({ items: [] });
+        const { getByTestId, findByTestId, queryByTestId } = renderScreen(
+          { entryId: 7 },
+          { autosaveDelayMs: 100 },
+        );
+        await act(async () => {
+          await Promise.resolve();
+        });
+        // Read-only: no Finish until the writer chooses Edit.
+        expect(queryByTestId('journal-finish-button')).toBeNull();
+        fireEvent.press(getByTestId('journal-edit-button'));
+        fireEvent.press(getByTestId('edit-confirm-edit'));
+        fireEvent.changeText(await findByTestId('journal-body-input'), 'I strolled instead.');
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(100);
+        });
+        // The edit's autosave never demotes the entry back to a draft.
+        for (const [, patch] of mockUpdate.mock.calls) {
+          expect(patch).not.toHaveProperty('status', 'draft');
+        }
+        mockUpdate.mockClear();
+        fireEvent.press(getByTestId('journal-finish-button'));
+        await act(async () => {
+          await Promise.resolve();
+        });
+        expect(mockUpdate).toHaveBeenCalledWith(7, {
+          message: 'I strolled instead.',
+          title: 'Rivers',
+          status: 'finished',
+        });
+        // Back to read-only, with the pencil in place of the editor.
+        expect(await findByTestId('journal-edit-button')).toBeTruthy();
+        expect(queryByTestId('journal-body-input')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('withholds Finish while an edited finished entry is emptied (#3447)', async () => {
+      const { getByTestId, findByTestId, queryByTestId } = await renderFinished();
+      fireEvent.press(getByTestId('journal-edit-button'));
+      fireEvent.press(getByTestId('edit-confirm-edit'));
+      const input = await findByTestId('journal-body-input');
+      expect(queryByTestId('journal-finish-button')).not.toBeNull();
+      fireEvent.changeText(input, '   ');
+      expect(queryByTestId('journal-finish-button')).toBeNull();
+    });
+
     it('re-fetches marginalia after the first save following an edit', async () => {
       jest.useFakeTimers();
       try {
