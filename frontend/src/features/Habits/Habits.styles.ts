@@ -18,6 +18,14 @@ const JUSTIFY_SPACE_BETWEEN = 'space-between' as const;
 const SECTION_TITLE_FONT_SIZE = 13;
 const SECTION_TITLE_LETTER_SPACING = 0.5;
 const FREQ_CHIP_FONT_SIZE = 14;
+// Onboarding reorder row (#3398): the energy line beneath the name starts on the
+// date's left edge, so the row keeps one column rule however the name wraps.
+const REORDER_HANDLE_WIDTH = 20;
+const REORDER_DATE_INSET = REORDER_HANDLE_WIDTH + SPACING.md;
+// The narrowest column the name may share a line with the date. Below it the
+// name drops to its own line under the date, so a word as long as "afternoon"
+// at doubled type still fits whole and lines break only at spaces.
+const REORDER_NAME_MIN_COLUMN = 200;
 
 // Device dimensions (for responsive layouts)
 
@@ -694,10 +702,21 @@ export const styles = StyleSheet.create({
   },
   habitDragInfo: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'baseline',
+    minWidth: 0,
+  },
+  // The date and the name share a wrapping line: the name sits beside the date
+  // while it has REORDER_NAME_MIN_COLUMN to spare, and drops beneath it when not.
+  habitDragText: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    rowGap: SPACING.xs,
   },
   dragHandle: {
-    width: 20,
+    width: REORDER_HANDLE_WIDTH,
     alignItems: 'center',
     marginRight: SPACING.md,
   },
@@ -713,7 +732,7 @@ export const styles = StyleSheet.create({
   },
   habitEnergyInfo: {
     marginTop: SPACING.sm,
-    paddingLeft: 90,
+    paddingLeft: REORDER_DATE_INSET,
   },
   habitEnergyText: {
     fontSize: 14,
@@ -795,24 +814,28 @@ export const styles = StyleSheet.create({
   habitsListContent: {
     paddingBottom: SPACING.xxl * 2,
   },
+  // A column: the handle/date/name/edit line on top, the energy line beneath,
+  // so a long name wraps inside the row instead of running past it (#3398).
   habitListItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: JUSTIFY_SPACE_BETWEEN,
+    flexDirection: 'column',
+    alignItems: 'stretch',
     backgroundColor: surface.canvas,
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.lg,
     borderRadius: BORDER_RADIUS.lg,
     marginVertical: SPACING.sm,
     borderWidth: 1,
-    borderColor: '#ddd',
+    borderColor: surface.hairline,
     ...SHADOWS.small,
   },
   habitListItemText: {
     fontSize: 16,
     fontWeight: '500',
     color: COLORS.text.primary,
+    flexGrow: 1,
     flexShrink: 1,
+    flexBasis: REORDER_NAME_MIN_COLUMN,
+    minWidth: 0,
   },
 
   habitChipContainer: {

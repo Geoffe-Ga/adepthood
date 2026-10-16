@@ -274,6 +274,30 @@
     "coveredBy": "frontend/e2e/habit-reorder.browser.e2e.test.ts"
   },
   {
+    "id": "habits.onboarding-row-wraps-a-long-name",
+    "description": "A user with a long habit name opens Energy Scaffolding and reaches the reorder step, where each habit is a draggable row (#3398). The covering spec signs up through the real client, seeds one habit with an 85-character name through the real API, walks review, add, both energy steps and the count warning, then measures the row in Chromium at 390px and 1280px with normal and doubled name text. Every glyph box of the name sits inside the row and the viewport, no word of the name is split across lines (on a phone the name drops to its own line under the date rather than breaking mid-word), the page never scrolls sideways, the date, icon-edit control and energy line stay inside the row without overlapping the name or each other, the energy line hangs on the date's left edge, and doubling the name adds lines without moving the date or the edit control. Saved frames are inspected by hand. Targeted text doubling does not establish physical OS zoom or native geometry.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/components/OnboardingModal.tsx",
+      "client": ["auth", "habits"],
+      "routes": ["POST /auth/signup", "POST /habits/", "GET /habits/"],
+      "tables": ["user", "habit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-onboarding-long-name.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.course-energy-handoff-waits-for-existing-habits",
+    "description": "A returning user taps Start Energy Scaffolding in Course while the Habits tab has never been opened (#3328). The handoff is consumed at once but the onboarding opens only after this account's habits have been read from the server under the live authentication session, so the review asks about the rows the user already has instead of showing the empty new-user flow. The covering spec signs up through the real client, seeds two habits over the real API, holds the cold tab's first GET /habits/ in Chromium at 390px and 1280px, and proves the modal stays closed while a waiting notice says why, then that releasing the read opens the review with both seeded rows. Controls: a rejected read with no cache keeps the handoff behind the existing error banner and opens once its Retry succeeds; a rejected read behind cached rows offers the notice's own Try again; Not now declines the held handoff and nothing opens later. The notice is measured for clipped or escaping glyphs and sideways page scroll at normal and targeted doubled text, and saved frames are inspected by hand. Account switch, A-to-B-to-A, a disabled ring and a stale earlier-session read during the hold are pinned in src/features/Habits/hooks/__tests__/useEnergyOnboardingIntent.test.ts, and the read outcome the hold keys on in the refreshHabits block of src/features/Habits/services/__tests__/habitManager.test.ts. Targeted text doubling does not establish physical OS zoom or native geometry.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["auth", "habits", "depthPreferences"],
+      "routes": ["POST /auth/signup", "POST /habits/", "GET /habits/", "GET /depth-preferences"],
+      "tables": ["user", "habit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-energy-cold-handoff.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.write-list-read-back",
     "description": "A user first tries to save a page made only of whitespace, a zero-width mark, and a control character; the production client receives the stable journal_message_empty refusal and the live journal remains empty. They then write legitimate Unicode prose, find it in the list, and read the body back unchanged. The backend boundary suite separately sweeps spaces, tabs/newlines, controls, and zero-width-only bodies across create and edit, proving those refusals happen before a journal row, Creek write, corpus classification, pipeline run, or wallet event.",
     "crosses": {
@@ -1136,6 +1160,27 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/course-start-here.browser.e2e.test.ts"
+  },
+  {
+    "id": "course.start-here-reloads-after-mounted-account-switch",
+    "description": "Two fresh accounts share a null program anchor. The outgoing account reads Course Start Here, then a controlled 401 on its next Frequency read (and on /auth/refresh) raises the re-auth sheet over the still-mounted Course, where the incoming account signs in; a document witness proves the running app never reloaded. Without a remount, Start Here shows the incoming account's own resources and server-confirmed read mark, Read next is re-asked for that account rather than keeping the outgoing answer, and the confirmed resource opens from the keyboard in the real reader as already read. Chromium covers phone and desktop at normal and targeted doubled rendered text (not native OS text-scale certification) with clipping checks. Held outgoing Start Here and Read next answers, A-to-B-to-A, the credential gap, a failed incoming load with retry, explicit Frequency routes, and same-session renewal are covered by the mounted CourseScreen jest suite, not by this browser spec.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["auth", "course", "stages"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "GET /stages",
+        "GET /course/site-resources",
+        "GET /course/start-here/progress",
+        "GET /course/next-unread",
+        "GET /course/site-resources/{slug}/body",
+        "POST /course/site-resources/{slug}/mark-read"
+      ],
+      "tables": ["user", "resourcecompletion", "stagecontent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course-start-here-account-switch.browser.e2e.test.ts"
   },
   {
     "id": "course.restores-last-read-frequency",
@@ -2554,6 +2599,24 @@
     "coveredBy": "frontend/e2e/habit-owner-switch.browser.e2e.test.ts"
   },
   {
+    "id": "habits.pending-create-survives-same-owner-reauth",
+    "description": "A real habit POST is held while the account's token is revoked on the real server; the running app's next read is refused, its refresh is refused, and the same account signs back in through the re-auth sheet without its id changing. The new session hydrates the account's real rows, then the held create's lost reply (phone) or success (desktop) is delivered: the row the new session shows never vanishes, and the ended session sends nothing further under its revoked credential. A reload shows the same single row. AuthProvider integration covers append, insert and logging across a real onUnauthorized and same-owner sign-in, the pending re-auth window, and controls for an uninterrupted session and a legitimate token refresh.",
+    "crosses": {
+      "screen": "frontend/src/features/Auth/ReauthSheet.tsx",
+      "client": ["auth", "habits"],
+      "routes": [
+        "POST /auth/signup",
+        "POST /auth/login",
+        "POST /auth/refresh",
+        "POST /habits/",
+        "GET /habits/"
+      ],
+      "tables": ["user", "habit", "goal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-same-owner-reauth.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.reflection-dismissal-account-ownership",
     "description": "Due-review reflection dismissals are account-owned on this device (#3289), proved in a real browser (#3321). Two accounts are rewound in the lane database so GET /reflections/due names the same scope, c1:w1, for both: the collision an unscoped flag would turn into one account's decline hiding the other's card. Account A sets its mounted Weekly Review card aside with the real Not now control (keyboard on phone, pointer on desktop); the only record written is A's @adepthood/reflection_dismissed:c1:w1#u<A> in on-device storage, no reflection write request is sent, and after reload the server still names c1:w1 while the shelf offers the daily page instead. An unscoped legacy flag for the same scope with unknown ownership is then planted, A's next real due read is answered by the server and held from the app, and B signs in through Settings in the same running SPA: B's independently due card stays offered, the late A answer is delivered without hiding or re-deciding it, and the legacy flag stays unassigned rather than migrating to B. B's undeclined card survives B's own reload, and A, B, A returns A to its retained set-aside. The decline's keyboard reach, pointer actionability and viewport containment are asserted at normal and doubled text, at 390 and 1280. The held read lands after a logout that remounts the signed-in tree, so the hook's owner/generation guards are not the only line there; their mounted-replacement cases stay in useDueReviewOwnership.test.tsx. #3073's broader criteria are not claimed here.",
     "crosses": {
@@ -2610,6 +2673,18 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/practice-habit-link.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.writing-timer-presets-in-reach",
+    "description": "A writer on a short phone page -- 200% browser zoom on a 390px phone, 195x422 CSS px at device scale 2 -- opens a new page and meets every length the idle writing timer offers (#3403). The presets wrap to a second row there, and the floating band used to keep its resonance-sized lift and hide 30, 45 and the unit behind an inner scroll nobody could see. The band now gives up that lift when its content cannot fit above it, and keeps it everywhere it can. The real browser reads each preset's box and the unit's against the band's visible area and the viewport with the band unscrolled, hit-tests each one's centre, keeps every preset at the 44px floor, then taps 30 where it is drawn and walks 10, 20, 30, 45 by Tab, each in view as it takes focus, choosing 45 with Enter (the readout says 30:00, then 45:00). The same checks run at 1280x720, at 390x844, and at 390x844 with the timer's text doubled. Jest pins the lowering, its no-flip re-measure, and the page clearance it reserves in WritingSessionSurface.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["auth", "journal"],
+      "routes": ["POST /auth/signup", "GET /journal/"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/writing-timer-presets-fit.browser.e2e.test.ts"
   },
   {
     "id": "journal.money-copy-route-and-credit-pack",

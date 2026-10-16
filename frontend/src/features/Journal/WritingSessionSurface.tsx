@@ -38,7 +38,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
-import { RESONANCE_BUTTON_CLEARANCE, WRITING_TIMER_CLEARANCE } from './JournalEntry.styles';
+import {
+  RESONANCE_BUTTON_CLEARANCE,
+  WRITING_BAND_LOWERED_CLEARANCE,
+  WRITING_TIMER_CLEARANCE,
+} from './JournalEntry.styles';
 import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 import WritingSessionBanner from './WritingSessionBanner';
 import WritingTimer from './WritingTimer';
@@ -105,6 +109,7 @@ interface StandingNote {
 function useBandClearance(
   onClearanceChange: WritingSessionSurfaceProps['onClearanceChange'],
   scrollWholeSurface: boolean,
+  lift: number,
 ) {
   const [visibleHeight, setVisibleHeight] = useState<number | null>(null);
   const reportLayout = useCallback((event: LayoutChangeEvent) => {
@@ -113,12 +118,9 @@ function useBandClearance(
   useEffect(() => {
     if (visibleHeight === null) return;
     onClearanceChange?.(
-      Math.max(
-        scrollWholeSurface ? 0 : WRITING_TIMER_CLEARANCE,
-        visibleHeight + RESONANCE_BUTTON_CLEARANCE + SPACING.md,
-      ),
+      Math.max(scrollWholeSurface ? 0 : WRITING_TIMER_CLEARANCE, visibleHeight + lift + SPACING.md),
     );
-  }, [onClearanceChange, scrollWholeSurface, visibleHeight]);
+  }, [onClearanceChange, scrollWholeSurface, visibleHeight, lift]);
   return reportLayout;
 }
 
@@ -160,19 +162,29 @@ function useStandingNote(
   return { note, dismiss, record };
 }
 
+/** The height a lowered band gains by giving up its resonance-sized lift. */
+const LIFT_GIVEN_UP = RESONANCE_BUTTON_CLEARANCE - WRITING_BAND_LOWERED_CLEARANCE;
+
 function useBandBounds() {
-  const [bandHeight, setBandHeight] = useState(Infinity);
+  // The band's height as it would be at the full lift, whichever lift it was
+  // measured at, so lowering it can never feed back into the decision to lower.
+  const [liftedHeight, setLiftedHeight] = useState(Infinity);
   const [contentHeight, setContentHeight] = useState(0);
   // Measure the unshrunk note, offers and clock: enlarged text and an open
   // picker need their real height, rather than a count of nominal targets.
-  const scrollWholeSurface = contentHeight > bandHeight;
+  const lowered = contentHeight > liftedHeight;
+  const loweredRef = useRef(lowered);
+  loweredRef.current = lowered;
+  const scrollWholeSurface = contentHeight > liftedHeight + (lowered ? LIFT_GIVEN_UP : 0);
   const reportBandLayout = useCallback((event: LayoutChangeEvent) => {
-    setBandHeight(event.nativeEvent.layout.height);
+    const measured = event.nativeEvent.layout.height;
+    setLiftedHeight(loweredRef.current ? measured - LIFT_GIVEN_UP : measured);
   }, []);
   const reportContentSize = useCallback((_width: number, height: number) => {
     setContentHeight(height);
   }, []);
-  return { scrollWholeSurface, reportBandLayout, reportContentSize };
+  const lift = lowered ? WRITING_BAND_LOWERED_CLEARANCE : RESONANCE_BUTTON_CLEARANCE;
+  return { scrollWholeSurface, lift, reportBandLayout, reportContentSize };
 }
 
 function StandingSessionNote({
@@ -212,11 +224,11 @@ function WritingSessionSurface({
   deps,
 }: WritingSessionSurfaceProps): React.JSX.Element {
   const { note, dismiss, record } = useStandingNote(onSession, loggedSession);
-  const { scrollWholeSurface, reportBandLayout, reportContentSize } = useBandBounds();
-  const reportLayout = useBandClearance(onClearanceChange, scrollWholeSurface);
+  const { scrollWholeSurface, lift, reportBandLayout, reportContentSize } = useBandBounds();
+  const reportLayout = useBandClearance(onClearanceChange, scrollWholeSurface, lift);
   return (
     <View
-      style={[styles.band, { right: rightInset }]}
+      style={[styles.band, { right: rightInset, bottom: lift }]}
       pointerEvents="box-none"
       onLayout={reportBandLayout}
       testID="writing-session-band"
@@ -256,13 +268,14 @@ const styles = StyleSheet.create({
   },
   band: {
     position: 'absolute',
-    // Leave the upper half for page actions; at short heights the complete
-    // surface scrolls, including its summary, Close and timer.
+    // Leave the upper half for page actions. The bottom is a lift applied at
+    // render: the resonance-sized baseline, or the lowered gap when the content
+    // cannot fit above it. Past even that, the complete surface scrolls,
+    // including its summary, Close and timer.
     top: '50%',
     justifyContent: 'flex-end',
     left: 0,
     right: 0,
-    bottom: RESONANCE_BUTTON_CLEARANCE,
     paddingHorizontal: journalSheet.deskPaddingH,
   },
 });

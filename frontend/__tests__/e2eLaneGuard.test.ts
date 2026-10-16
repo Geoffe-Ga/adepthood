@@ -62,6 +62,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'corpus-vault-first.browser.e2e.test.ts',
   BROWSER_JOURNEY,
   'course-reading-position.browser.e2e.test.ts',
+  'course-start-here-account-switch.browser.e2e.test.ts',
   'course-start-here.browser.e2e.test.ts',
   HABITS_VIEWPORT_JOURNEY,
   'course-reflect-return.browser.e2e.test.ts',
@@ -71,9 +72,12 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'feedback-composer.browser.e2e.test.ts',
   'feedback-resilience.browser.e2e.test.ts',
   'habit-add-cadence.browser.e2e.test.ts',
+  'habit-energy-cold-handoff.browser.e2e.test.ts',
+  'habit-onboarding-long-name.browser.e2e.test.ts',
   'habit-owner-switch.browser.e2e.test.ts',
   'habit-reorder.browser.e2e.test.ts',
   'habit-reveal-without-course.browser.e2e.test.ts',
+  'habit-same-owner-reauth.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
   DEMO_TILE_JOURNEY,
   'habits-day-rollover.browser.e2e.test.ts',
@@ -140,6 +144,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'text-order.browser.e2e.test.ts',
   'welcome.browser.e2e.test.ts',
   'writing-timer-habit-link.browser.e2e.test.ts',
+  'writing-timer-presets-fit.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [

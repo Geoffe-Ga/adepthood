@@ -38,6 +38,15 @@ const PREVIEW_STRIPE_WIDTH = 3;
 export const RESONANCE_BUTTON_CLEARANCE = SPACING.xl + touchTarget.minimum + SPACING.md;
 
 /**
+ * The floating writing band's lowered baseline: just a breathing gap above the
+ * page edge. A band too short to hold its own content above the resonance-sized
+ * lift (the idle timer's wrapped presets at 200% zoom on a phone, #3403) gives
+ * that lift up before it hides anything behind an inner scroll; nothing floats
+ * in the lift any more, so lowering covers no control.
+ */
+export const WRITING_BAND_LOWERED_CLEARANCE = SPACING.md;
+
+/**
  * Minimum row geometry for the floating writing timer. Readout and controls
  * occupy one row; idle presets have the same minimum height but can wrap for
  * enlarged text. WritingSessionSurface reports the resulting band's actual

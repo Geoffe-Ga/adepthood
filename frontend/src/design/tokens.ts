@@ -918,16 +918,18 @@ export const showcaseShadow = {
   elevation: 8,
 } as const;
 
-/** Blurred translucent web chrome, with opaque paper when native blur is absent. */
-export const glass = {
+/**
+ * Chrome that floats over the page, such as the writing timer's pill: the
+ * canvas paper, opaque on every platform, with a hairline edge and a card's
+ * lift. It was once a translucent blurred wash on the web, which let the page
+ * text under it read through behind its controls (#3403); floating chrome sits
+ * over writing, so nothing beneath it may be legible.
+ */
+export const floatingChrome = {
   pill: {
-    backgroundColor: Platform.OS === 'web' ? colors.mystical.glowLight : colors.paper.background,
+    backgroundColor: surface.canvas,
     borderColor: surface.hairline,
     borderWidth: 1,
     ...surfaceShadow.card,
   },
-  web:
-    Platform.OS === 'web'
-      ? ({ backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' } as unknown as ViewStyle)
-      : null,
-};
+} as const;

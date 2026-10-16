@@ -62,8 +62,7 @@ import {
   saveMorningPagesTipSetAside,
   type MorningPagesTipState,
 } from '@/storage/morningPagesTipStorage';
-import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
-import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
+import { useAccountScope } from '@/storage/useActiveUser';
 import { todayInUserTZ } from '@/utils/dateUtils';
 
 /** The band's identifying warm left rule (matches the shelf's other bands), in dp. */
@@ -102,8 +101,7 @@ function useMorningPagesTipState(
   onDismissed: (() => void) | undefined,
   refreshKey: number | undefined,
 ) {
-  const owner = useActiveUser();
-  const epoch = useActiveUserGeneration();
+  const { owner, epoch, isCurrent } = useAccountScope();
   const [answer, setAnswer] = useState<{
     owner: number | null;
     epoch: number;
@@ -116,22 +114,17 @@ function useMorningPagesTipState(
     let active = true;
     const seqAtStart = writeSeq.current;
     void loadMorningPagesTipState().then((stored) => {
-      if (
-        active &&
-        getActiveUser() === owner &&
-        getActiveUserGeneration() === epoch &&
-        writeSeq.current === seqAtStart
-      )
+      if (active && isCurrent() && writeSeq.current === seqAtStart)
         setAnswer({ owner, epoch, value: stored });
     });
     return () => {
       active = false;
     };
-  }, [refreshKey, owner, epoch]);
+  }, [refreshKey, owner, epoch, isCurrent]);
 
   const decline = useCallback(
     (change: Partial<MorningPagesTipState>, persist: () => Promise<unknown>) => {
-      if (getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
+      if (!isCurrent()) return;
       writeSeq.current += 1;
       void persist();
       setAnswer((prev) => ({
@@ -141,7 +134,7 @@ function useMorningPagesTipState(
       }));
       onDismissed?.();
     },
-    [onDismissed, owner, epoch],
+    [onDismissed, owner, epoch, isCurrent],
   );
 
   return { state, decline };
