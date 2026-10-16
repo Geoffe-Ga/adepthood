@@ -63,6 +63,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   BROWSER_JOURNEY,
   'course-reading-position.browser.e2e.test.ts',
   'course-start-here-account-switch.browser.e2e.test.ts',
+  'course-start-here-failure.browser.e2e.test.ts',
   'course-start-here.browser.e2e.test.ts',
   HABITS_VIEWPORT_JOURNEY,
   'course-reflect-return.browser.e2e.test.ts',

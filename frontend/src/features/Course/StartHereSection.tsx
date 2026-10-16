@@ -8,6 +8,9 @@ import type { EnergyHandoffStatus } from './useEnergyScaffoldingHandoff';
 import type { CourseProgress, SiteResource } from '@/api';
 import { ShowcaseCard } from '@/components/layout/ShowcaseCard';
 
+/** A failed read leaves progress unknown, so the copy claims nothing about it (#3344). */
+export const START_HERE_ERROR_COPY = "Start Here couldn't load, so your progress isn't shown.";
+
 interface Props {
   readNext?: React.ReactNode;
   resources: SiteResource[];
@@ -90,13 +93,18 @@ function StartHereHeader({
       <ShowcaseCard style={styles.stageCover}>
         <Text style={styles.stageCoverEyebrow}>New here? Start with these</Text>
         <Text style={styles.stageCoverTitle}>Start Here</Text>
-        {progress && (
+        {progress && status !== 'error' && (
           <Text style={styles.stageCoverProgressLabel}>
             {progress.read_items} of {progress.total_items} read
           </Text>
         )}
         {status === 'loading' && <ActivityIndicator />}
-        {status === 'error' && <RetryButton onRetry={onRetry} />}
+        {status === 'error' && (
+          <View style={styles.startHereError}>
+            <Text style={styles.stageCoverSubtitle}>{START_HERE_ERROR_COPY}</Text>
+            <RetryButton onRetry={onRetry} />
+          </View>
+        )}
       </ShowcaseCard>
       {readNext}
     </View>
