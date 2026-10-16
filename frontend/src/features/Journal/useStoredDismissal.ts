@@ -14,8 +14,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
-import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
-import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
+import { useAccountScope } from '@/storage/useActiveUser';
 
 export interface StoredDismissal {
   /** The answer if it is already in hand, or ``null`` while the read is out. */
@@ -39,8 +38,7 @@ export function useStoredDismissal(
   save: (_value: boolean) => Promise<void>,
   paymentScope?: unknown,
 ): StoredDismissal {
-  const owner = useActiveUser();
-  const epoch = useActiveUserGeneration();
+  const { epoch, isCurrent } = useAccountScope();
   const scope = useRef({ epoch, paymentScope });
   const revision = useRef(0);
   const settled = useRef<boolean | null>(null);
@@ -58,17 +56,12 @@ export function useStoredDismissal(
   const read = useCallback((): Promise<boolean> => {
     const atStart = revision.current;
     pending.current ??= load().then((stored) => {
-      if (
-        scope.current !== capturedScope ||
-        getActiveUser() !== owner ||
-        getActiveUserGeneration() !== epoch
-      )
-        return false;
+      if (scope.current !== capturedScope || !isCurrent()) return false;
       if (atStart === revision.current) settled.current = stored;
       return settled.current ?? stored;
     });
     return pending.current;
-  }, [load, owner, epoch, capturedScope]);
+  }, [load, isCurrent, capturedScope]);
 
   // Warm the read at mount so a press is almost never the thing waiting on it.
   useEffect(() => {
@@ -78,17 +71,12 @@ export function useStoredDismissal(
   const markDismissed = useCallback((): void => {
     // Memory first, disk after: a second press in the same session must not be
     // able to race the write and be shown the note it was just dismissed from.
-    if (
-      scope.current !== capturedScope ||
-      getActiveUser() !== owner ||
-      getActiveUserGeneration() !== epoch
-    )
-      return;
+    if (scope.current !== capturedScope || !isCurrent()) return;
     revision.current += 1;
     settled.current = true;
     pending.current = Promise.resolve(true);
     void save(true);
-  }, [save, owner, epoch, capturedScope]);
+  }, [save, isCurrent, capturedScope]);
 
   const known = useCallback((): boolean | null => settled.current, []);
 

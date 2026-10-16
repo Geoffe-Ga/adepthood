@@ -11,6 +11,7 @@ const A = 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y';
 const B = 'x.eyJzdWIiOiIyIiwiZXhwIjo0MDAwMDAwMDAwfQ.y';
 let mockToken: string | null = A;
 const mockDue = jest.fn<(_token?: string) => Promise<{ due: ReflectionDue | null }>>();
+const mockSaveDismissed = jest.fn<(_key: string, _value: boolean) => Promise<void>>();
 const DUE: ReflectionDue = {
   level: 'week',
   scope_key: 'c1:w1',
@@ -24,7 +25,7 @@ jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: mockToken }
 jest.mock('../reviewScopes', () => ({ resolveStageTitles: async () => new Map() }));
 jest.mock('@/storage/reflectionDismissalStorage', () => ({
   loadReflectionDismissed: async () => false,
-  saveReflectionDismissed: async () => undefined,
+  saveReflectionDismissed: (key: string, value: boolean) => mockSaveDismissed(key, value),
 }));
 jest.mock('@react-navigation/native', () => {
   const react = jest.requireActual<typeof React>('react');
@@ -37,6 +38,8 @@ beforeEach(() => {
   mockToken = A;
   setActiveUser(1);
   mockDue.mockReset();
+  mockSaveDismissed.mockReset();
+  mockSaveDismissed.mockResolvedValue(undefined);
   mockDue.mockResolvedValue({ due: DUE });
 });
 afterEach(() => {
@@ -100,4 +103,58 @@ it('keeps B’s confirmed review when the earlier A credential response arrives 
   });
   expect(result.current.review?.scope.existing_entry_id).toBe(41);
   expect(mockDue).toHaveBeenLastCalledWith(B);
+});
+
+it('rejects A’s held due read after A to B to A, keeping the fresh A answer', async () => {
+  let finish!: (_value: { due: ReflectionDue | null }) => void;
+  mockDue.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const { result } = renderHook(() => useDueReview());
+  await act(async () => {
+    setActiveUser(2);
+    setActiveUser(1);
+  });
+  await waitFor(() => expect(result.current.status).toBe('settled'));
+  expect(mockDue).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    finish({ due: { ...DUE, existing_entry_id: 99 } });
+  });
+  expect(result.current.review?.scope.existing_entry_id).toBe(41);
+});
+
+it('lands nothing from a held read after unmount', async () => {
+  let finish!: (_value: { due: ReflectionDue | null }) => void;
+  mockDue.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const { result, unmount } = renderHook(() => useDueReview());
+  unmount();
+  await act(async () => {
+    finish({ due: DUE });
+  });
+  expect(result.current.status).toBe('loading');
+});
+
+it('refuses a dismissal from a stale callback after the account changed', async () => {
+  const { result } = renderHook(() => useDueReview());
+  await waitFor(() => expect(result.current.review).not.toBeNull());
+  const staleDismiss = result.current.dismiss;
+  await act(async () => {
+    setActiveUser(2);
+  });
+  act(() => staleDismiss());
+  expect(mockSaveDismissed).not.toHaveBeenCalled();
+});
+
+it('sets the review aside for the same account', async () => {
+  const { result } = renderHook(() => useDueReview());
+  await waitFor(() => expect(result.current.review).not.toBeNull());
+  act(() => result.current.dismiss());
+  expect(mockSaveDismissed).toHaveBeenCalledWith(DUE.scope_key, true);
+  expect(result.current).toMatchObject({ status: 'settled', review: null });
 });

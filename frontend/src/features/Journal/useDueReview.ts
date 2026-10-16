@@ -21,8 +21,8 @@ import {
   loadReflectionDismissed,
   saveReflectionDismissed,
 } from '@/storage/reflectionDismissalStorage';
-import { useActiveUser, useActiveUserGeneration } from '@/storage/useActiveUser';
-import { getActiveUser, getActiveUserGeneration, parseUserId } from '@/storage/userScope';
+import { useAccountScope } from '@/storage/useActiveUser';
+import { parseUserId } from '@/storage/userScope';
 import { decodeJwtPayload } from '@/utils/token';
 
 /** A due review plus the stage title its program name needs (null for non-stage scopes). */
@@ -34,18 +34,21 @@ export interface DueReview {
 /** ``loading`` until the first due lookup settles, one way or the other. */
 export type DueReviewStatus = 'loading' | 'settled';
 
-/** The due review for today, or null. Never rejects. */
+/**
+ * The due review for today, or null. Never rejects.
+ *
+ * ``isCurrent`` is checked after each await, so a lookup whose account was
+ * replaced mid-flight reads nothing further in the new account's scope.
+ */
 async function resolveDueReview(
-  owner: number,
-  epoch: number,
+  isCurrent: () => boolean,
   token: string,
 ): Promise<DueReview | null> {
   try {
     const { due } = await reflections.due(token);
-    if (due == null || getActiveUser() !== owner || getActiveUserGeneration() !== epoch)
-      return null;
+    if (due == null || !isCurrent()) return null;
     if (await loadReflectionDismissed(due.scope_key)) return null;
-    if (getActiveUserGeneration() !== epoch) return null;
+    if (!isCurrent()) return null;
     const titles = await resolveStageTitles([due]);
     return { scope: due, stageTitle: titles.get(due.scope_key) ?? null };
   } catch {
@@ -59,8 +62,7 @@ export function useDueReview(): {
   dismiss: () => void;
 } {
   const { token } = useAuth();
-  const owner = useActiveUser();
-  const epoch = useActiveUserGeneration();
+  const { owner, epoch, isCurrent } = useAccountScope();
   // Auth adopts the durable namespace before committing its token to React.
   // That transition must not start an old credential's read in the new scope.
   const credentialOwner = token ? parseUserId(decodeJwtPayload(token)?.sub) : null;
@@ -73,23 +75,23 @@ export function useDueReview(): {
     useCallback(() => {
       if (!authenticated || token === null || owner === null) return;
       let active = true;
-      void resolveDueReview(owner, epoch, token).then((resolved) => {
-        if (!active || getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
+      void resolveDueReview(isCurrent, token).then((resolved) => {
+        if (!active || !isCurrent()) return;
         // Null is written too: a review that has since closed must go away.
         setAnswer({ epoch, review: resolved });
       });
       return () => {
         active = false;
       };
-    }, [owner, epoch, token, authenticated]),
+    }, [owner, epoch, isCurrent, token, authenticated]),
   );
 
   const dismiss = useCallback(() => {
-    if (review == null || getActiveUser() !== owner || getActiveUserGeneration() !== epoch) return;
+    if (review == null || !isCurrent()) return;
     // Only this scope is set aside; the morning-pages tip keeps its own say.
     void saveReflectionDismissed(review.scope.scope_key, true);
     setAnswer({ epoch, review: null });
-  }, [review, owner, epoch]);
+  }, [review, epoch, isCurrent]);
 
   return { status, review, dismiss };
 }
