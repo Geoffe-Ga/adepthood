@@ -2,6 +2,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getActiveUser, parseUserId } from './userScope';
 
+import { reportDiagnostic } from '@/observability/diagnostics';
+
 /** Persist before replacing the old owner stamp. Null quarantines unknown
  * legacy ownership even after a later successful account sign-in. */
 export const LEGACY_DECLINE_OWNER_KEY = '@adepthood/legacy_decline_owner';
@@ -66,6 +68,28 @@ function matchesLegacyOwner(raw: string, owner: number): boolean {
   );
 }
 
+/** Drop a migrated legacy row, best-effort. Once the scoped copy has landed
+ * the row is inert: provenance attributes it to this owner alone, and the
+ * scoped value now wins every read, so a failed removal must not cost the
+ * decline it just carried over. The bytes simply stay where they were. */
+async function discardMigratedLegacy(baseKey: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(baseKey);
+  } catch {
+    // Leaving the legacy row is harmless; losing the copied decline is not.
+    reportDiagnostic('storage_clear_failed', { storage: 'user_scope' });
+  }
+}
+
+/**
+ * Read ``owner``'s decline, carrying a legacy device-global row over to the
+ * owner's scoped key when provenance positively attributes it to them.
+ *
+ * Recovery contract: any failure BEFORE the scoped copy lands rejects and
+ * leaves the legacy row untouched, so the next read retries the migration.
+ * Once the copy lands, the decline is durable and is returned even if the
+ * legacy row cannot be removed (see ``discardMigratedLegacy``).
+ */
 export async function readOwnedDecline(
   baseKey: string,
   owner: number | null = getActiveUser(),
@@ -82,7 +106,7 @@ export async function readOwnedDecline(
     const latest = await AsyncStorage.getItem(key);
     if (latest !== null) return latest;
     await AsyncStorage.setItem(key, legacy);
-    await AsyncStorage.removeItem(baseKey);
+    await discardMigratedLegacy(baseKey);
     return legacy;
   });
 }

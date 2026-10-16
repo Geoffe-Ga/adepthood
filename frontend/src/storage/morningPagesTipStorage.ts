@@ -43,7 +43,12 @@ export const MORNING_PAGES_TIP_OPEN: MorningPagesTipState = Object.freeze({
   neverOffer: false,
 });
 
-/** Carry a legacy permanent decline over to the never-offer flag, once. */
+/**
+ * Carry a legacy permanent decline over to the never-offer flag, once. Removing
+ * the legacy row afterwards is best-effort: once the never-offer flag holds the
+ * decline, a failed removal must not reopen the tip. The stranded row is inert
+ * (the flag is only written when absent) and its removal retries on each read.
+ */
 async function migrateLegacyDismissal(
   legacyKey: string,
   neverOfferKey: string,
@@ -54,7 +59,12 @@ async function migrateLegacyDismissal(
   if ((await readOwnedDecline(NEVER_OFFER_KEY, owner)) === null) {
     await writeOwnedDeclineKey(neverOfferKey, FLAG_TRUE, true);
   }
-  await AsyncStorage.removeItem(legacyKey);
+  try {
+    await AsyncStorage.removeItem(legacyKey);
+  } catch {
+    // The decline already lives in the never-offer flag; retry on the next read.
+    reportDiagnostic('storage_clear_failed', { storage: 'morning_pages' });
+  }
 }
 
 export async function loadMorningPagesTipState(): Promise<MorningPagesTipState> {
