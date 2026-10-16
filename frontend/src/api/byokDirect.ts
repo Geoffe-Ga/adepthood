@@ -6,9 +6,14 @@
  * vendor that key belongs to. This module is that transport for a page read --
  * one image in, its text out -- for the two vendors the app supports.
  *
- * Both are reachable from a browser. Anthropic answers a cross-origin request
- * only when it carries {@link ANTHROPIC_BROWSER_ACCESS_HEADER}; OpenAI's API
- * allows cross-origin requests as it is. The enforced web CSP already admits
+ * On web, the browser must let each call cross origins. Anthropic does: its
+ * preflight admits any origin once the request carries
+ * {@link ANTHROPIC_BROWSER_ACCESS_HEADER}, which was checked live. Whether
+ * OpenAI's API admits a browser-origin call is UNVERIFIED: no live browser
+ * check has run yet (#3186). If OpenAI refuses, the browser blocks the `fetch`
+ * with an opaque `TypeError`, which `send()` reports as `network`, so an
+ * OpenAI-key writer on web would see a retryable connection message for a
+ * failure that repeats every time. The enforced web CSP already admits
  * both origins in `connect-src` (`frontend/nginx.conf`), which
  * `__tests__/byokDirect.test.ts` pins. Native has no CORS to satisfy.
  *
