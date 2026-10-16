@@ -104,18 +104,96 @@ function chips(editor: Locator, row: string): Locator {
   return editor.getByTestId(row).locator(`[data-testid^="${row}-"]`);
 }
 
-/** Double the note's and the chips' type, the way a 200% text setting would. */
+/** Marks every element in the editor that paints text of its own (a leaf text run). */
+const LEAF_MARK = 'data-e2e-leaf';
+
+async function markLeafText(editor: Locator): Promise<void> {
+  await editor.evaluate((root, mark) => {
+    for (const node of root.querySelectorAll<HTMLElement>('*')) {
+      const ownText = [...node.childNodes].some(
+        (child) => child.nodeType === Node.TEXT_NODE && (child.textContent ?? '').trim() !== '',
+      );
+      if (ownText) node.setAttribute(mark, '');
+    }
+  }, LEAF_MARK);
+}
+
+/** Double every text run in the editor, the way a 200% text setting would. */
 async function doubleEditorText(editor: Locator): Promise<void> {
-  await editor.evaluate((root) => {
-    const targets = root.querySelectorAll<HTMLElement>(
-      '[data-testid="goal-timer-note"], [data-testid^="goal-target-unit-"] > div, [data-testid^="goal-frequency-unit-"] > div',
-    );
-    for (const node of targets) {
+  await markLeafText(editor);
+  await editor.evaluate((root, mark) => {
+    for (const node of root.querySelectorAll<HTMLElement>(`[${mark}]`)) {
       const style = getComputedStyle(node);
       node.style.fontSize = `${Number.parseFloat(style.fontSize) * 2}px`;
       node.style.lineHeight = `${Number.parseFloat(style.lineHeight) * 2}px`;
     }
+  }, LEAF_MARK);
+}
+
+interface Box {
+  left: number;
+  right: number;
+}
+
+/** The card's content box: its border box less its horizontal padding. */
+async function cardContentBox(page: Page): Promise<Box> {
+  return page.getByTestId('goal-modal-card').evaluate((card) => {
+    const box = card.getBoundingClientRect();
+    const style = getComputedStyle(card);
+    return {
+      left: box.left + Number.parseFloat(style.paddingLeft),
+      right: box.right - Number.parseFloat(style.paddingRight),
+    };
   });
+}
+
+/** The painted boxes of one element: its glyph rects for a text run, else its own box. */
+async function paintedBoxes(target: Locator, glyphs: boolean): Promise<Box[]> {
+  return target.evaluate((node, byGlyph) => {
+    if (!byGlyph) return [node.getBoundingClientRect().toJSON() as Box];
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    return [...range.getClientRects()]
+      .filter((rect) => rect.width > 0)
+      .map((rect) => rect.toJSON() as Box);
+  }, glyphs);
+}
+
+/**
+ * Horizontal containment only. The edit region scrolls vertically by design;
+ * nothing is scrolled sideways first, so a chip a row has pushed off its end
+ * (and would only reach by swiping) counts as outside.
+ */
+const outside = (box: Box, inner: Box): boolean =>
+  box.left < inner.left - SUB_PIXEL || box.right > inner.right + SUB_PIXEL;
+
+/**
+ * Every chip, and every glyph of every text run in the editor, lies across
+ * inside the card's content box, and no run is clipped by its own box. Returns the offenders, described, so a failure names what spilled.
+ */
+async function offendersOutsideCard(page: Page, editor: Locator): Promise<string[]> {
+  await markLeafText(editor);
+  const offenders: string[] = [];
+  const targets = [
+    ...(
+      await editor
+        .locator('[data-testid^="goal-target-unit-"], [data-testid^="goal-frequency-unit-"]')
+        .all()
+    ).map((target) => ({ target, glyphs: false })),
+    ...(await editor.locator(`[${LEAF_MARK}]`).all()).map((target) => ({ target, glyphs: true })),
+  ];
+  for (const { target, glyphs } of targets) {
+    const boxes = await paintedBoxes(target, glyphs);
+    const inner = await cardContentBox(page);
+    const label = glyphs
+      ? `text "${await target.textContent()}"`
+      : `chip ${await target.getAttribute('data-testid')}`;
+    if (boxes.some((box) => outside(box, inner))) offenders.push(`${label} outside the card`);
+    if (glyphs && (await target.evaluate((node) => node.scrollWidth > node.clientWidth + 1))) {
+      offenders.push(`${label} clipped by its own box`);
+    }
+  }
+  return offenders;
 }
 
 /** The note sits inside the viewport, unclipped; every chip clears the touch floor. */
@@ -190,9 +268,13 @@ for (const width of [390, 1280]) {
     await editor.getByTestId('goal-frequency-unit-per_week').focus();
     await expect(editor.getByTestId('goal-frequency-unit-per_week')).toBeFocused();
 
+    expect(await offendersOutsideCard(page, editor)).toEqual([]);
     await doubleEditorText(editor);
+    expect(await offendersOutsideCard(page, editor)).toEqual([]);
     await expectReadableEditor(page, editor);
     await page.screenshot({ path: info.outputPath(`linked-editor-${width}-2x.png`) });
+    await editor.getByTestId('goal-target-display-low').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`linked-editor-${width}-2x-tiers.png`) });
     await closeModal(page);
 
     // --- The unlinked habit keeps every unit; then it is linked elsewhere. ---

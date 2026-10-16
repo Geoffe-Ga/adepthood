@@ -149,6 +149,20 @@ describe('GoalModal units editor for a timer-fed habit', () => {
     expect(onUpdateGoalUnits).toHaveBeenCalledWith(HABIT_ID, { target_unit: 'sessions' });
   });
 
+  it('wraps the two-chip rows of a timer-fed habit instead of scrolling them', async () => {
+    const unlinked = renderEditor();
+    await waitFor(() => expect(mockPracticeList).toHaveBeenCalled());
+    expect(unlinked.getByTestId('goal-target-unit').props.horizontal).toBe(true);
+    unlinked.unmount();
+
+    useWritingHabitLinkStore.setState({ habitId: HABIT_ID, hydrated: true });
+    const { getByTestId } = renderEditor();
+    for (const row of ['goal-target-unit', 'goal-frequency-unit']) {
+      expect(getByTestId(row).props.horizontal).toBeUndefined();
+      expect(getByTestId(row).props.style).toEqual(expect.objectContaining({ flexWrap: 'wrap' }));
+    }
+  });
+
   it('commits a unit pick through the shared batch update', () => {
     useWritingHabitLinkStore.setState({ habitId: HABIT_ID, hydrated: true });
     const { getByTestId, onUpdateGoalUnits } = renderEditor();

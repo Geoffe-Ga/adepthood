@@ -493,6 +493,9 @@ const goalEditorStyles = StyleSheet.create({
     fontSize: GOAL_UNIT_FONT_SIZE,
     color: colors.text.secondary,
     minWidth: GOAL_UNIT_MIN_WIDTH,
+    // Wrap "sessions a day" under itself at large text instead of running
+    // into the card edge.
+    flexShrink: 1,
   },
   fieldLabel: {
     fontSize: GOAL_FIELD_LABEL_FONT_SIZE,
@@ -501,6 +504,23 @@ const goalEditorStyles = StyleSheet.create({
     minWidth: GOAL_UNIT_MIN_WIDTH,
   },
   chipRow: {
+    paddingVertical: SPACING.xs,
+  },
+  rowWrap: {
+    flexWrap: 'wrap',
+  },
+  /**
+   * A timer-fed habit's rows hold only two chips, so they wrap onto a second
+   * line rather than scroll a whole chip out of sight at large text (#3154).
+   */
+  chipWrap: {
+    // Basis = the chips on one line: if that does not fit beside the label,
+    // the row wraps it to a line of its own, where it may wrap again.
+    flexGrow: 1,
+    flexShrink: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: SPACING.xs,
     paddingVertical: SPACING.xs,
   },
   // Trailing gap so the last chip clears the modal border with breathing room
@@ -741,6 +761,16 @@ const ChipScrollRow = ({ testID, children }: ChipScrollRowProps) => (
  * pinned to the formatted label so VoiceOver / TalkBack announce e.g.
  * "per day" rather than reading the raw "per_day" backend token.
  */
+/** The few chips of a timer-fed row wrap; the long list keeps its scroller. */
+const ChipRowFrame = ({ wrap, testID, children }: ChipScrollRowProps & { wrap: boolean }) =>
+  wrap ? (
+    <View testID={testID} style={goalEditorStyles.chipWrap}>
+      {children}
+    </View>
+  ) : (
+    <ChipScrollRow testID={testID}>{children}</ChipScrollRow>
+  );
+
 const UnitChipRow = ({
   options,
   selected,
@@ -748,7 +778,7 @@ const UnitChipRow = ({
   onSelect,
   timerOnly = false,
 }: UnitChipRowProps) => (
-  <ChipScrollRow testID={testID}>
+  <ChipRowFrame wrap={timerOnly} testID={testID}>
     {options.map((opt) => {
       const isSelected = opt === selected;
       const label = formatUnitLabel(opt);
@@ -774,7 +804,7 @@ const UnitChipRow = ({
         </TouchableOpacity>
       );
     })}
-  </ChipScrollRow>
+  </ChipRowFrame>
 );
 
 /**
@@ -910,7 +940,7 @@ const GoalUnitEditor = ({
 
   return (
     <View testID="goal-unit-editor">
-      <View style={goalEditorStyles.row}>
+      <View style={[goalEditorStyles.row, timerOnly && goalEditorStyles.rowWrap]}>
         <Text style={goalEditorStyles.fieldLabel}>Unit</Text>
         <UnitChipRow
           timerOnly={timerOnly}
@@ -920,7 +950,7 @@ const GoalUnitEditor = ({
           onSelect={(value) => commit({ target_unit: value })}
         />
       </View>
-      <View style={goalEditorStyles.row}>
+      <View style={[goalEditorStyles.row, timerOnly && goalEditorStyles.rowWrap]}>
         <Text style={goalEditorStyles.fieldLabel}>How often</Text>
         <FrequencyInput {...frequencyDraft} timerOnly={timerOnly} />
         <Text testID="goal-frequency-multiplier" style={goalEditorStyles.multiplier}>
