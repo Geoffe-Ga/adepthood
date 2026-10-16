@@ -3517,12 +3517,20 @@ async def _cache_and_mirror_essay(
         # Shadow only (#3059). ``_cache_essay`` commits before it dials, so this
         # read is released with its own before anything leaves the process.
         await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
-        cached, essay = await _write_first_letter(session, note=note, entry=entry, clients=clients)
-    if essay is None or isinstance(cached, LetterEscalation):
-        return cached
+        written = await _write_first_letter(session, note=note, entry=entry, clients=clients)
+    if not isinstance(written, _LetterToMirror):
+        return written
     return await _mirror_cached_essay(
-        session, entry=entry, cached=cached, essay=essay, clients=clients
+        session, entry=entry, cached=written.cached, essay=written.essay, clients=clients
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _LetterToMirror:
+    """An app-provider letter just cached on ``cached``, still owed its one mirror."""
+
+    cached: Marginalia
+    essay: str
 
 
 async def _write_first_letter(
@@ -3531,7 +3539,7 @@ async def _write_first_letter(
     note: Marginalia,
     entry: JournalEntry,
     clients: _EssayClients,
-) -> tuple[Marginalia | LetterEscalation, str | None]:
+) -> Marginalia | LetterEscalation | _LetterToMirror:
     """Have the one source this writer's boundary allows write the letter; name what to mirror.
 
     The vault for a vault-bound writer (#3156, #3203): it writes and keeps the
@@ -3540,10 +3548,12 @@ async def _write_first_letter(
     mirrored once -- unless it was not a letter at all, so the note comes back
     with ``essay`` unset and nothing reaches the vault the cache refused it
     from, or it is a stored demo letter a refused regeneration left in the row,
-    which must never reach the vault (#3096).
+    which must never reach the vault (#3096). Only a letter still owed its
+    mirror comes back as a :class:`_LetterToMirror`; a vault care escalation is
+    the :class:`LetterEscalation` the route answers with care (#3380).
     """
     if clients.boundary is ReflectionBoundary.VAULT_BOUND:
-        return await _cache_vault_letter(session, note=note, entry=entry, clients=clients), None
+        return await _cache_vault_letter(session, note=note, entry=entry, clients=clients)
     cached = await _cache_essay(
         session,
         note,
@@ -3551,7 +3561,8 @@ async def _write_first_letter(
         api_key=clients.api_key,
         boundary=clients.boundary,
     )
-    return cached, demo_visibility.served_letter(cached)
+    essay = demo_visibility.served_letter(cached)
+    return cached if essay is None else _LetterToMirror(cached, essay)
 
 
 async def _mirror_cached_essay(
