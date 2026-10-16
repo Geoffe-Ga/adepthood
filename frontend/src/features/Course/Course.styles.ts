@@ -80,6 +80,12 @@ const styles = StyleSheet.create({
   startHereHeader: {
     paddingBottom: SPACING.md,
   },
+  // A failed Start Here read: the truthful line, then its retry, hung from the
+  // cover's left edge like the progress label it stands in for (#3344).
+  startHereError: {
+    marginTop: SPACING.sm,
+    alignItems: 'flex-start',
+  },
   resourceActionButton: {
     minHeight: touchTarget.minimum,
     justifyContent: 'center',
@@ -505,6 +511,8 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     marginTop: SPACING.md,
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,

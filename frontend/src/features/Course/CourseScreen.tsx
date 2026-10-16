@@ -674,12 +674,14 @@ function useReadNext(
 /** The reader's position across the screen: the journal-return restore, the
  *  "Read next" target, and the mark-read handlers that keep both lists and the
  *  target current. A chapter or Start Here resource marked read moves the
- *  target, so it is re-asked. */
+ *  target, so it is re-asked. ``reloadStartHere`` re-reads the Start Here
+ *  resources and progress and re-asks "Read next" -- after a resource is marked
+ *  read and on an explicit retry of a failed read alike (#3344). */
 function useCourseReadingPosition(
   stageContent: ReturnType<typeof useStageContent>,
   viewer: ReturnType<typeof useCourseViewer>,
   setSelectedStage: (_stageNumber: number) => void,
-): { readNext: ReadNextProps; onMarkRead: () => void; onResourceRead: () => void } {
+): { readNext: ReadNextProps; onMarkRead: () => void; reloadStartHere: () => void } {
   const { rearm } = useReaderRestore(
     stageContent.content,
     viewer.viewingItem?.id ?? null,
@@ -696,11 +698,11 @@ function useCourseReadingPosition(
     refresh();
   }, [handleMarkRead, refresh]);
   const readNext = useMemo(() => ({ state, onOpen: openNext }), [state, openNext]);
-  const onResourceRead = useCallback(() => {
+  const reloadStartHere = useCallback(() => {
     refresh();
     void useStartHereStore.getState().load(true);
   }, [refresh]);
-  return { readNext, onMarkRead, onResourceRead };
+  return { readNext, onMarkRead, reloadStartHere };
 }
 
 // --- Main component ---
@@ -855,6 +857,7 @@ const StagePanel = ({
 
 interface CourseScreenDrawerProps {
   activeResourceSlug?: string;
+  onStartHereRetry: () => void;
   drawer: ScreenDrawerState;
   stages: Stage[];
   selectedStage: number;
@@ -871,6 +874,7 @@ const CourseScreenDrawer = ({
   onChapterPress,
   onResourcePress,
   activeResourceSlug,
+  onStartHereRetry,
 }: CourseScreenDrawerProps): React.JSX.Element => {
   const resources = useStartHereStore((state) => state.resources);
   const resourceStatus = useStartHereStore((state) => state.status);
@@ -882,7 +886,7 @@ const CourseScreenDrawer = ({
       <CourseDrawer
         resources={resources}
         resourceStatus={resourceStatus}
-        onResourcesRetry={() => void useStartHereStore.getState().load(true)}
+        onResourcesRetry={onStartHereRetry}
         activeResourceSlug={activeResourceSlug}
         onResourcePress={(resource) => {
           onResourcePress(resource);
@@ -931,13 +935,17 @@ interface CourseLandingProps {
   selectedStage: number;
   stageContent: ReturnType<typeof useStageContent>;
   viewer: ReturnType<typeof useCourseViewer>;
-  drawer: ScreenDrawerState;
+  drawerProps: CourseScreenDrawerProps;
   readNext: ReadNextProps;
   onStageSelect: (_stageNumber: number) => void;
-  onChapterPress: (_stageNumber: number, _item: ContentItem) => void;
 }
 
-function StartHereLanding({ viewer, readNext }: Pick<CourseLandingProps, 'viewer' | 'readNext'>) {
+function StartHereLanding({
+  viewer,
+  readNext,
+  onStartHereRetry,
+}: Pick<CourseLandingProps, 'viewer' | 'readNext'> &
+  Pick<CourseScreenDrawerProps, 'onStartHereRetry'>) {
   const startHere = useStartHereStore();
   const habitsEnabled = useDepthPreferencesStore(selectEnableHabits);
   const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList>>();
@@ -959,7 +967,7 @@ function StartHereLanding({ viewer, readNext }: Pick<CourseLandingProps, 'viewer
       progress={startHere.progress}
       status={startHere.status}
       onSelect={viewer.handleResourcePress}
-      onRetry={() => void startHere.load(true)}
+      onRetry={onStartHereRetry}
       habitsEnabled={habitsEnabled}
       energyStatus={energyHandoff.status}
       onStartEnergy={energyHandoff.start}
@@ -974,10 +982,9 @@ const CourseLanding = ({
   selectedStage,
   stageContent,
   viewer,
-  drawer,
+  drawerProps,
   readNext,
   onStageSelect,
-  onChapterPress,
 }: CourseLandingProps): React.JSX.Element => {
   const selectedStageData = allStages.find((s) => s.stage_number === selectedStage);
   return (
@@ -992,7 +999,11 @@ const CourseLanding = ({
           onSelectStage={onStageSelect}
         />
         {selectedStage === START_HERE ? (
-          <StartHereLanding viewer={viewer} readNext={readNext} />
+          <StartHereLanding
+            viewer={viewer}
+            readNext={readNext}
+            onStartHereRetry={drawerProps.onStartHereRetry}
+          />
         ) : (
           <StagePanel
             selectedStage={selectedStage}
@@ -1003,14 +1014,7 @@ const CourseLanding = ({
           />
         )}
         <BottomFade />
-        <CourseScreenDrawer
-          drawer={drawer}
-          stages={allStages}
-          selectedStage={selectedStage}
-          onChapterPress={onChapterPress}
-          onResourcePress={viewer.handleResourcePress}
-          activeResourceSlug={viewer.viewingResource?.slug}
-        />
+        <CourseScreenDrawer {...drawerProps} />
       </ContentContainer>
     </SafeAreaView>
   );
@@ -1032,7 +1036,7 @@ const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
   const stageContent = useStageContent(selectedStage, allStages.length > 0);
   const viewer = useCourseViewer(selectedStage);
-  const { readNext, onMarkRead, onResourceRead } = useCourseReadingPosition(
+  const { readNext, onMarkRead, reloadStartHere } = useCourseReadingPosition(
     stageContent,
     viewer,
     setSelectedStage,
@@ -1044,21 +1048,22 @@ const CourseScreen = (): React.JSX.Element => {
     drawer,
   );
 
-  const overlay = renderOverlay(viewer, { onMarkRead, onResourceRead }, stageContent.content);
-  if (overlay !== null) {
-    // Drawer must mount alongside the reader so the hamburger works while reading.
-    return (
-      <CourseReaderOverlay
-        overlay={overlay}
-        drawer={drawer}
-        stages={allStages}
-        selectedStage={selectedStage}
-        onChapterPress={handleChapterPress}
-        onResourcePress={viewer.handleResourcePress}
-        activeResourceSlug={viewer.viewingResource?.slug}
-      />
-    );
-  }
+  const drawerProps: CourseScreenDrawerProps = {
+    drawer,
+    stages: allStages,
+    selectedStage,
+    onChapterPress: handleChapterPress,
+    onResourcePress: viewer.handleResourcePress,
+    activeResourceSlug: viewer.viewingResource?.slug,
+    onStartHereRetry: reloadStartHere,
+  };
+  const overlay = renderOverlay(
+    viewer,
+    { onMarkRead, onResourceRead: reloadStartHere },
+    stageContent.content,
+  );
+  // Drawer must mount alongside the reader so the hamburger works while reading.
+  if (overlay !== null) return <CourseReaderOverlay overlay={overlay} {...drawerProps} />;
 
   if (loading) return <CourseLoadingState onRetry={retry} />;
 
@@ -1077,10 +1082,9 @@ const CourseScreen = (): React.JSX.Element => {
       selectedStage={selectedStage}
       stageContent={stageContent}
       viewer={viewer}
-      drawer={drawer}
+      drawerProps={drawerProps}
       readNext={readNext}
       onStageSelect={handleStageSelect}
-      onChapterPress={handleChapterPress}
     />
   );
 };

@@ -4,7 +4,13 @@ import { START_HERE } from './stageDisplay';
 import { stages, uiFlags, type CourseProgress, type Stage } from '@/api';
 import { programStage } from '@/store/useProgramStore';
 
-/** Explicit navigation wins; an unknown reading state cannot establish completion. */
+/**
+ * Explicit navigation wins; an unknown reading state cannot establish completion.
+ *
+ * A failed Start Here read leaves progress unknown, so entry opens Start Here,
+ * which reports the failure with a retry, rather than failing the whole Course
+ * and hiding chapter navigation that loaded fine (#3344).
+ */
 export async function loadInitialReadingStage(
   available: Stage[],
   anchor: Date | null,
@@ -17,8 +23,7 @@ export async function loadInitialReadingStage(
   };
   assertCurrent();
   if (explicit !== null) return explicit;
-  if (!progress) throw new Error('Start Here progress is unavailable');
-  if (progress.read_items < progress.total_items) return START_HERE;
+  if (!progress || progress.read_items < progress.total_items) return START_HERE;
   const { course_last_stage: saved } = await uiFlags.get(session.token);
   assertCurrent();
   const previous = available.find((stage) => stage.stage_number === saved && stage.is_unlocked);

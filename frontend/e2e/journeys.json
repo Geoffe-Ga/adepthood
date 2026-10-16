@@ -1183,6 +1183,28 @@
     "coveredBy": "frontend/e2e/course-start-here-account-switch.browser.e2e.test.ts"
   },
   {
+    "id": "course.start-here-failure-keeps-chapter-navigation",
+    "description": "On bare /course entry the stage list loads while a controlled 503 fails one Start Here read: GET /course/site-resources at normal text, GET /course/start-here/progress at doubled text, so each read fails at both phone and desktop widths. The Course does not fall back to its full-screen error: unknown progress opens Start Here (never the saved Frequency, which only finished progress can reach), which says the read failed, hides any progress count and offers a 44px 'Try again'. The stage pills still open a healthy stage-1 chapter in the real reader, and the drawer still lists the stages with its own Start Here retry. Once the read can succeed, Try again is reached with Tab (its focus ring inspected) and pressed with Enter; Start Here then shows the server-confirmed resources in order with the pre-marked first resource read, the right 'N of M read' count, and a re-asked, resource-first Read next past the confirmed resource, while the selection stays on Start Here. Chromium covers 390px and 1280px at normal and targeted doubled rendered text (not native OS text-scale certification) with clipping checks. A retry that fails again, a failed Read next lookup, explicit Frequency routes and the owner/generation protections are pinned by the mounted CourseScreen jest suites (CourseScreenStartHereFailure, CourseScreenAccountSwitch), not by this browser spec.",
+    "crosses": {
+      "screen": "frontend/src/features/Course/CourseScreen.tsx",
+      "client": ["course", "stages"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /stages",
+        "GET /course/site-resources",
+        "GET /course/start-here/progress",
+        "GET /course/next-unread",
+        "POST /course/site-resources/{slug}/mark-read",
+        "GET /course/stages/{stage_number}/content",
+        "GET /course/stages/{stage_number}/progress",
+        "GET /course/content/{content_id}/body"
+      ],
+      "tables": ["user", "stagecontent", "resourcecompletion"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/course-start-here-failure.browser.e2e.test.ts"
+  },
+  {
     "id": "course.restores-last-read-frequency",
     "description": "At desktop and phone widths, a reader marks a Blue chapter read while the program calendar is on Orange, then reloads Course without route parameters and finds Blue selected. The browser uses the real reader scroll and mark-read action, GET /ui-flags, and GET /stages without response stubs.",
     "crosses": {

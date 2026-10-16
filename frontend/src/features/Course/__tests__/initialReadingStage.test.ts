@@ -81,7 +81,9 @@ describe('the Course entry selection', () => {
     ).rejects.toThrow('Course session changed');
   });
   it('does not infer completion from a failed progress request', async () => {
-    await expect(loadInitialReadingStage(available, null, null, null, session)).rejects.toThrow();
+    // Unknown progress opens Start Here, where the failed read is reported (#3344).
+    await expect(loadInitialReadingStage(available, null, null, null, session)).resolves.toBe(0);
+    expect(uiFlags.get).not.toHaveBeenCalled();
     await expect(loadInitialReadingStage(available, null, null, 2, session)).resolves.toBe(2);
   });
 });
