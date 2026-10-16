@@ -821,6 +821,7 @@ function useCourseEnergyIntent(
         onboardingIntent: undefined,
         onboardingOwner: undefined,
         onboardingGeneration: undefined,
+        onboardingSession: undefined,
       }),
     [navigation],
   );

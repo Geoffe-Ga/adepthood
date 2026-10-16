@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { captureCourseSession, type CourseSession } from './courseSession';
 
 import { course, type CourseProgress, type SiteResource } from '@/api';
+import { hasOnlySessionEnded } from '@/api/sessionToken';
 import { reportDiagnostic } from '@/observability/diagnostics';
 import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
 import { registerStoreReset } from '@/store/registry';
@@ -34,12 +35,18 @@ async function readResources(
   session: CourseSession,
 ): Promise<StartHereSnapshot | null> {
   const current = () => sequence === request && session.current();
+  // A later session of the same account takes no answer from this one, but
+  // its Start Here must offer a retry rather than spin (#3423).
+  const sessionEnded = () => sequence === request && hasOnlySessionEnded(session);
   try {
     const [resources, progress] = await Promise.all([
       course.siteResources(session.token),
       course.startHereProgress(session.token),
     ]);
-    if (!current()) return null;
+    if (!current()) {
+      if (sessionEnded()) useStartHereStore.setState({ status: 'error' });
+      return null;
+    }
     const snapshot = { resources: [...resources].sort((a, b) => a.order - b.order), progress };
     useStartHereStore.setState({ ...snapshot, status: 'ready' });
     return snapshot;
@@ -47,6 +54,8 @@ async function readResources(
     if (current()) {
       useStartHereStore.setState({ status: 'error' });
       reportDiagnostic('course_load_failed');
+    } else if (sessionEnded()) {
+      useStartHereStore.setState({ status: 'error' });
     }
     return null;
   } finally {

@@ -1,4 +1,9 @@
-import { getActiveUserGeneration, isActiveUserTransitioning } from '../storage/userScope';
+import {
+  getActiveUser,
+  getActiveUserGeneration,
+  isAccountScopeCurrent,
+  isActiveUserTransitioning,
+} from '../storage/userScope';
 
 let tokenGetter: (() => string | null) | null = null;
 
@@ -28,6 +33,38 @@ export function beginAuthSession(): void {
 
 export function getAuthSession(): number {
   return authSession;
+}
+
+/** The account and authentication session a piece of work was captured under (#3423). */
+export interface AuthScope {
+  readonly owner: number | null;
+  readonly generation: number;
+  readonly session: number;
+}
+
+export function captureAuthScope(): AuthScope {
+  return { owner: getActiveUser(), generation: getActiveUserGeneration(), session: authSession };
+}
+
+/**
+ * Whether work captured as ``scope`` may still land: the account scope holds
+ * (``isAccountScopeCurrent``) and no session boundary has passed since. The
+ * same account signing back in after a 401 leaves the account scope alone, so
+ * only the session term refuses the ended session's late answers; a token
+ * refresh moves neither and keeps them.
+ */
+export function isAuthScopeCurrent({ owner, generation, session }: AuthScope): boolean {
+  return isAccountScopeCurrent(owner, generation) && session === authSession;
+}
+
+/**
+ * Whether ``scope`` is refused only because its session ended: the same
+ * account is still live in a later session. Its answer must not land, but the
+ * surface that issued it still belongs to that account and is still on
+ * screen, so it may let go of its spinner or pending mark and offer a retry.
+ */
+export function hasOnlySessionEnded({ owner, generation, session }: AuthScope): boolean {
+  return isAccountScopeCurrent(owner, generation) && session !== authSession;
 }
 
 /**

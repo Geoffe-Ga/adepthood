@@ -1,7 +1,14 @@
-import { afterEach, beforeEach, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { refreshSessionToken, resetTokenRotations, setTokenGetter } from '../index';
-import { getAuthSession } from '../sessionToken';
+import {
+  captureAuthScope,
+  getAuthSession,
+  hasOnlySessionEnded,
+  isAuthScopeCurrent,
+} from '../sessionToken';
+
+import { beginActiveUserTransition, setActiveUser } from '@/storage/userScope';
 
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 const fetchMock = jest.fn<typeof fetch>();
@@ -45,4 +52,41 @@ it('keeps the auth session across a legitimate token refresh', async () => {
 
   expect(live).toBe(renewed);
   expect(getAuthSession()).toBe(before);
+});
+
+describe('the shared auth scope (#3423)', () => {
+  afterEach(() => {
+    setActiveUser(null);
+  });
+
+  it('holds until a session boundary, and then only the session has ended', () => {
+    setActiveUser(1);
+    const scope = captureAuthScope();
+    expect(isAuthScopeCurrent(scope)).toBe(true);
+    expect(hasOnlySessionEnded(scope)).toBe(false);
+
+    resetTokenRotations();
+
+    expect(isAuthScopeCurrent(scope)).toBe(false);
+    expect(hasOnlySessionEnded(scope)).toBe(true);
+  });
+
+  it('treats a change of account as more than a session ending', () => {
+    setActiveUser(1);
+    const scope = captureAuthScope();
+    resetTokenRotations();
+    setActiveUser(2);
+
+    expect(isAuthScopeCurrent(scope)).toBe(false);
+    expect(hasOnlySessionEnded(scope)).toBe(false);
+  });
+
+  it('is current for nothing while an account cleanup runs', () => {
+    setActiveUser(1);
+    beginActiveUserTransition();
+    const scope = captureAuthScope();
+
+    expect(isAuthScopeCurrent(scope)).toBe(false);
+    expect(hasOnlySessionEnded(scope)).toBe(false);
+  });
 });

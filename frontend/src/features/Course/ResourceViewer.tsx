@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
 
 import { course as courseApi, type SiteResource } from '../../api';
+import { hasOnlySessionEnded } from '../../api/sessionToken';
 import { colors } from '../../design/tokens';
 
 import ChapterReader from './ChapterReader';
@@ -51,10 +52,10 @@ function useResourceMarkRead(
     const session = captureCourseSession();
     if (!session) return;
     const requestEpoch = useStartHereStore.getState().epoch;
-    const current = () =>
-      isMountedRef.current &&
-      session.current() &&
-      requestEpoch === useStartHereStore.getState().epoch;
+    const live = () => isMountedRef.current && requestEpoch === useStartHereStore.getState().epoch;
+    const current = () => live() && session.current();
+    // A later session of the same account takes no answer, but frees the button (#3423).
+    const settles = () => live() && (session.current() || hasOnlySessionEnded(session));
     setMarking(true);
     try {
       await courseApi.markResourceRead(requestedSlug, session.token);
@@ -66,7 +67,7 @@ function useResourceMarkRead(
     } catch {
       reportDiagnostic('course_read_failed');
     } finally {
-      if (current() && currentSlugRef.current === requestedSlug) setMarking(false);
+      if (settles() && currentSlugRef.current === requestedSlug) setMarking(false);
     }
   }, [isRead, marking, slug, onMarkedRead, isMountedRef]);
 

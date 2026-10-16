@@ -6,6 +6,7 @@ import ResourceViewer from '../ResourceViewer';
 import { useStartHereStore } from '../startHereStore';
 
 import { course } from '@/api';
+import { beginAuthSession } from '@/api/sessionToken';
 import { setActiveUser } from '@/storage/userScope';
 
 let mockSessionToken: string | undefined = 'e30.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.signature';
@@ -104,4 +105,37 @@ describe('confirmed resource reading state', () => {
     expect(changed).not.toHaveBeenCalled();
     expect(view.queryByText('✓ Read')).toBeNull();
   });
+
+  it.each([
+    ['the same account signs back in', false],
+    ['the token is only refreshed (control)', true],
+  ])(
+    'when %s mid-mark, the old answer lands only in its own session (#3423)',
+    async (_label, lands) => {
+      let resolve!: (_value: Awaited<ReturnType<typeof course.markResourceRead>>) => void;
+      jest.mocked(course.markResourceRead).mockReturnValue(
+        new Promise((done) => {
+          resolve = done;
+        }),
+      );
+      const changed = jest.fn();
+      const view = render(
+        <ResourceViewer
+          resource={{ slug: 'about', title: 'About' }}
+          onBack={jest.fn()}
+          onMarkedRead={changed}
+        />,
+      );
+      fireEvent.press(view.getByLabelText('Mark as Read'));
+      expect(view.getByTestId('resource-mark-read-loading')).toBeTruthy();
+      if (!lands) beginAuthSession();
+      await act(async () =>
+        resolve({ id: 1, slug: 'about', completed_at: '2026-10-14T00:00:00Z' }),
+      );
+      expect(changed).toHaveBeenCalledTimes(lands ? 1 : 0);
+      expect(view.queryByText('✓ Read') !== null).toBe(lands);
+      // Either way the button is released, not left spinning.
+      expect(view.queryByTestId('resource-mark-read-loading')).toBeNull();
+    },
+  );
 });

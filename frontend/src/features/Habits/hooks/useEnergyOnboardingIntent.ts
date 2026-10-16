@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { habitSyncScopeKey } from '../services/habitSyncScope';
 
-import { getActiveUser, getActiveUserGeneration } from '@/storage/userScope';
+import { isAuthScopeCurrent, type AuthScope } from '@/api/sessionToken';
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 import { useHabitStore, type HabitServerSync } from '@/store/useHabitStore';
 
@@ -10,6 +10,8 @@ export interface EnergyOnboardingParams {
   onboardingIntent?: 'energy-scaffolding';
   onboardingOwner?: number;
   onboardingGeneration?: number;
+  /** The authentication session Course asked in: a re-login of the same account ends it (#3423). */
+  onboardingSession?: number;
 }
 
 /**
@@ -26,14 +28,11 @@ export interface EnergyHandoff {
   cancel: () => void;
 }
 
-interface PendingHandoff {
-  owner: number;
-  generation: number;
-}
+type PendingHandoff = AuthScope;
 
-/** The account, its generation and the Habits ring that the request was made under all still hold. */
-const stillValid = ({ owner, generation }: PendingHandoff, ringEnabled: boolean): boolean =>
-  ringEnabled && owner === getActiveUser() && generation === getActiveUserGeneration();
+/** The account, its generation, its session and the Habits ring the request was made under all still hold. */
+const stillValid = (request: PendingHandoff, ringEnabled: boolean): boolean =>
+  ringEnabled && isAuthScopeCurrent(request);
 
 const syncFor = (sync: HabitServerSync | null): HabitServerSync['status'] | null =>
   sync?.scope === habitSyncScopeKey() ? sync.status : null;
@@ -57,6 +56,7 @@ export function useEnergyOnboardingIntent(
   const intent = params?.onboardingIntent;
   const owner = params?.onboardingOwner;
   const generation = params?.onboardingGeneration;
+  const session = params?.onboardingSession;
   useEffect(() => {
     if (!intent) {
       consumed.current = false;
@@ -65,10 +65,10 @@ export function useEnergyOnboardingIntent(
     if (!clear || consumed.current) return;
     consumed.current = true;
     clear();
-    if (owner === undefined || generation === undefined) return;
-    const request = { owner, generation };
+    if (owner === undefined || generation === undefined || session === undefined) return;
+    const request = { owner, generation, session };
     if (stillValid(request, useDepthPreferencesStore.getState().enable_habits)) setPending(request);
-  }, [intent, owner, generation, clear]);
+  }, [intent, owner, generation, session, clear]);
   useEffect(() => {
     if (!pending) return;
     if (!stillValid(pending, ringEnabled)) {

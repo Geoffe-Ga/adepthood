@@ -36,6 +36,7 @@ export type RootTabParamList = {
         onboardingIntent?: 'energy-scaffolding';
         onboardingOwner?: number;
         onboardingGeneration?: number;
+        onboardingSession?: number;
       }
     | undefined;
   Practice: { stageNumber?: number } | undefined;
