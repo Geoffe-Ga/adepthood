@@ -78,6 +78,13 @@ const NO_DEPS: EngineDeps = {};
 const JOURNAL_SHEET_MAX_WIDTH = journalLayout.pageMaxWidth + journalLayout.marginColumnWidth;
 const TIMER_DOCK_TRACK_MAX_WIDTH = JOURNAL_SHEET_MAX_WIDTH + 2 * (touchTarget.minimum + SPACING.sm);
 const TIMER_DOCK_MIN_VIEWPORT_WIDTH = TIMER_DOCK_TRACK_MAX_WIDTH + 2 * SPACING.sm;
+/** The preset grid's gap: the row's usual gap, and the rail's tighter one. */
+const PRESET_GAP = SPACING.sm;
+/**
+ * The desktop rail is a margin's width: at the usual gap its four 44dp presets
+ * leave no room for the unit, so the rail closes the gap rather than a target.
+ */
+const PRESET_GAP_RAIL = SPACING.xs;
 
 export interface WritingTimerProps {
   /** The length the timer opens at; the writer can change it before starting. */
@@ -99,7 +106,60 @@ export interface WritingTimerProps {
   deps?: EngineDeps;
 }
 
-/** The four lengths, offered as a row while the timer is at rest. */
+/** One length, as a radio chip that shares its pair's width equally. */
+function PresetChip({
+  option,
+  selected,
+  onChoose,
+}: {
+  option: number;
+  selected: boolean;
+  onChoose: (next: number) => void;
+}): React.JSX.Element {
+  return (
+    <TouchableOpacity
+      style={[styles.preset, selected ? styles.presetSelected : null]}
+      onPress={() => onChoose(option)}
+      accessibilityRole="radio"
+      accessibilityLabel={writingTimerPresetA11yLabel(option)}
+      accessibilityState={{ selected }}
+      testID={`writing-timer-preset-${option}`}
+    >
+      <Text style={styles.presetLabel}>{writingTimerPresetLabel(option)}</Text>
+    </TouchableOpacity>
+  );
+}
+
+/** The unit, said once after the numbers, in a trailing slot level with the last row. */
+function PresetUnit(): React.JSX.Element {
+  return (
+    <View style={styles.presetUnitSlot}>
+      <Text style={styles.presetUnit} {...decorativeHidden()} testID="writing-timer-preset-unit">
+        {WRITING_TIMER_PRESET_UNIT}
+      </Text>
+    </View>
+  );
+}
+
+/** The presets in pairs: the grid wraps a whole pair at a time, never a lone chip. */
+const PRESET_PAIRS = [
+  WRITING_DURATION_PRESET_MINUTES.slice(0, 2),
+  WRITING_DURATION_PRESET_MINUTES.slice(2),
+] as const;
+
+/**
+ * The four lengths, offered as an even grid while the timer is at rest.
+ *
+ * The presets sit in two pairs that grow equally from the same basis, and each
+ * pair splits its width equally between its two chips. On one line that gives
+ * four equal chips; when the row is too narrow (200% zoom on a phone, or
+ * enlarged text in the rail) a whole pair wraps, both pairs stretch to the
+ * full width, and the two rows share their column edges. Left to wrap chip by
+ * chip, flexbox grew a short last line's chips to fill it, so 30 and 45 came
+ * out narrower than 10 and 20 (#3403). The unit keeps a slot of its own after
+ * the grid, at the trailing edge and level with the last row, so it never
+ * squeezes a chip.
+ */
 function PresetRow({
   minutes,
   onChoose,
@@ -110,29 +170,34 @@ function PresetRow({
   /** True in the narrow desktop rail, where the unit only fits at the tighter gap. */
   rail: boolean;
 }): React.JSX.Element {
+  const gap = rail ? PRESET_GAP_RAIL : PRESET_GAP;
+  // Two touch-target chips and the gap between them: the narrowest a pair may be.
+  const pairBasis = 2 * touchTarget.minimum + gap;
   return (
     <View
-      style={[styles.row, styles.presetRow, rail && styles.presetRowRail]}
+      style={[styles.row, styles.presetRow, { gap }]}
       accessibilityRole="radiogroup"
       accessibilityLabel={WRITING_TIMER_PRESET_GROUP_LABEL}
       testID="writing-timer-row-presets"
     >
-      {WRITING_DURATION_PRESET_MINUTES.map((option) => (
-        <TouchableOpacity
-          key={option}
-          style={[styles.preset, option === minutes ? styles.presetSelected : null]}
-          onPress={() => onChoose(option)}
-          accessibilityRole="radio"
-          accessibilityLabel={writingTimerPresetA11yLabel(option)}
-          accessibilityState={{ selected: option === minutes }}
-          testID={`writing-timer-preset-${option}`}
-        >
-          <Text style={styles.presetLabel}>{writingTimerPresetLabel(option)}</Text>
-        </TouchableOpacity>
-      ))}
-      <Text style={styles.presetUnit} {...decorativeHidden()} testID="writing-timer-preset-unit">
-        {WRITING_TIMER_PRESET_UNIT}
-      </Text>
+      <View style={[styles.presetGrid, { gap }]} testID="writing-timer-preset-grid">
+        {PRESET_PAIRS.map((pair) => (
+          <View
+            key={pair.join('-')}
+            style={[styles.presetPair, { gap, flexBasis: pairBasis, minWidth: pairBasis }]}
+          >
+            {pair.map((option) => (
+              <PresetChip
+                key={option}
+                option={option}
+                selected={option === minutes}
+                onChoose={onChoose}
+              />
+            ))}
+          </View>
+        ))}
+      </View>
+      <PresetUnit />
     </View>
   );
 }
@@ -695,24 +760,32 @@ const styles = StyleSheet.create({
     height: WRITING_TIMER_ROW_HEIGHT,
   },
   // Larger system text may need another line; measured band clearance grows
-  // with it instead of clipping the unit or shrinking the touch targets.
+  // with it instead of clipping the unit or shrinking the touch targets. The
+  // grid wraps inside; the row holds it and the unit, level with its last row.
   presetRow: {
-    flexWrap: 'wrap',
-    // The presets grow to fill each line, so this moves only a unit that
-    // enlarged text pushes onto a line alone: it sits at the trailing edge,
-    // under the last number it qualifies, rather than at the start of the line.
-    justifyContent: 'flex-end',
     height: 'auto',
     minHeight: WRITING_TIMER_ROW_HEIGHT,
+    alignItems: 'flex-end',
+  },
+  /** The pairs' wrapping line; it takes the row's width beside the unit. */
+  presetGrid: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  /** Two chips that split the pair's width equally; pairs grow equally from one basis. */
+  presetPair: {
+    flexGrow: 1,
+    flexDirection: 'row',
   },
   /**
-   * The desktop rail is a margin's width: at the row's usual gap its four
-   * 44dp presets leave no room for the unit, which then wrapped onto a line of
-   * its own. The tighter gap keeps the unit on the row without shrinking a
-   * target.
+   * The unit's own slot, at the trailing edge, centred on the last row's 44dp
+   * height.
    */
-  presetRowRail: {
-    gap: SPACING.xs,
+  presetUnitSlot: {
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
+    alignItems: 'flex-end',
   },
   rowDocked: {
     flexDirection: 'column',
@@ -783,8 +856,6 @@ const styles = StyleSheet.create({
   presetUnit: {
     ...editorialType.caption,
     color: colors.paper.inkSoft,
-    paddingLeft: SPACING.xs,
-    alignSelf: 'center',
   },
   control: {
     minHeight: touchTarget.minimum,

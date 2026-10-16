@@ -70,11 +70,25 @@ describe('the writing timer floats in every state', () => {
     }
   });
 
-  it('sets a unit that enlarged text wraps alone at the trailing edge, under the last preset', () => {
+  it('groups the presets into two equal pairs so a wrap keeps every column edge (#3403)', () => {
     const timer = render(<WritingTimer onComplete={jest.fn()} />);
-    const row = flat(timer.getByTestId('writing-timer-row-presets').props.style);
-    expect(row.flexWrap).toBe('wrap');
-    expect(row.justifyContent).toBe('flex-end');
+    const grid = timer.getByTestId('writing-timer-preset-grid');
+    expect(flat(grid.props.style).flexWrap).toBe('wrap');
+    const pairs = grid.children as { props: { style: StyleProp<ViewStyle> } }[];
+    expect(pairs).toHaveLength(2);
+    const basis = 2 * touchTarget.minimum + SPACING.sm;
+    for (const pair of pairs) {
+      expect(flat(pair.props.style)).toMatchObject({
+        flexGrow: 1,
+        flexBasis: basis,
+        minWidth: basis,
+      });
+    }
+    for (const minutes of [10, 20, 30, 45]) {
+      const chip = flat(timer.getByTestId(`writing-timer-preset-${minutes}`).props.style);
+      expect(chip.flex).toBe(1);
+      expect(chip.minWidth).toBe(touchTarget.minimum);
+    }
   });
 
   it('keeps the usual preset gap below the rail', () => {

@@ -212,20 +212,65 @@ async function expectUnitOnPresetRow(page: Page, label: string): Promise<void> {
   ).toBeLessThanOrEqual(EDGE_TOLERANCE);
 }
 
-/** A unit that enlarged text pushes onto a line of its own ends at the last preset's edge. */
-async function expectWrappedUnitTrailing(page: Page, label: string): Promise<void> {
-  const last = await page
-    .getByTestId(`writing-timer-preset-${PRESETS[PRESETS.length - 1]}`)
-    .boundingBox();
-  const unit = await page.getByTestId('writing-timer-preset-unit').boundingBox();
-  if (last === null || unit === null) throw new Error(`${label}: the preset row is not laid out`);
-  expect(unit.y, `${label}: the unit wrapped below the presets`).toBeGreaterThanOrEqual(
-    last.y + last.height,
+/**
+ * The presets lay out as a grid: every chip is the same width, so when they
+ * wrap, the chips in one column share their left and right edges. The unit
+ * trails the last row, after its last chip and within its height, rather than
+ * taking a slot that squeezes a chip.
+ */
+async function expectPresetGrid(page: Page, label: string): Promise<void> {
+  const boxes = await Promise.all(
+    PRESETS.map(async (minutes) => {
+      const box = await page.getByTestId(`writing-timer-preset-${minutes}`).boundingBox();
+      if (box === null) throw new Error(`${label}: preset ${minutes} is not laid out`);
+      return box;
+    }),
   );
-  expect(
-    Math.abs(unit.x + unit.width - (last.x + last.width)),
-    `${label}: the wrapped unit ends at the last preset's trailing edge`,
-  ).toBeLessThanOrEqual(EDGE_TOLERANCE);
+  const unit = await page.getByTestId('writing-timer-preset-unit').boundingBox();
+  if (unit === null) throw new Error(`${label}: the unit is not laid out`);
+  const rows: (typeof boxes)[] = [];
+  for (const box of boxes) {
+    const row = rows.find(
+      (candidate) => Math.abs((candidate[0]?.y ?? 0) - box.y) <= EDGE_TOLERANCE,
+    );
+    if (row === undefined) rows.push([box]);
+    else row.push(box);
+  }
+  const first = boxes[0];
+  if (first === undefined) throw new Error(`${label}: no presets`);
+  for (const box of boxes) {
+    expect(
+      Math.abs(box.width - first.width),
+      `${label}: every preset is the same width`,
+    ).toBeLessThanOrEqual(EDGE_TOLERANCE);
+  }
+  const columns = rows[0]?.length ?? 0;
+  for (const row of rows) {
+    row.forEach((box, column) => {
+      const top = rows[0]?.[column];
+      if (top === undefined) throw new Error(`${label}: a row is wider than the first`);
+      expect(
+        Math.abs(box.x - top.x),
+        `${label}: column ${column} shares its left edge`,
+      ).toBeLessThanOrEqual(EDGE_TOLERANCE);
+      expect(
+        Math.abs(box.x + box.width - (top.x + top.width)),
+        `${label}: column ${column} shares its right edge`,
+      ).toBeLessThanOrEqual(EDGE_TOLERANCE);
+    });
+    expect(row.length, `${label}: every row is full`).toBe(columns);
+  }
+  const last = boxes[boxes.length - 1];
+  if (last === undefined) throw new Error(`${label}: no presets`);
+  expect(unit.x, `${label}: the unit trails the last preset`).toBeGreaterThanOrEqual(
+    last.x + last.width,
+  );
+  expect(unit.y, `${label}: the unit sits within the last row`).toBeGreaterThanOrEqual(
+    last.y - EDGE_TOLERANCE,
+  );
+  expect(unit.y + unit.height, `${label}: the unit sits within the last row`).toBeLessThanOrEqual(
+    last.y + last.height + EDGE_TOLERANCE,
+  );
 }
 
 /** Tap a preset where it is drawn, without letting the browser scroll it into view. */
@@ -277,10 +322,11 @@ test('every idle preset is in view and in reach at 1280px, at 390px, and with do
   await expectPresetsInView(page, '1280');
   await expectPresetsReadable(page, '1280', '20');
   await expectUnitOnPresetRow(page, '1280');
+  await expectPresetGrid(page, '1280');
   await page.screenshot({ path: testInfo.outputPath('presets-1280.png') });
   await scaleTimerText(page, TEXT_SCALE);
   await expectPresetsInView(page, '1280 doubled');
-  await expectWrappedUnitTrailing(page, '1280 doubled');
+  await expectPresetGrid(page, '1280 doubled');
   await page.screenshot({ path: testInfo.outputPath('presets-1280-doubled.png') });
   await scaleTimerText(page, 1);
 
@@ -288,10 +334,12 @@ test('every idle preset is in view and in reach at 1280px, at 390px, and with do
   await expectPresetsInView(page, '390');
   await expectPresetsReadable(page, '390', '20');
   await expectUnitOnPresetRow(page, '390');
+  await expectPresetGrid(page, '390');
   await page.screenshot({ path: testInfo.outputPath('presets-390.png') });
 
   await scaleTimerText(page, TEXT_SCALE);
   await expectPresetsInView(page, '390 doubled');
+  await expectPresetGrid(page, '390 doubled');
   await expectPresetsReadable(page, '390 doubled', '20');
   await page.screenshot({ path: testInfo.outputPath('presets-390-doubled.png') });
   await tapPreset(page, '30');
@@ -308,12 +356,14 @@ test('every idle preset is in view and in reach at 200% browser zoom on a phone'
   try {
     await openWritingPage(page, 'writing-timer-presets-zoom');
     await expectPresetsInView(page, '200%');
+    await expectPresetGrid(page, '200%');
     await expectPresetsReadable(page, '200%', '20');
     await page.screenshot({ path: testInfo.outputPath('presets-zoom-200.png') });
     await tapPreset(page, '30');
     await choosePresetsByKeyboard(page, '200%');
     // Photograph the chosen preset once its press and focus feedback has settled.
     await expectPresetsReadable(page, '200%, 45 chosen', '45');
+    await expectPresetGrid(page, '200%, 45 chosen');
     await page.screenshot({ path: testInfo.outputPath('presets-zoom-200-chosen.png') });
   } finally {
     await context.close();
