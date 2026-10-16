@@ -2,7 +2,9 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
+import { touchTarget } from '../../../design/tokens';
 import RetryButton, { RETRY_LABEL } from '../RetryButton';
 
 describe('RetryButton', () => {
@@ -25,6 +27,12 @@ describe('RetryButton', () => {
     const { getByTestId } = render(<RetryButton onRetry={onRetry} testID="x" />);
     fireEvent.press(getByTestId('x'));
     expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('meets the minimum touch target, so a failed read is retryable by touch (#3344)', () => {
+    const { getByTestId } = render(<RetryButton onRetry={jest.fn()} testID="x" />);
+    const style = StyleSheet.flatten(getByTestId('x').props.style);
+    expect(style.minHeight).toBeGreaterThanOrEqual(touchTarget.minimum);
   });
 
   it('exports RETRY_LABEL as "Try again"', () => {

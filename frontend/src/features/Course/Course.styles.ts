@@ -505,6 +505,8 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     marginTop: SPACING.md,
+    minHeight: touchTarget.minimum,
+    justifyContent: 'center',
     paddingVertical: SPACING.sm,
     paddingHorizontal: SPACING.lg,
     borderRadius: radius.md,
