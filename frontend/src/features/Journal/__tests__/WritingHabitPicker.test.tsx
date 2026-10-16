@@ -23,8 +23,11 @@ import { settle } from '@/testing/asyncSettle';
 
 jest.mock('../writingHabitGoals', () => ({ saveWritingHabitGoals: jest.fn() }));
 
+// A signed-in writer: the picker fences its saves on the session lineage (#3452).
+const PICKER_OWNER = 1;
+const mockPickerToken = `e30.${btoa(JSON.stringify({ sub: String(PICKER_OWNER), exp: 4_000_000_000 })).replaceAll('=', '')}.sig`;
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ token: 'picker-token', userTimezone: 'UTC' }),
+  useAuth: () => ({ token: mockPickerToken, authStatus: 'authenticated', userTimezone: 'UTC' }),
 }));
 
 const makeGoal = (tier: 'low' | 'clear' | 'stretch', isAdditive = true): Goal => ({
@@ -68,6 +71,7 @@ const noop = (): void => undefined;
 
 beforeEach(() => {
   jest.mocked(saveWritingHabitGoals).mockReset();
+  setActiveUser(PICKER_OWNER);
 });
 
 describe('WritingHabitPicker', () => {
@@ -244,7 +248,6 @@ describe('WritingHabitPicker', () => {
   });
 
   it('does not submit a stale form after the account changes away and back before rerender', async () => {
-    setActiveUser(1);
     jest.mocked(saveWritingHabitGoals).mockResolvedValueOnce(null);
     const pages = habit(20, 'Read pages', {
       goals: ladder().map((goal) => ({ ...goal, target_unit: 'pages' })),
@@ -252,7 +255,7 @@ describe('WritingHabitPicker', () => {
     const screen = render(<WritingHabitPicker habits={[pages]} onChoose={noop} onCancel={noop} />);
     fireEvent.press(screen.getByTestId('writing-habit-configure-20'));
     setActiveUser(2);
-    setActiveUser(1);
+    setActiveUser(PICKER_OWNER);
     fireEvent.press(screen.getByTestId('writing-habit-goals-save'));
     await settle();
     expect(saveWritingHabitGoals).not.toHaveBeenCalled();

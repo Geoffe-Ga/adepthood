@@ -37,7 +37,7 @@ import { saveWritingHabitGoals } from './writingHabitGoals';
 import { useAuth } from '@/context/AuthContext';
 import { SPACING, colors, editorialType } from '@/design/tokens';
 import type { Habit, HabitGoalSetup } from '@/features/Habits/Habits.types';
-import { getActiveUserGeneration } from '@/storage/userScope';
+import { useAuthLineage } from '@/hooks/useAuthLineage';
 
 export interface WritingHabitPickerProps {
   /** The writer's habits; the ones that cannot be linked are left out here. */
@@ -88,10 +88,15 @@ function ExtraRows({
   );
 }
 
-function useCurrentChoice(token: string | null) {
-  const ownerGeneration = getActiveUserGeneration();
-  const latestToken = useRef(token);
-  latestToken.current = token;
+/**
+ * The fence for a save started at this render, and the lineage epoch the open
+ * editor belongs to: the picker is still mounted and the writer's session
+ * lineage still holds. A token renewal keeps the lineage (#3452), so a save
+ * that crossed one, or its own 401-refresh-retry, still links the habit; a
+ * sign-out, another account or a same-account re-login does not.
+ */
+function useCurrentChoice() {
+  const lineage = useAuthLineage();
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -99,22 +104,21 @@ function useCurrentChoice(token: string | null) {
       alive.current = false;
     };
   }, []);
-  return () =>
-    alive.current && latestToken.current === token && ownerGeneration === getActiveUserGeneration();
+  return { epoch: lineage.epoch, current: () => alive.current && lineage.isCurrent() };
 }
 
 function useGoalChoice({ onNew, onChoose }: WritingHabitPickerProps) {
   const { token, userTimezone } = useAuth();
+  const { epoch, current } = useCurrentChoice();
   const [selected, setSelected] = useState<Habit | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
-  const selectionToken = useRef(token);
-  const current = useCurrentChoice(token);
+  const selectionLineage = useRef(epoch);
   useEffect(() => {
     setSelected(null);
     setError(false);
     setSaving(false);
-  }, [token]);
+  }, [epoch]);
   const cancel = () => {
     setSelected(null);
     setError(false);
@@ -141,11 +145,11 @@ function useGoalChoice({ onNew, onChoose }: WritingHabitPickerProps) {
       });
   };
   const choose = (habit: Habit | 'new') => {
-    selectionToken.current = token;
+    selectionLineage.current = epoch;
     setSelected(habit);
   };
   return {
-    selected: selectionToken.current === token ? selected : null,
+    selected: selectionLineage.current === epoch ? selected : null,
     saving,
     error,
     cancel,

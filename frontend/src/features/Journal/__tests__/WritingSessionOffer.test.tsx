@@ -18,6 +18,7 @@ import WritingSessionOffer from '../WritingSessionOffer';
 import type { UiFlags, UiFlagsUpdate } from '@/api';
 import type { Goal, Habit } from '@/features/Habits/Habits.types';
 import { habitManager } from '@/features/Habits/services/habitManager';
+import { setActiveUser } from '@/storage/userScope';
 import { loadWritingOfferAnswered, saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 import { useHabitStore } from '@/store/useHabitStore';
@@ -27,8 +28,16 @@ const mockUserTimezone = 'America/Los_Angeles';
 
 const keepPractice = keepAsPractice as jest.Mock;
 
+// A signed-in writer: the goal picker fences its saves on the session lineage (#3452).
+const OFFER_OWNER = 1;
+const mockOfferToken = `e30.${btoa(JSON.stringify({ sub: String(OFFER_OWNER), exp: 4_000_000_000 })).replaceAll('=', '')}.sig`;
+
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ userTimezone: mockUserTimezone, token: 'offer-tok' }),
+  useAuth: () => ({
+    userTimezone: mockUserTimezone,
+    token: mockOfferToken,
+    authStatus: 'authenticated',
+  }),
 }));
 
 const mockFlagsUpdate = jest.fn<(_partial: UiFlagsUpdate, _token?: string) => Promise<UiFlags>>();
@@ -94,6 +103,7 @@ const THREE_HABITS = [
 
 beforeEach(() => {
   jest.clearAllMocks();
+  setActiveUser(OFFER_OWNER);
   loadAnswered.mockImplementation(() => Promise.resolve(false));
   insertHabitAt.mockImplementation(() => Promise.resolve(KEPT));
   useHabitStore.setState({ habits: THREE_HABITS, loading: false, error: null });
@@ -561,7 +571,7 @@ describe('WritingSessionOffer — keeping it as a habit the writer already has (
 
     await waitFor(() => expect(view.queryByTestId('save-as-habit-linked')).not.toBeNull());
     expect(mockFlagsUpdate).toHaveBeenCalledTimes(1);
-    expect(mockFlagsUpdate).toHaveBeenCalledWith({ writing_session_habit_id: 22 }, 'offer-tok');
+    expect(mockFlagsUpdate).toHaveBeenCalledWith({ writing_session_habit_id: 22 }, mockOfferToken);
     expect(saveAnswered).toHaveBeenCalledWith(true);
     expect(view.getByText(linkedHabitConfirmation('Stretch'))).toBeTruthy();
     expect(insertHabitAt).not.toHaveBeenCalled();
@@ -676,7 +686,7 @@ describe('WritingSessionOffer — a new Journaling habit is linked too (#2861)',
     expect(mockFlagsUpdate).toHaveBeenCalledTimes(1);
     expect(mockFlagsUpdate).toHaveBeenCalledWith(
       { writing_session_habit_id: NEW_HABIT_ID },
-      'offer-tok',
+      mockOfferToken,
     );
     expect(useWritingHabitLinkStore.getState().habitId).toBe(NEW_HABIT_ID);
   });
