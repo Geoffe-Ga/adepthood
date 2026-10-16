@@ -175,6 +175,7 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
+from services.essay_answer import LetterToMirror, essay_response, letter_to_mirror
 from services.essay_settlement import (
     ESSAY_ATTEMPTS,
     EssayCharge,
@@ -260,7 +261,6 @@ from services.wallet import (
     preflight_deduction,
     refund_one_message,
     require_user_fresh,
-    reset_monthly_usage_if_due,
 )
 
 
@@ -3324,33 +3324,10 @@ async def expand_marginalia_essay(
     gets the no-letter note with ``care`` set: adepthood's own reviewed care
     surface, the one a resonance escalation returns, uncharged (#3380).
     """
+    # The note, or the escalation the vault's care guard answered instead: the
+    # response decides whether the reviewed care surface rides along (#3380).
     answered = await _expand_essay(session, marginalia_id, current_user, clients)
-    if isinstance(answered, LetterEscalation):
-        return await _essay_response(
-            session, answered.note, care=care_surface(build_care_payload())
-        )
-    return await _essay_response(session, answered)
-
-
-async def _essay_response(
-    session: AsyncSession, note: Marginalia, *, care: CareResponse | None = None
-) -> EssayResponse:
-    """Wrap ``note`` with the owner's balances, computed as ``/user/usage`` does.
-
-    A read only: the monthly rollover is applied inside the session so a stale
-    counter is never reported, but it is not committed here -- the same
-    discipline as ``GET /user/usage`` (BUG-BM-015). ``care`` is set only when a
-    vault care escalation answered the ask.
-    """
-    await reset_monthly_usage_if_due(session, note.user_id, datetime.now(UTC))
-    user = await require_user_fresh(session, note.user_id)
-    return EssayResponse(
-        **demo_visibility.served_note(note).model_dump(),
-        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
-        remaining_balance=user.offering_balance,
-        monthly_reset_date=user.monthly_reset_date,
-        care=care,
-    )
+    return await essay_response(session, answered)
 
 
 # Where a cached letter was found (#623 PR3). ``pre_barrier`` is the ordinary
@@ -3518,19 +3495,13 @@ async def _cache_and_mirror_essay(
         # read is released with its own before anything leaves the process.
         await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
         written = await _write_first_letter(session, note=note, entry=entry, clients=clients)
-    if not isinstance(written, _LetterToMirror):
+    # A vault letter is kept by the vault itself and a care escalation stored
+    # nothing, so only an app-provider letter is ever owed a mirror (#3380).
+    if not isinstance(written, LetterToMirror):
         return written
     return await _mirror_cached_essay(
         session, entry=entry, cached=written.cached, essay=written.essay, clients=clients
     )
-
-
-@dataclass(frozen=True, slots=True)
-class _LetterToMirror:
-    """An app-provider letter just cached on ``cached``, still owed its one mirror."""
-
-    cached: Marginalia
-    essay: str
 
 
 async def _write_first_letter(
@@ -3539,7 +3510,7 @@ async def _write_first_letter(
     note: Marginalia,
     entry: JournalEntry,
     clients: _EssayClients,
-) -> Marginalia | LetterEscalation | _LetterToMirror:
+) -> Marginalia | LetterEscalation | LetterToMirror:
     """Have the one source this writer's boundary allows write the letter; name what to mirror.
 
     The vault for a vault-bound writer (#3156, #3203): it writes and keeps the
@@ -3549,7 +3520,7 @@ async def _write_first_letter(
     with ``essay`` unset and nothing reaches the vault the cache refused it
     from, or it is a stored demo letter a refused regeneration left in the row,
     which must never reach the vault (#3096). Only a letter still owed its
-    mirror comes back as a :class:`_LetterToMirror`; a vault care escalation is
+    mirror comes back as a :class:`LetterToMirror`; a vault care escalation is
     the :class:`LetterEscalation` the route answers with care (#3380).
     """
     if clients.boundary is ReflectionBoundary.VAULT_BOUND:
@@ -3561,8 +3532,7 @@ async def _write_first_letter(
         api_key=clients.api_key,
         boundary=clients.boundary,
     )
-    essay = demo_visibility.served_letter(cached)
-    return cached if essay is None else _LetterToMirror(cached, essay)
+    return letter_to_mirror(cached)
 
 
 async def _mirror_cached_essay(
