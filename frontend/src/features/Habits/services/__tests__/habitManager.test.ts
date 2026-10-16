@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { waitFor } from '@testing-library/react-native';
 import { validate as uuidValidate } from 'uuid';
 
 let mockHabitDemoMode = false;
@@ -111,6 +112,7 @@ import {
   goalGroups as goalGroupsApi,
   goals as goalsApi,
 } from '../../../../api';
+import { beginAuthSession } from '../../../../api/sessionToken';
 import type * as HabitStorageModule from '../../../../storage/habitStorage';
 import {
   saveHabits,
@@ -140,6 +142,7 @@ import {
 } from '../../HabitUtils';
 import { cancelForHabit } from '../../hooks/useHabitNotifications';
 import { applyGoalUpdate, habitManager } from '../habitManager';
+import { habitSyncScopeKey } from '../habitSyncScope';
 import { MAX_CHECK_IN_REPLAY_ATTEMPTS, MIN_POISON_AGE_MS, checkInIdentity } from '../replayPolicy';
 
 const makeHabit = (overrides: Partial<Habit> = {}): Habit => ({
@@ -288,7 +291,7 @@ const freshServerGoal = (id: number, title: string, tier: string, target: number
 });
 
 const resetStore = () => {
-  useHabitStore.setState({ habits: [], loading: false, error: null });
+  useHabitStore.setState({ habits: [], loading: false, error: null, serverSync: null });
   // ``buildAddedHabit`` now reads the program anchor, so an anchor derived by an
   // earlier test would leak forward and make every add test order-dependent.
   useProgramStore.getState().hydrateProgramStartDate(null);
@@ -316,6 +319,91 @@ describe('habitManager', () => {
 
       await expect(habitManager.refreshHabits('UTC')).resolves.toBe(false);
       expect(useHabitStore.getState().error).toBeNull();
+    });
+
+    it('records an authoritative read for the live account and session (#3328)', async () => {
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockResolvedValueOnce([] as never);
+
+      await habitManager.refreshHabits('UTC');
+
+      expect(useHabitStore.getState().serverSync).toEqual({
+        scope: habitSyncScopeKey(),
+        status: 'ok',
+      });
+    });
+
+    it('records a failed read even when a cache kept the list on screen (#3328)', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      useHabitStore.setState({ habits: [makeHabit({ id: 1 })] });
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+
+      await habitManager.refreshHabits('UTC');
+      errorSpy.mockRestore();
+
+      expect(useHabitStore.getState().serverSync).toEqual({
+        scope: habitSyncScopeKey(),
+        status: 'failed',
+      });
+    });
+
+    it('clears a failed read while the retry is in flight, and keeps a confirmed one (#3328)', async () => {
+      const scope = habitSyncScopeKey();
+      const held = () => {
+        let release!: (_rows: never) => void;
+        const promise = new Promise<never>((resolve) => {
+          release = resolve;
+        });
+        (habitsApi.listAll as jest.Mock).mockReturnValueOnce(promise);
+        return () => release([] as never);
+      };
+      (loadHabits as jest.Mock)
+        .mockResolvedValueOnce(null as never)
+        .mockResolvedValueOnce(null as never);
+      useHabitStore.getState().setServerSync({ scope, status: 'failed' });
+
+      const releaseRetry = held();
+      const retry = habitManager.refreshHabits('UTC');
+      expect(useHabitStore.getState().serverSync).toBeNull();
+      releaseRetry();
+      await retry;
+      expect(useHabitStore.getState().serverSync).toEqual({ scope, status: 'ok' });
+
+      const releaseRefetch = held();
+      const refetch = habitManager.refreshHabits('UTC');
+      expect(useHabitStore.getState().serverSync).toEqual({ scope, status: 'ok' });
+      releaseRefetch();
+      await refetch;
+    });
+
+    it('does not let a later failed refetch unconfirm a read this session confirmed (#3328)', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+      const scope = habitSyncScopeKey();
+      useHabitStore.getState().setServerSync({ scope, status: 'ok' });
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockRejectedValueOnce(new Error('offline') as never);
+
+      await habitManager.refreshHabits('UTC');
+      errorSpy.mockRestore();
+
+      expect(useHabitStore.getState().serverSync).toEqual({ scope, status: 'ok' });
+    });
+
+    it('records nothing for a read the account changed under (#3328)', async () => {
+      let release!: (_rows: never) => void;
+      (loadHabits as jest.Mock).mockResolvedValueOnce(null as never);
+      (habitsApi.listAll as jest.Mock).mockReturnValueOnce(
+        new Promise<never>((resolve) => {
+          release = resolve;
+        }),
+      );
+      const load = habitManager.refreshHabits('UTC');
+      await waitFor(() => expect(habitsApi.listAll).toHaveBeenCalledTimes(1));
+      beginAuthSession();
+      release([] as never);
+      await load;
+      expect(useHabitStore.getState().serverSync).toBeNull();
     });
   });
 

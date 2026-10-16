@@ -13,6 +13,7 @@ import useResponsive from '../../design/useResponsive';
 
 import AddHabitModal from './components/AddHabitModal';
 import DroppedCheckInNotice from './components/DroppedCheckInNotice';
+import EnergyHandoffNotice from './components/EnergyHandoffNotice';
 import GoalModal from './components/GoalModal';
 import HabitEmojiPicker from './components/HabitEmojiPicker';
 import HabitsDrawer from './components/HabitsDrawer';
@@ -824,8 +825,24 @@ function useCourseEnergyIntent(
     [navigation],
   );
   const openEnergy = useCallback(() => modals.open('onboarding'), [modals]);
-  useEnergyOnboardingIntent(route?.params, navigation ? clearIntent : undefined, openEnergy);
+  return useEnergyOnboardingIntent(route?.params, navigation ? clearIntent : undefined, openEnergy);
 }
+
+/** The held Course handoff's wait, beside the error banner that may already offer its retry. */
+const CourseEnergyHandoffNotice = ({
+  handoff,
+  state,
+}: {
+  handoff: ReturnType<typeof useCourseEnergyIntent>;
+  state: ReturnType<typeof useHabitsScreenState>;
+}) => (
+  <EnergyHandoffNotice
+    status={handoff.status}
+    showRetry={state.error === null}
+    onRetry={() => void state.actions.loadHabits()}
+    onCancel={handoff.cancel}
+  />
+);
 
 const HabitsScreen = ({
   route,
@@ -833,7 +850,7 @@ const HabitsScreen = ({
 }: Partial<BottomTabScreenProps<RootTabParamList, 'Habits'>> = {}) => {
   const state = useHabitsScreenState();
   const { habits, modals, actions, ui, responsive, pagination } = state;
-  useCourseEnergyIntent({ route, navigation }, modals);
+  const energyHandoff = useCourseEnergyIntent({ route, navigation }, modals);
   const { columns, gridGutter, scale, width, isLG, isXL } = responsive;
   const drawer = useScreenDrawer('Habits');
   const { barVisible, toggleBarVisible } = usePaginationBarVisibility();
@@ -843,6 +860,7 @@ const HabitsScreen = ({
   return (
     <SafeAreaView style={[styles.container, { padding: spacing(isLG || isXL ? 2 : 1, scale) }]}>
       <ContentContainer fill>
+        <CourseEnergyHandoffNotice handoff={energyHandoff} state={state} />
         <HabitsContentSection
           state={state}
           columns={columns}
