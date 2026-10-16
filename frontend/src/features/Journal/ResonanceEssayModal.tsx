@@ -256,6 +256,28 @@ function unansweredState(unanswered: Unanswered): EssayState {
   };
 }
 
+/**
+ * Let go of an ask whose payer lineage ended under it (#3387).
+ *
+ * A token renewal keeps the lineage, so a letter asked across one still lands.
+ * A sign-out, an account switch or the same account signing back in after a
+ * 401 ends it, and that ask's answer is refused. Re-derived during render, so
+ * the card returns to its offer instead of spinning forever; asking again is
+ * safe because the server answers an already-written letter from its cache
+ * without a second charge.
+ */
+function useLineageRelease(
+  scopeIsCurrent: () => boolean,
+  loading: boolean,
+  setState: React.Dispatch<React.SetStateAction<EssayState>>,
+): void {
+  const [lineage, setLineage] = useState(() => scopeIsCurrent);
+  if (lineage !== scopeIsCurrent) {
+    setLineage(() => scopeIsCurrent);
+    if (loading) setState(OFFER_STATE);
+  }
+}
+
 /** The note's letter: shown, offered at its price, or asked for on purpose. */
 function useEssay(
   note: Marginalia | null,
@@ -269,6 +291,7 @@ function useEssay(
   const unansweredRef = useRef<UnansweredNotes>(new Map());
   const [state, setState] = useShownState(note, unansweredRef.current);
   const showingRef = useShowingGeneration(note);
+  useLineageRelease(scopeIsCurrent, state.loading, setState);
   const callbacksRef = useLatest(callbacks);
   // Bumped when the payer changed under an ask, so the offer rereads its price.
   const [costRevision, setCostRevision] = useState(0);
@@ -449,7 +472,10 @@ function useEssayCost(
   scopeIsCurrent: () => boolean,
   revision: number,
 ): ResonanceCostState {
+  // Read at dispatch: a renewal keeps the lineage (#3387), so it must not reread the price.
   const { token } = useAuth();
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
   const [snapshot, setSnapshot] = useState({ note, hasOwnKey, scopeIsCurrent, revision });
   const [cost, setCost] = useState(() => unknownCostState(ESSAY_NOUN));
   if (
@@ -462,6 +488,7 @@ function useEssayCost(
     setCost(unknownCostState(ESSAY_NOUN));
   }
   useEffect(() => {
+    const token = tokenRef.current;
     if (note === null || token === null || !scopeIsCurrent()) return;
     let current = true;
     setCost({
@@ -475,7 +502,7 @@ function useEssayCost(
     return () => {
       current = false;
     };
-  }, [note, hasOwnKey, scopeIsCurrent, token, revision]);
+  }, [note, hasOwnKey, scopeIsCurrent, revision]);
   return cost;
 }
 
