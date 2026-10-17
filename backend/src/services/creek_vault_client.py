@@ -176,7 +176,12 @@ from services.creek_vault_telemetry import (
     outcome_for_error,
     record_vault_outcome,
 )
-from services.creek_vault_url import VaultUrlDefect, VaultUrlFinding, classify_vault_url
+from services.creek_vault_url import (
+    VaultUrlDefect,
+    VaultUrlFinding,
+    classify_vault_url,
+    vault_base_url,
+)
 from services.creek_vault_url_user import (
     UserVaultUrlFinding,
     classify_user_vault_url_host,
@@ -1661,9 +1666,10 @@ class HttpCreekVaultClient:
         """
         _require_secure_vault_url(url)
         self._api_key = api_key
-        # Trailing slashes are stripped so a configured URL with or without one
-        # yields the same capability URL rather than a double-slashed path.
-        self._url = url.rstrip("/")
+        # Trailing slashes and an API-version suffix are stripped so a URL written
+        # with or without either yields the same capability URL rather than a
+        # double-slashed or ``/v1/v1/`` path.
+        self._url = vault_base_url(url)
         self._http_client = http_client
         self._pin_destination = pin_destination
         self._last_handshake = HandshakeResult.unavailable()
