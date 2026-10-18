@@ -30,7 +30,6 @@ FRONTEND_DIR="$REPO_ROOT/frontend"
 # The marker. Identical to the module specifier the guards import, so there is
 # no second place for the declaration to drift from the code.
 MARKER='@/testing/backendSource'
-IMPORT_PATTERN="^[[:space:]]*(import[[:space:]].*[[:space:]]from|}[[:space:]]from)[[:space:]]+['\"]${MARKER}['\"];?[[:space:]]*$"
 
 LIST_ONLY=false
 
@@ -65,16 +64,59 @@ EOF
 esac
 
 DISCOVERED=()
-while IFS= read -r file; do
-    if [ -n "$file" ]; then
+declares_marker() {
+    awk -v marker="$MARKER" '
+        BEGIN { in_block = 0; found = 0 }
+        {
+            line = $0
+            visible = ""
+            while (length(line) > 0) {
+                if (in_block) {
+                    finish = index(line, "*/")
+                    if (!finish) {
+                        line = ""
+                        break
+                    }
+                    line = substr(line, finish + 2)
+                    in_block = 0
+                    continue
+                }
+                block = index(line, "/*")
+                single = index(line, "//")
+                if (single && (!block || single < block)) {
+                    visible = visible substr(line, 1, single - 1)
+                    line = ""
+                    break
+                }
+                if (block) {
+                    visible = visible substr(line, 1, block - 1)
+                    line = substr(line, block + 2)
+                    in_block = 1
+                    continue
+                }
+                visible = visible line
+                line = ""
+            }
+            pattern = "^[[:space:]]*(import[[:space:]].*[[:space:]]from|}[[:space:]]from)[[:space:]]+[\047\042]" marker "[\047\042];?[[:space:]]*$"
+            if (visible ~ pattern) found = 1
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$1"
+}
+
+while IFS= read -r -d '' file; do
+    if declares_marker "$file"; then
         DISCOVERED+=("$file")
     fi
 done < <(
-    grep -Erl "$IMPORT_PATTERN" "$FRONTEND_DIR" \
-        --include='*.test.ts' --include='*.test.tsx' \
-        --exclude-dir=node_modules --exclude-dir=e2e |
-        LC_ALL=C sort
+    find "$FRONTEND_DIR" \
+        -type d \( -name node_modules -o -name e2e \) -prune -o \
+        -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) -print0
 )
+
+if [ ${#DISCOVERED[@]} -gt 0 ]; then
+    mapfile -t DISCOVERED < <(printf '%s\n' "${DISCOVERED[@]}" | LC_ALL=C sort)
+fi
 
 # An empty sweep is the failure this lane exists to prevent, one level up: a
 # gate that reports it did nothing looks exactly like a gate that passed.

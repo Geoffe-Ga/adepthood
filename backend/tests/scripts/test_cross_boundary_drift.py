@@ -62,9 +62,14 @@ _SUBPROCESS_TIMEOUT_SECONDS = 60
 # The one string that makes a test discoverable: the module specifier of the
 # shared helper every cross-boundary test reads backend source through.
 _MARKER = "@/testing/backendSource"
-_DECLARATION = re.compile(
+_IMPORT_DECLARATION = re.compile(
     rf"^\s*(?:import\s+.*\s+from|}}\s+from)\s+['\"]{re.escape(_MARKER)}['\"];?\s*$",
     re.MULTILINE,
+)
+_TYPESCRIPT_STRING_OR_COMMENT = re.compile(
+    r"""(?P<string>'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`)"""
+    r"|(?P<comment>//[^\r\n]*|/\*.*?\*/)",
+    re.DOTALL,
 )
 
 _JOB_NAME = "cross-boundary-drift"
@@ -89,6 +94,22 @@ _HAND_ROLLED_BACKEND_PATH = re.compile(r"""['"]backend['"]|backend/src/[\w/]+\.p
 _READS_FILES = re.compile(r"\b(readFileSync|readdirSync|readFile|readdir)\b")
 
 _INVENTED_GUARD = Path("frontend") / "src" / "invented" / "__tests__" / "inventedGuard.test.ts"
+
+
+def _without_typescript_comments(source: str) -> str:
+    """Remove JavaScript comments while preserving strings and line structure."""
+
+    def preserve_string_or_lines(match: re.Match[str]) -> str:
+        if match.lastgroup == "string":
+            return match.group()
+        return "".join(char if char in "\r\n" else " " for char in match.group())
+
+    return _TYPESCRIPT_STRING_OR_COMMENT.sub(preserve_string_or_lines, source)
+
+
+def _declares_cross_boundary_import(source: str) -> bool:
+    """Return whether source has a real import of the shared backend helper."""
+    return _IMPORT_DECLARATION.search(_without_typescript_comments(source)) is not None
 
 
 def _bash_executable() -> str:
@@ -201,7 +222,7 @@ class TestDiscovery:
             str(path.relative_to(_REPO_ROOT))
             for path in _frontend_test_files()
             if "e2e" not in path.relative_to(_FRONTEND).parts
-            and _DECLARATION.search(path.read_text(encoding="utf-8"))
+            and _declares_cross_boundary_import(path.read_text(encoding="utf-8"))
         )
 
         result = _run("--list")
@@ -222,7 +243,7 @@ class TestDiscovery:
         undeclared = [
             str(path.relative_to(_REPO_ROOT))
             for path in _frontend_test_files()
-            if not _DECLARATION.search(text := path.read_text(encoding="utf-8"))
+            if not _declares_cross_boundary_import(text := path.read_text(encoding="utf-8"))
             and _HAND_ROLLED_BACKEND_PATH.search(text)
             and _READS_FILES.search(text)
         ]
@@ -266,6 +287,17 @@ class TestDiscovery:
         checkout = _fake_checkout(tmp_path, marked=False)
         invented = checkout / _INVENTED_GUARD
         invented.write_text(f"// Read through {_MARKER} when this becomes a guard.\n")
+
+        result = _run("--list", checkout=checkout)
+
+        assert result.returncode != 0
+        assert _listed(result) == []
+
+    def test_an_import_shaped_block_comment_is_not_a_declaration(self, tmp_path: Path) -> None:
+        """A commented-out import cannot enroll a suite in the Jest lane."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(f"/*\nimport {{ backendPath }} from '{_MARKER}';\n*/\n")
 
         result = _run("--list", checkout=checkout)
 

@@ -55,6 +55,14 @@ describe('the rule that keeps a drift guard discoverable', () => {
     ).not.toBeNull();
   });
 
+  it('does not accept an import-shaped block comment', () => {
+    const source = `/*\nimport { backendPath } from '${CROSS_BOUNDARY_MARKER}';\n*/`;
+
+    expect(
+      undeclaredCrossBoundaryRead('frontend/src/a.test.ts', source, A_BACKEND_READ),
+    ).not.toBeNull();
+  });
+
   it('names the file, the read, and the fix when the marker is missing', () => {
     const failure = undeclaredCrossBoundaryRead(
       'frontend/src/a.test.ts',
