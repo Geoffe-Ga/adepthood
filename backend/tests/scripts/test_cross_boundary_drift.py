@@ -196,7 +196,8 @@ class TestDiscovery:
         expected = sorted(
             str(path.relative_to(_REPO_ROOT))
             for path in _frontend_test_files()
-            if _MARKER in path.read_text(encoding="utf-8")
+            if "e2e" not in path.relative_to(_FRONTEND).parts
+            and _MARKER in path.read_text(encoding="utf-8")
         )
 
         result = _run("--list")

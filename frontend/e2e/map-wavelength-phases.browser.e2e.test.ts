@@ -16,6 +16,8 @@ import { NARROW_VIEWPORT, WIDE_VIEWPORT } from './routeWalk';
  * (`backend/scripts/check_wavelength_terms.py`, the content-drift job, and
  * `test_phase_names_match_the_canonical_modes_csv`); the renderer is pinned by
  * fixtures. Nothing held the two together, so this spec does.
+ * `@/testing/backendSource` declares that direct backend read; e2e stays in its
+ * Playwright lane rather than the Jest cross-boundary runner.
  *
  * It names no phase term of its own beyond a guard on the CSV parse. It reads
  * the `GET /stages` response the page's own `stages` client received -- the
