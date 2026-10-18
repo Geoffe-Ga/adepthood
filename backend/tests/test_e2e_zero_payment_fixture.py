@@ -16,7 +16,9 @@ async def test_lane_license_purchase_is_explicitly_zero_price() -> None:
     check = await _stub_license_check("free-floor-key")
 
     assert check.purchase is not None
-    assert check.purchase.model_extra["price"] == 0
+    purchase_extra = check.purchase.model_extra
+    assert purchase_extra is not None
+    assert purchase_extra["price"] == 0
 
 
 @pytest.mark.asyncio
@@ -28,7 +30,7 @@ async def test_exhaust_arrange_moves_only_the_wallet_counters(
     monkeypatch.setenv("BOTMASON_MONTHLY_CAP", "7")
     user = User(
         email="floor@example.com",
-        password_hash="not-used",
+        password_hash="not-used",  # pragma: allowlist secret
         offering_balance=3,
     )
     db_session.add(user)
