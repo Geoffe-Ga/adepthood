@@ -6,8 +6,17 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, field_serializer
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_serializer,
+    field_validator,
+)
 
+from bounds import INT32_MAX, INT32_MIN
+from models.admin_balance_adjustment import ADMIN_ADJUSTMENT_REASON_MAX_LENGTH
 from models.entitlement import EntitlementKind
 from models.vault_activation import VaultCustodyMode
 from services.account_egress_barrier import EgressBarrierState
@@ -231,6 +240,36 @@ class EntitlementRevokeRequest(BaseModel):
     """A manual revocation, with the operator's reason. See the grant request."""
 
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class BalanceAdjustmentRequest(BaseModel):
+    """A signed, explained correction to one user's purchased-credit bucket."""
+
+    delta: Annotated[int, Field(ge=INT32_MIN, le=INT32_MAX)]
+    reason: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=ADMIN_ADJUSTMENT_REASON_MAX_LENGTH,
+        ),
+    ]
+
+    @field_validator("delta")
+    @classmethod
+    def _delta_must_change_balance(cls, value: int) -> int:
+        """Reject no-op mutations, which cannot justify an audit event."""
+        if value == 0:
+            msg = "delta must not be zero"
+            raise ValueError(msg)
+        return value
+
+
+class BalanceAdjustmentResponse(BaseModel):
+    """The target wallet identity and its balance after an adjustment."""
+
+    user_id: int
+    balance: int
 
 
 class EntitlementSummary(BaseModel):

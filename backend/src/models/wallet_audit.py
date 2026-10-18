@@ -38,6 +38,10 @@ REASON_SPEND_OFFERING = "spend_offering"
 # silently mis-label its audit rows as admin-initiated; an analyst
 # filtering by reason gets a clean signal of who did the granting.
 REASON_ADMIN_GRANT = "admin_grant"
+# ``admin_adjustment`` -- an operator's arbitrary positive or negative
+# correction through the audited admin endpoint. Unlike ``admin_grant``, the
+# delta is intentionally signed and the resulting balance may be negative.
+REASON_ADMIN_ADJUSTMENT = "admin_adjustment"
 REASON_SELF_GRANT = "self_grant"
 # ``monthly_reset`` — first-of-the-month rollover that zeroes
 # ``monthly_messages_used``.  Recording this is what makes

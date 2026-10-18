@@ -99,6 +99,13 @@ POLICY: Mapping[str, TablePolicy] = {
         "The receipt of the deletion itself: surrogate id, timestamp and row "
         "counts. Erasing it would erase the evidence that erasure happened.",
     ),
+    "adminbalanceadjustment": _erase(
+        "target_user_id",
+        "The account's wallet correction history goes with its wallet. Rows "
+        "about another account survive if this admin leaves, with the actor "
+        "cleared so the target's financial trail remains intact.",
+        clear_columns=("actor_admin_id",),
+    ),
     "authidentity": _erase(
         "user_id",
         "The links to Google / Apple sign-in. Removed, so the same social "
