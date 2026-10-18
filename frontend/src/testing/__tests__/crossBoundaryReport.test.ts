@@ -47,6 +47,14 @@ describe('the rule that keeps a drift guard discoverable', () => {
     ).toBeNull();
   });
 
+  it('does not accept a comment that only mentions the marker', () => {
+    const source = `// Read through ${CROSS_BOUNDARY_MARKER} when this becomes a guard.`;
+
+    expect(
+      undeclaredCrossBoundaryRead('frontend/src/a.test.ts', source, A_BACKEND_READ),
+    ).not.toBeNull();
+  });
+
   it('names the file, the read, and the fix when the marker is missing', () => {
     const failure = undeclaredCrossBoundaryRead(
       'frontend/src/a.test.ts',

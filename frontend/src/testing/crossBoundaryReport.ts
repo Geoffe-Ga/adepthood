@@ -17,6 +17,9 @@
  */
 export const CROSS_BOUNDARY_MARKER = '@/testing/backendSource';
 
+const CROSS_BOUNDARY_IMPORT =
+  /^\s*(?:import\s+.*\s+from|\}\s+from)\s+['"]@\/testing\/backendSource['"];?\s*$/mu;
+
 /**
  * Describe an undeclared crossing of the frontend/backend boundary.
  *
@@ -32,7 +35,7 @@ export function undeclaredCrossBoundaryRead(
   reads: readonly string[],
 ): string | null {
   if (reads.length === 0) return null;
-  if (testSource.includes(CROSS_BOUNDARY_MARKER)) return null;
+  if (CROSS_BOUNDARY_IMPORT.test(testSource)) return null;
   return (
     `${testFile} read ${reads.join(', ')} but does not import '${CROSS_BOUNDARY_MARKER}'. ` +
     `Backend CI discovers the cross-boundary guards by that import, so as written this ` +

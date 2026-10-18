@@ -1,10 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { expect, test, type Locator, type Page, type Response } from '@playwright/test';
 
 import { signUp } from './journalHabitsBrowserSupport';
 import { NARROW_VIEWPORT, WIDE_VIEWPORT } from './routeWalk';
+
+import { readBackendSource } from '@/testing/backendSource';
 
 /**
  * Issue #3157 -- the six Wavelength phase names a traveller reads in a stage's
@@ -16,8 +15,6 @@ import { NARROW_VIEWPORT, WIDE_VIEWPORT } from './routeWalk';
  * (`backend/scripts/check_wavelength_terms.py`, the content-drift job, and
  * `test_phase_names_match_the_canonical_modes_csv`); the renderer is pinned by
  * fixtures. Nothing held the two together, so this spec does.
- * `@/testing/backendSource` declares that direct backend read; e2e stays in its
- * Playwright lane rather than the Jest cross-boundary runner.
  *
  * It names no phase term of its own beyond a guard on the CSV parse. It reads
  * the `GET /stages` response the page's own `stages` client received -- the
@@ -37,16 +34,6 @@ import { NARROW_VIEWPORT, WIDE_VIEWPORT } from './routeWalk';
 /** Teal: the stage whose twelve names #3135 corrected. */
 const TEAL_STAGE = 8;
 const TEAL_COLOUR = 'Teal';
-
-const MODES_CSV = join(
-  __dirname,
-  '..',
-  '..',
-  'backend',
-  'content',
-  'curriculum',
-  'modes_of_the_wavelength.csv',
-);
 
 /** The six phases in canonical order, as the dataset spells them. */
 const PHASES = [
@@ -95,8 +82,8 @@ interface WireStage {
  * trimmed, as the drift gate trims them (the CSV carries trailing spaces).
  */
 function canonicalTealNames(): PhaseNames[] {
-  const text = readFileSync(MODES_CSV, 'utf8');
-  if (text.includes('"')) throw new Error(`${MODES_CSV} grew quoted cells; parse it properly`);
+  const text = readBackendSource('content', 'curriculum', 'modes_of_the_wavelength.csv');
+  if (text.includes('"')) throw new Error('the Modes CSV grew quoted cells; parse it properly');
   const [header, ...rows] = text
     .split(/\r?\n/u)
     .filter((line) => line.trim() !== '')
@@ -104,7 +91,7 @@ function canonicalTealNames(): PhaseNames[] {
   const columns = (header ?? []).map((cell) => cell.toLowerCase());
   const column = (name: string): number => {
     const index = columns.indexOf(name.toLowerCase());
-    if (index < 0) throw new Error(`${MODES_CSV} has no ${name} column`);
+    if (index < 0) throw new Error(`the Modes CSV has no ${name} column`);
     return index;
   };
   const row = (dosage: string): string[] => {

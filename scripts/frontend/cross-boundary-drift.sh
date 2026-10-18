@@ -30,6 +30,7 @@ FRONTEND_DIR="$REPO_ROOT/frontend"
 # The marker. Identical to the module specifier the guards import, so there is
 # no second place for the declaration to drift from the code.
 MARKER='@/testing/backendSource'
+IMPORT_PATTERN="^[[:space:]]*(import[[:space:]].*[[:space:]]from|}[[:space:]]from)[[:space:]]+['\"]${MARKER}['\"];?[[:space:]]*$"
 
 LIST_ONLY=false
 
@@ -69,7 +70,7 @@ while IFS= read -r file; do
         DISCOVERED+=("$file")
     fi
 done < <(
-    grep -rl --fixed-strings "$MARKER" "$FRONTEND_DIR" \
+    grep -Erl "$IMPORT_PATTERN" "$FRONTEND_DIR" \
         --include='*.test.ts' --include='*.test.tsx' \
         --exclude-dir=node_modules --exclude-dir=e2e |
         LC_ALL=C sort

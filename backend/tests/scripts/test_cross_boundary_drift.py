@@ -62,6 +62,10 @@ _SUBPROCESS_TIMEOUT_SECONDS = 60
 # The one string that makes a test discoverable: the module specifier of the
 # shared helper every cross-boundary test reads backend source through.
 _MARKER = "@/testing/backendSource"
+_DECLARATION = re.compile(
+    rf"^\s*(?:import\s+.*\s+from|}}\s+from)\s+['\"]{re.escape(_MARKER)}['\"];?\s*$",
+    re.MULTILINE,
+)
 
 _JOB_NAME = "cross-boundary-drift"
 _INVOCATION = "scripts/frontend/cross-boundary-drift.sh"
@@ -197,7 +201,7 @@ class TestDiscovery:
             str(path.relative_to(_REPO_ROOT))
             for path in _frontend_test_files()
             if "e2e" not in path.relative_to(_FRONTEND).parts
-            and _MARKER in path.read_text(encoding="utf-8")
+            and _DECLARATION.search(path.read_text(encoding="utf-8"))
         )
 
         result = _run("--list")
@@ -218,7 +222,7 @@ class TestDiscovery:
         undeclared = [
             str(path.relative_to(_REPO_ROOT))
             for path in _frontend_test_files()
-            if _MARKER not in (text := path.read_text(encoding="utf-8"))
+            if not _DECLARATION.search(text := path.read_text(encoding="utf-8"))
             and _HAND_ROLLED_BACKEND_PATH.search(text)
             and _READS_FILES.search(text)
         ]
@@ -256,6 +260,17 @@ class TestDiscovery:
 
         assert result.returncode != 0, "discovering nothing passed as if it were clean"
         assert _MARKER in result.stderr
+
+    def test_a_comment_only_marker_is_not_a_declaration(self, tmp_path: Path) -> None:
+        """Prose cannot enroll a suite in the backend-triggered Jest lane."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(f"// Read through {_MARKER} when this becomes a guard.\n")
+
+        result = _run("--list", checkout=checkout)
+
+        assert result.returncode != 0
+        assert _listed(result) == []
 
     def test_an_e2e_spec_carrying_the_marker_is_not_swept_in(self, tmp_path: Path) -> None:
         """``frontend/e2e`` is excluded structurally, not just by nobody trying yet.
