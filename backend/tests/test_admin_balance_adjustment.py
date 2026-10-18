@@ -19,7 +19,10 @@ from models.wallet_audit import REASON_ADMIN_ADJUSTMENT, WalletAudit
 async def _signup(client: AsyncClient, email: str) -> tuple[int, dict[str, str]]:
     response = await client.post(
         "/auth/signup",
-        json={"email": email, "password": "correct-horse-battery"},
+        json={
+            "email": email,
+            "password": "correct-horse-battery",  # pragma: allowlist secret
+        },
     )
     assert response.status_code == HTTPStatus.OK, response.text
     body = response.json()
