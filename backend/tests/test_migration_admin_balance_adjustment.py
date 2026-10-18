@@ -75,11 +75,11 @@ def test_upgrade_creates_the_audit_and_keyed_replay_guard(migration_config: Conf
     db_url = _url(migration_config)
     engine = create_engine(db_url.replace("+aiosqlite", ""))
     try:
-        columns = {column["name"] for column in inspect(engine).get_columns(_TABLE)}
+        columns = {column["name"]: column for column in inspect(engine).get_columns(_TABLE)}
         indexes = {index["name"] for index in inspect(engine).get_indexes(_TABLE)}
     finally:
         engine.dispose()
-    assert columns == {
+    assert set(columns) == {
         "id",
         "target_user_id",
         "actor_admin_id",
@@ -91,6 +91,7 @@ def test_upgrade_creates_the_audit_and_keyed_replay_guard(migration_config: Conf
         "request_fingerprint",
         "created_at",
     }
+    assert columns["source_ip"]["nullable"] is True
     assert "ix_adminbalanceadjustment_actor_idem_key" in indexes
 
     with _connect(db_url) as connection:

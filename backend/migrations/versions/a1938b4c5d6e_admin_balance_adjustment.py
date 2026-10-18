@@ -39,7 +39,7 @@ def upgrade() -> None:
         sa.Column("delta", sa.Integer(), nullable=False),
         sa.Column("balance_after", sa.Integer(), nullable=False),
         sa.Column("reason", sa.String(length=500), nullable=False),
-        sa.Column("source_ip", sa.String(length=45), nullable=False),
+        sa.Column("source_ip", sa.String(length=45), nullable=True),
         sa.Column("idempotency_key", sa.String(length=128), nullable=True),
         sa.Column("request_fingerprint", sa.String(length=64), nullable=False),
         sa.Column(

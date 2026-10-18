@@ -233,6 +233,25 @@ async def _anonymise_linked_sales(session: AsyncSession, account: Account) -> No
     await session.execute(update(sale).where(linked).values(values))
 
 
+async def _anonymise_admin_adjustment_sources(
+    session: AsyncSession,
+    account: Account,
+) -> None:
+    """Clear a departing operator's address while retaining the target's audit trail.
+
+    ``source_ip`` describes the actor, not the target that owns the adjustment
+    row. Clear it before the generic sweep nulls ``actor_admin_id``; afterwards
+    there would be no privacy-safe way to identify which surviving rows carried
+    the departing account's network identifier.
+    """
+    adjustment = SQLModel.metadata.tables["adminbalanceadjustment"]
+    await session.execute(
+        update(adjustment)
+        .where(adjustment.c.actor_admin_id == account.user_id)
+        .values(source_ip=None)
+    )
+
+
 def require_total_policy() -> None:
     """Refuse to erase anything while the policy has a hole in it."""
     gaps = policy_gaps(SQLModel.metadata)
@@ -323,6 +342,7 @@ async def delete_account(
         select(FeedbackReport.id).where(col(FeedbackReport.user_id) == account.user_id),
     )
     await _anonymise_linked_sales(session, account)
+    await _anonymise_admin_adjustment_sources(session, account)
     # Before the sweep erases the obligations: each open one becomes a detached,
     # content-free note in the same commit (owner decision 2026-10-14, #3267).
     notes_kept = await detach_open_obligations(session, user_id=account.user_id)

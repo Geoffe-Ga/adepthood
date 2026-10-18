@@ -103,7 +103,8 @@ POLICY: Mapping[str, TablePolicy] = {
         "target_user_id",
         "The account's wallet correction history goes with its wallet. Rows "
         "about another account survive if this admin leaves, with the actor "
-        "cleared so the target's financial trail remains intact.",
+        "and source address cleared so the target's financial trail remains "
+        "intact without retaining the departed operator's identity.",
         clear_columns=("actor_admin_id",),
     ),
     "authidentity": _erase(

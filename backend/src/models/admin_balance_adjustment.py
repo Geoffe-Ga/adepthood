@@ -53,7 +53,10 @@ class AdminBalanceAdjustment(SQLModel, table=True):
     reason: str = Field(
         sa_column=Column(String(ADMIN_ADJUSTMENT_REASON_MAX_LENGTH), nullable=False),
     )
-    source_ip: str = Field(sa_column=Column(String(_SOURCE_IP_MAX_LENGTH), nullable=False))
+    source_ip: str | None = Field(
+        default=None,
+        sa_column=Column(String(_SOURCE_IP_MAX_LENGTH), nullable=True),
+    )
     idempotency_key: str | None = Field(
         default=None,
         sa_column=Column(String(IDEMPOTENCY_DIGEST_COLUMN_WIDTH), nullable=True),
