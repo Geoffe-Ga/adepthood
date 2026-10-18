@@ -143,6 +143,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'reauth-sheet-survives-anonymous-401.browser.e2e.test.ts',
   'resonance-credit-exhausted.browser.e2e.test.ts',
   'resonance-explainer.browser.e2e.test.ts',
+  'revoked-entitlement-core-access.browser.e2e.test.ts',
   'money-copy.browser.e2e.test.ts',
   'return-letgo-token-renewal.browser.e2e.test.ts',
   'return-recover-habit.browser.e2e.test.ts',
@@ -152,6 +153,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'welcome.browser.e2e.test.ts',
   'writing-timer-habit-link.browser.e2e.test.ts',
   'writing-timer-presets-fit.browser.e2e.test.ts',
+  'zero-payment-core-access.browser.e2e.test.ts',
 ].sort();
 const LICENSE_STUB = 'verify_aptitude_license';
 const EXPECTED_JOURNEYS = [

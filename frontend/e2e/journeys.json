@@ -2374,10 +2374,10 @@
   },
   {
     "id": "auth.zero-payment-newcomer-core-access",
-    "description": "A newcomer claims a $0 APTITUDE membership license and, with no AI allowance on any axis (BOTMASON_MONTHLY_CAP=0, an empty offering balance, BOTMASON_DAILY_GENERATION_CEILING=0), writes, edits and deletes journal entries, exports everything as JSON and Markdown, creates a habit, logs a practice session and finally deletes the account -- none of it charging the wallet or calling Gumroad, and all of it still working after a refund revokes the entitlement (#1938, B21). Uncovered because the e2e lane's Gumroad stub (backend/tests/e2e/server.py _stub_license_check) replaces verification wholesale with a price-less purchase and the lane's allowance env is lane-wide, so a spec cannot set a zero price or a zero allowance for one journey. Pinned meanwhile by backend/tests/test_free_core_access_invariants.py and test_auth_signup_license.py::test_zero_price_membership_license_creates_exactly_one_account.",
+    "description": "A newcomer signs up through the real browser license gate after the lane's isolated Gumroad seam returns an explicit price: 0 purchase. This proves Adepthood's post-verification behavior, not a live Gumroad response or charge. An out-of-band arrange moves only this account to the deployment's served monthly cap with an empty offering balance; the writer then creates and finishes a page, downloads both JSON and Markdown exports, deletes the page and deletes the account through the real screens while forensic wallet reads stay unchanged (#1938, B21). The broader route-by-route matrix for habits, practice and a deployment configured with literal zero monthly/daily caps remains pinned in backend/tests/test_free_core_access_invariants.py; this browser journey does not relabel that in-process matrix as browser evidence.",
     "crosses": {
       "screen": "frontend/src/features/Auth/SignupScreen.tsx",
-      "client": ["auth", "journal", "users", "habits"],
+      "client": ["auth", "journal", "users"],
       "routes": [
         "POST /auth/signup",
         "POST /journal/",
@@ -2385,31 +2385,33 @@
         "DELETE /journal/{entry_id}",
         "GET /users/me/export",
         "GET /users/me/export/journal.md",
-        "POST /habits/",
         "DELETE /users/me"
       ],
-      "tables": ["user", "entitlement", "licensebinding", "walletaudit"]
+      "tables": ["user", "entitlement", "licensebinding", "walletaudit", "journalentry"]
     },
-    "status": "uncovered",
-    "issue": 1938
+    "status": "covered",
+    "coveredBy": "frontend/e2e/zero-payment-core-access.browser.e2e.test.ts"
   },
   {
     "id": "journal.revoked-entitlement-restricts-ai-only",
-    "description": "A member whose APTITUDE entitlement is revoked by a refund, a dispute or an operator (with no live re-grant; a cancelled or ended membership does not restrict while the owner's cancel-timing decision is pending) asks for a resonance pass, a letter, completion detection or a server page read without a key of their own and is refused 403 ai_access_revoked before the minute bucket, the slot, the wallet or any dial, with funded credits left untouched; the client renders the plain ai_access_revoked copy, which says nothing was charged and that the journal, course, habits, practice, export and deletion are unaffected. The page the pass was asked of stays saved, a flagged entry still receives the care surface, a personal key is still admitted, and an account with no entitlement row at all (legacy, never comped) keeps today's access (#1938, B21 E1). Uncovered because the e2e lane cannot revoke an entitlement through the product: revocation arrives only from a Gumroad refund/cancellation ping or the admin route, and the lane's Gumroad stub emits no reversal ping. Pinned meanwhile by backend/tests/test_ai_access_revocation.py, backend/tests/test_free_core_access_invariants.py and frontend/src/api/__tests__/errorMessages.test.ts.",
+    "description": "A member with an available served allowance has their APTITUDE entitlement revoked through the production admin route, then asks for a resonance pass from the real finished-entry screen. The production client and journal route answer 403 ai_access_revoked; the rendered margin says the membership is no longer active, nothing was charged, and export and deletion remain available, with no retry/refill detour. The same browser session then edits and re-finishes the saved page, downloads both current exports, deletes the page and deletes the account, while a forensic wallet read proves the refusal and core work added no charge (#1938, B21 E1). This is truthful evidence for the operator-revocation resonance seam only: refund/dispute webhooks, letters, completion detection, transcription, care, BYOK and legacy-no-row controls remain pinned by backend/tests/test_ai_access_revocation.py, backend/tests/test_free_core_access_invariants.py and focused frontend tests rather than being claimed by this browser spec.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["journal"],
+      "client": ["journal", "users", "botmasonUsage"],
       "routes": [
+        "GET /user/usage",
         "POST /journal/{entry_id}/resonance",
-        "POST /journal/marginalia/{marginalia_id}/essay",
-        "POST /journal/{entry_id}/suggestions/detect",
-        "POST /journal/transcribe-page",
-        "GET /journal/{entry_id}"
+        "GET /journal/{entry_id}",
+        "PATCH /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "GET /users/me/export",
+        "GET /users/me/export/journal.md",
+        "DELETE /users/me"
       ],
-      "tables": ["entitlement", "walletaudit", "journalentry"]
+      "tables": ["user", "entitlement", "walletaudit", "journalentry"]
     },
-    "status": "uncovered",
-    "issue": 1938
+    "status": "covered",
+    "coveredBy": "frontend/e2e/revoked-entitlement-core-access.browser.e2e.test.ts"
   },
   {
     "id": "habits.reveal-without-course",
