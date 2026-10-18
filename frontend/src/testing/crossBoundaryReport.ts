@@ -26,6 +26,7 @@ function declaresCrossBoundaryImport(testFile: string, testSource: string): bool
   return source.statements.some(
     (statement) =>
       ts.isImportDeclaration(statement) &&
+      statement.importClause !== undefined &&
       ts.isStringLiteral(statement.moduleSpecifier) &&
       statement.moduleSpecifier.text === CROSS_BOUNDARY_MARKER,
   );

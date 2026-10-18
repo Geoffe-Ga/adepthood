@@ -326,6 +326,18 @@ class TestDiscovery:
         assert result.returncode != 0
         assert _listed(result) == []
 
+    def test_a_side_effect_only_import_is_not_a_declaration(self, tmp_path: Path) -> None:
+        """The declaration must bind and use a helper, not merely load its module."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(f"import '{_MARKER}';\n")
+
+        result = _run("--list", checkout=checkout)
+
+        assert not _declares_cross_boundary_import(invented.read_text())
+        assert result.returncode != 0
+        assert _listed(result) == []
+
     @pytest.mark.parametrize(
         "quoted",
         [

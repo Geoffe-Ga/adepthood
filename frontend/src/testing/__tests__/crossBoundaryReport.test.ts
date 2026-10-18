@@ -63,6 +63,14 @@ describe('the rule that keeps a drift guard discoverable', () => {
     ).not.toBeNull();
   });
 
+  it('does not accept a side-effect-only marker import', () => {
+    const source = `import '${CROSS_BOUNDARY_MARKER}';`;
+
+    expect(
+      undeclaredCrossBoundaryRead('frontend/src/a.test.ts', source, A_BACKEND_READ),
+    ).not.toBeNull();
+  });
+
   it('accepts a real import after comment delimiters held in strings', () => {
     const source = `
       const single = '/* not a comment';
