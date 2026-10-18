@@ -63,6 +63,29 @@ describe('the rule that keeps a drift guard discoverable', () => {
     ).not.toBeNull();
   });
 
+  it('accepts a real import after comment delimiters held in strings', () => {
+    const source = `
+      const single = '/* not a comment';
+      const double = "// still not a comment";
+      const template = \`*/ also data\`;
+      import { backendPath } from '${CROSS_BOUNDARY_MARKER}';
+    `;
+
+    expect(
+      undeclaredCrossBoundaryRead('frontend/src/a.test.ts', source, A_BACKEND_READ),
+    ).toBeNull();
+  });
+
+  it('does not accept import-shaped text inside a multiline template', () => {
+    const source = `const fake = \`
+      import { backendPath } from '${CROSS_BOUNDARY_MARKER}';
+    \`;`;
+
+    expect(
+      undeclaredCrossBoundaryRead('frontend/src/a.test.ts', source, A_BACKEND_READ),
+    ).not.toBeNull();
+  });
+
   it('names the file, the read, and the fix when the marker is missing', () => {
     const failure = undeclaredCrossBoundaryRead(
       'frontend/src/a.test.ts',

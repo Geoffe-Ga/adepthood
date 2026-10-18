@@ -66,11 +66,12 @@ _IMPORT_DECLARATION = re.compile(
     rf"^\s*(?:import\s+.*\s+from|}}\s+from)\s+['\"]{re.escape(_MARKER)}['\"];?\s*$",
     re.MULTILINE,
 )
-_TYPESCRIPT_STRING_OR_COMMENT = re.compile(
+_TYPESCRIPT_NON_CODE = re.compile(
     r"""(?P<string>'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`)"""
     r"|(?P<comment>//[^\r\n]*|/\*.*?\*/)",
     re.DOTALL,
 )
+_MARKER_LITERALS = {f"'{_MARKER}'", f'"{_MARKER}"'}
 
 _JOB_NAME = "cross-boundary-drift"
 _INVOCATION = "scripts/frontend/cross-boundary-drift.sh"
@@ -96,20 +97,20 @@ _READS_FILES = re.compile(r"\b(readFileSync|readdirSync|readFile|readdir)\b")
 _INVENTED_GUARD = Path("frontend") / "src" / "invented" / "__tests__" / "inventedGuard.test.ts"
 
 
-def _without_typescript_comments(source: str) -> str:
-    """Remove JavaScript comments while preserving strings and line structure."""
+def _without_typescript_non_code(source: str) -> str:
+    """Blank comments and strings, except the exact import module literal."""
 
-    def preserve_string_or_lines(match: re.Match[str]) -> str:
-        if match.lastgroup == "string":
+    def preserve_marker_or_lines(match: re.Match[str]) -> str:
+        if match.lastgroup == "string" and match.group() in _MARKER_LITERALS:
             return match.group()
         return "".join(char if char in "\r\n" else " " for char in match.group())
 
-    return _TYPESCRIPT_STRING_OR_COMMENT.sub(preserve_string_or_lines, source)
+    return _TYPESCRIPT_NON_CODE.sub(preserve_marker_or_lines, source)
 
 
 def _declares_cross_boundary_import(source: str) -> bool:
     """Return whether source has a real import of the shared backend helper."""
-    return _IMPORT_DECLARATION.search(_without_typescript_comments(source)) is not None
+    return _IMPORT_DECLARATION.search(_without_typescript_non_code(source)) is not None
 
 
 def _bash_executable() -> str:
@@ -267,9 +268,28 @@ class TestDiscovery:
         workflow, or any manifest.
         """
         checkout = _fake_checkout(tmp_path, marked=True)
+        invented = checkout / _INVENTED_GUARD
 
         result = _run("--list", checkout=checkout)
 
+        assert _declares_cross_boundary_import(invented.read_text())
+        assert result.returncode == 0, result.stderr
+        assert _listed(result) == [_INVENTED_GUARD.as_posix()]
+
+    def test_comment_delimiters_in_strings_do_not_hide_a_real_import(self, tmp_path: Path) -> None:
+        """Quoted comment syntax is data, so discovery must keep scanning."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(
+            "const single = '/* not a comment';\n"
+            'const double = "// still not a comment";\n'
+            "const template = `*/ also data`;\n"
+            f"import {{ backendPath }} from '{_MARKER}';\n",
+        )
+
+        result = _run("--list", checkout=checkout)
+
+        assert _declares_cross_boundary_import(invented.read_text())
         assert result.returncode == 0, result.stderr
         assert _listed(result) == [_INVENTED_GUARD.as_posix()]
 
@@ -290,6 +310,7 @@ class TestDiscovery:
 
         result = _run("--list", checkout=checkout)
 
+        assert not _declares_cross_boundary_import(invented.read_text())
         assert result.returncode != 0
         assert _listed(result) == []
 
@@ -301,6 +322,37 @@ class TestDiscovery:
 
         result = _run("--list", checkout=checkout)
 
+        assert not _declares_cross_boundary_import(invented.read_text())
+        assert result.returncode != 0
+        assert _listed(result) == []
+
+    @pytest.mark.parametrize(
+        "quoted",
+        [
+            f"""const fake = `before
+import {{ backendPath }} from '{_MARKER}';
+after`;
+""",
+            f"""const fake = "before\\
+import {{ backendPath }} from '{_MARKER}';\\
+after";
+""",
+        ],
+        ids=["template", "continued-double-quote"],
+    )
+    def test_import_shaped_text_inside_a_multiline_string_is_not_a_declaration(
+        self,
+        tmp_path: Path,
+        quoted: str,
+    ) -> None:
+        """An import must be syntax, not text held by a string literal."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(quoted)
+
+        result = _run("--list", checkout=checkout)
+
+        assert not _declares_cross_boundary_import(invented.read_text())
         assert result.returncode != 0
         assert _listed(result) == []
 
