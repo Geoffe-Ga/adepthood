@@ -161,15 +161,14 @@ async def test_same_key_different_target_race_conflicts_without_partial_movement
     assert loser.json()["detail"] == "idempotency_key_reused"
     winning_id = int(winner.json()["user_id"])
     async with pair.factory() as session:
-        balances = dict(
-            (
-                await session.execute(
-                    select(User.id, User.offering_balance).where(
-                        col(User.id).in_([first_target.user_id, second_target.user_id])
-                    )
-                )
-            ).all()
+        balance_rows = await session.execute(
+            select(User.id, User.offering_balance).where(
+                col(User.id).in_([first_target.user_id, second_target.user_id])
+            )
         )
+        balances: dict[int, int] = {
+            int(user_id): int(balance) for user_id, balance in balance_rows.tuples().all()
+        }
     assert balances[winning_id] == 5
     losing_id = (
         second_target.user_id if winning_id == first_target.user_id else first_target.user_id

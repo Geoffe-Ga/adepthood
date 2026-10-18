@@ -291,9 +291,9 @@ async def test_admin_adjustment_emits_structured_operator_audit(
 
     assert response.status_code == HTTPStatus.OK, response.text
     record = next(record for record in caplog.records if record.msg == "admin_balance_adjusted")
-    assert record.actor == admin_id
-    assert record.action == "adjust_balance"
-    assert record.target_user_id == target.id
-    assert record.delta == 8
-    assert record.reason == reason
-    assert record.source_ip == "127.0.0.1"
+    assert record.__dict__["actor"] == admin_id
+    assert record.__dict__["action"] == "adjust_balance"
+    assert record.__dict__["target_user_id"] == target.id
+    assert record.__dict__["delta"] == 8
+    assert record.__dict__["reason"] == reason
+    assert record.__dict__["source_ip"] == "127.0.0.1"
