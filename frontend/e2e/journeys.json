@@ -2397,7 +2397,7 @@
     "description": "A member with an available served allowance has their APTITUDE entitlement revoked through the production admin route, then asks for a resonance pass from the real finished-entry screen. The production client and journal route answer 403 ai_access_revoked; the rendered margin says the membership is no longer active, nothing was charged, and export and deletion remain available, with no retry/refill detour. The same browser session then edits and re-finishes the saved page, downloads both current exports, deletes the page and deletes the account, while a forensic wallet read proves the refusal and core work added no charge (#1938, B21 E1). This is truthful evidence for the operator-revocation resonance seam only: refund/dispute webhooks, letters, completion detection, transcription, care, BYOK and legacy-no-row controls remain pinned by backend/tests/test_ai_access_revocation.py, backend/tests/test_free_core_access_invariants.py and focused frontend tests rather than being claimed by this browser spec.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["journal", "users", "botmasonUsage"],
+      "client": ["journal", "resonance", "users", "botmasonUsage"],
       "routes": [
         "GET /user/usage",
         "POST /journal/{entry_id}/resonance",

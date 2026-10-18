@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Page, type Response } from '@playwright/test';
 
 import {
   ACCOUNT_PHRASE,
@@ -41,6 +41,20 @@ const PROMOTE_MODULE = 'tests.e2e.promote_admin';
 
 function visible(page: Page, testId: string) {
   return page.locator(`[data-testid="${testId}"]:visible`);
+}
+
+function isFinishedPatch(response: Response, entryId: number): boolean {
+  const request = response.request();
+  if (request.method() !== 'PATCH' || new URL(response.url()).pathname !== `/journal/${entryId}`) {
+    return false;
+  }
+  const payload = request.postDataJSON() as unknown;
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'status' in payload &&
+    payload.status === 'finished'
+  );
 }
 
 function wallet(email: string): Wallet {
@@ -123,13 +137,10 @@ test('a revoked entitlement refuses AI but leaves writing, export and deletion i
   await page.getByTestId('journal-body-input').fill(FIRST_BODY);
   const entryId = ((await (await created).json()) as { id: number }).id;
   await expect(page.getByTestId('journal-save-hint')).toHaveText('Saved');
-  const finished = page.waitForResponse(
-    (response) =>
-      response.request().method() === 'PATCH' &&
-      new URL(response.url()).pathname === `/journal/${entryId}`,
-  );
+  const finished = page.waitForResponse((response) => isFinishedPatch(response, entryId));
   await page.getByTestId('journal-finish-button').click();
   expect((await finished).status()).toBe(HTTP_OK);
+  await expect(page.getByTestId('journal-edit-button')).toBeVisible();
   const usageResponse = await page.request.get(`${backendUrl()}/user/usage`, { headers });
   expect(usageResponse.status()).toBe(HTTP_OK);
   const usage = (await usageResponse.json()) as Usage;
@@ -155,13 +166,10 @@ test('a revoked entitlement refuses AI but leaves writing, export and deletion i
   await page.getByTestId('journal-edit-button').click();
   await page.getByRole('dialog').getByRole('button', { name: 'Edit this entry' }).click();
   await page.getByTestId('journal-body-input').fill(EDITED_BODY);
-  const refinished = page.waitForResponse(
-    (response) =>
-      response.request().method() === 'PATCH' &&
-      new URL(response.url()).pathname === `/journal/${entryId}`,
-  );
+  const refinished = page.waitForResponse((response) => isFinishedPatch(response, entryId));
   await page.getByTestId('journal-finish-button').click();
   expect((await refinished).status()).toBe(HTTP_OK);
+  await expect(page.getByTestId('journal-edit-button')).toBeVisible();
   const stored = await page.request.get(`${backendUrl()}/journal/${entryId}`, { headers });
   expect((await stored.json()).message).toBe(EDITED_BODY);
 
