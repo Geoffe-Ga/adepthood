@@ -64,16 +64,83 @@ EOF
 esac
 
 DISCOVERED=()
-while IFS= read -r file; do
-    if [ -n "$file" ]; then
+declares_marker() {
+    awk -v marker="$MARKER" '
+        BEGIN { state = "code"; escaped = 0; capture_string = 0; found = 0 }
+        {
+            visible = ""
+            for (position = 1; position <= length($0); position++) {
+                char = substr($0, position, 1)
+                following = substr($0, position + 1, 1)
+                if (state == "block-comment") {
+                    if (char == "*" && following == "/") {
+                        state = "code"
+                        position++
+                    }
+                    continue
+                }
+                if (state != "code") {
+                    if (capture_string) visible = visible char
+                    if (escaped) {
+                        escaped = 0
+                    } else if (char == "\\") {
+                        escaped = 1
+                    } else if ((state == "single" && char == "\047") ||
+                               (state == "double" && char == "\042") ||
+                               (state == "template" && char == "`")) {
+                        state = "code"
+                        capture_string = 0
+                    }
+                    continue
+                }
+                if (char == "/" && following == "/") break
+                if (char == "/" && following == "*") {
+                    state = "block-comment"
+                    position++
+                    continue
+                }
+                if (char == "\047") {
+                    state = "single"
+                    capture_string = visible ~ /^[[:space:]]*(import[[:space:]].*[[:space:]]from|}[[:space:]]from)[[:space:]]*$/
+                    visible = visible char
+                    continue
+                }
+                if (char == "\042") {
+                    state = "double"
+                    capture_string = visible ~ /^[[:space:]]*(import[[:space:]].*[[:space:]]from|}[[:space:]]from)[[:space:]]*$/
+                    visible = visible char
+                    continue
+                }
+                if (char == "`") {
+                    state = "template"
+                    continue
+                }
+                visible = visible char
+            }
+            pattern = "^[[:space:]]*(import[[:space:]].*[[:space:]]from|}[[:space:]]from)[[:space:]]+[\047\042]" marker "[\047\042];?[[:space:]]*$"
+            if (visible ~ pattern) found = 1
+            if (state == "single" || state == "double") {
+                if (!escaped) state = "code"
+                escaped = 0
+            }
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$1"
+}
+
+while IFS= read -r -d '' file; do
+    if declares_marker "$file"; then
         DISCOVERED+=("$file")
     fi
 done < <(
-    grep -rl --fixed-strings "$MARKER" "$FRONTEND_DIR" \
-        --include='*.test.ts' --include='*.test.tsx' \
-        --exclude-dir=node_modules --exclude-dir=e2e |
-        LC_ALL=C sort
+    find "$FRONTEND_DIR" \
+        -type d \( -name node_modules -o -name e2e \) -prune -o \
+        -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) -print0
 )
+
+if [ ${#DISCOVERED[@]} -gt 0 ]; then
+    mapfile -t DISCOVERED < <(printf '%s\n' "${DISCOVERED[@]}" | LC_ALL=C sort)
+fi
 
 # An empty sweep is the failure this lane exists to prevent, one level up: a
 # gate that reports it did nothing looks exactly like a gate that passed.
