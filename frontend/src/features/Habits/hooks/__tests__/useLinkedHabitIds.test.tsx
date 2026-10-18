@@ -3,6 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 const mockList = jest.fn<() => Promise<{ id: number; habit_id?: number | null }[]>>();
 const mockUiFlagsGet = jest.fn<() => Promise<{ writing_session_habit_id: number | null }>>();
+let mockToken = 'token-a';
 
 jest.mock('../../../../api', () => ({
   __esModule: true,
@@ -11,7 +12,7 @@ jest.mock('../../../../api', () => ({
 }));
 
 jest.mock('../../../../context/AuthContext', () => ({
-  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
+  useAuth: () => ({ token: mockToken, userTimezone: 'UTC' }),
 }));
 
 import { useWritingHabitLinkStore } from '../../../../store/useWritingHabitLinkStore';
@@ -19,6 +20,7 @@ import { useLinkedHabitIds } from '../useLinkedHabitIds';
 
 describe('useLinkedHabitIds', () => {
   beforeEach(() => {
+    mockToken = 'token-a';
     mockList.mockReset();
     mockUiFlagsGet.mockReset();
     useWritingHabitLinkStore.getState().reset();
@@ -86,5 +88,48 @@ describe('useLinkedHabitIds', () => {
     });
     expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();
+  });
+
+  it('exposes no prior-account practice links while the next account read is pending', async () => {
+    mockUiFlagsGet.mockResolvedValue({ writing_session_habit_id: null });
+    let resolveNext: (rows: { id: number; habit_id: number }[]) => void = () => {};
+    mockList.mockResolvedValueOnce([{ id: 1, habit_id: 5 }]).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveNext = resolve;
+      }),
+    );
+    const { result, rerender } = renderHook(() => useLinkedHabitIds());
+    await waitFor(() => expect([...result.current]).toEqual([5]));
+
+    mockToken = 'token-b';
+    rerender({});
+
+    expect(result.current.size).toBe(0);
+    await act(async () => {
+      resolveNext([{ id: 2, habit_id: 9 }]);
+    });
+    expect([...result.current]).toEqual([9]);
+  });
+
+  it('does not let a deferred prior-account answer overwrite the current account', async () => {
+    mockUiFlagsGet.mockResolvedValue({ writing_session_habit_id: null });
+    let resolvePrior: (rows: { id: number; habit_id: number }[]) => void = () => {};
+    mockList
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolvePrior = resolve;
+        }),
+      )
+      .mockResolvedValueOnce([{ id: 2, habit_id: 9 }]);
+    const { result, rerender } = renderHook(() => useLinkedHabitIds());
+
+    mockToken = 'token-b';
+    rerender({});
+    await waitFor(() => expect([...result.current]).toEqual([9]));
+    await act(async () => {
+      resolvePrior([{ id: 1, habit_id: 5 }]);
+    });
+
+    expect([...result.current]).toEqual([9]);
   });
 });
