@@ -21,6 +21,12 @@ import { useWritingHabitLinkStore } from '../../../store/useWritingHabitLinkStor
 /** No practice is linked, or none is known yet. Shared so the memo stays stable. */
 const NO_PRACTICE_LINKS: readonly number[] = [];
 
+interface PracticeLinksState {
+  /** The credential whose response produced ``ids``. */
+  token: string | null;
+  ids: readonly number[];
+}
+
 /** The habit ids the caller's adopted practices log to. */
 const loadPracticeHabitIds = async (token?: string): Promise<number[]> => {
   const rows = await userPractices.list(token);
@@ -31,7 +37,10 @@ export const useLinkedHabitIds = (): ReadonlySet<number> => {
   const { token } = useAuth();
   const writingHabitId = useWritingHabitLinkStore((state) => state.habitId);
   const hydrateWritingLink = useWritingHabitLinkStore((state) => state.hydrate);
-  const [practiceHabitIds, setPracticeHabitIds] = useState<readonly number[]>(NO_PRACTICE_LINKS);
+  const [practiceLinks, setPracticeLinks] = useState<PracticeLinksState>({
+    token,
+    ids: NO_PRACTICE_LINKS,
+  });
 
   useEffect(() => {
     void hydrateWritingLink(token ?? undefined);
@@ -43,10 +52,10 @@ export const useLinkedHabitIds = (): ReadonlySet<number> => {
     let current = true;
     loadPracticeHabitIds(token ?? undefined)
       .then((ids) => {
-        if (current) setPracticeHabitIds(ids);
+        if (current) setPracticeLinks({ token, ids });
       })
       .catch(() => {
-        if (current) setPracticeHabitIds(NO_PRACTICE_LINKS);
+        if (current) setPracticeLinks({ token, ids: NO_PRACTICE_LINKS });
       });
     return () => {
       current = false;
@@ -54,8 +63,13 @@ export const useLinkedHabitIds = (): ReadonlySet<number> => {
   }, [token]);
 
   return useMemo(() => {
+    // A token change is visible during render, before the next effect runs.
+    // Never let the previous credential's ids cross that boundary while the
+    // current account's read is pending; the effect cleanup separately keeps
+    // a late response from the previous credential from repopulating them.
+    const practiceHabitIds = practiceLinks.token === token ? practiceLinks.ids : NO_PRACTICE_LINKS;
     const ids = new Set(practiceHabitIds);
     if (writingHabitId !== null) ids.add(writingHabitId);
     return ids;
-  }, [practiceHabitIds, writingHabitId]);
+  }, [practiceLinks, token, writingHabitId]);
 };

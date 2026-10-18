@@ -62,6 +62,16 @@ _SUBPROCESS_TIMEOUT_SECONDS = 60
 # The one string that makes a test discoverable: the module specifier of the
 # shared helper every cross-boundary test reads backend source through.
 _MARKER = "@/testing/backendSource"
+_IMPORT_DECLARATION = re.compile(
+    rf"^\s*(?:import\s+.*\s+from|}}\s+from)\s+['\"]{re.escape(_MARKER)}['\"];?\s*$",
+    re.MULTILINE,
+)
+_TYPESCRIPT_NON_CODE = re.compile(
+    r"""(?P<string>'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`)"""
+    r"|(?P<comment>//[^\r\n]*|/\*.*?\*/)",
+    re.DOTALL,
+)
+_MARKER_LITERALS = {f"'{_MARKER}'", f'"{_MARKER}"'}
 
 _JOB_NAME = "cross-boundary-drift"
 _INVOCATION = "scripts/frontend/cross-boundary-drift.sh"
@@ -85,6 +95,22 @@ _HAND_ROLLED_BACKEND_PATH = re.compile(r"""['"]backend['"]|backend/src/[\w/]+\.p
 _READS_FILES = re.compile(r"\b(readFileSync|readdirSync|readFile|readdir)\b")
 
 _INVENTED_GUARD = Path("frontend") / "src" / "invented" / "__tests__" / "inventedGuard.test.ts"
+
+
+def _without_typescript_non_code(source: str) -> str:
+    """Blank comments and strings, except the exact import module literal."""
+
+    def preserve_marker_or_lines(match: re.Match[str]) -> str:
+        if match.lastgroup == "string" and match.group() in _MARKER_LITERALS:
+            return match.group()
+        return "".join(char if char in "\r\n" else " " for char in match.group())
+
+    return _TYPESCRIPT_NON_CODE.sub(preserve_marker_or_lines, source)
+
+
+def _declares_cross_boundary_import(source: str) -> bool:
+    """Return whether source has a real import of the shared backend helper."""
+    return _IMPORT_DECLARATION.search(_without_typescript_non_code(source)) is not None
 
 
 def _bash_executable() -> str:
@@ -196,7 +222,8 @@ class TestDiscovery:
         expected = sorted(
             str(path.relative_to(_REPO_ROOT))
             for path in _frontend_test_files()
-            if _MARKER in path.read_text(encoding="utf-8")
+            if "e2e" not in path.relative_to(_FRONTEND).parts
+            and _declares_cross_boundary_import(path.read_text(encoding="utf-8"))
         )
 
         result = _run("--list")
@@ -217,7 +244,7 @@ class TestDiscovery:
         undeclared = [
             str(path.relative_to(_REPO_ROOT))
             for path in _frontend_test_files()
-            if _MARKER not in (text := path.read_text(encoding="utf-8"))
+            if not _declares_cross_boundary_import(text := path.read_text(encoding="utf-8"))
             and _HAND_ROLLED_BACKEND_PATH.search(text)
             and _READS_FILES.search(text)
         ]
@@ -241,9 +268,28 @@ class TestDiscovery:
         workflow, or any manifest.
         """
         checkout = _fake_checkout(tmp_path, marked=True)
+        invented = checkout / _INVENTED_GUARD
 
         result = _run("--list", checkout=checkout)
 
+        assert _declares_cross_boundary_import(invented.read_text())
+        assert result.returncode == 0, result.stderr
+        assert _listed(result) == [_INVENTED_GUARD.as_posix()]
+
+    def test_comment_delimiters_in_strings_do_not_hide_a_real_import(self, tmp_path: Path) -> None:
+        """Quoted comment syntax is data, so discovery must keep scanning."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(
+            "const single = '/* not a comment';\n"
+            'const double = "// still not a comment";\n'
+            "const template = `*/ also data`;\n"
+            f"import {{ backendPath }} from '{_MARKER}';\n",
+        )
+
+        result = _run("--list", checkout=checkout)
+
+        assert _declares_cross_boundary_import(invented.read_text())
         assert result.returncode == 0, result.stderr
         assert _listed(result) == [_INVENTED_GUARD.as_posix()]
 
@@ -255,6 +301,72 @@ class TestDiscovery:
 
         assert result.returncode != 0, "discovering nothing passed as if it were clean"
         assert _MARKER in result.stderr
+
+    def test_a_comment_only_marker_is_not_a_declaration(self, tmp_path: Path) -> None:
+        """Prose cannot enroll a suite in the backend-triggered Jest lane."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(f"// Read through {_MARKER} when this becomes a guard.\n")
+
+        result = _run("--list", checkout=checkout)
+
+        assert not _declares_cross_boundary_import(invented.read_text())
+        assert result.returncode != 0
+        assert _listed(result) == []
+
+    def test_an_import_shaped_block_comment_is_not_a_declaration(self, tmp_path: Path) -> None:
+        """A commented-out import cannot enroll a suite in the Jest lane."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(f"/*\nimport {{ backendPath }} from '{_MARKER}';\n*/\n")
+
+        result = _run("--list", checkout=checkout)
+
+        assert not _declares_cross_boundary_import(invented.read_text())
+        assert result.returncode != 0
+        assert _listed(result) == []
+
+    def test_a_side_effect_only_import_is_not_a_declaration(self, tmp_path: Path) -> None:
+        """The declaration must bind and use a helper, not merely load its module."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(f"import '{_MARKER}';\n")
+
+        result = _run("--list", checkout=checkout)
+
+        assert not _declares_cross_boundary_import(invented.read_text())
+        assert result.returncode != 0
+        assert _listed(result) == []
+
+    @pytest.mark.parametrize(
+        "quoted",
+        [
+            f"""const fake = `before
+import {{ backendPath }} from '{_MARKER}';
+after`;
+""",
+            f"""const fake = "before\\
+import {{ backendPath }} from '{_MARKER}';\\
+after";
+""",
+        ],
+        ids=["template", "continued-double-quote"],
+    )
+    def test_import_shaped_text_inside_a_multiline_string_is_not_a_declaration(
+        self,
+        tmp_path: Path,
+        quoted: str,
+    ) -> None:
+        """An import must be syntax, not text held by a string literal."""
+        checkout = _fake_checkout(tmp_path, marked=False)
+        invented = checkout / _INVENTED_GUARD
+        invented.write_text(quoted)
+
+        result = _run("--list", checkout=checkout)
+
+        assert not _declares_cross_boundary_import(invented.read_text())
+        assert result.returncode != 0
+        assert _listed(result) == []
 
     def test_an_e2e_spec_carrying_the_marker_is_not_swept_in(self, tmp_path: Path) -> None:
         """``frontend/e2e`` is excluded structurally, not just by nobody trying yet.
