@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Response } from '@playwright/test';
 
 import { backendUrl, bearer, frontendUrl, sessionFor, signUp } from './journalHabitsBrowserSupport';
 import { runBackendModule } from './laneDatabase';
@@ -41,6 +41,20 @@ const ALLOWANCE_MODULE = 'tests.e2e.exhaust_allowance';
 
 function visible(page: Page, testId: string) {
   return page.locator(`[data-testid="${testId}"]:visible`);
+}
+
+function isFinishedPatch(response: Response, entryId: number): boolean {
+  const request = response.request();
+  if (request.method() !== 'PATCH' || new URL(response.url()).pathname !== `/journal/${entryId}`) {
+    return false;
+  }
+  const payload = request.postDataJSON() as unknown;
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    'status' in payload &&
+    payload.status === 'finished'
+  );
 }
 
 function wallet(email: string): Wallet {
@@ -94,13 +108,10 @@ test('a zero-price member keeps the journal floor when the AI wallet is exhauste
   await page.getByTestId('journal-body-input').fill(FIRST_BODY);
   const entryId = ((await (await created).json()) as { id: number }).id;
   await expect(page.getByTestId('journal-save-hint')).toHaveText('Saved');
-  const finished = page.waitForResponse(
-    (response) =>
-      response.request().method() === 'PATCH' &&
-      new URL(response.url()).pathname === `/journal/${entryId}`,
-  );
+  const finished = page.waitForResponse((response) => isFinishedPatch(response, entryId));
   await page.getByTestId('journal-finish-button').click();
   expect((await finished).status()).toBe(HTTP_OK);
+  await expect(page.getByTestId('journal-edit-button')).toBeVisible();
 
   await page.goto(`${frontendUrl()}/settings`);
   await page.getByTestId('settings-row-export-data').click();
