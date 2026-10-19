@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { mettaReturn, type MettaReturnState } from '@/api';
+import { captureAuthScope, getAuthSession } from '@/api/sessionToken';
 import { useAuth } from '@/context/AuthContext';
 import { useMountedRef } from '@/hooks/useMountedRef';
 import {
@@ -56,11 +57,14 @@ function identityFor(scope: ReturnScope, state: MettaReturnState): ReturnOfferId
 /** Keep credentials and namespace together, including an A → B → A without a render. */
 function useReturnScope(): MountedReturnScope {
   const { token } = useAuth();
-  const latestToken = useRef(token);
-  latestToken.current = token;
   const owner = useActiveUser();
   const generation = useActiveUserGeneration();
   const mounted = useMountedRef();
+  const {
+    owner: scopeOwner,
+    generation: scopeGeneration,
+    session: scopeSession,
+  } = captureAuthScope();
   // Cleanup moves the generation (and re-renders this hook) while the outgoing
   // token and namespace are still in hand; nothing is authorized until the
   // incoming scope is committed (#3368).
@@ -73,14 +77,16 @@ function useReturnScope(): MountedReturnScope {
     () =>
       mounted.current &&
       authorized &&
-      latestToken.current === token &&
-      getActiveUser() === owner &&
-      getActiveUserGeneration() === generation,
-    [mounted, authorized, owner, generation, token],
+      scopeOwner === owner &&
+      scopeGeneration === generation &&
+      getActiveUser() === scopeOwner &&
+      getActiveUserGeneration() === scopeGeneration &&
+      getAuthSession() === scopeSession,
+    [mounted, authorized, owner, generation, scopeOwner, scopeGeneration, scopeSession],
   );
   return {
     generation,
-    session: authorized ? `${owner}@${generation}` : null,
+    session: authorized ? `${owner}@${generation}@${scopeSession}` : null,
     current,
     credentials: authorized && owner !== null && token !== null ? { userId: owner, token } : null,
   };

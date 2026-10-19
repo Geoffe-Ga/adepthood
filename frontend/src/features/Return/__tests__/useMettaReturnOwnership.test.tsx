@@ -2,10 +2,12 @@ import { jest, beforeEach, it, expect } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import type { MettaReturnState, ReturnArc } from '@/api';
+import type * as SessionToken from '@/api/sessionToken';
 import type * as UserScope from '@/storage/userScope';
 
 let mockOwner: number | null = 1;
 let mockEpoch = 1;
+let mockAuthSession = 1;
 let mockToken: string | null = 'account-1';
 const mockState = jest.fn<(..._args: unknown[]) => Promise<MettaReturnState>>();
 const mockDismiss = jest.fn<(..._args: unknown[]) => Promise<unknown>>();
@@ -29,6 +31,19 @@ jest.mock('@/storage/userScope', () => ({
 jest.mock('@/storage/useActiveUser', () => ({
   useActiveUser: () => mockOwner,
   useActiveUserGeneration: () => mockEpoch,
+}));
+jest.mock('@/api/sessionToken', () => ({
+  ...jest.requireActual<typeof SessionToken>('@/api/sessionToken'),
+  captureAuthScope: () => ({
+    owner: mockOwner,
+    generation: mockEpoch,
+    session: mockAuthSession,
+  }),
+  getAuthSession: () => mockAuthSession,
+  isAuthScopeCurrent: (scope: { owner: number | null; generation: number; session: number }) =>
+    scope.owner === mockOwner &&
+    scope.generation === mockEpoch &&
+    scope.session === mockAuthSession,
 }));
 jest.mock('@/storage/returnOfferStorage', () => ({
   loadReturnOfferDismissed: (...args: unknown[]) => mockLoad(...args),
@@ -68,6 +83,7 @@ function deferred<T>(): { promise: Promise<T>; resolve: (_value: T) => void } {
 beforeEach(() => {
   mockOwner = 1;
   mockEpoch = 1;
+  mockAuthSession = 1;
   mockToken = 'account-1';
   mockState.mockReset().mockResolvedValue(state());
   mockDismiss.mockReset().mockResolvedValue({ ...state(), offer_dismissed: true });
@@ -163,6 +179,89 @@ it('passes the observed credential to same-account lifecycle requests', async ()
   });
   expect(mockStart).toHaveBeenCalledWith('account-1');
   expect(mockRelease).toHaveBeenCalledWith([9], 'account-1');
+});
+
+it('lands one held Return offer action across a proactive same-account renewal', async () => {
+  const held = deferred<MettaReturnState>();
+  const renewalRead = deferred<MettaReturnState>();
+  mockDismiss.mockReturnValueOnce(held.promise);
+  const { result, rerender } = renderHook(() => useMettaReturn());
+  await waitFor(() => expect(result.current.offerVisible).toBe(true));
+  let decline!: Promise<void>;
+  act(() => {
+    decline = result.current.dismissOffer();
+  });
+  await waitFor(() => expect(mockDismiss).toHaveBeenCalledTimes(1));
+
+  mockState.mockReturnValueOnce(renewalRead.promise);
+  mockToken = 'account-1:renewed';
+  rerender({});
+  await act(async () => {
+    held.resolve(state('opaque-episode-B'));
+    await decline;
+  });
+
+  expect(mockDismiss).toHaveBeenCalledTimes(1);
+  expect(result.current.offerVisible).toBe(true);
+  expect(mockSave).not.toHaveBeenCalledWith({ userId: 1, episode: 'opaque-episode-B' }, true);
+});
+
+it.each<[string, () => void]>([
+  [
+    'the same owner starts a new auth session',
+    () => {
+      mockAuthSession += 1;
+    },
+  ],
+  [
+    'the owner signs out',
+    () => {
+      mockOwner = null;
+      mockToken = null;
+      mockEpoch += 1;
+      mockAuthSession += 1;
+    },
+  ],
+  [
+    'the account switches',
+    () => {
+      mockOwner = 2;
+      mockToken = 'account-2';
+      mockEpoch += 1;
+      mockAuthSession += 1;
+    },
+  ],
+  [
+    'the account switches A → B → A without an intermediate render',
+    () => {
+      mockOwner = 2;
+      mockToken = 'account-2';
+      mockEpoch += 1;
+      mockAuthSession += 1;
+      mockOwner = 1;
+      mockToken = 'account-1';
+      mockEpoch += 1;
+      mockAuthSession += 1;
+    },
+  ],
+])('drops a held Return action when %s', async (_label, interrupt) => {
+  const held = deferred<MettaReturnState>();
+  mockDismiss.mockReturnValueOnce(held.promise);
+  const { result } = renderHook(() => useMettaReturn());
+  await waitFor(() => expect(result.current.offerVisible).toBe(true));
+  let decline!: Promise<void>;
+  act(() => {
+    decline = result.current.dismissOffer();
+  });
+  await waitFor(() => expect(mockDismiss).toHaveBeenCalledTimes(1));
+
+  interrupt();
+  await act(async () => {
+    held.resolve(state('opaque-episode-B'));
+    await decline;
+  });
+
+  expect(result.current.offerVisible).toBe(false);
 });
 
 it('does not decline a newer episode through a retained previous-episode callback', async () => {
