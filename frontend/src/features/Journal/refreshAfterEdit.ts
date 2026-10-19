@@ -22,6 +22,8 @@ export interface RefreshAfterEdit {
   refreshersRef: MutableRefObject<readonly Refresher[]>;
   /** Fires the deferred refreshers after the first post-edit save. */
   handleSaved: () => void;
+  /** Re-reads annotations after any write that can re-anchor them. */
+  refreshNow: () => void;
   /** Arms the deferred refresh when the writer confirms an edit of a finished entry. */
   onConfirmEdit: () => void;
 }
@@ -29,13 +31,24 @@ export interface RefreshAfterEdit {
 export function useRefreshAfterEdit(): RefreshAfterEdit {
   const refreshersRef = useRef<readonly Refresher[]>([]);
   const pendingRefreshRef = useRef(false);
+  const refreshTailRef = useRef<Promise<void> | null>(null);
+  const refreshNow = useCallback(() => {
+    const refreshers = refreshersRef.current;
+    const run = (): Promise<void> =>
+      Promise.allSettled(refreshers.map((refresh) => refresh())).then(() => undefined);
+    const batch = refreshTailRef.current == null ? run() : refreshTailRef.current.then(run);
+    refreshTailRef.current = batch;
+    void batch.finally(() => {
+      if (refreshTailRef.current === batch) refreshTailRef.current = null;
+    });
+  }, []);
   const handleSaved = useCallback(() => {
     if (!pendingRefreshRef.current) return;
     pendingRefreshRef.current = false;
-    void Promise.allSettled(refreshersRef.current.map((refresh) => refresh()));
-  }, []);
+    refreshNow();
+  }, [refreshNow]);
   const onConfirmEdit = useCallback(() => {
     pendingRefreshRef.current = true;
   }, []);
-  return { refreshersRef, handleSaved, onConfirmEdit };
+  return { refreshersRef, handleSaved, refreshNow, onConfirmEdit };
 }

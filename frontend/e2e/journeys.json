@@ -2850,6 +2850,18 @@
     "coveredBy": "frontend/e2e/settings-gain-copy.browser.e2e.test.ts"
   },
   {
+    "id": "journal.tick-a-task-on-a-finished-entry",
+    "description": "A writer finishes an entry containing open and nested checked tasks, then ticks the open task directly in read mode without reopening Edit (#3448). The checkbox keeps the existing glyph and dimmed checked-line treatment, exposes its item text and checked state to assistive technology, and has an expanded press target. Its optimistic one-character state swap sends a message-only PATCH through the serialized journal write lane; a cold reload shows both tasks checked while the entry remains finished. The real-client browser journey also delays that PATCH while the writer enters Edit and proves newer typed text survives the response and autosaves, delays an editor PATCH while the writer presses Close and proves text typed after X is durable before navigation, then refuses a task PATCH and its Close-time retry to prove the entry stays open with Retry reachable until persistence succeeds. It saves evidence at 390x844, effective 200% phone zoom and 1280x800 desktop.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-finished-task-toggle.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.stat-tiles-wrap-at-200-percent",
     "description": "A writer opens the Journal home on a 390px phone at 200% browser zoom (195x422 CSS px at device scale 2) and reads the Today's habits and Practices stat tiles without a word split across lines (#3440). The covering spec signs up through the real client, waits for both tiles to show their real counts from GET /habits/ and GET /practice-sessions/insights, and measures every word of each tile's title, stat and cue with a Range: all of a word's client rects share one line top. It does so at 390x844 and 1280x800, each at normal size and at 200% zoom, plus 390px with the tiles' text doubled; no tile glyph leaves its tile and the page never scrolls sideways. The same word measurement sweeps every visible text node on the Journal home and in the Notification Center, which hosts the same tiles, so any other row that splits a word fails too. At 1280px the tiles stay two-up on one line; when two will not fit side by side they stack in one column. Saved frames are inspected by hand. Targeted text doubling does not establish physical OS zoom or native geometry.",
     "crosses": {

@@ -485,6 +485,100 @@ describe('JournalEntryScreen -- promote lifecycle feedback (in-flight, success, 
 });
 
 describe('JournalEntryScreen -- promotions follow the server after an edited save (#2891)', () => {
+  it('refetches promotions and marginalia after a finished-task PATCH', async () => {
+    mockGet.mockResolvedValue(
+      entry({ id: 7, message: '- [ ] notice the river', status: 'finished' }),
+    );
+    mockUpdate.mockResolvedValue(
+      entry({ id: 7, message: '- [x] notice the river', status: 'finished' }),
+    );
+    const screen = renderScreen({ entryId: 7 });
+    await screen.findByTestId('journal-markdown-checkbox-0');
+    mockList.mockClear();
+    mockPromotionsList.mockClear();
+
+    fireEvent.press(screen.getByTestId('journal-markdown-checkbox-0'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockList).toHaveBeenCalledWith(7));
+    expect(mockPromotionsList).toHaveBeenCalledWith(7);
+  });
+
+  it('keeps the newest annotations when two task refresh batches would finish out of order', async () => {
+    const body = `${BODY}\n- [ ] first\n- [ ] second`;
+    let releaseOldNotes!: (_value: { items: unknown[] }) => void;
+    const oldNotes = new Promise<{ items: unknown[] }>((resolve) => {
+      releaseOldNotes = resolve;
+    });
+    let releaseOldQuotes!: (_value: PromotedQuote[]) => void;
+    const oldQuotes = new Promise<PromotedQuote[]>((resolve) => {
+      releaseOldQuotes = resolve;
+    });
+    const note = (id: number, start: number, text: string) => ({
+      id,
+      journal_entry_id: 7,
+      kind: 'theme',
+      anchor_start: start,
+      anchor_end: start + text.length,
+      anchor_text: text,
+      note: `Note ${id}`,
+      essay: null,
+      essay_generated_at: null,
+      status: 'active',
+      created_at: '',
+      updated_at: '',
+    });
+    const oldNote = { ...note(82, 2, BODY.slice(2, 19)), note: 'Old note' };
+    const newestNote = { ...note(82, 2, BODY.slice(2, 19)), note: 'Newest note' };
+    const oldQuote = promotedQuote({ id: 81 });
+    const newestQuote = promotedQuote({
+      id: 81,
+      anchor_start: 32,
+      anchor_end: 37,
+      anchor_text: 'river',
+    });
+    mockGet.mockResolvedValue(entry({ id: 7, message: body, status: 'finished' }));
+    mockUpdate.mockImplementation((_id, patch) =>
+      Promise.resolve(
+        entry({
+          id: 7,
+          message: (patch as { message: string }).message,
+          status: 'finished',
+        }),
+      ),
+    );
+    const screen = renderScreen({ entryId: 7 });
+    await screen.findByTestId('journal-markdown-checkbox-48');
+    mockList.mockReset();
+    mockList.mockImplementationOnce(() => oldNotes).mockResolvedValueOnce({ items: [newestNote] });
+    mockPromotionsList.mockReset();
+    mockPromotionsList.mockImplementationOnce(() => oldQuotes).mockResolvedValueOnce([newestQuote]);
+
+    fireEvent.press(screen.getByTestId('journal-markdown-checkbox-48'));
+    fireEvent.press(screen.getByTestId('journal-markdown-checkbox-60'));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(1));
+    expect(mockPromotionsList).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      releaseOldNotes({ items: [oldNote] });
+      releaseOldQuotes([oldQuote]);
+      await Promise.all([oldNotes, oldQuotes]);
+    });
+    await waitFor(() => expect(mockList).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockPromotionsList).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId('margin-note-82')).toHaveTextContent(/Newest note/u);
+    expect(await screen.findByTestId('quote-highlight-81')).toHaveTextContent(/river/u);
+    expect(screen.getByTestId('margin-note-82')).not.toHaveTextContent(/Old note/u);
+    expect(screen.getByTestId('quote-highlight-81')).not.toHaveTextContent(/page about a dail/u);
+    expect(
+      screen.getByTestId('journal-markdown-checkbox-48').props.accessibilityState.checked,
+    ).toBe(true);
+    expect(
+      screen.getByTestId('journal-markdown-checkbox-60').props.accessibilityState.checked,
+    ).toBe(true);
+  });
+
   it('refetches promotions (and marginalia) after an edited finished entry is saved', async () => {
     jest.useFakeTimers();
     try {
