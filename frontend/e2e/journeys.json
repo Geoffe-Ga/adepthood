@@ -207,7 +207,7 @@
   },
   {
     "id": "habits.successful-empty-is-first-use",
-    "description": "A newly registered person whose live habits request succeeds with an empty collection sees an honest first-use state with an Add a habit action, never the fictional names, streaks, or completion history reserved for an explicitly configured demo build. The real-wire spec proves the fresh account and production client receive an empty Page; habitManager.test.ts pins that the service preserves the empty list, and HabitsEmptyState.test.tsx pins the rendered CTA.",
+    "description": "A newly registered person whose live habits request succeeds with an empty collection sees an honest first-use state with an Add a habit action, never the fictional names, streaks, or completion history reserved for an explicitly configured demo build. The page-zero fallback explains the gain -- 'Choose one habit. A minute a day begins the practice; you can build from there.' -- without claiming the account's current stage or duration. The real-wire spec proves the fresh account and production client receive an empty Page; empty-state-map-copy.browser.e2e.test.ts pins the rendered gain and reachable action at phone, desktop and effective 200% zoom; habitManager.test.ts pins that the service preserves the empty list, and HabitsEmptyState.test.tsx pins every selectCopy variant with 'no pressure' rendered at most once.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits"],
@@ -311,7 +311,7 @@
   },
   {
     "id": "journal.write-list-read-back",
-    "description": "A user first tries to save a page made only of whitespace, a zero-width mark, and a control character; the production client receives the stable journal_message_empty refusal and the live journal remains empty. They then write legitimate Unicode prose, find it in the list, and read the body back unchanged. The backend boundary suite separately sweeps spaces, tabs/newlines, controls, and zero-width-only bodies across create and edit, proving those refusals happen before a journal row, Creek write, corpus classification, pipeline run, or wallet event.",
+    "description": "A user first arrives at an empty Journal whose invitation distinguishes corpus membership from bounded reflection retrieval: with corpus sorting enabled, every eligible page not marked Intimate joins the private corpus, whether new or already written; Higher Self may draw only a few passages from it for a reflection. The Start a page action remains the same. empty-state-map-copy.browser.e2e.test.ts pins that invitation and reachable action at phone, desktop and effective 200% zoom. The Journal-wide word-wrap sweep separately proves every token in the invitation has a safe line-break opportunity at effective 200% zoom. The user first tries to save a page made only of whitespace, a zero-width mark, and a control character; the production client receives the stable journal_message_empty refusal and the live journal remains empty. They then write legitimate Unicode prose, find it in the list, and read the body back unchanged. The backend boundary suite separately sweeps spaces, tabs/newlines, controls, and zero-width-only bodies across create and edit, proving those refusals happen before a journal row, Creek write, corpus classification, pipeline run, or wallet event.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
@@ -1336,6 +1336,24 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/map.e2e.test.ts"
+  },
+  {
+    "id": "map.drawer-frames-capacity-without-ranking",
+    "description": "A traveller opens the Map drawer and reads one framing sentence between the journey read and the ten stage rows: 'The Map is a wheel, not a ladder: its ten stages revisit different capacities, never ranking you or the stages.' It appears exactly once, describes only the rendered stage-and-capacity rows, and introduces no invented fullness, altitude or person-ranking vocabulary. The same real-browser walk first visits the successful-empty Journal and Habits surfaces and filters the Practice catalog to its three empty sections, proving each names the gain of filling it. At 390x844, 1280x800 and effective 200% browser zoom it asserts horizontal containment, journey-lead-row order and reachable actions, and saves every product surface for visual inspection with each Practice section captured separately; the enlarged drawer labels wrap instead of clipping.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["auth", "journal", "habits", "practices", "stages"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /journal/",
+        "GET /habits/",
+        "GET /practices/",
+        "GET /stages"
+      ],
+      "tables": ["user", "journalentry", "habit", "practice", "coursestage"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/empty-state-map-copy.browser.e2e.test.ts"
   },
   {
     "id": "map.continue-stage-in-course",

@@ -9,7 +9,7 @@ import { StyleSheet } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import { cycleLabel } from '../beginAgain';
-import { journeyRead, unlockTimeline } from '../journeyNarrative';
+import { MAP_LEAD, journeyRead, unlockTimeline } from '../journeyNarrative';
 import MapDrawer from '../MapDrawer';
 import { STAGE_DISPLAY } from '../mapLayout';
 import { STAGE_COUNT } from '../stageData';
@@ -107,6 +107,22 @@ describe('MapDrawer', () => {
         row.findAll((node: TestNode) => node.props.children === requireDisplay(n).arrowLabel)
           .length,
       ).toBeGreaterThan(0);
+    }
+  });
+
+  it('lets category and Aspect labels wrap instead of clipping enlarged text', () => {
+    const tree = create(
+      <MapDrawer
+        lookup={buildLookup()}
+        currentStage={1}
+        cycleNumber={1}
+        onSelectStage={jest.fn()}
+      />,
+    );
+    const row = tree.root.findByProps({ testID: 'map-drawer-stage-5' });
+    for (const copy of [categoryForStage(5), requireDisplay(5).arrowLabel]) {
+      const label = row.find((node: TestNode) => node.props.children === copy);
+      expect(label.props.numberOfLines).toBeUndefined();
     }
   });
 
@@ -370,6 +386,21 @@ describe('MapDrawer', () => {
     expect(
       summary.findAll((n: TestNode) => n.props.children === journeyRead(3, 4, STAGE_COUNT)).length,
     ).toBeGreaterThan(0);
+  });
+
+  it('frames the Map once as a wheel that reads capacity without ranking', () => {
+    const tree = create(
+      <MapDrawer
+        lookup={buildLookup()}
+        currentStage={3}
+        cycleNumber={1}
+        onSelectStage={jest.fn()}
+      />,
+    );
+    expect(tree.root.findByProps({ testID: 'map-drawer-lead' }).props.children).toBe(MAP_LEAD);
+    expect(MAP_LEAD).toBe(
+      'The Map is a wheel, not a ladder: its ten stages revisit different capacities, never ranking you or the stages.',
+    );
   });
 
   it('shows the cycle label only when cycleNumber is greater than 1', () => {

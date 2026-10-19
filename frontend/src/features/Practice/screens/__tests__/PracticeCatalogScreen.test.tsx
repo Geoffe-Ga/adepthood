@@ -409,6 +409,13 @@ describe('PracticeCatalogScreen — empty sections', () => {
     await waitForLoad();
     // All three section footers render under all-empty.
     expect(view.getByTestId('practice-catalog-section-presets-empty')).toBeTruthy();
+    expect(
+      view.getByText('Curated practices that fit this view land here, ready to try.'),
+    ).toBeTruthy();
+    expect(view.getByText('Practices you author land here, ready to shape and use.')).toBeTruthy();
+    expect(
+      view.getByText('Practices shared with you will land here, ready to explore.'),
+    ).toBeTruthy();
     // Passive "Nothing here yet." copy must not appear in any footer.
     expect(view.queryByText('Nothing here yet.')).toBeNull();
     // The Create CTA in the presets footer opens the wizard.
