@@ -452,7 +452,14 @@ async function holdAnchorRemeasureClear(
     const collisionProbe = annotationCollisionsDuringRemeasure(page, finalViewport);
     await page.setViewportSize(finalViewport);
     const collisions = await collisionProbe;
-    expect(collisions, `${physical.label}: lens caption crossed a locked annotation`).toEqual([]);
+    // Chromium may paint the resized box once before React Native's
+    // ResizeObserver delivers its new grid measurements. The product census
+    // deliberately settles for two frames; a layout-only glide used to keep
+    // crossing annotations for many frames beyond that boundary.
+    expect(
+      collisions.filter(({ frame }) => frame > 0),
+      `${physical.label}: lens caption crossed a locked annotation after measurement delivery`,
+    ).toEqual([]);
     await page.getByTestId('you-are-here').scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath(`map-anchor-${physical.label}.png`) });
   } finally {
