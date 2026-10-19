@@ -5,6 +5,7 @@ import { signUp } from './journalHabitsBrowserSupport';
 const PHONE = { width: 390, height: 844 } as const;
 const LAPTOP = { width: 1280, height: 800 } as const;
 const ZOOM_200 = 2;
+const SHORT_PHONE = { width: 390, height: 300 } as const;
 const EDGE_TOLERANCE = 1;
 
 interface Box {
@@ -62,6 +63,20 @@ async function expectHitTestClear(locator: Locator, message: string): Promise<vo
             const hit = document.elementFromPoint(x, y);
             return hit !== null && (hit === node || node.contains(hit));
           });
+        }),
+      { message },
+    )
+    .toBe(true);
+}
+
+async function expectCenterHit(locator: Locator, message: string): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        locator.evaluate((node) => {
+          const box = node.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return hit !== null && (hit === node || node.contains(hit));
         }),
       { message },
     )
@@ -147,3 +162,102 @@ for (const [label, viewport, zoom] of [
     );
   });
 }
+
+test('an extreme-zoom split-screen dock scrolls every timer control into reach', async ({
+  browser,
+}, testInfo) => {
+  const context = await browser.newContext({
+    viewport: { width: SHORT_PHONE.width / ZOOM_200, height: SHORT_PHONE.height / ZOOM_200 },
+    deviceScaleFactor: ZOOM_200,
+  });
+  const page = await context.newPage();
+  try {
+    await openWritingPage(page, 'idle-dock-short-zoom');
+    const band = page.getByTestId('writing-session-band');
+    const content = page.getByTestId('writing-session-band-content');
+    const headerTitle = page.locator('h1:visible', { hasText: /^Journal$/ }).first();
+    const pageScroll = page.getByTestId('journal-page-scroll');
+    await pageScroll.evaluate((node) => {
+      node.scrollTop = 0;
+    });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    const bandBox = await boxOf(band, 'constrained idle dock');
+    const contentBox = await boxOf(content, 'constrained idle dock scroll viewport');
+    const dockCss = await band.evaluate((node) => ({
+      innerHeight: window.innerHeight,
+      maxHeight: getComputedStyle(node).maxHeight,
+      overflow: getComputedStyle(node).overflow,
+    }));
+    expect(bandBox.y, JSON.stringify(dockCss)).toBeGreaterThanOrEqual(0);
+    expect(dockCss.overflow).toBe('hidden');
+    expect(bandBox.y + bandBox.height).toBeLessThanOrEqual(SHORT_PHONE.height / ZOOM_200);
+    expect(contentBox.y).toBeGreaterThanOrEqual(bandBox.y);
+    expect(contentBox.y + contentBox.height).toBeLessThanOrEqual(
+      bandBox.y + bandBox.height + EDGE_TOLERANCE,
+    );
+    const overflow = await content.evaluate((node) => ({
+      clientHeight: node.clientHeight,
+      scrollHeight: node.scrollHeight,
+    }));
+    expect(overflow.scrollHeight).toBeGreaterThan(overflow.clientHeight);
+
+    const outerBefore = await page.evaluate(() => window.scrollY);
+    const pageScrollBefore = await pageScroll.evaluate((node) => node.scrollTop);
+    await expect(headerTitle).toBeInViewport();
+    await expectCenterHit(
+      headerTitle,
+      'the stationary Journal header starts unobstructed above the dock',
+    );
+    await expect(page.getByTestId('writing-timer-start')).toBeInViewport();
+    await expectHitTestClear(page.getByTestId('writing-timer-start'), 'Start remains reachable');
+    await page.screenshot({
+      path: testInfo.outputPath('idle-dock-short-390x300-200-top.png'),
+    });
+    await content.hover();
+    await page.mouse.wheel(0, overflow.scrollHeight);
+    await expect.poll(() => content.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
+    await expect(page.getByTestId('writing-timer-preset-45')).toBeInViewport();
+    await expectHitTestClear(
+      page.getByTestId('writing-timer-preset-45'),
+      'the final preset remains reachable after dock scroll',
+    );
+    expect(await page.evaluate(() => window.scrollY)).toBe(outerBefore);
+    expect(await pageScroll.evaluate((node) => node.scrollTop)).toBe(pageScrollBefore);
+    const scrolledBandBox = await boxOf(band, 'scrolled constrained idle dock');
+    expect(scrolledBandBox.y).toBeGreaterThanOrEqual(0);
+    expect(scrolledBandBox.y + scrolledBandBox.height).toBeLessThanOrEqual(
+      SHORT_PHONE.height / ZOOM_200,
+    );
+    const scrolledContentBox = await boxOf(content, 'scrolled idle dock viewport');
+    expect(scrolledContentBox.y).toBeGreaterThanOrEqual(scrolledBandBox.y);
+    expect(scrolledContentBox.y + scrolledContentBox.height).toBeLessThanOrEqual(
+      scrolledBandBox.y + scrolledBandBox.height + EDGE_TOLERANCE,
+    );
+    await expect(headerTitle).toBeInViewport();
+    await expectCenterHit(
+      headerTitle,
+      'the stationary Journal header stays unobstructed above the dock',
+    );
+    await page.screenshot({
+      path: testInfo.outputPath('idle-dock-short-390x300-200-bottom.png'),
+    });
+
+    await content.hover();
+    await page.mouse.wheel(0, -overflow.scrollHeight);
+    await expect.poll(() => content.evaluate((node) => node.scrollTop)).toBe(0);
+    await page.getByTestId('writing-timer-start').click();
+    await expect(page.getByTestId('writing-timer-stop')).toBeVisible();
+    await expect(page.getByTestId('writing-session-band')).toHaveCSS('position', 'absolute');
+    const runningScrollBefore = await content.evaluate((node) => node.scrollTop);
+    await content.hover();
+    await page.mouse.wheel(0, overflow.scrollHeight);
+    await expect
+      .poll(() => content.evaluate((node) => node.scrollTop))
+      .toBeGreaterThan(runningScrollBefore);
+    const stop = page.getByTestId('writing-timer-stop');
+    await expect(stop).toBeInViewport();
+    await expectCenterHit(stop, 'Stop remains reachable after starting at extreme zoom');
+  } finally {
+    await context.close();
+  }
+});

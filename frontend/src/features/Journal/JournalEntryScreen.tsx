@@ -4658,14 +4658,15 @@ function EntryWritingCanvas({
   const [idleDockHeight, setIdleDockHeight] = useState(0);
   return (
     <>
-      <EntryComposeRow
-        ctl={ctl}
-        bodyPlaceholder={bodyPlaceholder}
-        focusSpan={focusSpan}
-        writingClearance={writingClearance}
-        bottomInset={idleDockHeight}
-      />
-      <ReflectionComposer reflection={ctl.reflection} />
+      <View style={{ flex: 1, marginBottom: idleDockHeight }} testID="journal-compose-stack">
+        <EntryComposeRow
+          ctl={ctl}
+          bodyPlaceholder={bodyPlaceholder}
+          focusSpan={focusSpan}
+          writingClearance={writingClearance}
+        />
+        <ReflectionComposer reflection={ctl.reflection} />
+      </View>
       <EntryWritingSurfaces
         ctl={ctl}
         launch={launch}

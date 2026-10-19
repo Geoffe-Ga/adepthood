@@ -12,7 +12,7 @@ import {
 import { DEFAULT_WRITING_MINUTES, type WritingSessionResult } from '../writingSession';
 import WritingSessionSurface from '../WritingSessionSurface';
 
-import { SPACING } from '@/design/tokens';
+import { SPACING, touchTarget } from '@/design/tokens';
 import type { IntervalHandle } from '@/features/Practice/engine/types';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 
@@ -72,6 +72,14 @@ describe('WritingSessionSurface', () => {
         position: 'absolute',
         top: 'auto',
         bottom: 0,
+        maxHeight: 844 - touchTarget.minimum - SPACING.lg,
+        overflow: 'hidden',
+      });
+      expect(
+        StyleSheet.flatten(getByTestId('writing-session-band-content').props.style),
+      ).toMatchObject({
+        flexShrink: 1,
+        maxHeight: 844 - touchTarget.minimum - SPACING.lg,
       });
       expect(onClearanceChange).toHaveBeenLastCalledWith(0);
 
@@ -89,6 +97,30 @@ describe('WritingSessionSurface', () => {
       expect(getByTestId('writing-timer-stop')).toBeTruthy();
     } finally {
       unmount?.();
+      dimensions.mockRestore();
+    }
+  });
+
+  it('scrolls an untouched phone dock whose enlarged content exceeds the available height', () => {
+    const rn = require('react-native');
+    const dimensions = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 195, height: 150, scale: 2, fontScale: 2 });
+    try {
+      const { getByTestId } = renderSurface();
+      const band = getByTestId('writing-session-band');
+      const content = getByTestId('writing-session-band-content');
+      fireEvent(content, 'contentSizeChange', 195, 360);
+      fireEvent(band, 'layout', { nativeEvent: { layout: { height: 150 } } });
+      expect(content.props.scrollEnabled).toBe(true);
+      expect(StyleSheet.flatten(band.props.style).maxHeight).toBe(
+        150 - touchTarget.minimum - SPACING.lg,
+      );
+      expect(StyleSheet.flatten(content.props.style).flexShrink).toBe(1);
+      expect(StyleSheet.flatten(content.props.style).maxHeight).toBe(
+        150 - touchTarget.minimum - SPACING.lg,
+      );
+    } finally {
       dimensions.mockRestore();
     }
   });

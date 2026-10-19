@@ -53,7 +53,7 @@ import type { LoggedWritingSession, WritingSessionResult } from './writingSessio
 import WritingSessionBanner from './WritingSessionBanner';
 import WritingTimer from './WritingTimer';
 
-import { SPACING, journalSheet } from '@/design/tokens';
+import { SPACING, journalSheet, touchTarget } from '@/design/tokens';
 import type { EngineDeps } from '@/features/Practice/engine/types';
 
 export interface WritingSessionSurfaceProps {
@@ -196,11 +196,19 @@ const LIFT_GIVEN_UP = RESONANCE_BUTTON_CLEARANCE - WRITING_BAND_LOWERED_CLEARANC
 /** Match the page's single-column breakpoint: below it, there is no side rail for an idle card. */
 export const IDLE_TIMER_DOCK_MAX_WIDTH = 600;
 
-function useIdleTimerDock(): { idleDocked: boolean; beginFloatingSession: () => void } {
+function useIdleTimerDock(): {
+  idleDocked: boolean;
+  idleDockMaxHeight: number;
+  beginFloatingSession: () => void;
+} {
   const [hasStarted, setHasStarted] = useState(false);
-  const idleDocked = useWindowDimensions().width < IDLE_TIMER_DOCK_MAX_WIDTH && !hasStarted;
+  const window = useWindowDimensions();
+  const idleDocked = window.width < IDLE_TIMER_DOCK_MAX_WIDTH && !hasStarted;
   const beginFloatingSession = useCallback(() => setHasStarted(true), []);
-  return { idleDocked, beginFloatingSession };
+  // RN Web applies maxHeight to the content box; leave the tray's outer inset
+  // outside that cap so padding can never push its top above the viewport.
+  const idleDockMaxHeight = Math.max(0, window.height - touchTarget.minimum - SPACING.lg);
+  return { idleDocked, idleDockMaxHeight, beginFloatingSession };
 }
 
 function useBandBounds() {
@@ -251,11 +259,28 @@ function StandingSessionNote({
   );
 }
 
-function writingBandStyle(idleDocked: boolean, rightInset: number, lift: number) {
+function writingBandStyle(
+  idleDocked: boolean,
+  idleDockMaxHeight: number,
+  rightInset: number,
+  lift: number,
+) {
   return [
     styles.band,
     idleDocked ? styles.idleDock : null,
-    { right: rightInset, bottom: idleDocked ? 0 : lift },
+    {
+      right: rightInset,
+      bottom: idleDocked ? 0 : lift,
+      maxHeight: idleDocked ? idleDockMaxHeight : undefined,
+    },
+  ];
+}
+
+function writingContentStyle(idleDocked: boolean, idleDockMaxHeight: number) {
+  return [
+    styles.content,
+    idleDocked ? styles.idleDockContent : null,
+    idleDocked ? { maxHeight: idleDockMaxHeight } : null,
   ];
 }
 
@@ -263,7 +288,7 @@ function useWritingBandLayout(
   onClearanceChange: WritingSessionSurfaceProps['onClearanceChange'],
   onIdleDockHeightChange: WritingSessionSurfaceProps['onIdleDockHeightChange'],
 ) {
-  const { idleDocked, beginFloatingSession } = useIdleTimerDock();
+  const { idleDocked, idleDockMaxHeight, beginFloatingSession } = useIdleTimerDock();
   const bounds = useBandBounds();
   const reportLayout = useBandClearance(
     onClearanceChange,
@@ -272,7 +297,7 @@ function useWritingBandLayout(
     bounds.lift,
     idleDocked,
   );
-  return { ...bounds, idleDocked, beginFloatingSession, reportLayout };
+  return { ...bounds, idleDocked, idleDockMaxHeight, beginFloatingSession, reportLayout };
 }
 
 function WritingSessionSurface({
@@ -290,14 +315,14 @@ function WritingSessionSurface({
   const layout = useWritingBandLayout(onClearanceChange, onIdleDockHeightChange);
   return (
     <View
-      style={writingBandStyle(layout.idleDocked, rightInset, layout.lift)}
+      style={writingBandStyle(layout.idleDocked, layout.idleDockMaxHeight, rightInset, layout.lift)}
       pointerEvents="box-none"
       onLayout={layout.reportBandLayout}
       testID="writing-session-band"
     >
       <ScrollView
-        style={[styles.content, layout.idleDocked ? styles.idleDockContent : null]}
-        scrollEnabled={layout.scrollWholeSurface}
+        style={writingContentStyle(layout.idleDocked, layout.idleDockMaxHeight)}
+        scrollEnabled={layout.idleDocked || layout.scrollWholeSurface}
         pointerEvents="box-none"
         onLayout={layout.reportLayout}
         onContentSizeChange={layout.reportContentSize}
@@ -354,11 +379,12 @@ const styles = StyleSheet.create({
     top: 'auto',
     bottom: 0,
     paddingBottom: SPACING.md,
+    overflow: 'hidden',
   },
-  /** In flow, the content defines the tray's height; no absolute band caps it. */
+  /** Fill only the available tray height; overflow remains reachable by scroll. */
   idleDockContent: {
-    flexShrink: 0,
-    maxHeight: undefined,
+    flexShrink: 1,
+    minHeight: 0,
   },
 });
 
