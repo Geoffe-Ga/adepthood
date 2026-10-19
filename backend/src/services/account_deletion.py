@@ -253,6 +253,53 @@ async def _anonymise_admin_adjustment_sources(
     )
 
 
+async def _lock_admin_adjustment_rows(
+    session: AsyncSession,
+    account: Account,
+) -> None:
+    """Lock adjustment participants, then every affected row, in global order.
+
+    The actor-side redaction and target-side erasure touch overlapping sets.
+    Participant user locks use the same order as balance adjustment itself;
+    only then does deletion lock the adjustment-row union by primary key. The
+    second participant read closes the discovery race: if an adjustment added
+    a new participant while deletion waited, rollback releases the partial
+    lock set and retries rather than acquiring the late user out of order.
+    """
+    adjustment = SQLModel.metadata.tables["adminbalanceadjustment"]
+    affected = or_(
+        adjustment.c.actor_admin_id == account.user_id,
+        adjustment.c.target_user_id == account.user_id,
+    )
+
+    async def _participant_ids() -> set[int]:
+        actor_result = await session.execute(select(adjustment.c.actor_admin_id).where(affected))
+        target_result = await session.execute(select(adjustment.c.target_user_id).where(affected))
+        user_ids = {account.user_id}
+        for actor_id in actor_result.scalars().all():
+            if actor_id is not None:
+                user_ids.add(int(actor_id))
+        for target_id in target_result.scalars().all():
+            user_ids.add(int(target_id))
+        return user_ids
+
+    while True:
+        participant_ids = await _participant_ids()
+        await session.execute(
+            select(User.id)
+            .where(col(User.id).in_(sorted(participant_ids)))
+            .order_by(col(User.id))
+            .with_for_update()
+        )
+        if await _participant_ids() <= participant_ids:
+            break
+        await session.rollback()
+
+    await session.execute(
+        select(adjustment.c.id).where(affected).order_by(adjustment.c.id).with_for_update()
+    )
+
+
 def require_total_policy() -> None:
     """Refuse to erase anything while the policy has a hole in it."""
     gaps = policy_gaps(SQLModel.metadata)
@@ -337,10 +384,11 @@ async def delete_account(
     """
     require_total_policy()
     # Serialize the full privacy sweep against operations that retain this
-    # account as their actor. In particular, admin wallet adjustments take the
-    # same lock before persisting ``source_ip``: whichever transaction wins
-    # completes first, so redaction cannot run once and then miss a late row.
-    await session.scalar(select(User).where(col(User.id) == account.user_id).with_for_update())
+    # account as actor or target. The helper locks all participant users before
+    # their adjustment rows so reciprocal deletions and mutations share one
+    # hierarchy, while still preventing a source-bearing row from arriving
+    # after redaction.
+    await _lock_admin_adjustment_rows(session, account)
     # Before the sweep, so other accounts' reports that were duplicates of this
     # account's record their unlink rather than silently losing it.
     await detach_from_doomed_reports(

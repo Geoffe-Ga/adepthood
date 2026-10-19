@@ -9,7 +9,7 @@ production.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from http import HTTPStatus
 from time import monotonic
 from typing import TYPE_CHECKING
@@ -46,6 +46,8 @@ _PRE_CHECK = "_recorded_adjustment"
 _ANONYMISE_SOURCES = "_anonymise_admin_adjustment_sources"
 _APPLY_ADJUSTMENT = "_apply_balance_adjustment"
 _LOCK_ADJUSTMENT_USERS = "_lock_adjustment_users"
+_LOCK_DELETION_ADJUSTMENTS = "_lock_admin_adjustment_rows"
+_SWEEP = "_sweep"
 # This is a failure bound, not a scheduling assertion. The pre-push lane runs
 # PostgreSQL integration tests after a 12k-test parallel coverage pass, where a
 # request can legitimately take several seconds to reach the instrumented lock.
@@ -86,6 +88,56 @@ async def _seed(pair: SessionPerRequest) -> tuple[Account, Account, Account]:
         first = await make_account(session, "balance-race-first@example.com")
         second = await make_account(session, "balance-race-second@example.com")
     return admin, first, second
+
+
+async def _seed_reciprocal_adjustments(
+    pair: SessionPerRequest,
+) -> tuple[Account, Account]:
+    """Create two admins and one retained adjustment in each direction."""
+    async with pair.factory() as session:
+        first = await make_account(session, "delete-cross-first@example.com", admin=True)
+        second = await make_account(session, "delete-cross-second@example.com", admin=True)
+    responses = await asyncio.gather(
+        pair.client.post(
+            f"/admin/users/{second.user_id}/tokens",
+            json={"delta": 3, "reason": "first operator adjusted second"},
+            headers=first.headers,
+        ),
+        pair.client.post(
+            f"/admin/users/{first.user_id}/tokens",
+            json={"delta": 5, "reason": "second operator adjusted first"},
+            headers=second.headers,
+        ),
+    )
+    assert all(response.status_code == HTTPStatus.OK for response in responses), responses
+    return first, second
+
+
+async def _assert_reciprocal_erasure(
+    pair: SessionPerRequest,
+    first: Account,
+    second: Account,
+) -> None:
+    """Confirm both subjects and their target-owned adjustment rows are gone."""
+    async with pair.factory() as session:
+        remaining_users = await session.scalar(
+            select(func.count())
+            .select_from(User)
+            .where(col(User.id).in_([first.user_id, second.user_id]))
+        )
+        remaining_adjustments = await session.scalar(
+            select(func.count()).select_from(AdminBalanceAdjustment)
+        )
+    assert int(remaining_users or 0) == 0
+    assert int(remaining_adjustments or 0) == 0
+
+
+def _assert_successful_deletions(responses: Sequence[Response | BaseException]) -> None:
+    """Require both concurrent HTTP deletions to finish without a 500 or exception."""
+    assert all(isinstance(response, Response) for response in responses), responses
+    for response in responses:
+        assert isinstance(response, Response)
+        assert response.status_code == HTTPStatus.OK, response.text
 
 
 def _headers(admin: Account) -> dict[str, str]:
@@ -290,6 +342,100 @@ async def test_self_deleting_admin_cannot_insert_source_ip_after_redaction(
             .where(col(AdminBalanceAdjustment.target_user_id) == target.user_id)
         )
     assert int(leaked or 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_reciprocal_admin_deletions_lock_adjustments_in_one_order(
+    pair: SessionPerRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two operators who adjusted each other can erase concurrently without deadlock."""
+    first, second = await _seed_reciprocal_adjustments(pair)
+
+    real_lock: Callable[..., Awaitable[None]] = getattr(
+        account_deletion,
+        _LOCK_DELETION_ADJUSTMENTS,
+    )
+    real_sweep: Callable[..., Awaitable[dict[str, int]]] = getattr(
+        account_deletion,
+        _SWEEP,
+    )
+    lock_arrivals = 0
+    sweep_arrivals = 0
+    both_deletions_started = asyncio.Event()
+    sweep_entered = asyncio.Event()
+    release_sweeps = asyncio.Event()
+    backend_pids: list[int] = []
+
+    async def _start_locks_together(session: AsyncSession, account: object) -> None:
+        nonlocal lock_arrivals
+        backend_pids.append(int(await session.scalar(select(func.pg_backend_pid()))))
+        lock_arrivals += 1
+        if lock_arrivals == _PARTIES:
+            both_deletions_started.set()
+        await asyncio.wait_for(
+            both_deletions_started.wait(),
+            timeout=_LOCK_WAIT_SECONDS,
+        )
+        await real_lock(session, account)
+
+    async def _hold_before_sweep(*args: object, **kwargs: object) -> dict[str, int]:
+        nonlocal sweep_arrivals
+        sweep_arrivals += 1
+        sweep_entered.set()
+        await release_sweeps.wait()
+        return await real_sweep(*args, **kwargs)
+
+    monkeypatch.setattr(account_deletion, _LOCK_DELETION_ADJUSTMENTS, _start_locks_together)
+    monkeypatch.setattr(account_deletion, _SWEEP, _hold_before_sweep)
+    deleting_first = asyncio.create_task(
+        pair.client.request(
+            "DELETE",
+            "/users/me",
+            json={"confirm_email": first.email},
+            headers=first.headers,
+        )
+    )
+    deleting_second = asyncio.create_task(
+        pair.client.request(
+            "DELETE",
+            "/users/me",
+            json={"confirm_email": second.email},
+            headers=second.headers,
+        )
+    )
+    try:
+        await asyncio.wait_for(sweep_entered.wait(), timeout=_LOCK_WAIT_SECONDS)
+    except BaseException:
+        release_sweeps.set()
+        deleting_first.cancel()
+        deleting_second.cancel()
+        await asyncio.gather(deleting_first, deleting_second, return_exceptions=True)
+        raise
+
+    blocked_on_global_order, deadline = False, monotonic() + _LOCK_WAIT_SECONDS
+    while monotonic() < deadline and sweep_arrivals < _PARTIES:
+        async with pair.factory() as observer:
+            for backend_pid in backend_pids:
+                blocker_count = await observer.scalar(
+                    select(func.cardinality(func.pg_blocking_pids(backend_pid)))
+                )
+                if int(blocker_count or 0) > 0:
+                    blocked_on_global_order = True
+                    break
+        if blocked_on_global_order:
+            break
+        await asyncio.sleep(0.01)
+
+    release_sweeps.set()
+    responses = await asyncio.wait_for(
+        asyncio.gather(deleting_first, deleting_second, return_exceptions=True),
+        timeout=_LOCK_WAIT_SECONDS,
+    )
+
+    assert blocked_on_global_order, "neither deletion serialized on the shared row set"
+    _assert_successful_deletions(responses)
+    await _assert_reciprocal_erasure(pair, first, second)
 
 
 @pytest.mark.asyncio
