@@ -2873,6 +2873,8 @@ function ReadActions({ quote }: { quote: QuotePromotion }): React.JSX.Element {
         accessibilityLabel="Promote a quote"
         testID="promote-quote-button"
         label="Promote a quote"
+        style={styles.readActionButton}
+        labelStyle={styles.readActionLabel}
         busy={quote.promoting}
       />
     </View>

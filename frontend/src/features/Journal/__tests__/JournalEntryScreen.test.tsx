@@ -703,6 +703,30 @@ describe('JournalEntryScreen', () => {
     }
   });
 
+  it('lets the read action and its label reflow inside a 200%-zoom phone column', async () => {
+    // A 390px device at 200% browser zoom exposes a 195 CSS-pixel viewport.
+    // The paper and page insets leave less than one desktop button width, so
+    // every layer must yield before the label can wrap at its spaces (#3457).
+    const restore = spyWidth(195);
+    let view: ReturnType<typeof renderScreen> | null = null;
+    try {
+      view = await renderFinished();
+      const row = view.getByTestId('journal-read-actions');
+      const promote = within(row).getByTestId('promote-quote-button');
+      const label = within(promote).getByText('Promote a quote');
+      expect(StyleSheet.flatten(row.props.style)).toEqual(
+        expect.objectContaining({ flexWrap: 'wrap', maxWidth: '100%' }),
+      );
+      expect(StyleSheet.flatten(promote.props.style)).toEqual(
+        expect.objectContaining({ flexShrink: 1, maxWidth: '100%', minWidth: 0 }),
+      );
+      expect(StyleSheet.flatten(label.props.style).flexShrink).toBe(1);
+    } finally {
+      view?.unmount();
+      restore();
+    }
+  });
+
   it('does not float the resonance affordance over the entry in read mode', async () => {
     const { getByTestId } = await renderFinished();
     expect(hostWrapperStyle(getByTestId('get-resonance-button')).position).not.toBe('absolute');
