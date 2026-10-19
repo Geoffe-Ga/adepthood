@@ -10,6 +10,7 @@ import type { WritingSessionResult } from '../writingSession';
 import WritingSessionSurface from '../WritingSessionSurface';
 
 import type { PracticeSessionCreate, UiFlags } from '@/api';
+import { beginAuthSession } from '@/api/sessionToken';
 import type { EngineDeps, IntervalHandle } from '@/features/Practice/engine/types';
 import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 import { setActiveUser } from '@/storage/userScope';
@@ -19,6 +20,10 @@ const mockPracticeCreate = jest.fn<(_body: PracticeSessionCreate) => Promise<unk
 const mockFlagsGet = jest.fn<(_token?: string) => Promise<UiFlags>>();
 const mockCheckOff = jest.fn<(_request: Record<string, unknown>) => Promise<void>>();
 
+const tokenFor = (session: string): string =>
+  `e30.${Buffer.from(JSON.stringify({ sub: '1', exp: 4_000_000_000, jti: session })).toString('base64url')}.sig`;
+let mockToken = tokenFor('first');
+
 jest.mock('@/api', () => ({
   practiceSessions: {
     create: (body: unknown) => mockPracticeCreate(body as PracticeSessionCreate),
@@ -27,7 +32,11 @@ jest.mock('@/api', () => ({
 }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ token: 'link-tok', userTimezone: 'America/Chicago' }),
+  useAuth: () => ({
+    token: mockToken,
+    authStatus: 'authenticated',
+    userTimezone: 'America/Chicago',
+  }),
 }));
 
 jest.mock('../writingHabitCheckOff', () => ({
@@ -62,6 +71,7 @@ const flush = async (): Promise<void> => {
 
 beforeEach(() => {
   setActiveUser(1);
+  mockToken = tokenFor('first');
   jest.clearAllMocks();
   useWritingHabitLinkStore.getState().reset();
   mockFlagsGet.mockResolvedValue(flags(null));
@@ -74,7 +84,7 @@ describe('useLinkedHabitCheckOff', () => {
     renderHook(() => useLinkedHabitCheckOff(jest.fn()));
     await flush();
 
-    expect(mockFlagsGet).toHaveBeenCalledWith('link-tok');
+    expect(mockFlagsGet).toHaveBeenCalledWith(tokenFor('first'));
   });
 
   it('always hands the session to the handler it wraps', async () => {
@@ -159,6 +169,66 @@ describe('useLinkedHabitCheckOff', () => {
       useWritingHabitLinkStore.setState({ habitId: LINKED_HABIT_ID });
     });
     expect(isCurrent()).toBe(false);
+  });
+
+  it('lands a held check-off exactly once across a proactive same-account renewal', async () => {
+    mockFlagsGet.mockResolvedValue(flags(LINKED_HABIT_ID));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const onLogged = jest.fn();
+    mockCheckOff.mockImplementationOnce(async (request) => {
+      await held;
+      if ((request.isCurrent as () => boolean)())
+        (request.onLogged as (_message: string) => void)('Logged once');
+    });
+    const screen = renderHook(() => useLinkedHabitCheckOff(jest.fn(), onLogged));
+    await flush();
+    act(() => screen.result.current(RESULT));
+
+    mockToken = tokenFor('renewed');
+    screen.rerender({});
+    await act(async () => {
+      release();
+      await held;
+    });
+
+    expect(mockCheckOff).toHaveBeenCalledTimes(1);
+    expect(onLogged).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['same-owner reauthentication', () => beginAuthSession()],
+    ['sign-out', () => setActiveUser(null)],
+    ['account switch', () => setActiveUser(2)],
+    [
+      'A → B → A',
+      () => {
+        setActiveUser(2);
+        setActiveUser(1);
+      },
+    ],
+  ])('drops a held check-off after %s', async (_name, endSession) => {
+    mockFlagsGet.mockResolvedValue(flags(LINKED_HABIT_ID));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const onLogged = jest.fn();
+    mockCheckOff.mockImplementationOnce(async (request) => {
+      await held;
+      if ((request.isCurrent as () => boolean)())
+        (request.onLogged as (_message: string) => void)('Must stay dropped');
+    });
+    const screen = renderHook(() => useLinkedHabitCheckOff(jest.fn(), onLogged));
+    await flush();
+    act(() => screen.result.current(RESULT));
+
+    endSession();
+    await act(async () => {
+      release();
+      await held;
+    });
+
+    expect(onLogged).not.toHaveBeenCalled();
+    setActiveUser(1);
   });
 
   it('does not dispatch an old render’s session after the account changes away and back', async () => {

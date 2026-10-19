@@ -30,6 +30,7 @@ import {
   WRITING_HABIT_PICKER_TITLE,
   writingHabitChooseA11y,
 } from './saveAsHabitCopy';
+import { usePaymentScope } from './usePaymentScope';
 import { canConfigureWritingHabit, isLinkableHabit } from './writingHabitCheckOff';
 import WritingHabitGoalEditor from './WritingHabitGoalEditor';
 import { saveWritingHabitGoals } from './writingHabitGoals';
@@ -37,7 +38,6 @@ import { saveWritingHabitGoals } from './writingHabitGoals';
 import { useAuth } from '@/context/AuthContext';
 import { SPACING, colors, editorialType } from '@/design/tokens';
 import type { Habit, HabitGoalSetup } from '@/features/Habits/Habits.types';
-import { getActiveUserGeneration } from '@/storage/userScope';
 
 export interface WritingHabitPickerProps {
   /** The writer's habits; the ones that cannot be linked are left out here. */
@@ -88,10 +88,8 @@ function ExtraRows({
   );
 }
 
-function useCurrentChoice(token: string | null) {
-  const ownerGeneration = getActiveUserGeneration();
-  const latestToken = useRef(token);
-  latestToken.current = token;
+function useCurrentChoice() {
+  const currentSession = usePaymentScope();
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -99,8 +97,7 @@ function useCurrentChoice(token: string | null) {
       alive.current = false;
     };
   }, []);
-  return () =>
-    alive.current && latestToken.current === token && ownerGeneration === getActiveUserGeneration();
+  return React.useCallback(() => alive.current && currentSession(), [currentSession]);
 }
 
 function useGoalChoice({ onNew, onChoose }: WritingHabitPickerProps) {
@@ -108,13 +105,13 @@ function useGoalChoice({ onNew, onChoose }: WritingHabitPickerProps) {
   const [selected, setSelected] = useState<Habit | 'new' | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(false);
-  const selectionToken = useRef(token);
-  const current = useCurrentChoice(token);
+  const current = useCurrentChoice();
+  const selectionSession = useRef(current);
   useEffect(() => {
     setSelected(null);
     setError(false);
     setSaving(false);
-  }, [token]);
+  }, [current]);
   const cancel = () => {
     setSelected(null);
     setError(false);
@@ -141,11 +138,11 @@ function useGoalChoice({ onNew, onChoose }: WritingHabitPickerProps) {
       });
   };
   const choose = (habit: Habit | 'new') => {
-    selectionToken.current = token;
+    selectionSession.current = current;
     setSelected(habit);
   };
   return {
-    selected: selectionToken.current === token ? selected : null,
+    selected: selectionSession.current === current && current() ? selected : null,
     saving,
     error,
     cancel,
