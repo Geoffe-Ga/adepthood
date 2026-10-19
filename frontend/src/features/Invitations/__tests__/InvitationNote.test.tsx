@@ -1,5 +1,5 @@
 /* eslint-env jest */
-import { jest, describe, it, expect } from '@jest/globals';
+import { jest, afterEach, beforeEach, describe, it, expect } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
@@ -11,10 +11,23 @@ jest.mock('@/hooks/usePressScale', () => ({
 
 import { invitationCopy, INVITATION_COPY_ENTRIES } from '../invitationCopy';
 import InvitationNote from '../InvitationNote';
+import { resetInvitationAspectCacheForTests } from '../useInvitationAspect';
 
-import type { Invitation } from '@/api';
+import { stages, type Invitation, type StageCorrespondence } from '@/api';
 import { touchTarget } from '@/design/tokens';
+import type { StageData } from '@/features/Map/stageData';
+import { useStageStore } from '@/store/useStageStore';
 import { BANNED_PHRASES } from '@/testing/bannedInvitationPhrases';
+
+const FALSE_MODESTY_PHRASES = [
+  'if it feels right',
+  'if you like',
+  "whenever you'd like",
+  'whenever you’re ready',
+  "whenever you're ready",
+  'no pressure',
+  'waiting quietly',
+] as const;
 
 function invitation(overrides: Partial<Invitation> = {}): Invitation {
   return {
@@ -28,6 +41,17 @@ function invitation(overrides: Partial<Invitation> = {}): Invitation {
 }
 
 const noop = () => Promise.resolve();
+const correspondence = jest.spyOn(stages, 'correspondence');
+
+beforeEach(() => {
+  resetInvitationAspectCacheForTests();
+  correspondence.mockReset();
+  correspondence.mockRejectedValue(new Error('offline'));
+});
+
+afterEach(() => {
+  useStageStore.getState().reset();
+});
 
 /** Smallest of the flattened minHeight/minWidth on a pressable, for 44dp checks. */
 function StyleSheetMin(node: { props: { style: unknown } }): number {
@@ -60,14 +84,13 @@ describe('InvitationNote', () => {
     expect(StyleSheetMin(btn)).toBeGreaterThanOrEqual(touchTarget.minimum);
   });
 
-  it('decline has accessibilityRole button and a non-empty accessibilityLabel', () => {
+  it('decline keeps its exact one-tap accessibility label', () => {
     const inv = invitation({ id: 4 });
     const { getByTestId } = render(<InvitationNote invitation={inv} onDismiss={noop} />);
     const btn = getByTestId('invitation-4-dismiss');
     expect(btn.props.accessibilityRole).toBe('button');
     const label: string = btn.props.accessibilityLabel;
-    expect(label).toBeTruthy();
-    expect(label.length).toBeGreaterThan(0);
+    expect(label).toBe('Dismiss this invitation');
   });
 
   it('decline accessibilityLabel contains none of the banned phrases', () => {
@@ -89,9 +112,83 @@ describe('InvitationNote', () => {
         expect(line).not.toContain(phrase);
         expect(a11y).not.toContain(phrase);
       }
+      for (const phrase of FALSE_MODESTY_PHRASES) {
+        expect(line).not.toContain(phrase);
+        expect(a11y).not.toContain(phrase);
+      }
       expect(entry.line.endsWith('!')).toBe(false);
       expect(entry.declineA11y.endsWith('!')).toBe(false);
     }
+  });
+
+  it('names a course invitation by the served Aspect and never its persona', () => {
+    useStageStore.setState({
+      stagesByNumber: {
+        4: {
+          aspect: 'Self-Love',
+          relationshipToFreeWill: 'Persona That Must Stay Private',
+        } as StageData,
+      },
+    });
+    const inv = invitation({ id: 14, target_type: 'course', target_id: 4, kind: 'readiness' });
+    const expected = invitationCopy('course', 'readiness', { aspect: 'Self-Love' }).line;
+    const { getByText, queryByText } = render(<InvitationNote invitation={inv} onDismiss={noop} />);
+
+    expect(getByText(expected)).toBeTruthy();
+    expect(queryByText(/Persona That Must Stay Private/)).toBeNull();
+  });
+
+  it('uses the generic course reason when the served stage has no Aspect', () => {
+    const inv = invitation({ id: 15, target_type: 'course', target_id: 9, kind: 'readiness' });
+    const generic = invitationCopy('course', 'readiness').line;
+    const { getByText } = render(<InvitationNote invitation={inv} onDismiss={noop} />);
+    expect(getByText(generic)).toBeTruthy();
+  });
+
+  it('loads the served Aspect on a cold Journal route without exposing its persona', async () => {
+    correspondence.mockResolvedValue([
+      {
+        stage_number: 4,
+        aspect: 'Self-Love',
+        relationship_to_free_will: 'Persona That Must Stay Private',
+      } as StageCorrespondence,
+    ]);
+    const inv = invitation({ id: 16, target_type: 'course', target_id: 4, kind: 'readiness' });
+    const expected = invitationCopy('course', 'readiness', { aspect: 'Self-Love' }).line;
+    const { findByText, queryByText } = render(
+      <InvitationNote invitation={inv} onDismiss={noop} />,
+    );
+
+    expect(await findByText(expected)).toBeTruthy();
+    expect(correspondence).toHaveBeenCalledTimes(1);
+    expect(queryByText(/Persona That Must Stay Private/)).toBeNull();
+  });
+
+  it('deduplicates the visit-free Aspect lookup across invitation cards', async () => {
+    correspondence.mockResolvedValue([
+      { stage_number: 4, aspect: 'Self-Love' } as StageCorrespondence,
+      { stage_number: 5, aspect: 'Compassion' } as StageCorrespondence,
+    ]);
+    const { findByText } = render(
+      <>
+        <InvitationNote
+          invitation={invitation({ id: 17, target_type: 'course', target_id: 4 })}
+          onDismiss={noop}
+        />
+        <InvitationNote
+          invitation={invitation({ id: 18, target_type: 'course', target_id: 5 })}
+          onDismiss={noop}
+        />
+      </>,
+    );
+
+    expect(
+      await findByText(invitationCopy('course', 'consistency', { aspect: 'Self-Love' }).line),
+    ).toBeTruthy();
+    expect(
+      await findByText(invitationCopy('course', 'consistency', { aspect: 'Compassion' }).line),
+    ).toBeTruthy();
+    expect(correspondence).toHaveBeenCalledTimes(1);
   });
 
   it('wires the press-scale handlers to the decline touchable', () => {

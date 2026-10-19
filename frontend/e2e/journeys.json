@@ -2615,6 +2615,22 @@
     "coveredBy": "frontend/e2e/account-decline-choices.browser.e2e.test.ts"
   },
   {
+    "id": "journal.invitation-reason-and-served-aspect",
+    "description": "A course invitation explains why it appeared: a theme across the writer's full corpus has crossed the generation threshold, and the reading is named by that stage's served Aspect rather than its relationship-to-free-will persona (#3104). The browser arranges a real pending course/readiness InvitationSignal whose target_id names stage 2, opens the Notification Center directly from a cold Journal route, and requires its one visit-free GET /stages/correspondence lookup to carry a deliberately long served Aspect while excluding a deliberately distinct served persona. The same real card stays fully readable with a clear one-tap Not now action at 390x844, at an effective 200% size, and at 1280x800; glyph bounds, viewport overflow, line/action separation, the 44px target, the unchanged spoken name and the real dismiss POST are asserted. Eligibility generation itself remains pinned by the backend domain suite; this journey begins from the persisted signal so it can isolate the frontend lookup and copy seam.",
+    "crosses": {
+      "screen": "frontend/src/features/Invitations/InvitationNote.tsx",
+      "client": ["invitations", "stages"],
+      "routes": [
+        "GET /stages/correspondence",
+        "GET /invitations",
+        "POST /invitations/{invitation_id}/dismiss"
+      ],
+      "tables": ["coursestage", "invitationsignal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/invitation-reason-copy.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.invitation-decline-persistence",
     "description": "Real pending InvitationSignal rows are arranged in the isolated database, without pretending to prove eligibility or generation. The real browser loads GET /invitations, declines two different cards while one request is held, completes the other real POST, then injects a 503 only for the held request. Only the failed card returns in server order; the confirmed card stays absent. The browser retries the failed decline through the real POST and reloads; the real GET retains only the untouched card. Phone and desktop retry controls are keyboard driven at 200% text with frames saved. This covers the invitation persistence seam missing from the fresh-account journal-only proof (#3296).",
     "crosses": {
