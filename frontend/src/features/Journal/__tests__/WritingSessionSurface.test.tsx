@@ -51,6 +51,48 @@ afterEach(() => {
 });
 
 describe('WritingSessionSurface', () => {
+  it('docks an untouched phone timer below the paper, then restores the running overlay', () => {
+    const rn = require('react-native');
+    const dimensions = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    const onClearanceChange = jest.fn();
+    const onIdleDockHeightChange = jest.fn();
+    let unmount: (() => void) | undefined;
+    try {
+      const view = render(
+        <WritingSessionSurface
+          onClearanceChange={onClearanceChange}
+          onIdleDockHeightChange={onIdleDockHeightChange}
+        />,
+      );
+      unmount = view.unmount;
+      const { getByTestId } = view;
+      expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style)).toMatchObject({
+        position: 'absolute',
+        top: 'auto',
+        bottom: 0,
+      });
+      expect(onClearanceChange).toHaveBeenLastCalledWith(0);
+
+      fireEvent(getByTestId('writing-session-band-content'), 'layout', {
+        nativeEvent: { layout: { height: 100 } },
+      });
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(100 + SPACING.md);
+      fireEvent.press(getByTestId('writing-timer-start'));
+
+      expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style).position).toBe(
+        'absolute',
+      );
+      expect(onClearanceChange).toHaveBeenLastCalledWith(WRITING_TIMER_CLEARANCE);
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(0);
+      expect(getByTestId('writing-timer-stop')).toBeTruthy();
+    } finally {
+      unmount?.();
+      dimensions.mockRestore();
+    }
+  });
+
   it('carries the timer and no note until a session has actually finished', () => {
     const { queryByTestId } = renderSurface();
 

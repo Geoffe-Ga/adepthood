@@ -2774,6 +2774,18 @@
     "coveredBy": "frontend/e2e/writing-timer-presets-fit.browser.e2e.test.ts"
   },
   {
+    "id": "journal.idle-writing-timer-does-not-obstruct-the-page",
+    "description": "A writer opens a draft at 390x844, at the same physical size under 200% browser zoom (195x422 CSS px at device scale 2), and at 1280x800 (#3456). Before the writer asks the timer to run, phone layouts dock its complete 10/20/30/45-minute tray below the paper instead of floating it over the body; the desktop keeps the established margin rail. The browser proves the timer and textarea have zero overlap, the entire phone tray remains inside the viewport, and Finish receives elementFromPoint hits across its full height after the page is scrolled to its beginning, midpoint and end. Starting the timer returns the existing running surface to its absolute floating band and hit-tests Stop, so #3132's running behavior is not traded away. Before/after frames at all three dimensions are retained under e2e/artifacts/journal-idle-timer-3456 for human visual review.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["auth", "journal"],
+      "routes": ["POST /auth/signup", "GET /journal/"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-idle-timer-obstruction.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.money-copy-route-and-credit-pack",
     "description": "An authenticated writer sees the payer before an ask. The browser checks real server-confirmed armed demo readings and first letters with Demo disclosure, persistence, no wallet charge and no provider calls, plus explicitly controlled production app-provider keyless reading/letter Settings paths without a UI ask, real deployment-owner vault readings charged to the wallet with and without a key, wallet-priced vault first letters with explicit price acknowledgment and free cached reopening, missing-capability refusal without charge or app-provider fallback, and app-provider own-key reading receipts without a wallet debit. A controlled rolling-server response omitting only route metadata proves unknown payment disables asking. A separate explicitly controlled empty-wallet response changes only affordability while preserving the real owner route: optional EXPO_PUBLIC_CREDIT_PACK_URL set/unset determines the exact link and same-email note, and the press sends only one keyless POST ?free_only=true, which the funded real server refuses 409 resonance_payment_unconfirmed rather than charge, with no wallet change. The same controlled empty wallet still lets the real server adjudicate its free exits (#3389): a page made intimate from another device after the screen loaded shows the server's privacy reason, and a locally flagged page shows the reviewed care surface, each with no wallet change and no vault reflection or letter dial. Admission is bound to the disclosed payer route (#3385): a controlled usage read serves the app-provider route a key-holding writer saw before their vault connected, and the real server refuses that reading 409 resonance_payment_unconfirmed and that first letter 409 essay_price_unacknowledged, with no wallet, vault or provider side effect, while the client rereads the real route and shows the new credit price under a nothing-was-charged notice; confirming it then sends disclosed_route=vault_bound and spends exactly one credit for each. Phone390 and desktop1280 computed text at200 percent are inspected with actual pointer hit testing.",
     "crosses": {

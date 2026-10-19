@@ -4275,14 +4275,16 @@ function EntryComposeRow({
   bodyPlaceholder,
   focusSpan,
   writingClearance,
+  bottomInset = 0,
 }: {
   ctl: Controller;
   bodyPlaceholder: string;
   focusSpan?: FocusSpan;
   writingClearance: number;
+  bottomInset?: number;
 }): React.JSX.Element {
   return (
-    <View style={styles.composeRow} testID="journal-compose-row">
+    <View style={[styles.composeRow, { marginBottom: bottomInset }]} testID="journal-compose-row">
       <JournalPage
         ctl={ctl}
         bodyPlaceholder={bodyPlaceholder}
@@ -4605,10 +4607,12 @@ function EntryWritingSurfaces({
   ctl,
   launch,
   onWritingClearanceChange,
+  onIdleDockHeightChange,
 }: {
   ctl: Controller;
   launch: WritingLaunchParam;
   onWritingClearanceChange: (_clearance: number) => void;
+  onIdleDockHeightChange: (_height: number) => void;
 }): React.JSX.Element | null {
   const session = useQuickLaunchedSession(launch);
   const width = useWindowDimensions().width;
@@ -4630,6 +4634,7 @@ function EntryWritingSurfaces({
       onSession={onSession}
       loggedSession={loggedSession}
       onClearanceChange={onWritingClearanceChange}
+      onIdleDockHeightChange={onIdleDockHeightChange}
       renderOffer={session.launched ? renderLaunchedSessionNote : renderSessionOffer}
     />
   );
@@ -4650,6 +4655,7 @@ function EntryWritingCanvas({
   // Reserve the timer before its first layout, then include a finished note
   // at its measured height so every offer and completion control remains reachable.
   const [writingClearance, setWritingClearance] = useState(WRITING_TIMER_CLEARANCE);
+  const [idleDockHeight, setIdleDockHeight] = useState(0);
   return (
     <>
       <EntryComposeRow
@@ -4657,12 +4663,14 @@ function EntryWritingCanvas({
         bodyPlaceholder={bodyPlaceholder}
         focusSpan={focusSpan}
         writingClearance={writingClearance}
+        bottomInset={idleDockHeight}
       />
       <ReflectionComposer reflection={ctl.reflection} />
       <EntryWritingSurfaces
         ctl={ctl}
         launch={launch}
         onWritingClearanceChange={setWritingClearance}
+        onIdleDockHeightChange={setIdleDockHeight}
       />
     </>
   );
