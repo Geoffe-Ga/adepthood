@@ -141,25 +141,63 @@ interface ReadOptions {
   refreshKey?: number;
 }
 
-function useObservation(scope: ReturnScope, { enabled = true, refreshKey = 0 }: ReadOptions) {
+/** One ordered observation cell: reads lease it; mutations advance it. */
+function useObservationCell(scope: ReturnScope) {
   const { generation, current } = scope;
-  const credentials = scope.credentials;
-  const token = credentials?.token;
-  const userId = credentials?.userId;
   const [observation, setObservation] = useState({ generation: -1, state: EMPTY });
   const latest = useRef(observation);
+  const revision = useRef(0);
   latest.current = observation;
   const publish = useCallback(
     (state: MettaReturnState): void => {
       if (!current()) return;
+      revision.current += 1;
       latest.current = { generation, state };
       setObservation(latest.current);
     },
     [current, generation],
   );
+  const invalidate = useCallback((): void => {
+    if (current()) revision.current += 1;
+  }, [current]);
+  const update = useCallback(
+    (change: (_state: MettaReturnState) => MettaReturnState): void => {
+      if (!current()) return;
+      revision.current += 1;
+      setObservation((old) => {
+        const next = { generation, state: change(old.state) };
+        latest.current = next;
+        return next;
+      });
+    },
+    [current, generation],
+  );
+  const beginRead = useCallback((): Publish => {
+    const lease = revision.current + 1;
+    revision.current = lease;
+    return (state: MettaReturnState): void => {
+      if (!current() || revision.current !== lease) return;
+      latest.current = { generation, state };
+      setObservation(latest.current);
+    };
+  }, [current, generation]);
+  return { observation, latest, publish, invalidate, update, beginRead };
+}
+
+function useObservation(scope: ReturnScope, { enabled = true, refreshKey = 0 }: ReadOptions) {
+  const { generation, current } = scope;
+  const credentials = scope.credentials;
+  const token = credentials?.token;
+  const userId = credentials?.userId;
+  const cell = useObservationCell(scope);
+  const { observation, latest, publish, invalidate, update, beginRead } = cell;
+  const state = current() && observation.generation === generation ? observation.state : EMPTY;
+  // Token renewal starts a fresh read inside the same auth lineage. A
+  // monotonic lease orders those reads without rejecting surviving mutations.
   useEffect(() => {
     // A disabled read stays EMPTY: a declined ring costs no request at all.
     if (!enabled) return;
+    const publishRead = beginRead();
     // Rebuild the immutable captured scope from primitive dependencies so state
     // updates do not start another read or replace an in-flight observation.
     void reload(
@@ -168,15 +206,10 @@ function useObservation(scope: ReturnScope, { enabled = true, refreshKey = 0 }: 
         current,
         credentials: userId === undefined || token === undefined ? null : { userId, token },
       },
-      publish,
+      publishRead,
     );
-  }, [generation, current, userId, token, publish, enabled, refreshKey]);
-  return {
-    state: current() && observation.generation === generation ? observation.state : EMPTY,
-    latest,
-    publish,
-    setObservation,
-  };
+  }, [generation, current, userId, token, enabled, refreshKey, beginRead]);
+  return { state, latest, publish, invalidate, update };
 }
 
 function useDeclineEpisode(scope: ReturnScope, observation: ReturnType<typeof useObservation>) {
@@ -205,23 +238,19 @@ function useDeclineEpisode(scope: ReturnScope, observation: ReturnType<typeof us
   return dismissOffer;
 }
 
-function useStateWriters(
-  scope: ReturnScope,
-  setObservation: ReturnType<typeof useObservation>['setObservation'],
-) {
-  const { generation, current } = scope;
+function useStateWriters(scope: ReturnScope, update: ReturnType<typeof useObservation>['update']) {
+  const { current } = scope;
   const setArc = useCallback(
     (arc: MettaReturnState['arc']): void => {
-      if (current()) setObservation((old) => ({ generation, state: { ...old.state, arc } }));
+      if (current()) update((state) => ({ ...state, arc }));
     },
-    [current, generation, setObservation],
+    [current, update],
   );
   const setReleasedHabits = useCallback(
     (released_habits: MettaReturnState['released_habits']): void => {
-      if (current())
-        setObservation((old) => ({ generation, state: { ...old.state, released_habits } }));
+      if (current()) update((state) => ({ ...state, released_habits }));
     },
-    [current, generation, setObservation],
+    [current, update],
   );
   return { setArc, setReleasedHabits };
 }
@@ -231,7 +260,7 @@ export function useReturnOfferState(options: ReadOptions = {}) {
   const scope = useReturnScope();
   const observation = useObservation(scope, options);
   const dismissOffer = useDeclineEpisode(scope, observation);
-  const writers = useStateWriters(scope, observation.setObservation);
+  const writers = useStateWriters(scope, observation.update);
   const state = observation.state;
   return {
     ...state,
@@ -240,6 +269,7 @@ export function useReturnOfferState(options: ReadOptions = {}) {
     current: scope.current,
     session: scope.session,
     token: scope.credentials?.token ?? null,
+    beginMutation: observation.invalidate,
     ...writers,
     dismissOffer,
   };

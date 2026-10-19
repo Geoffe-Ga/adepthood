@@ -57,6 +57,7 @@ function useLetGoActions(
   session: string | null,
   token: string | null,
   setReleasedHabits: (_habits: ReleasedHabit[]) => void,
+  beginMutation: () => void,
 ): LetGoActions {
   const [letGoVisible, setLetGoVisible] = useState(false);
   useEffect(() => setLetGoVisible(false), [session]);
@@ -67,6 +68,7 @@ function useLetGoActions(
   const release = useCallback(
     async (habitIds: number[]): Promise<void> => {
       if (!current() || token === null) return;
+      beginMutation();
       try {
         const rested = await mettaReturn.release(habitIds, token);
         if (current()) setReleasedHabits(rested);
@@ -78,11 +80,12 @@ function useLetGoActions(
         if (current()) setLetGoVisible(false);
       }
     },
-    [current, token, setReleasedHabits],
+    [current, token, setReleasedHabits, beginMutation],
   );
   const recommit = useCallback(
     async (habitIds: number[]): Promise<void> => {
       if (!current() || token === null) return;
+      beginMutation();
       try {
         const updated = await mettaReturn.recommit(habitIds, token);
         if (current()) setReleasedHabits(updated);
@@ -92,7 +95,7 @@ function useLetGoActions(
         // the resting list untouched rather than raising an unhandled rejection.
       }
     },
-    [current, token, setReleasedHabits],
+    [current, token, setReleasedHabits, beginMutation],
   );
   return { letGoVisible, markStarted, skipLetGo, release, recommit };
 }
@@ -110,22 +113,25 @@ function useArcLifecycle(
   token: string | null,
   setArc: (_arc: ReturnArc | null) => void,
   onStarted: () => void,
+  beginMutation: () => void,
 ): ArcLifecycle {
   const start = useCallback(async (): Promise<void> => {
     if (!current() || token === null) return;
+    beginMutation();
     const started = await mettaReturn.start(token);
     if (current()) {
       setArc(started);
       onStarted();
     }
-  }, [current, token, setArc, onStarted]);
+  }, [current, token, setArc, onStarted, beginMutation]);
   const runLifecycle = useCallback(
     async (call: () => Promise<ReturnArc>): Promise<void> => {
       if (!current()) return;
+      beginMutation();
       const updated = await call();
       if (current()) setArc(updated);
     },
-    [current, setArc],
+    [current, setArc, beginMutation],
   );
   const pause = useCallback(
     () => runLifecycle(() => mettaReturn.pause(token ?? undefined)),
@@ -137,9 +143,10 @@ function useArcLifecycle(
   );
   const leave = useCallback(async (): Promise<void> => {
     if (!current() || token === null) return;
+    beginMutation();
     await mettaReturn.leave(token);
     if (current()) setArc(null);
-  }, [current, token, setArc]);
+  }, [current, token, setArc, beginMutation]);
   return { start, pause, resume, leave };
 }
 
@@ -159,12 +166,14 @@ export function useMettaReturn(options: UseMettaReturnOptions = {}): UseMettaRet
     loaded.session,
     loaded.token,
     loaded.setReleasedHabits,
+    loaded.beginMutation,
   );
   const { start, pause, resume, leave } = useArcLifecycle(
     loaded.current,
     loaded.token,
     loaded.setArc,
     markStarted,
+    loaded.beginMutation,
   );
   const dismissOffer = loaded.dismissOffer;
   const offerVisible =

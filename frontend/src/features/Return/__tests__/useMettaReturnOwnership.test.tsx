@@ -204,6 +204,45 @@ it('lands one held Return offer action across a proactive same-account renewal',
   expect(mockDismiss).toHaveBeenCalledTimes(1);
   expect(result.current.offerVisible).toBe(true);
   expect(mockSave).not.toHaveBeenCalledWith({ userId: 1, episode: 'opaque-episode-B' }, true);
+
+  await act(async () => renewalRead.resolve({ ...state(), offer_dismissed: true }));
+  expect(result.current.offerVisible).toBe(true);
+});
+
+it('does not let an older token read overwrite the newer token read', async () => {
+  const older = deferred<MettaReturnState>();
+  const newer = deferred<MettaReturnState>();
+  mockState.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+  const { result, rerender } = renderHook(() => useMettaReturn());
+  await waitFor(() => expect(mockState).toHaveBeenCalledTimes(1));
+
+  mockToken = 'account-1:renewed';
+  rerender({});
+  await waitFor(() => expect(mockState).toHaveBeenCalledTimes(2));
+  await act(async () => newer.resolve(state('newer-episode')));
+  expect(result.current.offerVisible).toBe(true);
+
+  await act(async () => older.resolve({ ...state('older-episode'), eligible: false }));
+  expect(result.current.offerVisible).toBe(true);
+});
+
+it('does not let a token-triggered read overwrite a completed start mutation', async () => {
+  const renewalRead = deferred<MettaReturnState>();
+  mockStart.mockResolvedValue(ARC);
+  const { result, rerender } = renderHook(() => useMettaReturn());
+  await waitFor(() => expect(result.current.offerVisible).toBe(true));
+
+  mockState.mockReturnValueOnce(renewalRead.promise);
+  mockToken = 'account-1:renewed';
+  rerender({});
+  await waitFor(() => expect(mockState).toHaveBeenCalledWith('account-1:renewed'));
+  await act(async () => result.current.start());
+  expect(result.current.arc).toEqual(ARC);
+  expect(result.current.letGoVisible).toBe(true);
+
+  await act(async () => renewalRead.resolve(state('stale-before-start')));
+  expect(result.current.arc).toEqual(ARC);
+  expect(result.current.letGoVisible).toBe(true);
 });
 
 it.each<[string, () => void]>([
