@@ -41,6 +41,7 @@ from domain.constants import TOTAL_PROGRAM_WEEKS, TOTAL_STAGES
 # and not a Python limit: both of those are far larger, which is precisely why
 # an unbounded field reaches the driver before anything objects.
 INT32_MAX = 2_147_483_647
+INT32_MIN = -2_147_483_648
 
 # Rows are numbered from one, so no identifier this application issues is ever
 # zero or negative.  A request carrying one is malformed rather than unlucky.

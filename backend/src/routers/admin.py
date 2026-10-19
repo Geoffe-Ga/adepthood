@@ -6,25 +6,31 @@ identity is a first-class per-user flag rather than a shared header secret.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import Depends, Query, Request
+from fastapi import Depends, Header, Query, Request, status
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
 from bounds import RowIdPath
+from client_ip import resolve_client_ip
 from database import get_session
 from dependencies.admin import AdminContext, admin_context
 from dependencies.auth import require_admin
 from domain.entitlements import grant_manual_course_access, revoke_entitlement_by_id
 from domain.stage_progress import completed_stage_gap, expected_completed_stages
 from error_responses import build_router
-from errors import bad_request, not_found
+from errors import bad_request, conflict, forbidden, not_found, unprocessable
+from models.admin_balance_adjustment import AdminBalanceAdjustment
 from models.entitlement import Entitlement
 from models.feedback import FEEDBACK_RETENTION_DAYS
 from models.gumroad_sale import GumroadSale
@@ -38,6 +44,8 @@ from rate_limit import limiter
 from schemas import PaginationParams
 from schemas.admin import (
     AdminUserSummary,
+    BalanceAdjustmentRequest,
+    BalanceAdjustmentResponse,
     ChargedGenerationCostResponse,
     EnergyPlanCleanupResult,
     EntitlementGrantRequest,
@@ -60,6 +68,7 @@ from schemas.admin import (
 from schemas.pagination import count_query_total, page_has_more, paginate_query
 from schemas.privacy_suspension import PrivacySuspensionStatus
 from schemas.vault_activation import VaultTeardownStatus
+from security.idempotency import IDEMPOTENCY_KEY_MAX_LENGTH, hash_idem_key
 from services.energy import ENERGY_PLAN_RETENTION_DAYS, delete_expired_energy_plans
 from services.feedback import delete_expired_feedback_reports
 from services.journal_retention import (
@@ -70,6 +79,7 @@ from services.journal_retention import (
 from services.llm_cost_alerts import charged_generation_cost_report
 from services.privacy_suspension import suspension_state
 from services.serving_receipt import build_serving_receipt
+from services.wallet import adjust_balance
 
 # SQL ``SUM(NUMERIC)`` returns ``Decimal`` on Postgres but ``int`` (or
 # ``float``) on SQLite for an empty group.  Coerce defensively to keep
@@ -115,7 +125,11 @@ def _to_decimal(value: object) -> Decimal:
 
 logger = logging.getLogger(__name__)
 
-router = build_router(prefix="/admin", tags=["admin"])
+router = build_router(
+    prefix="/admin",
+    tags=["admin"],
+    extra_statuses=(status.HTTP_409_CONFLICT,),
+)
 
 
 @router.get("/vault-teardowns", response_model=list[VaultTeardownStatus])
@@ -547,6 +561,212 @@ def _entitlement_summary(entitlement: Entitlement) -> EntitlementSummary:
         revoked_at=entitlement.revoked_at,
         metadata=entitlement.entitlement_metadata,
     )
+
+
+def _adjustment_fingerprint(user_id: int, payload: BalanceAdjustmentRequest) -> str:
+    """Hash the complete semantic operation without retaining a second prose copy."""
+    canonical = json.dumps(
+        {"delta": payload.delta, "reason": payload.reason, "user_id": user_id},
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+async def _recorded_adjustment(
+    session: AsyncSession,
+    actor_admin_id: int,
+    idempotency_key: str | None,
+) -> AdminBalanceAdjustment | None:
+    """Resolve an admin's previously completed keyed wallet operation."""
+    if idempotency_key is None:
+        return None
+    result = await session.execute(
+        select(AdminBalanceAdjustment).where(
+            col(AdminBalanceAdjustment.actor_admin_id) == actor_admin_id,
+            col(AdminBalanceAdjustment.idempotency_key) == idempotency_key,
+        )
+    )
+    return result.scalars().first()
+
+
+def _replay_adjustment(
+    row: AdminBalanceAdjustment,
+    fingerprint: str,
+) -> BalanceAdjustmentResponse:
+    """Return an exact replay, or reject a key bound to another operation."""
+    if row.request_fingerprint != fingerprint:
+        raise conflict("idempotency_key_reused")
+    return BalanceAdjustmentResponse(user_id=row.target_user_id, balance=row.balance_after)
+
+
+@dataclass(frozen=True, slots=True)
+class _BalanceAdjustmentCommand:
+    """The complete, immutable input to one admin wallet transaction."""
+
+    actor_admin_id: int
+    user_id: int
+    payload: BalanceAdjustmentRequest
+    source_ip: str
+    hashed_key: str | None
+    fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class _BalanceAdjustmentOutcome:
+    """The stable response balance and whether this request actually moved it."""
+
+    balance: int
+    mutated: bool
+
+
+async def _lock_adjustment_users(
+    session: AsyncSession,
+    actor_admin_id: int,
+    target_user_id: int,
+) -> None:
+    """Lock actor and target by id, then revalidate their current database state.
+
+    Every balance adjustment eventually updates the target and retains the actor
+    in its audit rows. Taking both row locks in ascending-id order prevents two
+    admins adjusting each other from each holding their own row while waiting
+    for the other's. ``populate_existing`` is equally load-bearing: both users
+    were loaded by dependencies earlier in the request, so the lock query must
+    overwrite identity-map state before authority is rechecked.
+    """
+    user_ids = sorted({actor_admin_id, target_user_id})
+    result = await session.execute(
+        select(User)
+        .where(col(User.id).in_(user_ids))
+        .order_by(col(User.id))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    users = {user.id: user for user in result.scalars().all()}
+    actor = users.get(actor_admin_id)
+    if actor is None:
+        raise forbidden("user_not_found")
+    if not actor.is_admin:
+        raise forbidden("admin_required")
+    if target_user_id not in users:
+        raise not_found("user")
+
+
+async def _apply_balance_adjustment(
+    session: AsyncSession,
+    command: _BalanceAdjustmentCommand,
+) -> _BalanceAdjustmentOutcome:
+    """Land the wallet + audit transaction, collapsing a concurrent keyed retry."""
+    # Account erasure takes this same actor-row lock before redacting retained
+    # audit metadata. If erasure wins, this fresh lookup sees no operator and
+    # refuses; if adjustment wins, erasure waits and redacts the completed row.
+    await _lock_adjustment_users(session, command.actor_admin_id, command.user_id)
+    try:
+        async with session.begin_nested():
+            balance = await adjust_balance(
+                session,
+                command.user_id,
+                command.payload.delta,
+                actor_user_id=command.actor_admin_id,
+            )
+            if balance is None:
+                raise unprocessable("balance_out_of_range")
+            session.add(
+                AdminBalanceAdjustment(
+                    target_user_id=command.user_id,
+                    actor_admin_id=command.actor_admin_id,
+                    delta=command.payload.delta,
+                    balance_after=balance,
+                    reason=command.payload.reason,
+                    source_ip=command.source_ip,
+                    idempotency_key=command.hashed_key,
+                    request_fingerprint=command.fingerprint,
+                )
+            )
+            await session.flush()
+    except IntegrityError:
+        # A concurrent request with the same key won the unique-index race.
+        # The savepoint discarded this request's wallet UPDATE and ledger row;
+        # end the outer read transaction so the winner's committed row is visible.
+        await session.rollback()
+        # Rolling back also released the actor lock. Reacquire the globally
+        # ordered locks and refresh authority before this recovery path can
+        # return the winner's result.
+        await _lock_adjustment_users(session, command.actor_admin_id, command.user_id)
+        raced = await _recorded_adjustment(
+            session,
+            command.actor_admin_id,
+            command.hashed_key,
+        )
+        if raced is None:
+            raise
+        replay = _replay_adjustment(raced, command.fingerprint)
+        return _BalanceAdjustmentOutcome(balance=replay.balance, mutated=False)
+
+    await session.commit()
+    return _BalanceAdjustmentOutcome(balance=balance, mutated=True)
+
+
+@router.post("/users/{user_id}/tokens", response_model=BalanceAdjustmentResponse)
+@limiter.limit(_OVERRIDE_RATE_LIMIT)
+async def adjust_user_balance(
+    request: Request,
+    user_id: RowIdPath,
+    payload: BalanceAdjustmentRequest,
+    context: Annotated[AdminContext, Depends(admin_context)],
+    idempotency_key: Annotated[
+        str | None,
+        Header(alias="X-Idempotency-Key", max_length=IDEMPOTENCY_KEY_MAX_LENGTH),
+    ] = None,
+) -> BalanceAdjustmentResponse:
+    """Apply an auditable signed correction to any existing user's wallet.
+
+    The wallet update, its reconciliation ledger row, and the operator-facing
+    audit row share one transaction. A keyed retry replays the recorded result;
+    reusing that key for another target, delta, or reason is a conflict.
+    """
+    session, admin = context.session, context.admin
+    await _require_user(session, user_id)
+    if admin.id is None:
+        msg = "authenticated admin is not persisted"
+        raise ValueError(msg)
+    actor_admin_id = admin.id
+    hashed_key = hash_idem_key(actor_admin_id, idempotency_key) if idempotency_key else None
+    fingerprint = _adjustment_fingerprint(user_id, payload)
+    existing = await _recorded_adjustment(session, actor_admin_id, hashed_key)
+    if existing is not None:
+        # Dependencies loaded the operator before this replay lookup. Lock and
+        # refresh both participants before every replay terminal path so a
+        # concurrently committed role revocation cannot inherit stale authority.
+        await _lock_adjustment_users(session, actor_admin_id, user_id)
+        return _replay_adjustment(existing, fingerprint)
+
+    source_ip = resolve_client_ip(request)
+    outcome = await _apply_balance_adjustment(
+        session,
+        _BalanceAdjustmentCommand(
+            actor_admin_id=actor_admin_id,
+            user_id=user_id,
+            payload=payload,
+            source_ip=source_ip,
+            hashed_key=hashed_key,
+            fingerprint=fingerprint,
+        ),
+    )
+    if outcome.mutated:
+        logger.warning(
+            "admin_balance_adjusted",
+            extra={
+                "actor": actor_admin_id,
+                "action": "adjust_balance",
+                "target_user_id": user_id,
+                "delta": payload.delta,
+                "reason": payload.reason,
+                "source_ip": source_ip,
+            },
+        )
+    return BalanceAdjustmentResponse(user_id=user_id, balance=outcome.balance)
 
 
 @router.post(

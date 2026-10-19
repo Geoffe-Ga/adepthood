@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import INT32_MAX
 from models.user import User
 from models.wallet_audit import (
     BUCKET_MONTHLY,
@@ -33,6 +34,7 @@ from models.wallet_audit import (
 )
 from services.wallet import (
     SpendResult,
+    WalletBalanceOutOfRangeError,
     add_balance,
     get_user_fresh,
     grant_purchase_credit,
@@ -300,6 +302,22 @@ async def test_add_balance_increments_and_returns_total(db_session: AsyncSession
 @pytest.mark.asyncio
 async def test_add_balance_returns_none_when_user_missing(db_session: AsyncSession) -> None:
     assert await add_balance(db_session, user_id=999, amount=5) is None
+
+
+@pytest.mark.asyncio
+async def test_add_balance_refuses_int32_overflow_without_audit(
+    db_session: AsyncSession,
+) -> None:
+    user = await _make_user(db_session, offering_balance=INT32_MAX)
+    assert user.id is not None
+
+    with pytest.raises(WalletBalanceOutOfRangeError):
+        await add_balance(db_session, user.id, 1)
+
+    refreshed = await get_user_fresh(db_session, user.id)
+    assert refreshed is not None
+    assert refreshed.offering_balance == INT32_MAX
+    assert await _audit_rows(db_session, user.id) == []
 
 
 # ── Wallet audit trail (BUG-BM-011) ───────────────────────────────────────
@@ -726,3 +744,30 @@ class TestRefundOneMessage:
         assert refunded.balances == stale
         assert refunded.landed is False
         assert await _audit_rows(db_session, _MISSING_USER_ID) == []
+
+    @pytest.mark.asyncio
+    async def test_paid_refund_at_int32_ceiling_is_a_safe_noop(
+        self, db_session: AsyncSession
+    ) -> None:
+        """A concurrent top-up cannot turn compensation into an integer overflow."""
+        user = await _make_user(
+            db_session,
+            monthly_used=_MONTHLY_CAP,
+            offering_balance=INT32_MAX,
+        )
+        assert user.id is not None
+        stale = SpendResult(
+            monthly_used=_MONTHLY_CAP,
+            offering_balance=INT32_MAX - 1,
+            bucket=BUCKET_OFFERING,
+        )
+
+        refunded = await refund_one_message(db_session, user.id, stale)
+        await db_session.commit()
+
+        assert refunded.landed is False
+        assert refunded.balances == stale
+        refreshed = await get_user_fresh(db_session, user.id)
+        assert refreshed is not None
+        assert refreshed.offering_balance == INT32_MAX
+        assert await _audit_rows(db_session, user.id) == []

@@ -167,6 +167,11 @@ MANIFEST: Mapping[str, ExportRule] = {
         "the account it describes is gone, so it can never be anybody's to "
         "take with them.",
     ),
+    "adminbalanceadjustment": Omitted(
+        "Operator accounting for wallet corrections. The wallet owner can see "
+        "their current balance; internal admin identity and source-address "
+        "evidence are not part of a portable account archive.",
+    ),
     "authidentity": Omitted(
         "Opaque Google / Apple subject identifiers. They are credentials for "
         "somebody else's system and mean nothing outside this one.",
