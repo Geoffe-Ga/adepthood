@@ -30,6 +30,7 @@ import {
   headingStyle,
   renderDecoratedLine,
   renderMarkdownRun,
+  type TaskPress,
   webRole,
 } from './ReadOnlyMarkdownText';
 import { lineSlice } from './renderedSpans';
@@ -67,6 +68,8 @@ export interface HighlightedBodyProps {
   onConfirmRemove?: () => void;
   /** Dismiss the revealed remove card (tapping elsewhere in the body). */
   onDismissRemove?: () => void;
+  /** Finished-entry task glyphs become controls only when this is supplied. */
+  onTaskPress?: TaskPress;
 }
 
 /** A promoted-quote span: washed while pending, quietly dimmed once folded in. */
@@ -186,6 +189,7 @@ interface RenderContext {
   onQuotePress?: (_quote: PromotedQuote) => void;
   /** The quote the reader arrived to see, if it resolved. */
   focusedQuoteId: number | null;
+  onTaskPress?: TaskPress;
 }
 
 /** A selected note's passage keeps its wash and gains the same quiet focus underline. */
@@ -291,7 +295,13 @@ function renderBlockLines(
 ): React.ReactNode[] {
   return block.lines.flatMap((line, index) => [
     ...(index === 0 ? [] : [`\n`]),
-    ...renderDecoratedLine(render.document, block, line, renderLine(line, segments, render)),
+    ...renderDecoratedLine(
+      render.document,
+      block,
+      line,
+      renderLine(line, segments, render),
+      render.onTaskPress,
+    ),
   ]);
 }
 
@@ -470,6 +480,7 @@ function HighlightedBody({
   removeTargetId = null,
   onConfirmRemove = NOOP,
   onDismissRemove,
+  onTaskPress,
 }: HighlightedBodyProps): React.JSX.Element {
   const segments = React.useMemo(
     () => buildAnchoredSegments(body, notes, quotes),
@@ -488,6 +499,7 @@ function HighlightedBody({
     onOpen,
     onQuotePress,
     focusedQuoteId: focus?.span.quoteId ?? null,
+    onTaskPress,
   };
   return (
     <>

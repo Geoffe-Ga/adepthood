@@ -72,6 +72,7 @@ import ResonanceEssayModal from './ResonanceEssayModal';
 import ResonanceExplainerDialog from './ResonanceExplainerDialog';
 import ResonanceRefillDialog from './ResonanceRefillDialog';
 import { describeCardFacts } from './suggestionFacts';
+import { taskOrdinalAt, toggleTaskAtOrdinal } from './toggleTaskAt';
 import { useAspectOptions } from './useAspectOptions';
 import { useEntryLoad } from './useEntryLoad';
 import { useGrowingFieldHeight } from './useGrowingFieldHeight';
@@ -518,6 +519,8 @@ interface AutosaveApi {
   chord: AspectChordValue;
   onChangeTitle: (_next: string) => void;
   onChangeBody: (_next: string) => void;
+  /** Optimistically flip and serialize a task while this finished entry stays read-only. */
+  toggleFinishedTask: (_lineStart: number) => void;
   /** Set the privacy tier: updates the control and persists (create/PATCH). */
   onChangeClassification: (_tier: JournalClassification) => void;
   /** Set the Aspect chord: updates the control and persists (create/PATCH). */
@@ -1306,6 +1309,7 @@ function useDebouncedSave(
     delayMs,
     reporter,
   );
+  const persistFinishedBody = useFinishedBodyWriter(refs, reporter);
   const flushAndTrack = useCallback(
     async (...args: Parameters<typeof flush>) => {
       const result = await flush(...args);
@@ -1331,10 +1335,56 @@ function useDebouncedSave(
     save,
     flush: flushAndTrack,
     finish: finishAndTrack,
+    persistFinishedBody,
     ...persistPorts(persist),
     seedDurableText: useDurableTextSeeder(refs.durableTextRef),
     cancelPending,
   };
+}
+
+/** A read-mode task PATCH, serialized through the draft/Finish single-flight lane. */
+type PersistFinishedBody = (_title: string, _body: string) => Promise<string>;
+
+function useFinishedBodyWriter(
+  refs: Pick<SaveRunnerRefs, 'entryIdRef' | 'entryUnsettledRef' | 'inFlightRef' | 'durableTextRef'>,
+  reporter: SaveReporter,
+): PersistFinishedBody {
+  const { entryIdRef, entryUnsettledRef, inFlightRef, durableTextRef } = refs;
+  return useCallback(
+    async (title: string, body: string): Promise<string> => {
+      while (inFlightRef.current) await inFlightRef.current;
+      const id = entryIdRef.current;
+      if (id == null || entryUnsettledRef.current) {
+        throw new Error('Cannot update a task before its entry has loaded.');
+      }
+      reporter.publish('saving');
+      const request = journal.update(id, { message: body });
+      const shadow = request.then(
+        () => undefined,
+        () => undefined,
+      );
+      inFlightRef.current = shadow;
+      try {
+        const stored = await request;
+        durableTextRef.current = { title, body: stored.message };
+        reporter.succeed('body');
+        reporter.publish('saved');
+        return stored.message;
+      } catch (error) {
+        if (isDeletionPending(error)) {
+          reporter.succeed('body');
+          reporter.publish('deletionPending');
+        } else {
+          reporter.fail({ lane: 'body' });
+          reporter.publish('idle');
+        }
+        throw error;
+      } finally {
+        if (inFlightRef.current === shadow) inFlightRef.current = null;
+      }
+    },
+    [entryIdRef, entryUnsettledRef, inFlightRef, durableTextRef, reporter],
+  );
 }
 
 type StrRef = React.MutableRefObject<string>;
@@ -2208,6 +2258,7 @@ interface AutosaveBindings extends ChoiceHandlers {
   flushForPass: () => Promise<PassFlushResult>;
   flushForExit: () => Promise<boolean>;
   finish: () => Promise<number>;
+  toggleFinishedTask: (_lineStart: number) => void;
 }
 
 /** Project internal entry/persistence state onto the screen's autosave contract. */
@@ -2278,7 +2329,11 @@ function useAutosaveBindings(
     saving,
     saving.changeChord,
   );
-  const retrySource = useRetrySource(saving, flushNow, { applyClassification, applyChord });
+  const finishedTasks = useFinishedTaskToggles(entry, saving.persistFinishedBody, flushNow);
+  const retrySource = useRetrySource(saving, finishedTasks.retry, {
+    applyClassification,
+    applyChord,
+  });
   return {
     entryId: saving.entryId,
     saveState: saving.saveState,
@@ -2290,8 +2345,155 @@ function useAutosaveBindings(
     flushForPass: flushForPassNow,
     flushForExit: flushForExitNow,
     finish: finishNow,
+    toggleFinishedTask: finishedTasks.toggle,
     ...choices,
   };
+}
+
+interface PendingTaskToggle {
+  ordinal: number;
+}
+
+/** Replay pending presses over the last server-confirmed body for honest rollback. */
+function applyPendingTaskToggles(body: string, pending: readonly PendingTaskToggle[]): string {
+  return pending.reduce((next, operation) => toggleTaskAtOrdinal(next, operation.ordinal), body);
+}
+
+interface FinishedTaskToggles {
+  toggle: (_lineStart: number) => void;
+  retry: () => Promise<unknown>;
+}
+
+interface FinishedTaskQueueRefs {
+  committedRef: React.MutableRefObject<string>;
+  pendingRef: React.MutableRefObject<PendingTaskToggle[]>;
+  drainRef: React.MutableRefObject<Promise<void> | null>;
+  blockedRef: React.MutableRefObject<boolean>;
+  terminalRef: React.MutableRefObject<boolean>;
+}
+
+/** Keep the synchronous body ref and the rendered read surface on the same truth. */
+function useShowFinishedTaskBody(
+  entry: Pick<EntryState, 'bodyRef' | 'setBody'>,
+): (_body: string) => void {
+  const { bodyRef, setBody } = entry;
+  return useCallback(
+    (body: string): void => {
+      bodyRef.current = body;
+      setBody(body);
+    },
+    [bodyRef, setBody],
+  );
+}
+
+/** Retry a blocked head before allowing its later optimistic operations through. */
+async function retryFinishedTaskQueue(
+  blockedRef: React.MutableRefObject<boolean>,
+  pendingRef: React.MutableRefObject<PendingTaskToggle[]>,
+  committedRef: React.MutableRefObject<string>,
+  drainRef: React.MutableRefObject<Promise<void> | null>,
+  show: (_body: string) => void,
+  drain: () => Promise<void>,
+  fallbackRetry: () => Promise<unknown>,
+): Promise<unknown> {
+  if (!blockedRef.current) return fallbackRetry();
+  blockedRef.current = false;
+  show(applyPendingTaskToggles(committedRef.current, pendingRef.current));
+  if (drainRef.current != null) await drainRef.current;
+  return drain();
+}
+
+/** Build the one-at-a-time server drain behind optimistic finished-task presses. */
+function useFinishedTaskDrain(
+  refs: FinishedTaskQueueRefs,
+  titleRef: React.MutableRefObject<string>,
+  persist: PersistFinishedBody,
+  show: (_body: string) => void,
+): () => Promise<void> {
+  const { committedRef, pendingRef, drainRef, blockedRef, terminalRef } = refs;
+  return useCallback((): Promise<void> => {
+    if (drainRef.current != null) return drainRef.current;
+    const run = (async () => {
+      while (!blockedRef.current && pendingRef.current.length > 0) {
+        const operation = pendingRef.current[0]!;
+        const requested = toggleTaskAtOrdinal(committedRef.current, operation.ordinal);
+        try {
+          if (requested !== committedRef.current)
+            committedRef.current = await persist(titleRef.current, requested);
+        } catch (error) {
+          if (isDeletionPending(error)) {
+            terminalRef.current = true;
+            blockedRef.current = false;
+            pendingRef.current = [];
+            show(committedRef.current);
+          } else {
+            blockedRef.current = true;
+            show(applyPendingTaskToggles(committedRef.current, pendingRef.current.slice(1)));
+          }
+          break;
+        }
+        pendingRef.current.shift();
+        show(applyPendingTaskToggles(committedRef.current, pendingRef.current));
+      }
+    })();
+    drainRef.current = run;
+    void run.finally(() => {
+      if (drainRef.current === run) drainRef.current = null;
+    });
+    return run;
+  }, [blockedRef, committedRef, drainRef, pendingRef, terminalRef, titleRef, persist, show]);
+}
+
+/**
+ * Finished-entry task queue: every tap paints immediately, while PATCHes run one
+ * at a time. A failed head blocks for Retry while later optimistic presses are
+ * replayed over server truth, so rollback never erases a later tap.
+ */
+function useFinishedTaskToggles(
+  entry: EntryState,
+  persist: PersistFinishedBody,
+  fallbackRetry: () => Promise<unknown>,
+): FinishedTaskToggles {
+  const committedRef = useRef(entry.body);
+  const pendingRef = useRef<PendingTaskToggle[]>([]);
+  const drainRef = useRef<Promise<void> | null>(null);
+  const blockedRef = useRef(false);
+  const terminalRef = useRef(false);
+  const { bodyRef, setBody, titleRef } = entry;
+  if (pendingRef.current.length === 0 && drainRef.current == null)
+    committedRef.current = entry.body;
+  const show = useShowFinishedTaskBody({ bodyRef, setBody });
+  const refs = { committedRef, pendingRef, drainRef, blockedRef, terminalRef };
+  const drain = useFinishedTaskDrain(refs, titleRef, persist, show);
+
+  const toggle = useCallback(
+    (lineStart: number): void => {
+      if (terminalRef.current) return;
+      const ordinal = taskOrdinalAt(bodyRef.current, lineStart);
+      if (ordinal == null) return;
+      const optimistic = toggleTaskAtOrdinal(bodyRef.current, ordinal);
+      pendingRef.current.push({ ordinal });
+      show(optimistic);
+      if (!blockedRef.current) void drain();
+    },
+    [bodyRef, show, drain],
+  );
+
+  const retry = useCallback(
+    () =>
+      retryFinishedTaskQueue(
+        blockedRef,
+        pendingRef,
+        committedRef,
+        drainRef,
+        show,
+        drain,
+        fallbackRetry,
+      ),
+    [fallbackRetry, show, drain],
+  );
+
+  return { toggle, retry };
 }
 
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
@@ -2971,11 +3173,13 @@ function ReadBodyContent({
   notes,
   quote,
   onOpen,
+  onTaskPress,
 }: {
   body: string;
   notes: Marginalia[];
   quote: QuotePromotion;
   onOpen: (_note: Marginalia) => void;
+  onTaskPress: (_lineStart: number) => void;
 }): React.JSX.Element {
   return (
     <>
@@ -2988,10 +3192,24 @@ function ReadBodyContent({
         removeTargetId={quote.removeTargetId}
         onConfirmRemove={quote.confirmRemove}
         onDismissRemove={quote.dismissRemove}
+        onTaskPress={onTaskPress}
       />
       <QuotePromotionFeedback quote={quote} />
     </>
   );
+}
+
+interface ReadColumnProps {
+  title: string;
+  body: string;
+  notes: Marginalia[];
+  quote: QuotePromotion;
+  /** True when this entry was just saved from photograph capture; shows "Saved". */
+  justSaved: boolean;
+  onOpen: (_note: Marginalia) => void;
+  saveState: SaveState;
+  onRetrySave: () => Promise<void>;
+  onTaskPress: (_lineStart: number) => void;
 }
 
 /** Read-mode body: the title + the highlighted passage tree + the action row. */
@@ -3002,15 +3220,10 @@ function ReadColumn({
   quote,
   justSaved,
   onOpen,
-}: {
-  title: string;
-  body: string;
-  notes: Marginalia[];
-  quote: QuotePromotion;
-  /** True when this entry was just saved from photograph capture; shows "Saved". */
-  justSaved: boolean;
-  onOpen: (_note: Marginalia) => void;
-}) {
+  saveState,
+  onRetrySave,
+  onTaskPress,
+}: ReadColumnProps) {
   return (
     <View style={[styles.writingColumn, readingScrollStyle]}>
       <View style={styles.writingColumnContent}>
@@ -3024,13 +3237,48 @@ function ReadColumn({
             onCancel={quote.cancelSelecting}
           />
         ) : (
-          <ReadBodyContent body={body} notes={notes} quote={quote} onOpen={onOpen} />
+          <ReadBodyContent
+            body={body}
+            notes={notes}
+            quote={quote}
+            onOpen={onOpen}
+            onTaskPress={onTaskPress}
+          />
         )}
-        <Text style={styles.savedHint} testID="journal-save-hint">
-          {justSaved ? SAVED_HINT : BLANK_HINT}
-        </Text>
+        <ReadSaveStatus saveState={saveState} justSaved={justSaved} onRetry={onRetrySave} />
         {quote.selecting ? null : <ReadModeControls quote={quote} />}
       </View>
+    </View>
+  );
+}
+
+/** Read-mode reuse of the ordinary save hint and retry affordance. */
+function ReadSaveStatus({
+  saveState,
+  justSaved,
+  onRetry,
+}: {
+  saveState: SaveState;
+  justSaved: boolean;
+  onRetry: () => Promise<void>;
+}): React.JSX.Element {
+  return (
+    <View style={styles.saveStatusRow}>
+      <Text style={styles.savedHint} testID="journal-save-hint">
+        {justSaved && saveState === 'idle' ? SAVED_HINT : savedHintLabel(saveState)}
+      </Text>
+      {saveState === 'error' ? (
+        <TouchableOpacity
+          style={styles.saveRetry}
+          onPress={() => void onRetry()}
+          accessibilityRole="button"
+          accessibilityLabel="Retry saving this entry"
+          testID="journal-save-retry"
+        >
+          <RefreshCw color={accent.primary} size={18} {...decorativeHidden()} />
+          <Text style={styles.saveRetryLabel}>Retry</Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -3693,6 +3941,9 @@ function PageBodyColumn({ ctl, bodyPlaceholder }: { ctl: Controller; bodyPlaceho
       quote={ctl.quote}
       justSaved={ctl.justSaved && !ctl.autosave.carryHeld}
       onOpen={ctl.modal.onOpenNote}
+      saveState={saveState}
+      onRetrySave={() => ctl.saveRetry.retryFailedSave('tap')}
+      onTaskPress={ctl.autosave.toggleFinishedTask}
     />
   );
 }

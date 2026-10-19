@@ -1051,6 +1051,149 @@ describe('JournalEntryScreen', () => {
     expect(queryByTestId('journal-body-input')).toBeNull();
   });
 
+  it('optimistically ticks a finished task and adopts the server-returned body', async () => {
+    const initial = '- [ ] milk';
+    const sanitized = '- [x] milk (stored)';
+    mockUpdate.mockResolvedValue(entry({ id: 7, message: sanitized, status: 'finished' }));
+    const { getByTestId, queryByTestId } = await renderFinished(initial);
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+
+    expect(getByTestId('journal-markdown-checkbox-0').props.accessibilityState).toEqual({
+      checked: true,
+    });
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(7, { message: '- [x] milk' }));
+    await waitFor(() => expect(getByTestId('journal-body-read').props.children).toBeTruthy());
+    expect(queryByTestId('journal-body-input')).toBeNull();
+    expect(queryByTestId('journal-finish-button')).toBeNull();
+    expect(getByTestId('journal-body-read')).toHaveTextContent('☑ milk (stored)');
+  });
+
+  it('serializes rapid task presses so both state changes persist without racing PATCHes', async () => {
+    let releaseFirst!: (_value: JournalMessage) => void;
+    const first = new Promise<JournalMessage>((resolve) => {
+      releaseFirst = resolve;
+    });
+    mockUpdate
+      .mockImplementationOnce(() => first)
+      .mockResolvedValueOnce(
+        entry({ id: 7, message: '- [x] milk\n- [x] bread', status: 'finished' }),
+      );
+    const { getByTestId } = await renderFinished('- [ ] milk\n- [ ] bread');
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    fireEvent.press(getByTestId('journal-markdown-checkbox-11'));
+
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(getByTestId('journal-markdown-checkbox-0').props.accessibilityState.checked).toBe(true);
+    expect(getByTestId('journal-markdown-checkbox-11').props.accessibilityState.checked).toBe(true);
+
+    await act(async () => {
+      releaseFirst(entry({ id: 7, message: '- [x] milk\n- [ ] bread', status: 'finished' }));
+      await first;
+    });
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    expect(mockUpdate.mock.calls[1]).toEqual([7, { message: '- [x] milk\n- [x] bread' }]);
+  });
+
+  it('rebases a queued task press when the first response changes an earlier line length', async () => {
+    let releaseFirst!: (_value: JournalMessage) => void;
+    const first = new Promise<JournalMessage>((resolve) => {
+      releaseFirst = resolve;
+    });
+    mockUpdate
+      .mockImplementationOnce(() => first)
+      .mockResolvedValueOnce(
+        entry({ id: 7, message: '- [x] milk (stored)\n- [x] bread', status: 'finished' }),
+      );
+    const { getByTestId } = await renderFinished('- [ ] milk\n- [ ] bread');
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    fireEvent.press(getByTestId('journal-markdown-checkbox-11'));
+    await act(async () => {
+      releaseFirst(
+        entry({ id: 7, message: '- [x] milk (stored)\n- [ ] bread', status: 'finished' }),
+      );
+      await first;
+    });
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    expect(mockUpdate.mock.calls[1]).toEqual([7, { message: '- [x] milk (stored)\n- [x] bread' }]);
+  });
+
+  it('reverts a failed optimistic task press and shows the existing save-error surface', async () => {
+    mockUpdate.mockRejectedValue(new Error('offline'));
+    const { getByTestId } = await renderFinished('- [ ] milk');
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    expect(getByTestId('journal-markdown-checkbox-0').props.accessibilityState.checked).toBe(true);
+
+    await waitFor(() =>
+      expect(getByTestId('journal-markdown-checkbox-0').props.accessibilityState.checked).toBe(
+        false,
+      ),
+    );
+    expect(getByTestId('journal-save-hint')).toHaveTextContent(
+      "Couldn't save — keep writing, we'll retry",
+    );
+  });
+
+  it('retries the failed task intent before a later queued press', async () => {
+    mockUpdate
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(
+        entry({ id: 7, message: '- [x] milk\n- [ ] bread', status: 'finished' }),
+      )
+      .mockResolvedValueOnce(
+        entry({ id: 7, message: '- [x] milk\n- [x] bread', status: 'finished' }),
+      );
+    const { getByTestId } = await renderFinished('- [ ] milk\n- [ ] bread');
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    fireEvent.press(getByTestId('journal-markdown-checkbox-11'));
+    await waitFor(() =>
+      expect(getByTestId('journal-markdown-checkbox-0').props.accessibilityState.checked).toBe(
+        false,
+      ),
+    );
+    expect(getByTestId('journal-markdown-checkbox-11').props.accessibilityState.checked).toBe(true);
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(getByTestId('journal-save-retry'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(3));
+    expect(mockUpdate.mock.calls[1]).toEqual([7, { message: '- [x] milk\n- [ ] bread' }]);
+    expect(mockUpdate.mock.calls[2]).toEqual([7, { message: '- [x] milk\n- [x] bread' }]);
+    expect(getByTestId('journal-save-hint')).toHaveTextContent('Saved');
+  });
+
+  it('rolls back and disables the task queue when deletion is already pending', async () => {
+    mockUpdate.mockRejectedValue(
+      Object.assign(new Error('deleting'), { detail: 'journal_entry_deletion_pending' }),
+    );
+    const { getByTestId, queryByTestId } = await renderFinished('- [ ] milk\n- [ ] bread');
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    fireEvent.press(getByTestId('journal-markdown-checkbox-11'));
+
+    await waitFor(() =>
+      expect(getByTestId('journal-markdown-checkbox-0').props.accessibilityState.checked).toBe(
+        false,
+      ),
+    );
+    expect(getByTestId('journal-markdown-checkbox-11').props.accessibilityState.checked).toBe(
+      false,
+    );
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(queryByTestId('journal-save-retry')).toBeNull();
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-11'));
+    expect(getByTestId('journal-markdown-checkbox-11').props.accessibilityState.checked).toBe(
+      false,
+    );
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+  });
+
   it('loads an existing draft by id (editable)', async () => {
     mockGet.mockResolvedValue(entry({ id: 7, title: 'Rivers', message: 'An existing page.' }));
     const { getByTestId } = renderScreen({ entryId: 7 });

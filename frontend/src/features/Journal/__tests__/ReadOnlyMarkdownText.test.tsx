@@ -54,6 +54,15 @@ describe('ReadOnlyMarkdownText -- block dialect (#3251)', () => {
     expect(queryByTestId('journal-markdown-task-done-11')).toBeNull();
   });
 
+  it('keeps task glyphs non-interactive when no finished-entry handler is supplied', () => {
+    const { getByTestId } = render(<ReadOnlyMarkdownText body="- [ ] source task" testID="flat" />);
+    const checkbox = getByTestId('journal-markdown-checkbox-0');
+
+    expect(checkbox.props.onPress).toBeUndefined();
+    expect(checkbox.props.accessibilityRole).toBeUndefined();
+    expect(checkbox.props.accessibilityState).toBeUndefined();
+  });
+
   it('splits around each rule, drawing a hairline and none of its characters', () => {
     const { getByTestId } = render(
       <ReadOnlyMarkdownText
