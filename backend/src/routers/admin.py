@@ -29,7 +29,7 @@ from dependencies.auth import require_admin
 from domain.entitlements import grant_manual_course_access, revoke_entitlement_by_id
 from domain.stage_progress import completed_stage_gap, expected_completed_stages
 from error_responses import build_router
-from errors import bad_request, conflict, not_found, unprocessable
+from errors import bad_request, conflict, forbidden, not_found, unprocessable
 from models.admin_balance_adjustment import AdminBalanceAdjustment
 from models.entitlement import Entitlement
 from models.feedback import FEEDBACK_RETENTION_DAYS
@@ -621,11 +621,26 @@ class _BalanceAdjustmentOutcome:
     mutated: bool
 
 
+async def _lock_admin_actor(session: AsyncSession, actor_admin_id: int) -> None:
+    """Serialize an operator mutation with erasure and revalidate its authority."""
+    actor = await session.scalar(
+        select(User).where(col(User.id) == actor_admin_id).with_for_update()
+    )
+    if actor is None:
+        raise forbidden("user_not_found")
+    if not actor.is_admin:
+        raise forbidden("admin_required")
+
+
 async def _apply_balance_adjustment(
     session: AsyncSession,
     command: _BalanceAdjustmentCommand,
 ) -> _BalanceAdjustmentOutcome:
     """Land the wallet + audit transaction, collapsing a concurrent keyed retry."""
+    # Account erasure takes this same actor-row lock before redacting retained
+    # audit metadata. If erasure wins, this fresh lookup sees no operator and
+    # refuses; if adjustment wins, erasure waits and redacts the completed row.
+    await _lock_admin_actor(session, command.actor_admin_id)
     try:
         async with session.begin_nested():
             balance = await adjust_balance(

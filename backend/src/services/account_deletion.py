@@ -54,6 +54,7 @@ from domain.ownership import OwnedBy, owner_predicate
 from domain.retention import DETACHED_WITHDRAWAL_NOTE_RETENTION_DAYS, REDACT_INSTEAD_OF_DELETE
 from models.account_deletion_audit import AccountDeletionAudit
 from models.feedback import FeedbackReport
+from models.user import User
 from services.feedback_triage import detach_from_doomed_reports
 from services.journal_withdrawal_note import detach_open_obligations
 
@@ -335,6 +336,11 @@ async def delete_account(
     finds the account gone and sends nothing.
     """
     require_total_policy()
+    # Serialize the full privacy sweep against operations that retain this
+    # account as their actor. In particular, admin wallet adjustments take the
+    # same lock before persisting ``source_ip``: whichever transaction wins
+    # completes first, so redaction cannot run once and then miss a late row.
+    await session.scalar(select(User).where(col(User.id) == account.user_id).with_for_update())
     # Before the sweep, so other accounts' reports that were duplicates of this
     # account's record their unlink rather than silently losing it.
     await detach_from_doomed_reports(

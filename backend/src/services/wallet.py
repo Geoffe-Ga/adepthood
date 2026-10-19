@@ -60,6 +60,10 @@ from services.usage import compute_next_reset, get_daily_generation_ceiling, get
 logger = logging.getLogger(__name__)
 
 
+class WalletBalanceOutOfRangeError(ValueError):
+    """A wallet mutation would exceed the database's signed-int32 range."""
+
+
 @dataclass(frozen=True, slots=True)
 class _AuditEntry:
     """Bundled inputs for a single wallet-audit row.
@@ -387,7 +391,10 @@ async def _reverse_offering_spend(
     """
     result = await session.execute(
         update(User)
-        .where(col(User.id) == user_id)
+        .where(
+            col(User.id) == user_id,
+            col(User.offering_balance) < INT32_MAX,
+        )
         .values(offering_balance=col(User.offering_balance) + 1)
         .returning(col(User.monthly_messages_used), col(User.offering_balance))
     )
@@ -624,16 +631,29 @@ async def _credit_offering(
     lets a credit land atomically alongside whatever else it guards.
 
     Returns the post-credit balance, or ``None`` when no row matched
-    ``user_id`` (in which case nothing is staged).
+    ``user_id`` (in which case nothing is staged). Raises
+    :class:`WalletBalanceOutOfRangeError` when the user exists but applying the
+    full delta would exceed the signed-int32 storage range. The guarded
+    predicate prevents PostgreSQL from evaluating an overflowing addition.
     """
+    if not INT32_MIN <= amount <= INT32_MAX:
+        raise WalletBalanceOutOfRangeError
+    range_guard = (
+        col(User.offering_balance) <= INT32_MAX - amount
+        if amount > 0
+        else col(User.offering_balance) >= INT32_MIN - amount
+    )
     result = await session.execute(
         update(User)
-        .where(col(User.id) == user_id)
+        .where(col(User.id) == user_id, range_guard)
         .values(offering_balance=col(User.offering_balance) + amount)
         .returning(col(User.offering_balance))
     )
     new_balance = result.scalar()
     if new_balance is None:
+        user_exists = await session.scalar(select(User.id).where(col(User.id) == user_id))
+        if user_exists is not None:
+            raise WalletBalanceOutOfRangeError
         return None
     new_balance_int = int(new_balance)
     _stage_audit(

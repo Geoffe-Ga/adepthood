@@ -9,22 +9,31 @@ production.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from http import HTTPStatus
+from time import monotonic
 from typing import TYPE_CHECKING
 
 import pytest
+from httpx import Response
 from sqlalchemy import func
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import INT32_MAX, INT32_MIN
 from models.admin_balance_adjustment import AdminBalanceAdjustment
 from models.user import User
 from models.wallet_audit import REASON_ADMIN_ADJUSTMENT, WalletAudit
 from routers import admin as admin_router
+from services import account_deletion
+from services.wallet import (
+    WalletBalanceOutOfRangeError,
+    claw_back_purchase_credit,
+    grant_purchase_credit,
+)
 from tests.helpers.feedback_triage import Account, make_account
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from tests.integration.session_per_request import SessionPerRequest
 
 pytestmark = pytest.mark.integration
@@ -34,6 +43,9 @@ _PARTIES = 2
 _RENDEZVOUS_SECONDS = 2.0
 _ONE_ROW = 1
 _PRE_CHECK = "_recorded_adjustment"
+_ANONYMISE_SOURCES = "_anonymise_admin_adjustment_sources"
+_APPLY_ADJUSTMENT = "_apply_balance_adjustment"
+_LOCK_WAIT_SECONDS = 2.0
 
 
 def _hold_completed_pre_checks(
@@ -175,3 +187,142 @@ async def test_same_key_different_target_race_conflicts_without_partial_movement
     )
     assert balances[losing_id] == 0
     assert await _counts(pair, admin.user_id) == (_ONE_ROW, _ONE_ROW)
+
+
+async def _request_is_blocked_by(
+    pair: SessionPerRequest,
+    *,
+    backend_pid: int,
+    request: asyncio.Task[Response],
+) -> bool:
+    """Observe a real PostgreSQL lock wait, not timing alone."""
+    deadline = monotonic() + _LOCK_WAIT_SECONDS
+    while monotonic() < deadline:
+        async with pair.factory() as observer:
+            blocker_count = await observer.scalar(
+                select(func.cardinality(func.pg_blocking_pids(backend_pid)))
+            )
+        if int(blocker_count or 0) > 0:
+            return True
+        if request.done():
+            return False
+        await asyncio.sleep(0.01)
+    return False
+
+
+@pytest.mark.asyncio
+async def test_self_deleting_admin_cannot_insert_source_ip_after_redaction(
+    pair: SessionPerRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Erasure and adjustment serialize on the actor before source-IP redaction."""
+    admin, target, _ = await _seed(pair)
+    redaction_finished = asyncio.Event()
+    release_deletion = asyncio.Event()
+    adjustment_entered = asyncio.Event()
+    adjustment_pid: list[int] = []
+
+    real_anonymise: Callable[..., Awaitable[None]] = getattr(
+        account_deletion,
+        _ANONYMISE_SOURCES,
+    )
+    real_apply: Callable[..., Awaitable[object]] = getattr(
+        admin_router,
+        _APPLY_ADJUSTMENT,
+    )
+
+    async def _hold_after_redaction(*args: object, **kwargs: object) -> None:
+        await real_anonymise(*args, **kwargs)
+        redaction_finished.set()
+        await release_deletion.wait()
+
+    async def _observe_adjustment(session: AsyncSession, command: object) -> object:
+        pid = await session.scalar(select(func.pg_backend_pid()))
+        adjustment_pid.append(int(pid))
+        adjustment_entered.set()
+        return await real_apply(session, command)
+
+    monkeypatch.setattr(
+        account_deletion,
+        _ANONYMISE_SOURCES,
+        _hold_after_redaction,
+    )
+    monkeypatch.setattr(admin_router, _APPLY_ADJUSTMENT, _observe_adjustment)
+
+    deleting = asyncio.create_task(
+        pair.client.request(
+            "DELETE",
+            "/users/me",
+            json={"confirm_email": admin.email},
+            headers=admin.headers,
+        )
+    )
+    await asyncio.wait_for(redaction_finished.wait(), timeout=_LOCK_WAIT_SECONDS)
+    adjusting = asyncio.create_task(
+        pair.client.post(
+            f"/admin/users/{target.user_id}/tokens",
+            json={"delta": 1, "reason": "race against operator erasure"},
+            headers=admin.headers,
+        )
+    )
+    await asyncio.wait_for(adjustment_entered.wait(), timeout=_LOCK_WAIT_SECONDS)
+
+    blocked = await _request_is_blocked_by(
+        pair,
+        backend_pid=adjustment_pid[0],
+        request=adjusting,
+    )
+    release_deletion.set()
+    deleted, adjusted = await asyncio.gather(deleting, adjusting)
+
+    assert blocked, "the adjustment never waited on the erasure's actor-row lock"
+    assert deleted.status_code == HTTPStatus.OK
+    assert adjusted.status_code == HTTPStatus.FORBIDDEN
+    assert adjusted.json() == {"detail": "user_not_found"}
+    async with pair.factory() as session:
+        leaked = await session.scalar(
+            select(func.count())
+            .select_from(AdminBalanceAdjustment)
+            .where(col(AdminBalanceAdjustment.target_user_id) == target.user_id)
+        )
+    assert int(leaked or 0) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("boundary", "mutation"),
+    [
+        (INT32_MAX, grant_purchase_credit),
+        (INT32_MIN, claw_back_purchase_credit),
+    ],
+)
+async def test_admin_boundary_cannot_poison_shared_wallet_mutations(
+    pair: SessionPerRequest,
+    boundary: int,
+    mutation: Callable[..., Awaitable[int | None]],
+) -> None:
+    """Exact endpoint bounds remain stored while a later paid mutation refuses safely."""
+    admin, target, _ = await _seed(pair)
+    adjusted = await pair.client.post(
+        f"/admin/users/{target.user_id}/tokens",
+        json={"delta": boundary, "reason": "exercise the storage boundary"},
+        headers=admin.headers,
+    )
+    assert adjusted.status_code == HTTPStatus.OK, adjusted.text
+    assert adjusted.json()["balance"] == boundary
+
+    async with pair.factory() as session:
+        with pytest.raises(WalletBalanceOutOfRangeError):
+            await mutation(session, target.user_id, 1)
+        await session.rollback()
+
+    async with pair.factory() as session:
+        stored = await session.get(User, target.user_id)
+        audit_count = await session.scalar(
+            select(func.count())
+            .select_from(WalletAudit)
+            .where(col(WalletAudit.user_id) == target.user_id)
+        )
+    assert stored is not None
+    assert stored.offering_balance == boundary
+    assert int(audit_count or 0) == _ONE_ROW
