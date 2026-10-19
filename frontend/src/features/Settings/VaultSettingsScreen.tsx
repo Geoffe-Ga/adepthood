@@ -262,20 +262,15 @@ const VaultPromiseDeck = (): React.JSX.Element => {
   const t = typeRamp(width);
   return (
     <>
-      <ScreenHeader
-        eyebrow={VAULT_EYEBROW}
-        title={VAULT_TITLE}
-        titleHidden
-        lead={VAULT_PROMISE}
-        testID="vault-header"
-      />
-      <Text style={[t.body, styles.body]} testID="vault-what-it-is">
-        {VAULT_WHAT_IT_IS}
-      </Text>
-      {/* What saying yes to sorting gives, with the floor directly beneath it, so
-          the gain is never read without the sentence that bounds it (#3003). */}
+      <ScreenHeader eyebrow={VAULT_EYEBROW} title={VAULT_TITLE} titleHidden testID="vault-header" />
       <Text style={[t.body, styles.body]} testID="vault-higher-self-gain">
         {HIGHER_SELF_GAIN}
+      </Text>
+      <Text style={[t.body, styles.body]} testID="vault-promise">
+        {VAULT_PROMISE}
+      </Text>
+      <Text style={[t.body, styles.body]} testID="vault-what-it-is">
+        {VAULT_WHAT_IT_IS}
       </Text>
       {/* No explicit label: the floor states its own optionality, and repeating
           the header's promise here would announce it twice in reading order. */}
