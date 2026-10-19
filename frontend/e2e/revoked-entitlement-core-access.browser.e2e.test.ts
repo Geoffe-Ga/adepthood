@@ -1,8 +1,12 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 
 import { expect, test, type APIRequestContext, type Page, type Response } from '@playwright/test';
 
+import {
+  expectJsonExport,
+  expectMarkdownExport,
+  exportThroughScreen,
+} from './exportBrowserSupport';
 import {
   ACCOUNT_PHRASE,
   backendUrl,
@@ -34,6 +38,7 @@ interface Usage {
 
 const FIRST_BODY = 'A saved page remains mine after access changes.';
 const EDITED_BODY = `${FIRST_BODY} I can still revise it.`;
+const TITLE = 'Access changes, ownership does not';
 const HTTP_OK = 200;
 const HTTP_NO_CONTENT = 204;
 const HTTP_FORBIDDEN = 403;
@@ -109,17 +114,6 @@ async function revokeThroughAdmin(page: Page, targetUserId: number): Promise<voi
   expect((await revoked.json()).revoked_at).not.toBeNull();
 }
 
-async function exportThroughScreen(page: Page, testId: string): Promise<string> {
-  const [download] = await Promise.all([
-    page.waitForEvent('download'),
-    page.getByTestId(testId).click(),
-  ]);
-  const path = await download.path();
-  if (path === null) throw new Error(`${testId} produced no readable browser download`);
-  await expect(page.getByTestId('export-data-receipt')).toBeVisible();
-  return readFileSync(path, 'utf8');
-}
-
 test('a revoked entitlement refuses AI but leaves writing, export and deletion intact', async ({
   page,
 }) => {
@@ -134,6 +128,7 @@ test('a revoked entitlement refuses AI but leaves writing, export and deletion i
     (response) =>
       response.request().method() === 'POST' && new URL(response.url()).pathname === '/journal/',
   );
+  await page.getByTestId('journal-title-input').fill(TITLE);
   await page.getByTestId('journal-body-input').fill(FIRST_BODY);
   const entryId = ((await (await created).json()) as { id: number }).id;
   await expect(page.getByTestId('journal-save-hint')).toHaveText('Saved');
@@ -156,8 +151,16 @@ test('a revoked entitlement refuses AI but leaves writing, export and deletion i
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === `/journal/${entryId}/resonance`,
   );
+  const detection = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      new URL(response.url()).pathname === `/journal/${entryId}/suggestions/detect`,
+  );
   await page.getByTestId('resonance-explainer-continue').click();
   expect((await refusal).status()).toBe(HTTP_FORBIDDEN);
+  const detectionResponse = await detection;
+  expect(detectionResponse.status()).toBe(HTTP_OK);
+  expect(await detectionResponse.json()).toEqual({ checked: true, items: [] });
   const error = page.getByTestId('journal-resonance-error');
   await expect(error).toContainText('APTITUDE membership is no longer active');
   await expect(error).toContainText('Nothing was charged');
@@ -175,8 +178,14 @@ test('a revoked entitlement refuses AI but leaves writing, export and deletion i
 
   await page.goto(`${frontendUrl()}/settings`);
   await page.getByTestId('settings-row-export-data').click();
-  expect(await exportThroughScreen(page, 'export-data-json')).toContain(EDITED_BODY);
-  expect(await exportThroughScreen(page, 'export-data-markdown')).toContain(EDITED_BODY);
+  expectJsonExport(await exportThroughScreen(page, 'export-data-json'), {
+    title: TITLE,
+    message: EDITED_BODY,
+  });
+  expectMarkdownExport(await exportThroughScreen(page, 'export-data-markdown'), {
+    title: TITLE,
+    message: EDITED_BODY,
+  });
 
   await page.goto(`${frontendUrl()}/journal`);
   await visible(page, `journal-shelf-delete-${entryId}`).click();

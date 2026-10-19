@@ -1,7 +1,10 @@
-import { readFileSync } from 'node:fs';
-
 import { expect, test, type Page, type Response } from '@playwright/test';
 
+import {
+  expectJsonExport,
+  expectMarkdownExport,
+  exportThroughScreen,
+} from './exportBrowserSupport';
 import { backendUrl, bearer, frontendUrl, sessionFor, signUp } from './journalHabitsBrowserSupport';
 import { runBackendModule } from './laneDatabase';
 
@@ -31,6 +34,7 @@ interface Wallet {
 
 interface ExhaustedAllowance extends Wallet {
   monthly_cap: number;
+  monthly_reset_date: string;
 }
 
 const TITLE = 'The floor stays mine';
@@ -75,17 +79,6 @@ function expectWalletState(actual: Wallet, expected: ExhaustedAllowance): void {
   expect(actual.rows).toEqual(expected.rows);
 }
 
-async function exportThroughScreen(page: Page, testId: string): Promise<string> {
-  const [download] = await Promise.all([
-    page.waitForEvent('download'),
-    page.getByTestId(testId).click(),
-  ]);
-  const path = await download.path();
-  if (path === null) throw new Error(`${testId} produced no readable browser download`);
-  await expect(page.getByTestId('export-data-receipt')).toBeVisible();
-  return readFileSync(path, 'utf8');
-}
-
 test('a zero-price member keeps the journal floor when the AI wallet is exhausted', async ({
   page,
 }) => {
@@ -95,6 +88,7 @@ test('a zero-price member keeps the journal floor when the AI wallet is exhauste
   const exhausted = exhaustAllowance(email);
   expect(exhausted.monthly_cap).toBeGreaterThan(0);
   expect(exhausted.monthly_messages_used).toBe(exhausted.monthly_cap);
+  expect(Date.parse(exhausted.monthly_reset_date)).toBeGreaterThan(Date.now());
   expect(exhausted.offering_balance).toBe(0);
   expect(exhausted.rows).toEqual([]);
 
@@ -115,8 +109,14 @@ test('a zero-price member keeps the journal floor when the AI wallet is exhauste
 
   await page.goto(`${frontendUrl()}/settings`);
   await page.getByTestId('settings-row-export-data').click();
-  expect(await exportThroughScreen(page, 'export-data-json')).toContain(FIRST_BODY);
-  expect(await exportThroughScreen(page, 'export-data-markdown')).toContain(FIRST_BODY);
+  expectJsonExport(await exportThroughScreen(page, 'export-data-json'), {
+    title: TITLE,
+    message: FIRST_BODY,
+  });
+  expectMarkdownExport(await exportThroughScreen(page, 'export-data-markdown'), {
+    title: TITLE,
+    message: FIRST_BODY,
+  });
   await page.goto(`${frontendUrl()}/journal`);
   await visible(page, `journal-shelf-delete-${entryId}`).click();
   const deleted = page.waitForResponse(

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import User
+from services.wallet import has_generation_capacity
 from tests.e2e.exhaust_allowance import exhaust
 from tests.e2e.server import _stub_license_check
 
@@ -22,7 +25,7 @@ async def test_lane_license_purchase_is_explicitly_zero_price() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exhaust_arrange_moves_only_the_wallet_counters(
+async def test_exhaust_arrange_blocks_production_admission_through_next_reset(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -32,6 +35,7 @@ async def test_exhaust_arrange_moves_only_the_wallet_counters(
         email="floor@example.com",
         password_hash="not-used",  # pragma: allowlist secret
         offering_balance=3,
+        monthly_reset_date=datetime.now(UTC) - timedelta(days=1),
     )
     db_session.add(user)
     await db_session.commit()
@@ -39,11 +43,17 @@ async def test_exhaust_arrange_moves_only_the_wallet_counters(
     receipt = await exhaust(db_session, " FLOOR@example.com ")
 
     await db_session.refresh(user)
-    assert receipt == {
+    assert {key: value for key, value in receipt.items() if key != "monthly_reset_date"} == {
         "monthly_cap": 7,
         "monthly_messages_used": 7,
         "offering_balance": 0,
         "rows": [],
     }
     assert user.monthly_messages_used == 7
+    reset = user.monthly_reset_date
+    if reset.tzinfo is None:
+        reset = reset.replace(tzinfo=UTC)
+    assert reset > datetime.now(UTC)
+    assert datetime.fromisoformat(str(receipt["monthly_reset_date"])) == reset
     assert user.offering_balance == 0
+    assert not await has_generation_capacity(db_session, int(user.id))

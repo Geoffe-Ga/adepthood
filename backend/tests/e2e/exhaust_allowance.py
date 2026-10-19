@@ -7,9 +7,10 @@ lane's throwaway database::
 
 The monthly allowance is deployment configuration, so changing it for one
 browser account is impossible. This arrange instead moves only that account's
-real ``monthly_messages_used`` counter to the currently served cap and empties
-its offering balance. The subsequent browser requests still cross the ordinary
-screens, clients, routes and database; no request-path function is patched.
+real ``monthly_messages_used`` counter to the currently served cap, advances
+its reset into the next UTC month, and empties its offering balance. The
+subsequent browser requests still cross the ordinary screens, clients, routes
+and database; no request-path function is patched.
 """
 
 from __future__ import annotations
@@ -19,12 +20,14 @@ import asyncio
 import json
 import os
 import sys
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 from sqlmodel import select
 
 from database import normalize_database_url
+from domain.dates import compute_next_reset
 from models import User
 from services.usage import get_monthly_cap
 
@@ -46,7 +49,7 @@ def _require_database_url() -> str:
 
 
 async def exhaust(session: AsyncSession, email: str) -> dict[str, object]:
-    """Move ``email`` to the served cap with no offerings and report the state."""
+    """Exhaust ``email`` through its next monthly reset and report the state."""
     normalized = email.strip().lower()
     user = (await session.execute(select(User).where(User.email == normalized))).scalars().first()
     if user is None:
@@ -56,13 +59,16 @@ async def exhaust(session: AsyncSession, email: str) -> dict[str, object]:
     if monthly_cap <= 0:
         msg = "the lane serves no positive monthly cap; there is nothing account-local to exhaust"
         raise ExhaustAllowanceError(msg)
+    next_reset = compute_next_reset(datetime.now(UTC))
     user.monthly_messages_used = monthly_cap
+    user.monthly_reset_date = next_reset
     user.offering_balance = 0
     session.add(user)
     await session.commit()
     return {
         "monthly_cap": monthly_cap,
         "monthly_messages_used": user.monthly_messages_used,
+        "monthly_reset_date": next_reset.isoformat(),
         "offering_balance": user.offering_balance,
         "rows": [],
     }
