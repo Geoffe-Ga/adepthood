@@ -1343,7 +1343,7 @@ function useDebouncedSave(
 }
 
 /** A read-mode task PATCH, serialized through the draft/Finish single-flight lane. */
-type PersistFinishedBody = (_title: string, _body: string) => Promise<string>;
+type PersistFinishedBody = (_body: string) => Promise<string>;
 
 function useFinishedBodyWriter(
   refs: Pick<SaveRunnerRefs, 'entryIdRef' | 'entryUnsettledRef' | 'inFlightRef' | 'durableTextRef'>,
@@ -1351,12 +1351,16 @@ function useFinishedBodyWriter(
 ): PersistFinishedBody {
   const { entryIdRef, entryUnsettledRef, inFlightRef, durableTextRef } = refs;
   return useCallback(
-    async (title: string, body: string): Promise<string> => {
+    async (body: string): Promise<string> => {
       while (inFlightRef.current) await inFlightRef.current;
       const id = entryIdRef.current;
       if (id == null || entryUnsettledRef.current) {
         throw new Error('Cannot update a task before its entry has loaded.');
       }
+      // This request carries only ``message``. A title typed while task writes
+      // are queued is still local until the draft writer sends it, so never bless
+      // the latest local title as durable after this body-only PATCH.
+      const durableTitle = durableTextRef.current?.title;
       reporter.publish('saving');
       const request = journal.update(id, { message: body });
       const shadow = request.then(
@@ -1366,7 +1370,8 @@ function useFinishedBodyWriter(
       inFlightRef.current = shadow;
       try {
         const stored = await request;
-        durableTextRef.current = { title, body: stored.message };
+        durableTextRef.current =
+          durableTitle == null ? null : { title: durableTitle, body: stored.message };
         reporter.succeed('body');
         reporter.publish('saved');
         return stored.message;
@@ -2313,6 +2318,7 @@ function useAdoptStoredBody(bodyRef: StrRef, setBody: (_v: string) => void) {
 function useAutosaveBindings(
   entry: EntryState,
   saving: ReturnType<typeof useDebouncedSave>,
+  onFinishedTaskSaved: () => void,
 ): AutosaveBindings {
   const { onChangeTitle, onChangeBody } = useFieldHandlers(
     entry.titleRef,
@@ -2329,7 +2335,17 @@ function useAutosaveBindings(
     saving,
     saving.changeChord,
   );
-  const finishedTasks = useFinishedTaskToggles(entry, saving.persistFinishedBody, flushNow);
+  const finishedTasks = useFinishedTaskToggles(
+    entry,
+    saving.persistFinishedBody,
+    flushNow,
+    onFinishedTaskSaved,
+  );
+  const flushForExit = useCallback(async () => {
+    const taskFlush = finishedTasks.flushForExit();
+    if (taskFlush !== true && !(await taskFlush)) return false;
+    return flushForExitNow();
+  }, [finishedTasks, flushForExitNow]);
   const retrySource = useRetrySource(saving, finishedTasks.retry, {
     applyClassification,
     applyChord,
@@ -2343,7 +2359,7 @@ function useAutosaveBindings(
     flush: flushNow,
     flushDurable: flushDurableNow,
     flushForPass: flushForPassNow,
-    flushForExit: flushForExitNow,
+    flushForExit,
     finish: finishNow,
     toggleFinishedTask: finishedTasks.toggle,
     ...choices,
@@ -2362,14 +2378,31 @@ function applyPendingTaskToggles(body: string, pending: readonly PendingTaskTogg
 interface FinishedTaskToggles {
   toggle: (_lineStart: number) => void;
   retry: () => Promise<unknown>;
+  flushForExit: () => boolean | Promise<boolean>;
 }
 
 interface FinishedTaskQueueRefs {
   committedRef: React.MutableRefObject<string>;
+  projectedRef: React.MutableRefObject<string>;
   pendingRef: React.MutableRefObject<PendingTaskToggle[]>;
   drainRef: React.MutableRefObject<Promise<void> | null>;
   blockedRef: React.MutableRefObject<boolean>;
   terminalRef: React.MutableRefObject<boolean>;
+}
+
+/** Stable mutable queue state, re-seeded from React only while fully idle. */
+function useFinishedTaskQueueRefs(body: string): FinishedTaskQueueRefs {
+  const committedRef = useRef(body);
+  const projectedRef = useRef(body);
+  const pendingRef = useRef<PendingTaskToggle[]>([]);
+  const drainRef = useRef<Promise<void> | null>(null);
+  const blockedRef = useRef(false);
+  const terminalRef = useRef(false);
+  if (pendingRef.current.length === 0 && drainRef.current == null) {
+    committedRef.current = body;
+    projectedRef.current = body;
+  }
+  return { committedRef, projectedRef, pendingRef, drainRef, blockedRef, terminalRef };
 }
 
 /** Keep the synchronous body ref and the rendered read surface on the same truth. */
@@ -2386,62 +2419,190 @@ function useShowFinishedTaskBody(
   );
 }
 
+/** Update the rendered body only while it is still the queue projection we own. */
+function showFinishedTaskProjectionIfOwned(
+  bodyRef: React.MutableRefObject<string>,
+  projectedRef: React.MutableRefObject<string>,
+  next: string,
+  show: (_body: string) => void,
+): void {
+  if (bodyRef.current !== projectedRef.current) return;
+  projectedRef.current = next;
+  show(next);
+}
+
 /** Retry a blocked head before allowing its later optimistic operations through. */
 async function retryFinishedTaskQueue(
   blockedRef: React.MutableRefObject<boolean>,
   pendingRef: React.MutableRefObject<PendingTaskToggle[]>,
   committedRef: React.MutableRefObject<string>,
+  projectedRef: React.MutableRefObject<string>,
   drainRef: React.MutableRefObject<Promise<void> | null>,
+  bodyRef: React.MutableRefObject<string>,
   show: (_body: string) => void,
   drain: () => Promise<void>,
   fallbackRetry: () => Promise<unknown>,
 ): Promise<unknown> {
   if (!blockedRef.current) return fallbackRetry();
+  if (bodyRef.current !== projectedRef.current) {
+    // The editor has replaced the read-mode projection since this task failed.
+    // Its full body is now authoritative: replaying the old delta would land a
+    // stale message-only PATCH after that newer body and overwrite it.
+    blockedRef.current = false;
+    pendingRef.current = [];
+    committedRef.current = bodyRef.current;
+    projectedRef.current = bodyRef.current;
+    return fallbackRetry();
+  }
   blockedRef.current = false;
-  show(applyPendingTaskToggles(committedRef.current, pendingRef.current));
+  showFinishedTaskProjectionIfOwned(
+    bodyRef,
+    projectedRef,
+    applyPendingTaskToggles(committedRef.current, pendingRef.current),
+    show,
+  );
   if (drainRef.current != null) await drainRef.current;
   return drain();
 }
 
+interface FinishedTaskDrainContext extends FinishedTaskQueueRefs {
+  bodyRef: React.MutableRefObject<string>;
+  persist: PersistFinishedBody;
+  show: (_body: string) => void;
+  onSaved: () => void;
+}
+
+/** Persist one queue head; false means a failure blocked or ended the queue. */
+async function persistFinishedTaskHead(ctx: FinishedTaskDrainContext): Promise<boolean> {
+  const { committedRef, projectedRef, pendingRef, blockedRef, terminalRef } = ctx;
+  const operation = pendingRef.current[0]!;
+  const requested = toggleTaskAtOrdinal(committedRef.current, operation.ordinal);
+  try {
+    if (requested !== committedRef.current) {
+      committedRef.current = await ctx.persist(requested);
+      ctx.onSaved();
+    }
+  } catch (error) {
+    if (isDeletionPending(error)) {
+      terminalRef.current = true;
+      blockedRef.current = false;
+      pendingRef.current = [];
+      showFinishedTaskProjectionIfOwned(ctx.bodyRef, projectedRef, committedRef.current, ctx.show);
+    } else if (ctx.bodyRef.current !== projectedRef.current) {
+      // Edit mode now owns the full body (including every optimistic glyph).
+      // Its serialized autosave is the only write allowed to follow this failure.
+      blockedRef.current = false;
+      pendingRef.current = [];
+    } else {
+      blockedRef.current = true;
+      const tail = applyPendingTaskToggles(committedRef.current, pendingRef.current.slice(1));
+      showFinishedTaskProjectionIfOwned(ctx.bodyRef, projectedRef, tail, ctx.show);
+    }
+    return false;
+  }
+  if (ctx.bodyRef.current !== projectedRef.current) {
+    // Do not let queued read-mode deltas land after a newer full-body editor save.
+    pendingRef.current = [];
+    return false;
+  }
+  pendingRef.current.shift();
+  const next = applyPendingTaskToggles(committedRef.current, pendingRef.current);
+  showFinishedTaskProjectionIfOwned(ctx.bodyRef, projectedRef, next, ctx.show);
+  return true;
+}
+
+async function runFinishedTaskQueue(ctx: FinishedTaskDrainContext): Promise<void> {
+  while (!ctx.blockedRef.current && ctx.pendingRef.current.length > 0)
+    if (!(await persistFinishedTaskHead(ctx))) break;
+}
+
 /** Build the one-at-a-time server drain behind optimistic finished-task presses. */
-function useFinishedTaskDrain(
-  refs: FinishedTaskQueueRefs,
-  titleRef: React.MutableRefObject<string>,
-  persist: PersistFinishedBody,
-  show: (_body: string) => void,
-): () => Promise<void> {
-  const { committedRef, pendingRef, drainRef, blockedRef, terminalRef } = refs;
+function useFinishedTaskDrain(ctx: FinishedTaskDrainContext): () => Promise<void> {
+  const { drainRef } = ctx;
   return useCallback((): Promise<void> => {
     if (drainRef.current != null) return drainRef.current;
-    const run = (async () => {
-      while (!blockedRef.current && pendingRef.current.length > 0) {
-        const operation = pendingRef.current[0]!;
-        const requested = toggleTaskAtOrdinal(committedRef.current, operation.ordinal);
-        try {
-          if (requested !== committedRef.current)
-            committedRef.current = await persist(titleRef.current, requested);
-        } catch (error) {
-          if (isDeletionPending(error)) {
-            terminalRef.current = true;
-            blockedRef.current = false;
-            pendingRef.current = [];
-            show(committedRef.current);
-          } else {
-            blockedRef.current = true;
-            show(applyPendingTaskToggles(committedRef.current, pendingRef.current.slice(1)));
-          }
-          break;
-        }
-        pendingRef.current.shift();
-        show(applyPendingTaskToggles(committedRef.current, pendingRef.current));
-      }
-    })();
+    const run = runFinishedTaskQueue(ctx);
     drainRef.current = run;
     void run.finally(() => {
       if (drainRef.current === run) drainRef.current = null;
     });
     return run;
-  }, [blockedRef, committedRef, drainRef, pendingRef, terminalRef, titleRef, persist, show]);
+  }, [ctx, drainRef]);
+}
+
+function useToggleFinishedTask(
+  refs: FinishedTaskQueueRefs,
+  bodyRef: React.MutableRefObject<string>,
+  show: (_body: string) => void,
+  drain: () => Promise<void>,
+): (_lineStart: number) => void {
+  const { blockedRef, pendingRef, projectedRef, terminalRef } = refs;
+  return useCallback(
+    (lineStart: number): void => {
+      if (terminalRef.current || blockedRef.current) return;
+      const ordinal = taskOrdinalAt(bodyRef.current, lineStart);
+      if (ordinal == null) return;
+      const optimistic = toggleTaskAtOrdinal(bodyRef.current, ordinal);
+      pendingRef.current.push({ ordinal });
+      projectedRef.current = optimistic;
+      show(optimistic);
+      void drain();
+    },
+    [blockedRef, bodyRef, pendingRef, projectedRef, show, drain, terminalRef],
+  );
+}
+
+function useRetryFinishedTask(
+  refs: FinishedTaskQueueRefs,
+  bodyRef: React.MutableRefObject<string>,
+  show: (_body: string) => void,
+  drain: () => Promise<void>,
+  fallbackRetry: () => Promise<unknown>,
+): () => Promise<unknown> {
+  const { blockedRef, pendingRef, committedRef, projectedRef, drainRef } = refs;
+  return useCallback(
+    () =>
+      retryFinishedTaskQueue(
+        blockedRef,
+        pendingRef,
+        committedRef,
+        projectedRef,
+        drainRef,
+        bodyRef,
+        show,
+        drain,
+        fallbackRetry,
+      ),
+    [
+      blockedRef,
+      bodyRef,
+      committedRef,
+      drainRef,
+      fallbackRetry,
+      pendingRef,
+      projectedRef,
+      show,
+      drain,
+    ],
+  );
+}
+
+function useFlushFinishedTasksForExit(
+  refs: FinishedTaskQueueRefs,
+  retry: () => Promise<unknown>,
+): () => boolean | Promise<boolean> {
+  const { blockedRef, drainRef, pendingRef, terminalRef } = refs;
+  return useCallback((): boolean | Promise<boolean> => {
+    if (terminalRef.current) return true;
+    if (drainRef.current == null && !blockedRef.current && pendingRef.current.length === 0)
+      return true;
+    return (async () => {
+      if (drainRef.current != null) await drainRef.current;
+      if (blockedRef.current) await retry();
+      if (drainRef.current != null) await drainRef.current;
+      return !blockedRef.current && pendingRef.current.length === 0;
+    })();
+  }, [blockedRef, drainRef, pendingRef, retry, terminalRef]);
 }
 
 /**
@@ -2453,47 +2614,17 @@ function useFinishedTaskToggles(
   entry: EntryState,
   persist: PersistFinishedBody,
   fallbackRetry: () => Promise<unknown>,
+  onSaved: () => void,
 ): FinishedTaskToggles {
-  const committedRef = useRef(entry.body);
-  const pendingRef = useRef<PendingTaskToggle[]>([]);
-  const drainRef = useRef<Promise<void> | null>(null);
-  const blockedRef = useRef(false);
-  const terminalRef = useRef(false);
-  const { bodyRef, setBody, titleRef } = entry;
-  if (pendingRef.current.length === 0 && drainRef.current == null)
-    committedRef.current = entry.body;
+  const refs = useFinishedTaskQueueRefs(entry.body);
+  const { bodyRef, setBody } = entry;
   const show = useShowFinishedTaskBody({ bodyRef, setBody });
-  const refs = { committedRef, pendingRef, drainRef, blockedRef, terminalRef };
-  const drain = useFinishedTaskDrain(refs, titleRef, persist, show);
+  const drain = useFinishedTaskDrain({ ...refs, bodyRef, persist, show, onSaved });
+  const toggle = useToggleFinishedTask(refs, bodyRef, show, drain);
+  const retry = useRetryFinishedTask(refs, bodyRef, show, drain, fallbackRetry);
+  const flushForExit = useFlushFinishedTasksForExit(refs, retry);
 
-  const toggle = useCallback(
-    (lineStart: number): void => {
-      if (terminalRef.current) return;
-      const ordinal = taskOrdinalAt(bodyRef.current, lineStart);
-      if (ordinal == null) return;
-      const optimistic = toggleTaskAtOrdinal(bodyRef.current, ordinal);
-      pendingRef.current.push({ ordinal });
-      show(optimistic);
-      if (!blockedRef.current) void drain();
-    },
-    [bodyRef, show, drain],
-  );
-
-  const retry = useCallback(
-    () =>
-      retryFinishedTaskQueue(
-        blockedRef,
-        pendingRef,
-        committedRef,
-        drainRef,
-        show,
-        drain,
-        fallbackRetry,
-      ),
-    [fallbackRetry, show, drain],
-  );
-
-  return { toggle, retry };
+  return { toggle, retry, flushForExit };
 }
 
 /** Owns the entry's text + debounced draft autosave (create-then-update). */
@@ -2504,6 +2635,7 @@ function useJournalAutosave(
   initialText: InitialText,
   initialClassification: JournalClassification,
   onSaved?: () => void,
+  onFinishedTaskSaved: () => void = () => undefined,
   onConflict?: () => void,
 ): AutosaveApi {
   const entry = useEntryState(
@@ -2524,7 +2656,7 @@ function useJournalAutosave(
   useDropStaleSaveOnLoad(entry.loaded, saving.cancelPending);
   useSeedPersistOnNew(routeEntryId, initialClassification, saving.seedPersist);
   const gate = useHeldTextGate(saving, entry.carryHold != null);
-  const bindings = useAutosaveBindings(entry, gate.saving);
+  const bindings = useAutosaveBindings(entry, gate.saving, onFinishedTaskSaved);
   const carry = useCarryRelease(entry, saving.save, bindings.retrySource, gate);
   return buildAutosaveApi(
     entry,
@@ -3821,7 +3953,7 @@ function useJournalEntryController(
   justSaved: boolean,
   initialClassification: JournalClassification,
 ) {
-  const { refreshersRef, handleSaved, onConfirmEdit } = useRefreshAfterEdit();
+  const { refreshersRef, handleSaved, refreshNow, onConfirmEdit } = useRefreshAfterEdit();
   const onCreateConflict = useCreateConflictHandler(ctx, navigation);
   const autosave = useJournalAutosave(
     routeEntryId,
@@ -3830,6 +3962,7 @@ function useJournalEntryController(
     initialText,
     initialClassification,
     handleSaved,
+    refreshNow,
     onCreateConflict,
   );
   const { isIdle, bump } = useResonanceIdle(autosave);

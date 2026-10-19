@@ -185,10 +185,10 @@ function hostTestIDOrder(root: unknown, wanted: readonly string[]): string[] {
 
 describe('JournalEntryScreen', () => {
   /** A finished entry loaded into read mode, shared by the read-mode specs. */
-  async function renderFinished(message = 'I walked.') {
+  async function renderFinished(message = 'I walked.', extraProps: Record<string, unknown> = {}) {
     mockGet.mockResolvedValue(entry({ id: 7, message, status: 'finished' }));
     mockList.mockResolvedValue({ items: [] });
-    const view = renderScreen({ entryId: 7 });
+    const view = renderScreen({ entryId: 7 }, extraProps);
     await waitFor(() => expect(view.queryByTestId('journal-edit-button')).not.toBeNull());
     return view;
   }
@@ -1069,6 +1069,42 @@ describe('JournalEntryScreen', () => {
     expect(getByTestId('journal-body-read')).toHaveTextContent('☑ milk (stored)');
   });
 
+  it('does not replace a newer editor body when an in-flight task PATCH settles', async () => {
+    let releaseTask!: (_value: JournalMessage) => void;
+    const task = new Promise<JournalMessage>((resolve) => {
+      releaseTask = resolve;
+    });
+    mockUpdate.mockImplementationOnce(() => task);
+    const { getByTestId, findByTestId } = await renderFinished('- [ ] milk\n- [ ] bread', {
+      autosaveDelayMs: 10,
+    });
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    fireEvent.press(getByTestId('journal-markdown-checkbox-11'));
+    fireEvent.press(getByTestId('journal-edit-button'));
+    fireEvent.press(getByTestId('edit-confirm-edit'));
+    const input = await findByTestId('journal-body-input');
+    fireEvent.changeText(input, '- [x] milk\n- [x] bread\nA newer thought.');
+
+    await act(async () => {
+      releaseTask(entry({ id: 7, message: '- [x] milk (stored)', status: 'finished' }));
+      await task;
+    });
+
+    expect(getByTestId('journal-body-input').props.value).toBe(
+      '- [x] milk\n- [x] bread\nA newer thought.',
+    );
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    expect(mockUpdate.mock.calls[1]).toEqual([
+      7,
+      expect.objectContaining({ message: '- [x] milk\n- [x] bread\nA newer thought.' }),
+    ]);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+  });
+
   it('serializes rapid task presses so both state changes persist without racing PATCHes', async () => {
     let releaseFirst!: (_value: JournalMessage) => void;
     const first = new Promise<JournalMessage>((resolve) => {
@@ -1094,6 +1130,52 @@ describe('JournalEntryScreen', () => {
     });
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
     expect(mockUpdate.mock.calls[1]).toEqual([7, { message: '- [x] milk\n- [x] bread' }]);
+  });
+
+  it('saves a title edited while a queued message-only task PATCH drains', async () => {
+    let releaseFirst!: (_value: JournalMessage) => void;
+    const first = new Promise<JournalMessage>((resolve) => {
+      releaseFirst = resolve;
+    });
+    mockUpdate
+      .mockImplementationOnce(() => first)
+      .mockResolvedValueOnce(
+        entry({ id: 7, title: 'Rivers', message: '- [x] milk\n- [x] bread', status: 'finished' }),
+      )
+      .mockResolvedValueOnce(
+        entry({
+          id: 7,
+          title: 'A newer title',
+          message: '- [x] milk\n- [x] bread',
+          status: 'finished',
+        }),
+      );
+    const { getByTestId } = await renderFinished('- [ ] milk\n- [ ] bread', {
+      autosaveDelayMs: 10,
+    });
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    fireEvent.press(getByTestId('journal-markdown-checkbox-11'));
+    fireEvent.press(getByTestId('journal-edit-button'));
+    fireEvent.press(getByTestId('edit-confirm-edit'));
+    fireEvent.changeText(getByTestId('journal-title-input'), 'A newer title');
+
+    await act(async () => {
+      releaseFirst(
+        entry({ id: 7, title: 'Rivers', message: '- [x] milk\n- [ ] bread', status: 'finished' }),
+      );
+      await first;
+    });
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(3));
+    expect(mockUpdate.mock.calls[1]).toEqual([7, { message: '- [x] milk\n- [x] bread' }]);
+    expect(mockUpdate.mock.calls[2]).toEqual([
+      7,
+      expect.objectContaining({
+        title: 'A newer title',
+        message: '- [x] milk\n- [x] bread',
+      }),
+    ]);
   });
 
   it('rebases a queued task press when the first response changes an earlier line length', async () => {
@@ -1138,6 +1220,30 @@ describe('JournalEntryScreen', () => {
     );
   });
 
+  it('relinquishes a failed task intent after Edit saves a newer full body', async () => {
+    const edited = '- [ ] milk\nA newer editor body.';
+    mockUpdate
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(entry({ id: 7, message: edited, status: 'finished' }));
+    const { getByTestId, findByTestId, navigation } = await renderFinished('- [ ] milk', {
+      autosaveDelayMs: 10,
+    });
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    await waitFor(() => expect(getByTestId('journal-save-retry')).toBeTruthy());
+    fireEvent.press(getByTestId('journal-edit-button'));
+    fireEvent.press(getByTestId('edit-confirm-edit'));
+    fireEvent.changeText(await findByTestId('journal-body-input'), edited);
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+
+    fireEvent.press(getByTestId('journal-close-entry'));
+    await waitFor(() =>
+      expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' }),
+    );
+    expect(mockUpdate).toHaveBeenCalledTimes(2);
+    expect(mockUpdate.mock.calls[1]).toEqual([7, expect.objectContaining({ message: edited })]);
+  });
+
   it('retries the failed task intent before a later queued press', async () => {
     mockUpdate
       .mockRejectedValueOnce(new Error('offline'))
@@ -1165,6 +1271,71 @@ describe('JournalEntryScreen', () => {
     expect(mockUpdate.mock.calls[1]).toEqual([7, { message: '- [x] milk\n- [ ] bread' }]);
     expect(mockUpdate.mock.calls[2]).toEqual([7, { message: '- [x] milk\n- [x] bread' }]);
     expect(getByTestId('journal-save-hint')).toHaveTextContent('Saved');
+  });
+
+  it('does not accept more task presses behind a blocked failed head', async () => {
+    mockUpdate
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(
+        entry({ id: 7, message: '- [x] milk\n- [ ] bread', status: 'finished' }),
+      );
+    const { getByTestId } = await renderFinished('- [ ] milk\n- [ ] bread');
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    await waitFor(() =>
+      expect(getByTestId('journal-markdown-checkbox-0').props.accessibilityState.checked).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-11'));
+    fireEvent.press(getByTestId('journal-markdown-checkbox-11'));
+    expect(getByTestId('journal-markdown-checkbox-11').props.accessibilityState.checked).toBe(
+      false,
+    );
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+
+    fireEvent.press(getByTestId('journal-save-retry'));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    expect(mockUpdate.mock.calls[1]).toEqual([7, { message: '- [x] milk\n- [ ] bread' }]);
+  });
+
+  it('retries a blocked finished-task intent before Close can leave the entry', async () => {
+    mockUpdate
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(entry({ id: 7, message: '- [x] milk', status: 'finished' }));
+    const { getByTestId, navigation } = await renderFinished('- [ ] milk');
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    await waitFor(() =>
+      expect(getByTestId('journal-markdown-checkbox-0').props.accessibilityState.checked).toBe(
+        false,
+      ),
+    );
+
+    fireEvent.press(getByTestId('journal-close-entry'));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(navigation.navigate).toHaveBeenCalledWith('Tabs', { screen: 'Journal' }),
+    );
+    expect(mockUpdate.mock.calls[1]).toEqual([7, { message: '- [x] milk' }]);
+  });
+
+  it('keeps the entry open when Close cannot durably retry a blocked task intent', async () => {
+    mockUpdate.mockRejectedValue(new Error('offline'));
+    const { getByTestId, navigation } = await renderFinished('- [ ] milk');
+
+    fireEvent.press(getByTestId('journal-markdown-checkbox-0'));
+    await waitFor(() =>
+      expect(getByTestId('journal-markdown-checkbox-0').props.accessibilityState.checked).toBe(
+        false,
+      ),
+    );
+    fireEvent.press(getByTestId('journal-close-entry'));
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(2));
+    expect(navigation.navigate).not.toHaveBeenCalled();
+    expect(getByTestId('journal-save-retry')).toBeTruthy();
   });
 
   it('rolls back and disables the task queue when deletion is already pending', async () => {
