@@ -14,7 +14,11 @@ import {
 import type { PendingCheckIn } from '../../../../storage/habitStorage';
 import { serialize } from '../../../../storage/serializedWrite';
 import { setUserTimezonePending } from '../../../../storage/userCalendar';
-import { getActiveUser, setActiveUser } from '../../../../storage/userScope';
+import {
+  beginActiveUserTransition,
+  getActiveUser,
+  setActiveUser,
+} from '../../../../storage/userScope';
 import { useDroppedCheckInStore } from '../../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../../store/useHabitStore';
 import { HABIT_DEFAULTS } from '../../HabitDefaults';
@@ -375,6 +379,71 @@ describe('offline queue replay with concurrent writers (#3086)', () => {
 
     expect(goalCompletions.create).toHaveBeenCalledTimes(1);
     expect(await loadPendingCheckIns()).toEqual([]);
+  });
+
+  it('serializes a fresh same-owner drain behind its stale in-flight drain', async () => {
+    const entry = queued('owner-one-returned');
+    await savePendingCheckIn(entry);
+    const started = deferred<void>();
+    const response = deferred<Awaited<ReturnType<typeof goalCompletions.create>>>();
+    jest.mocked(goalCompletions.create).mockImplementationOnce(() => {
+      started.resolve();
+      return response.promise;
+    });
+
+    const originalDrain = habitManager.loadHabits('UTC');
+    await started.promise;
+    setActiveUser(2);
+    setActiveUser(1);
+    const returnedOwnerDrain = habitManager.loadHabits('America/Los_Angeles');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    // The returning session must not race the old request, even though the
+    // old session's scope can no longer settle owner one's queue.
+    expect(goalCompletions.create).toHaveBeenCalledTimes(1);
+    response.resolve(mockCheckInResult);
+    await Promise.all([originalDrain, returnedOwnerDrain]);
+
+    expect(goalCompletions.create).toHaveBeenCalledTimes(2);
+    expect(await loadPendingCheckIns()).toEqual([]);
+  });
+
+  it('keeps every account queue while logout invalidates one same-owner drain', async () => {
+    const first = queued('owner-one-first');
+    const second = queued('owner-one-second', 2);
+    await savePendingCheckIn(first);
+    await savePendingCheckIn(second);
+    const started = deferred<void>();
+    const response = deferred<Awaited<ReturnType<typeof goalCompletions.create>>>();
+    jest.mocked(goalCompletions.create).mockImplementationOnce(() => {
+      started.resolve();
+      return response.promise;
+    });
+
+    const originalDrain = habitManager.loadHabits('UTC');
+    await started.promise;
+    const overlappingLoad = habitManager.loadHabits('America/Los_Angeles');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(goalCompletions.create).toHaveBeenCalledTimes(1);
+
+    setActiveUser(2);
+    const ownerTwo = queued('owner-two', 3);
+    await savePendingCheckIn(ownerTwo);
+    setActiveUser(3);
+    const ownerThree = queued('owner-three', 4);
+    await savePendingCheckIn(ownerThree);
+    beginActiveUserTransition();
+    setActiveUser(null);
+    response.resolve(mockCheckInResult);
+    await Promise.all([originalDrain, overlappingLoad]);
+
+    expect(goalCompletions.create).toHaveBeenCalledTimes(1);
+    setActiveUser(1);
+    expect(await loadPendingCheckIns()).toEqual([first, second]);
+    setActiveUser(2);
+    expect(await loadPendingCheckIns()).toEqual([ownerTwo]);
+    setActiveUser(3);
+    expect(await loadPendingCheckIns()).toEqual([ownerThree]);
   });
 
   it.each(['success', 'rejection'] as const)(
