@@ -5,6 +5,7 @@ import { Animated, StyleSheet, Text } from 'react-native';
 import { act, create } from 'react-test-renderer';
 
 import {
+  clampLensCenter,
   lensCaptionWidth,
   lensCenterForStage,
   lensFrame,
@@ -362,6 +363,45 @@ describe('MagnifierLens', () => {
     } finally {
       timing.mockRestore();
       jest.useRealTimers();
+    }
+  });
+
+  it('snaps to a remeasured anchor instead of crossing neighbouring annotations', () => {
+    reducedMotionState.value = false;
+    const timing = jest.spyOn(Animated, 'timing');
+    const setValue = jest.spyOn(Animated.ValueXY.prototype, 'setValue');
+    try {
+      const { tree } = renderLens({ focusedStage: 1, anchors: {} });
+      timing.mockClear();
+      setValue.mockClear();
+      const anchors = { 1: 0.88 };
+      act(() => {
+        tree.update(
+          <MagnifierLens
+            gridWidth={GRID_WIDTH}
+            gridHeight={GRID_HEIGHT}
+            anchors={anchors}
+            focusedStage={1}
+            currentStage={1}
+            captionForStage={captionForStage}
+            onSettleStage={jest.fn()}
+            onOpenStage={jest.fn()}
+          />,
+        );
+      });
+
+      expect(centerGlideConfigs(timing)).toEqual([]);
+      expect(setValue).toHaveBeenCalledWith(
+        clampLensCenter(
+          lensCenterForStage(1, GRID_WIDTH, GRID_HEIGHT, anchors),
+          lensFrame(GRID_WIDTH, GRID_HEIGHT),
+          GRID_WIDTH,
+          GRID_HEIGHT,
+        ),
+      );
+    } finally {
+      setValue.mockRestore();
+      timing.mockRestore();
     }
   });
 
