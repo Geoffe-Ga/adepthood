@@ -13,7 +13,7 @@
  * ``useReducedMotion`` and falls back to instant repositioning.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Platform, Text, View } from 'react-native';
 import type { GestureResponderEvent, ViewStyle } from 'react-native';
 
@@ -165,11 +165,40 @@ const runGlide = (
   });
 };
 
+function useLiveLensCenter(
+  center: Animated.ValueXY,
+  lastCenter: React.MutableRefObject<LensCenter>,
+): void {
+  useEffect(() => {
+    const id = center.addListener((value) => {
+      lastCenter.current = value;
+    });
+    return () => center.removeListener(id);
+  }, [center, lastCenter]);
+}
+
+function snapLensToMeasuredCenter(
+  center: Animated.ValueXY,
+  frost: Animated.Value,
+  activeGlideTarget: React.MutableRefObject<LensCenter | null>,
+  lastCenter: React.MutableRefObject<LensCenter>,
+  target: LensCenter,
+): void {
+  center.stopAnimation();
+  frost.stopAnimation();
+  activeGlideTarget.current = null;
+  lastCenter.current = target;
+  center.setValue(target);
+  frost.setValue(0);
+}
+
 /**
- * Own the lens's animated center + frost. Follows ``focusedStage`` (stage
- * taps, anchor re-measures) with a glide — gather speed, glide, slide to a
- * slowing stop — unless a drag holds the lens, and repositions instantly
- * under reduced motion.
+ * Own the lens's animated center + frost. Follows a new ``focusedStage`` with
+ * a glide — gather speed, glide, slide to a slowing stop — unless a drag holds
+ * the lens, and repositions instantly under reduced motion. Layout-only anchor
+ * re-measures snap in place: travelling between the old and new measurements
+ * would make the caption cross neighbouring stage annotations even though the
+ * writer never moved the lens.
  */
 const useLensMotion = (
   focusedStage: number,
@@ -187,13 +216,9 @@ const useLensMotion = (
   const frost = useRef(new Animated.Value(0)).current;
   const dragging = useRef(false);
   const activeGlideTarget = useRef<LensCenter | null>(null);
+  const followedStage = useRef(focusedStage);
 
-  useEffect(() => {
-    const id = center.addListener((value) => {
-      lastCenter.current = value;
-    });
-    return () => center.removeListener(id);
-  }, [center]);
+  useLiveLensCenter(center, lastCenter);
 
   const raiseFrost = useCallback(() => {
     Animated.timing(frost, { toValue: 1, duration: FROST_IN_MS, useNativeDriver: false }).start();
@@ -219,11 +244,15 @@ const useLensMotion = (
     [center, frost, raiseFrost, reducedMotion],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const focusChanged = followedStage.current !== focusedStage;
+    followedStage.current = focusedStage;
     onFocusFollowed(focusedStage);
     if (dragging.current) return;
-    glideTo(restingCenter(focusedStage));
-  }, [focusedStage, glideTo, onFocusFollowed, restingCenter]);
+    const target = restingCenter(focusedStage);
+    if (focusChanged) glideTo(target);
+    else snapLensToMeasuredCenter(center, frost, activeGlideTarget, lastCenter, target);
+  }, [center, focusedStage, frost, glideTo, onFocusFollowed, restingCenter]);
 
   return { center, frost, lastCenter, dragging, glideTo, raiseFrost };
 };
