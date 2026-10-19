@@ -151,6 +151,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'return-recover-habit.browser.e2e.test.ts',
   'screen-title-heading.browser.e2e.test.ts',
   'settings-corpus-sharing.browser.e2e.test.ts',
+  'settings-gain-copy.browser.e2e.test.ts',
   'text-order.browser.e2e.test.ts',
   'welcome.browser.e2e.test.ts',
   'writing-timer-habit-link.browser.e2e.test.ts',

@@ -2833,6 +2833,23 @@
     "coveredBy": "frontend/e2e/journal-refinish-edited-entry.browser.e2e.test.ts"
   },
   {
+    "id": "settings.depth-sangha-and-vault-gains-lead",
+    "description": "A newly signed-in writer opens Settings and sees the honest gain beneath each optional depth before its switch (#3106): one habit begins at one minute across three weeks, a practice grows from one minute to 45 minutes across its arc, the Course offers ten capacities at calendar pace, and Sangha offers company whose point is the room the writer is actually in. The configured Sangha door leads with that company before saying the app works without it once, while preserving the one-tap decline hint. The vault row and screen lead with the bounded sorting gain before optional-vault mechanics; the browser crosses the real depth-preference, vault-connection and managed-activation reads, preserves the custody and Intimate disclosures, and proves the gain-to-floor reading order. At 390x844, the same physical size under effective 200% (195x422 CSS pixels at device scale 2), and 1280x800, it rejects horizontal text clipping and sideways document overflow, keeps one reachable switch in every depth row, and retains before/after frames for human inspection.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
+      "client": ["auth", "depthPreferences", "vault", "vaultActivation"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /depth-preferences",
+        "GET /vault/connection",
+        "GET /vault/activation"
+      ],
+      "tables": ["user", "userdepthpreferences", "uservaultconfig", "vaultactivation"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/settings-gain-copy.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.stat-tiles-wrap-at-200-percent",
     "description": "A writer opens the Journal home on a 390px phone at 200% browser zoom (195x422 CSS px at device scale 2) and reads the Today's habits and Practices stat tiles without a word split across lines (#3440). The covering spec signs up through the real client, waits for both tiles to show their real counts from GET /habits/ and GET /practice-sessions/insights, and measures every word of each tile's title, stat and cue with a Range: all of a word's client rects share one line top. It does so at 390x844 and 1280x800, each at normal size and at 200% zoom, plus 390px with the tiles' text doubled; no tile glyph leaves its tile and the page never scrolls sideways. The same word measurement sweeps every visible text node on the Journal home and in the Notification Center, which hosts the same tiles, so any other row that splits a word fails too. At 1280px the tiles stay two-up on one line; when two will not fit side by side they stack in one column. Saved frames are inspected by hand. Targeted text doubling does not establish physical OS zoom or native geometry.",
     "crosses": {
