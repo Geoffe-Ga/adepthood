@@ -8,9 +8,9 @@ lane's throwaway database::
 The monthly allowance is deployment configuration, so changing it for one
 browser account is impossible. This arrange instead moves only that account's
 real ``monthly_messages_used`` counter to the currently served cap, advances
-its reset into the next UTC month, and empties its offering balance. The
-subsequent browser requests still cross the ordinary screens, clients, routes
-and database; no request-path function is patched.
+its reset past the immediately upcoming UTC month boundary, and empties its
+offering balance. The subsequent browser requests still cross the ordinary
+screens, clients, routes and database; no request-path function is patched.
 """
 
 from __future__ import annotations
@@ -48,8 +48,10 @@ def _require_database_url() -> str:
     return normalize_database_url(value)
 
 
-async def exhaust(session: AsyncSession, email: str) -> dict[str, object]:
-    """Exhaust ``email`` through its next monthly reset and report the state."""
+async def exhaust(
+    session: AsyncSession, email: str, *, now: datetime | None = None
+) -> dict[str, object]:
+    """Exhaust ``email`` safely past the next monthly boundary and report it."""
     normalized = email.strip().lower()
     user = (await session.execute(select(User).where(User.email == normalized))).scalars().first()
     if user is None:
@@ -59,7 +61,10 @@ async def exhaust(session: AsyncSession, email: str) -> dict[str, object]:
     if monthly_cap <= 0:
         msg = "the lane serves no positive monthly cap; there is nothing account-local to exhaust"
         raise ExhaustAllowanceError(msg)
-    next_reset = compute_next_reset(datetime.now(UTC))
+    # Keep the account exhausted through the immediately upcoming boundary.
+    # A lane arranged at 23:59:59 UTC must not regain capacity while the
+    # browser journey is still running on the other side of midnight.
+    next_reset = compute_next_reset(compute_next_reset(now or datetime.now(UTC)))
     user.monthly_messages_used = monthly_cap
     user.monthly_reset_date = next_reset
     user.offering_balance = 0

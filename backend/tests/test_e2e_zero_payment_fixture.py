@@ -25,7 +25,7 @@ async def test_lane_license_purchase_is_explicitly_zero_price() -> None:
 
 
 @pytest.mark.asyncio
-async def test_exhaust_arrange_blocks_production_admission_through_next_reset(
+async def test_exhaust_arrange_blocks_admission_across_immediate_year_rollover(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -39,8 +39,10 @@ async def test_exhaust_arrange_blocks_production_admission_through_next_reset(
     )
     db_session.add(user)
     await db_session.commit()
+    assert user.id is not None
 
-    receipt = await exhaust(db_session, " FLOOR@example.com ")
+    arranged_at = datetime(2026, 12, 31, 23, 59, 59, 999_999, tzinfo=UTC)
+    receipt = await exhaust(db_session, " FLOOR@example.com ", now=arranged_at)
 
     await db_session.refresh(user)
     assert {key: value for key, value in receipt.items() if key != "monthly_reset_date"} == {
@@ -53,7 +55,8 @@ async def test_exhaust_arrange_blocks_production_admission_through_next_reset(
     reset = user.monthly_reset_date
     if reset.tzinfo is None:
         reset = reset.replace(tzinfo=UTC)
-    assert reset > datetime.now(UTC)
+    assert reset == datetime(2027, 2, 1, tzinfo=UTC)
     assert datetime.fromisoformat(str(receipt["monthly_reset_date"])) == reset
     assert user.offering_balance == 0
-    assert not await has_generation_capacity(db_session, int(user.id))
+    just_after_immediate_rollover = datetime(2027, 1, 1, tzinfo=UTC) + timedelta(seconds=1)
+    assert not await has_generation_capacity(db_session, user.id, now=just_after_immediate_rollover)
