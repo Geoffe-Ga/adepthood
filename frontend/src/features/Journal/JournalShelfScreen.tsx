@@ -288,7 +288,7 @@ function ShelfEmpty({
     <EmptyState
       glyph="📖"
       title="Your journal is empty"
-      body="Start your first page — a quiet place to think out loud."
+      body="Start your first page. With corpus sorting enabled, every eligible page not marked Intimate joins your private corpus, whether new or already written. Higher Self may draw a few passages from it for a reflection."
       cta={
         <View style={styles.emptyCtaGroup}>
           <Button label="Start a page" onPress={onNew} testID="journal-empty-cta" />

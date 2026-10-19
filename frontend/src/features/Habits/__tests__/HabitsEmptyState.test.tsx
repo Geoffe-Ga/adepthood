@@ -26,11 +26,14 @@ jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/StatsModal', () => () => null);
 
 describe('HabitsEmptyState', () => {
-  it('renders the guidance title and subtitle', () => {
-    const { getByText, getByTestId } = render(<HabitsEmptyState />);
+  it('names the gain of beginning one habit without guessing the current stage duration', () => {
+    const { getByText, getByTestId, queryByText } = render(<HabitsEmptyState />);
     expect(getByTestId('habits-empty-state')).toBeTruthy();
     expect(getByText('No habits yet')).toBeTruthy();
-    expect(getByText(/start building momentum/i)).toBeTruthy();
+    expect(
+      getByText('Choose one habit. A minute a day begins the practice; you can build from there.'),
+    ).toBeTruthy();
+    expect(queryByText(/three weeks?/i)).toBeNull();
   });
 
   it('omits the CTA when no onAdd is provided', () => {
@@ -52,6 +55,11 @@ describe('HabitsEmptyState second-lap invite (stages 11-20)', () => {
     const { getByTestId, getByText } = render(<HabitsEmptyState stageStart={11} stageEnd={20} />);
     expect(getByTestId('habits-empty-state')).toBeTruthy();
     expect(getByText(/11[\s\S]*20/)).toBeTruthy();
+    expect(
+      getByText(
+        'One habit, one minute, three weeks. Begin one, or keep tending what you have; both are the program.',
+      ),
+    ).toBeTruthy();
   });
 
   it('still renders the Add CTA and fires onAdd when lap-context props are supplied', () => {
@@ -66,11 +74,28 @@ describe('HabitsEmptyState second-lap invite (stages 11-20)', () => {
 
 describe('HabitsEmptyState negative-lap carryover invite (stages -10 to -1)', () => {
   it('names the negative range and invites bringing an already-practiced habit', () => {
-    const { getByTestId, getByText } = render(<HabitsEmptyState stageStart={-10} stageEnd={-1} />);
+    const { getByTestId, getByText, queryAllByText } = render(
+      <HabitsEmptyState stageStart={-10} stageEnd={-1} />,
+    );
     expect(getByTestId('habits-empty-state')).toBeTruthy();
     expect(getByText(/-10 to -1/)).toBeTruthy();
-    expect(getByText(/already practice/i)).toBeTruthy();
-    expect(getByText(/no pressure/i)).toBeTruthy();
+    expect(
+      getByText(
+        'Bring one habit you already practice into these stages, or leave the set open; both are the program.',
+      ),
+    ).toBeTruthy();
+    expect(queryAllByText(/no pressure/i)).toHaveLength(0);
+  });
+
+  it.each<{ name: string; stageStart?: number; stageEnd?: number }>([
+    { name: 'first run' },
+    { name: 'later lap', stageStart: 11, stageEnd: 20 },
+    { name: 'carryover lap', stageStart: -10, stageEnd: -1 },
+  ])('uses "no pressure" at most once for $name copy', ({ stageStart, stageEnd }) => {
+    const { queryAllByText } = render(
+      <HabitsEmptyState stageStart={stageStart} stageEnd={stageEnd} />,
+    );
+    expect(queryAllByText(/no pressure/i).length).toBeLessThanOrEqual(1);
   });
 
   it('keeps the positive-range invite copy free of the carryover invitation', () => {

@@ -71,6 +71,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'csp-enforced.browser.e2e.test.ts',
   'date-picker-day-change.browser.e2e.test.ts',
   'date-picker-reflow.browser.e2e.test.ts',
+  'empty-state-map-copy.browser.e2e.test.ts',
   'feedback-composer.browser.e2e.test.ts',
   'feedback-resilience.browser.e2e.test.ts',
   'habit-add-cadence.browser.e2e.test.ts',
