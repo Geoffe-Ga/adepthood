@@ -621,15 +621,36 @@ class _BalanceAdjustmentOutcome:
     mutated: bool
 
 
-async def _lock_admin_actor(session: AsyncSession, actor_admin_id: int) -> None:
-    """Serialize an operator mutation with erasure and revalidate its authority."""
-    actor = await session.scalar(
-        select(User).where(col(User.id) == actor_admin_id).with_for_update()
+async def _lock_adjustment_users(
+    session: AsyncSession,
+    actor_admin_id: int,
+    target_user_id: int,
+) -> None:
+    """Lock actor and target by id, then revalidate their current database state.
+
+    Every balance adjustment eventually updates the target and retains the actor
+    in its audit rows. Taking both row locks in ascending-id order prevents two
+    admins adjusting each other from each holding their own row while waiting
+    for the other's. ``populate_existing`` is equally load-bearing: both users
+    were loaded by dependencies earlier in the request, so the lock query must
+    overwrite identity-map state before authority is rechecked.
+    """
+    user_ids = sorted({actor_admin_id, target_user_id})
+    result = await session.execute(
+        select(User)
+        .where(col(User.id).in_(user_ids))
+        .order_by(col(User.id))
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
+    users = {user.id: user for user in result.scalars().all()}
+    actor = users.get(actor_admin_id)
     if actor is None:
         raise forbidden("user_not_found")
     if not actor.is_admin:
         raise forbidden("admin_required")
+    if target_user_id not in users:
+        raise not_found("user")
 
 
 async def _apply_balance_adjustment(
@@ -640,7 +661,7 @@ async def _apply_balance_adjustment(
     # Account erasure takes this same actor-row lock before redacting retained
     # audit metadata. If erasure wins, this fresh lookup sees no operator and
     # refuses; if adjustment wins, erasure waits and redacts the completed row.
-    await _lock_admin_actor(session, command.actor_admin_id)
+    await _lock_adjustment_users(session, command.actor_admin_id, command.user_id)
     try:
         async with session.begin_nested():
             balance = await adjust_balance(

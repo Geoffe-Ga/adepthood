@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from httpx import Response
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -45,6 +45,7 @@ _ONE_ROW = 1
 _PRE_CHECK = "_recorded_adjustment"
 _ANONYMISE_SOURCES = "_anonymise_admin_adjustment_sources"
 _APPLY_ADJUSTMENT = "_apply_balance_adjustment"
+_LOCK_ADJUSTMENT_USERS = "_lock_adjustment_users"
 _LOCK_WAIT_SECONDS = 2.0
 
 
@@ -326,3 +327,110 @@ async def test_admin_boundary_cannot_poison_shared_wallet_mutations(
     assert stored is not None
     assert stored.offering_balance == boundary
     assert int(audit_count or 0) == _ONE_ROW
+
+
+@pytest.mark.asyncio
+async def test_admins_adjusting_each_other_lock_users_in_the_same_order(
+    pair: SessionPerRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reciprocal adjustments both commit instead of forming a circular row-lock wait."""
+    async with pair.factory() as session:
+        first = await make_account(session, "balance-cross-first@example.com", admin=True)
+        second = await make_account(session, "balance-cross-second@example.com", admin=True)
+
+    real_lock: Callable[..., Awaitable[None]] = getattr(
+        admin_router,
+        _LOCK_ADJUSTMENT_USERS,
+    )
+    arrived = 0
+    both_started = asyncio.Event()
+
+    async def _start_together(*args: object, **kwargs: object) -> None:
+        nonlocal arrived
+        arrived += 1
+        if arrived == _PARTIES:
+            both_started.set()
+        await asyncio.wait_for(both_started.wait(), timeout=_RENDEZVOUS_SECONDS)
+        await real_lock(*args, **kwargs)
+
+    monkeypatch.setattr(admin_router, _LOCK_ADJUSTMENT_USERS, _start_together)
+
+    first_response, second_response = await asyncio.wait_for(
+        asyncio.gather(
+            pair.client.post(
+                f"/admin/users/{second.user_id}/tokens",
+                json={"delta": 11, "reason": "first operator corrects second"},
+                headers=first.headers,
+            ),
+            pair.client.post(
+                f"/admin/users/{first.user_id}/tokens",
+                json={"delta": 7, "reason": "second operator corrects first"},
+                headers=second.headers,
+            ),
+        ),
+        timeout=_LOCK_WAIT_SECONDS * 3,
+    )
+
+    assert first_response.status_code == HTTPStatus.OK, first_response.text
+    assert second_response.status_code == HTTPStatus.OK, second_response.text
+    assert await _counts(pair, first.user_id) == (_ONE_ROW, _ONE_ROW)
+    assert await _counts(pair, second.user_id) == (_ONE_ROW, _ONE_ROW)
+    async with pair.factory() as session:
+        rows = await session.execute(
+            select(User.id, User.offering_balance)
+            .where(col(User.id).in_([first.user_id, second.user_id]))
+            .order_by(col(User.id))
+        )
+        balances = {int(user_id): int(balance) for user_id, balance in rows.tuples().all()}
+    assert balances == {first.user_id: 7, second.user_id: 11}
+
+
+@pytest.mark.asyncio
+async def test_role_revoked_after_dependency_load_is_refused_under_lock(
+    pair: SessionPerRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The lock query refreshes cached authority before any wallet mutation."""
+    admin, target, _ = await _seed(pair)
+    apply_entered = asyncio.Event()
+    continue_apply = asyncio.Event()
+    real_apply: Callable[..., Awaitable[object]] = getattr(
+        admin_router,
+        _APPLY_ADJUSTMENT,
+    )
+
+    async def _pause_after_dependency_load(*args: object, **kwargs: object) -> object:
+        apply_entered.set()
+        await continue_apply.wait()
+        return await real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(admin_router, _APPLY_ADJUSTMENT, _pause_after_dependency_load)
+    adjusting = asyncio.create_task(
+        pair.client.post(
+            f"/admin/users/{target.user_id}/tokens",
+            json={"delta": 9, "reason": "must recheck current authority"},
+            headers=admin.headers,
+        )
+    )
+    await asyncio.wait_for(apply_entered.wait(), timeout=_LOCK_WAIT_SECONDS)
+    async with pair.factory() as revoker:
+        await revoker.execute(
+            update(User).where(col(User.id) == admin.user_id).values(is_admin=False)
+        )
+        await revoker.commit()
+    continue_apply.set()
+    response = await asyncio.wait_for(adjusting, timeout=_LOCK_WAIT_SECONDS)
+
+    assert response.status_code == HTTPStatus.FORBIDDEN
+    assert response.json() == {"detail": "admin_required"}
+    async with pair.factory() as session:
+        stored = await session.get(User, target.user_id)
+        audit_count = await session.scalar(
+            select(func.count())
+            .select_from(WalletAudit)
+            .where(col(WalletAudit.user_id) == target.user_id)
+        )
+    assert stored is not None
+    assert stored.offering_balance == 0
+    assert int(audit_count or 0) == 0
