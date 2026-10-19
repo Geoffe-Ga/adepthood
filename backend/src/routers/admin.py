@@ -690,6 +690,10 @@ async def _apply_balance_adjustment(
         # The savepoint discarded this request's wallet UPDATE and ledger row;
         # end the outer read transaction so the winner's committed row is visible.
         await session.rollback()
+        # Rolling back also released the actor lock. Reacquire the globally
+        # ordered locks and refresh authority before this recovery path can
+        # return the winner's result.
+        await _lock_adjustment_users(session, command.actor_admin_id, command.user_id)
         raced = await _recorded_adjustment(
             session,
             command.actor_admin_id,
@@ -732,6 +736,10 @@ async def adjust_user_balance(
     fingerprint = _adjustment_fingerprint(user_id, payload)
     existing = await _recorded_adjustment(session, actor_admin_id, hashed_key)
     if existing is not None:
+        # Dependencies loaded the operator before this replay lookup. Lock and
+        # refresh both participants before every replay terminal path so a
+        # concurrently committed role revocation cannot inherit stale authority.
+        await _lock_adjustment_users(session, actor_admin_id, user_id)
         return _replay_adjustment(existing, fingerprint)
 
     source_ip = resolve_client_ip(request)

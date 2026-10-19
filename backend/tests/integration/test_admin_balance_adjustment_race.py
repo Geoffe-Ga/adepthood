@@ -46,7 +46,10 @@ _PRE_CHECK = "_recorded_adjustment"
 _ANONYMISE_SOURCES = "_anonymise_admin_adjustment_sources"
 _APPLY_ADJUSTMENT = "_apply_balance_adjustment"
 _LOCK_ADJUSTMENT_USERS = "_lock_adjustment_users"
-_LOCK_WAIT_SECONDS = 2.0
+# This is a failure bound, not a scheduling assertion. The pre-push lane runs
+# PostgreSQL integration tests after a 12k-test parallel coverage pass, where a
+# request can legitimately take several seconds to reach the instrumented lock.
+_LOCK_WAIT_SECONDS = 10.0
 
 
 def _hold_completed_pre_checks(
@@ -434,3 +437,59 @@ async def test_role_revoked_after_dependency_load_is_refused_under_lock(
     assert stored is not None
     assert stored.offering_balance == 0
     assert int(audit_count or 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_completed_replay_revalidates_role_after_dependency_load(
+    pair: SessionPerRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A completed key cannot bypass a role revocation cached by the dependency."""
+    admin, target, _ = await _seed(pair)
+    payload = {"delta": 6, "reason": "replay only while still authorised"}
+    created = await pair.client.post(
+        f"/admin/users/{target.user_id}/tokens",
+        json=payload,
+        headers=_headers(admin),
+    )
+    assert created.status_code == HTTPStatus.OK, created.text
+
+    replay_lookup_entered = asyncio.Event()
+    continue_replay_lookup = asyncio.Event()
+    real_lookup: Callable[..., Awaitable[AdminBalanceAdjustment | None]] = getattr(
+        admin_router,
+        _PRE_CHECK,
+    )
+
+    async def _pause_after_dependency_load(
+        *args: object,
+        **kwargs: object,
+    ) -> AdminBalanceAdjustment | None:
+        replay_lookup_entered.set()
+        await continue_replay_lookup.wait()
+        return await real_lookup(*args, **kwargs)
+
+    monkeypatch.setattr(admin_router, _PRE_CHECK, _pause_after_dependency_load)
+    replaying = asyncio.create_task(
+        pair.client.post(
+            f"/admin/users/{target.user_id}/tokens",
+            json=payload,
+            headers=_headers(admin),
+        )
+    )
+    await asyncio.wait_for(replay_lookup_entered.wait(), timeout=_LOCK_WAIT_SECONDS)
+    async with pair.factory() as revoker:
+        await revoker.execute(
+            update(User).where(col(User.id) == admin.user_id).values(is_admin=False)
+        )
+        await revoker.commit()
+    continue_replay_lookup.set()
+    response = await asyncio.wait_for(replaying, timeout=_LOCK_WAIT_SECONDS)
+
+    assert response.status_code == HTTPStatus.FORBIDDEN
+    assert response.json() == {"detail": "admin_required"}
+    async with pair.factory() as session:
+        stored = await session.get(User, target.user_id)
+    assert stored is not None
+    assert stored.offering_balance == 6
+    assert await _counts(pair, admin.user_id) == (_ONE_ROW, _ONE_ROW)
