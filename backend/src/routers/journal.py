@@ -255,7 +255,12 @@ from services.resonance_care import (
 )
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
-from services.vault_byok import paying_key, vault_provider_key
+from services.vault_byok import (
+    paying_key,
+    reading_vault_key,
+    refused_whatever_pays,
+    vault_provider_key,
+)
 from services.voice_draft_privacy import journal_vault_mutations, voice_draft_privacy
 from services.wallet import (
     SpendResult,
@@ -2437,11 +2442,19 @@ async def run_resonance(
     # A ``free_only`` request is refused here whatever it could pay (#3389).
     # A vault-bound writer's own key pays when their vault will spend it
     # (#3437). Decided before the payer gate, so a writer with a key and no
-    # credits is admitted, and committed before the probe it needs.
+    # credits is admitted; a pass refused whoever pays is never probed.
     clients = replace(
         clients,
-        vault_key=await vault_provider_key(
-            session, clients.vault_client, clients.boundary, clients.api_key
+        vault_key=await reading_vault_key(
+            session,
+            clients.vault_client,
+            clients.boundary,
+            clients.api_key,
+            refused_whatever_pays=refused_whatever_pays(
+                free_only=clients.free_only,
+                disclosed_route=clients.disclosed_route,
+                boundary=clients.boundary,
+            ),
         ),
     )
     refusal = await payer_refusal(

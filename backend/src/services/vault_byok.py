@@ -34,6 +34,7 @@ from fastapi import HTTPException
 
 from domain.creek_vault import VaultKeyProvider, VaultProviderKey
 from services.botmason import provider_for_api_key, resolve_chat_api_key
+from services.generation_access import disclosed_route_changed
 from services.reflection_boundary import ReflectionBoundary
 
 if TYPE_CHECKING:
@@ -91,6 +92,34 @@ async def vault_provider_key(
     if not handshake.accepts_key(vendor):
         return None
     return VaultProviderKey(provider=vendor, _secret=key)
+
+
+async def reading_vault_key(
+    session: AsyncSession,
+    vault_client: CreekVaultClient,
+    boundary: ReflectionBoundary,
+    supplied_key: str | None,
+    *,
+    refused_whatever_pays: bool,
+) -> VaultProviderKey | None:
+    """:func:`vault_provider_key` for a Resonance pass, never probing one already refused.
+
+    A ``free_only`` pass (#3389) and one whose disclosed payer route is stale
+    (#3385) are refused whatever would pay, and a refused reading must never
+    reach the vault -- not even for its handshake. So such a pass is answered
+    ``None`` here without a probe, and the refusals that follow are exactly the
+    ones a keyless pass would meet.
+    """
+    if refused_whatever_pays:
+        return None
+    return await vault_provider_key(session, vault_client, boundary, supplied_key)
+
+
+def refused_whatever_pays(
+    *, free_only: bool, disclosed_route: str | None, boundary: ReflectionBoundary
+) -> bool:
+    """Whether a pass is refused whoever would pay: ``free_only`` or a stale disclosed route."""
+    return free_only or disclosed_route_changed(disclosed_route, boundary)
 
 
 def relayable_key(supplied_key: str | None) -> VaultProviderKey | None:
