@@ -296,14 +296,18 @@ vault directly, because adepthood holds the vault credential.
 4. **INTIMATE content is not sent with a BYOK key, whatever the boundary.**
    The privacy floor (`admits_egress`) refuses before any key is relayed; the
    vault forces any INTIMATE work it is asked for onto its local model or
-   refuses it (Creek ADR 0015).
+   refuses it (Creek-Vault ADR-0015).
 5. **The key is not logged, persisted, echoed, or written to telemetry.** It
    travels in `VaultProviderKey`, whose renderings redact it and which refuses
    to pickle; a canary key is swept from responses, every log record and every
    table (`test_a_relayed_key_is_never_logged_persisted_or_echoed`).
 6. **Labelled on each use.** Before a reading or letter the price line says
    "Written by your own {Anthropic|OpenAI} key, through your vault"; after a
-   reading the pass receipt says the same, from `own_key_vendor`.
+   reading the pass receipt says the same, from `own_key_vendor`. The client
+   learns the vendors from `GET /user/vault-key-vendors`, its own read, and
+   asks only for a key holder on the vault route. The usage snapshot still
+   never resolves or dials a vault. A failed vendor read shows the credit
+   price, never a key that might not pay.
 
 **The honest limit.** Item 1's premise does not cover this path: adepthood
 relays the key and the plaintext, and the managed vault processes the writing
