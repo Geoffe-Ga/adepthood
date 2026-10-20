@@ -14,7 +14,7 @@ import { SPACING, accent, ink, radius, surface, touchTarget, type } from '../../
 import { useDaysUntilStage } from '../../store/useProgramProgression';
 
 import { useJourneySummary } from './hooks/useJourneySummary';
-import { unlockTimeline } from './journeyNarrative';
+import { MAP_LEAD, unlockTimeline } from './journeyNarrative';
 import { STAGE_DISPLAY, type StageDisplay } from './mapLayout';
 import { isStageUnlocked } from './services/stageService';
 import { STAGE_COUNT, type StageData } from './stageData';
@@ -100,14 +100,8 @@ const LegendRow = ({
         style={[styles.swatch, { backgroundColor: display.textColor }]}
       />
       <View style={styles.rowBody}>
-        <Text style={[type(width).label, styles.category]} numberOfLines={1}>
-          {category}
-        </Text>
-        {aspect ? (
-          <Text style={[type(width).caption, styles.aspect]} numberOfLines={1}>
-            {aspect}
-          </Text>
-        ) : null}
+        <Text style={[type(width).label, styles.category]}>{category}</Text>
+        {aspect ? <Text style={[type(width).caption, styles.aspect]}>{aspect}</Text> : null}
         {locked ? <UnlockRow stageNumber={stageNumber} /> : null}
       </View>
       {selected ? (
@@ -136,10 +130,14 @@ export default function MapDrawer({
   cycleNumber,
   onSelectStage,
 }: MapDrawerProps): React.JSX.Element {
+  const { width } = useWindowDimensions();
   const stageNumbers = Array.from({ length: STAGE_COUNT }, (_, i) => i + 1);
   return (
     <View testID="map-drawer">
       <JourneySummary currentStage={currentStage} cycleNumber={cycleNumber} />
+      <Text testID="map-drawer-lead" style={[type(width).body, styles.lead]}>
+        {MAP_LEAD}
+      </Text>
       {stageNumbers.map((stageNumber) => {
         const display = STAGE_DISPLAY[stageNumber];
         if (!display) return null;
@@ -171,6 +169,10 @@ const styles = StyleSheet.create({
   },
   cycle: {
     color: ink.muted,
+  },
+  lead: {
+    color: ink.soft,
+    marginBottom: SPACING.md,
   },
   row: {
     flexDirection: 'row',

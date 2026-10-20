@@ -1,6 +1,7 @@
 /* eslint-env jest */
 /* global describe, it, expect */
 import {
+  MAP_LEAD,
   formatMinutes,
   journeyRead,
   progressionSentence,
@@ -32,6 +33,16 @@ const EMPTY: StageHistoryResponse = { stage_number: 1, practices: [], habits: []
 describe('journeyRead', () => {
   it('renders "Stage N of 10 · Week W"', () => {
     expect(journeyRead(5, 12, 10)).toBe('Stage 5 of 10 · Week 12');
+  });
+});
+
+describe('MAP_LEAD', () => {
+  it('describes a wheel of capacities without altitude or rank language', () => {
+    expect(MAP_LEAD).toContain('wheel, not a ladder');
+    expect(MAP_LEAD).toContain('ten stages revisit different capacities');
+    expect(MAP_LEAD).toContain('never ranking');
+    expect(MAP_LEAD).not.toMatch(/full|thin/i);
+    expect(MAP_LEAD).not.toMatch(/higher|lower|above|below|climb|ascend/i);
   });
 });
 

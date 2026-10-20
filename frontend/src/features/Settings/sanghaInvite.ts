@@ -29,13 +29,14 @@ export function sanghaInviteUrl(configured: string): string | null {
 export const SANGHA_SECTION_TITLE = 'Digital Sangha';
 
 /**
- * The invitation itself. It says the app is whole without the Sangha, because
+ * The invitation itself. It says the app works without the Sangha, because
  * that is true and because the alternative — implying something is missing
  * until you go — is the pressure this depth is forbidden to apply.
  */
 export const SANGHA_LEAD =
-  'There is a Discord where people walking this path keep each other company. ' +
-  'It is a door left open — Adepthood is whole without it.';
+  'There are people walking this with you, and the point of meeting them is to feel less ' +
+  'alone in the room you are actually in. Adepthood works without it, and the door is ' +
+  'one tap either way.';
 
 /**
  * Where the door is closed. Declining is the same one tap as accepting, on the

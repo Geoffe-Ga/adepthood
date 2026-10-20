@@ -8,6 +8,10 @@
 
 import type { StageHistoryResponse } from '../../api';
 
+/** Wheel-not-ladder framing shared by every Map drawer state. */
+export const MAP_LEAD =
+  'The Map is a wheel, not a ladder: its ten stages revisit different capacities, never ranking you or the stages.';
+
 /** Compact "Stage N of 10 · Week W" read for the journey header. */
 export const journeyRead = (
   currentStage: number,

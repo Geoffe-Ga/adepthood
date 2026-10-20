@@ -100,6 +100,8 @@ export interface WritingTimerProps {
   autoStart?: boolean;
   /** Called once per finished session, however the session ended. */
   onComplete: (result: WritingSessionResult) => void;
+  /** Called immediately before the first engine start changes the timer's presentation. */
+  onStart?: () => void;
   /** The session surface already supplies the absolute floating band. */
   withinBand?: boolean;
   /** The engine's clock and adapter seam; tests inject it, production does not. */
@@ -607,6 +609,7 @@ function useTimerActions(
   controls: RitualControls,
   collapse: () => void,
   setMinutes: React.Dispatch<React.SetStateAction<number>>,
+  onStart?: () => void,
 ): { chooseMinutes: (_next: number) => void; start: () => void } {
   const statusRef = useRef(status);
   statusRef.current = status;
@@ -617,24 +620,30 @@ function useTimerActions(
     [setMinutes],
   );
   const start = useCallback(() => {
+    onStart?.();
     collapse();
     controls.start();
-  }, [collapse, controls]);
+  }, [collapse, controls, onStart]);
   return { chooseMinutes, start };
+}
+
+function useTimerMountLayout(compact: boolean): { desktopRail: boolean; docked: boolean } {
+  const desktopRail = useWindowDimensions().width >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
+  return { desktopRail, docked: compact && desktopRail };
 }
 
 function WritingTimer({
   initialMinutes = DEFAULT_WRITING_MINUTES,
   autoStart = false,
   onComplete,
+  onStart,
   withinBand = false,
   deps = NO_DEPS,
 }: WritingTimerProps): React.JSX.Element {
   const [minutes, setMinutes] = useState(initialMinutes);
   const [state, controls] = useRitualEngine(useWritingConfig(minutes), deps);
   const { compact, collapse, expand } = useCompactPill(state.status);
-  const desktopRail = useWindowDimensions().width >= TIMER_DOCK_MIN_VIEWPORT_WIDTH;
-  const docked = compact && desktopRail;
+  const { desktopRail, docked } = useTimerMountLayout(compact);
   const view = describeTimer({
     status: state.status,
     remainingMs: state.remainingMs,
@@ -647,8 +656,8 @@ function WritingTimer({
     controls,
     onComplete,
   });
-  const { chooseMinutes, start } = useTimerActions(state.status, controls, collapse, setMinutes);
-  useAutoStart(autoStart, start);
+  const actions = useTimerActions(state.status, controls, collapse, setMinutes, onStart);
+  useAutoStart(autoStart, actions.start);
   return (
     <TimerMount
       compact={compact}
@@ -666,9 +675,9 @@ function WritingTimer({
         minutes={minutes}
         view={view}
         controls={controls}
-        onStart={start}
+        onStart={actions.start}
         onMinimize={collapse}
-        onChooseMinutes={chooseMinutes}
+        onChooseMinutes={actions.chooseMinutes}
       />
     </TimerMount>
   );

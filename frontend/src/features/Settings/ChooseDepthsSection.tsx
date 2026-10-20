@@ -55,6 +55,7 @@ const FRAMING_CAPTION =
 interface DepthDefinition {
   key: 'habits' | 'practices' | 'course' | 'sangha';
   label: string;
+  gain: string;
   enableKey: keyof DepthPreferencesUpdate;
   /**
    * Whether this build has a destination for the depth. Absent means the
@@ -67,12 +68,28 @@ interface DepthDefinition {
 }
 
 const DEPTHS: readonly DepthDefinition[] = [
-  { key: 'habits', label: 'Habits', enableKey: 'enable_habits' },
-  { key: 'practices', label: 'Practices', enableKey: 'enable_practices' },
-  { key: 'course', label: 'Course', enableKey: 'enable_course' },
+  {
+    key: 'habits',
+    label: 'Habits',
+    gain: 'Build one habit from one minute a day across three weeks.',
+    enableKey: 'enable_habits',
+  },
+  {
+    key: 'practices',
+    label: 'Practices',
+    gain: 'Grow a practice from one minute to 45 minutes across the arc.',
+    enableKey: 'enable_practices',
+  },
+  {
+    key: 'course',
+    label: 'Course',
+    gain: 'Explore ten capacities through readings paced by the calendar.',
+    enableKey: 'enable_course',
+  },
   {
     key: 'sangha',
     label: 'Sangha',
+    gain: 'Find company that helps you feel less alone in the room you are actually in.',
     enableKey: 'enable_sangha',
     // The Sangha's only destination is the door ``SanghaSection`` opens. Both
     // gates read the same resolver over the same config constant, at render
@@ -87,6 +104,8 @@ const isOffered = (depth: DepthDefinition): boolean =>
 
 interface DepthToggleRowProps {
   label: string;
+  gain: string;
+  gainTestID: string;
   value: boolean;
   testID: string;
   rowTestID: string;
@@ -96,6 +115,8 @@ interface DepthToggleRowProps {
 /** A single ring row: a labelled switch on a >=44dp touch target. */
 const DepthToggleRow = ({
   label,
+  gain,
+  gainTestID,
   value,
   testID,
   rowTestID,
@@ -105,10 +126,16 @@ const DepthToggleRow = ({
   const t = typeRamp(width);
   return (
     <View style={styles.row} testID={rowTestID}>
-      <Text style={[t.body, styles.rowLabel]}>{label}</Text>
+      <View style={styles.rowCopy}>
+        <Text style={[t.body, styles.rowLabel]}>{label}</Text>
+        <Text style={[t.caption, styles.rowGain]} testID={gainTestID}>
+          {gain}
+        </Text>
+      </View>
       <SettingsSwitch
         testID={testID}
         accessibilityLabel={label}
+        accessibilityHint={gain}
         accessibilityState={{ checked: value }}
         value={value}
         onValueChange={onValueChange}
@@ -150,6 +177,8 @@ const ChooseDepthsSection = (): React.JSX.Element => {
         <DepthToggleRow
           key={depth.key}
           label={depth.label}
+          gain={depth.gain}
+          gainTestID={`depth-gain-${depth.key}`}
           value={enabled[depth.key]}
           testID={`depth-toggle-${depth.key}`}
           rowTestID={`depth-row-${depth.key}`}
@@ -180,6 +209,15 @@ const styles = StyleSheet.create({
   },
   rowLabel: {
     color: ink.primary,
+  },
+  rowCopy: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: rhythm.blockGap,
+  },
+  rowGain: {
+    color: ink.soft,
+    marginTop: rhythm.blockGap / 3,
   },
 });
 

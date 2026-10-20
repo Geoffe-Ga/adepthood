@@ -345,8 +345,26 @@ const styles = StyleSheet.create({
    */
   readActionsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
+    maxWidth: '100%',
     paddingTop: spacing(2),
+  },
+  /**
+   * A doubled-text phone leaves the reading column narrower than the shared
+   * button's desktop inset. Let this one quiet link yield to the paper, while
+   * retaining a comfortable inset and the 44dp touch floor (#3457).
+   */
+  readActionButton: {
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '100%',
+    paddingHorizontal: SPACING.md,
+  },
+  /** The phrase may take two centred lines, but each word remains whole. */
+  readActionLabel: {
+    flexShrink: 1,
+    textAlign: 'center',
   },
   /**
    * The page's exit row, above the sheet: the optional "Back to reading" return,

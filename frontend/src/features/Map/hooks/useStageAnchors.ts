@@ -7,7 +7,7 @@
  * the nominal band center in ``waveGeometry``.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
 
 import type { StageAnchors } from '../waveGeometry';
@@ -136,7 +136,7 @@ export const useStageAnchors = (gridHeight: number): UseStageAnchorsResult => {
   // onLayout lands after them and fires nothing here. Re-resolve on every new
   // height, or the wave is drawn against stale bands (#2657) -- as it was
   // whenever Begin again or the cycle caption took height from the grid.
-  useEffect(() => {
+  useLayoutEffect(() => {
     recompute();
   }, [recompute]);
 

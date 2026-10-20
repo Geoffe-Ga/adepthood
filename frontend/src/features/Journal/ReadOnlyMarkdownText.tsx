@@ -48,6 +48,58 @@ export const JOURNAL_INDENT_COLUMN = ' ';
  */
 export const JOURNAL_TASK_GLYPHS = Object.freeze({ open: '\u2610', done: '\u2611' });
 
+/** A native task glyph's transparent reach: at least 44dp without changing its ink. */
+const TASK_HIT_SLOP = Object.freeze({ top: 12, right: 14, bottom: 12, left: 14 });
+
+// Native Text forwards hitSlop even though the public TextProps declaration omits it.
+interface TaskKeyEvent {
+  key?: string;
+  nativeEvent?: { key?: string };
+  preventDefault: () => void;
+  stopPropagation: () => void;
+}
+
+type TaskGlyphProps = TextProps & {
+  hitSlop?: typeof TASK_HIT_SLOP;
+  onKeyDown?: (_event: TaskKeyEvent) => void;
+};
+const TaskGlyph = Text as React.ComponentType<TaskGlyphProps>;
+
+/** A read-mode task press, addressed by the source line's code-point start. */
+export type TaskPress = (_lineStart: number) => void;
+
+/** Keep feed/source task glyphs truly inert when there is no finished-page handler. */
+function taskOnPress(onTaskPress: TaskPress | undefined, lineStart: number): TextProps['onPress'] {
+  if (onTaskPress == null) return undefined;
+  return (event) => {
+    event?.stopPropagation();
+    onTaskPress(lineStart);
+  };
+}
+
+/** A span with checkbox semantics needs the native checkbox keyboard contract too. */
+function taskOnKeyDown(
+  onTaskPress: TaskPress | undefined,
+  lineStart: number,
+): TaskGlyphProps['onKeyDown'] {
+  if (onTaskPress == null) return undefined;
+  return (event) => {
+    const key = event.key ?? event.nativeEvent?.key;
+    if (key !== ' ' && key !== 'Enter') return;
+    event.preventDefault();
+    event.stopPropagation();
+    onTaskPress(lineStart);
+  };
+}
+
+/** RN Web drops Text's checkbox state unless its ARIA spelling is explicit. */
+function taskStateProps(interactive: boolean, checked: boolean): TextProps {
+  if (!interactive) return {};
+  const native = { accessibilityState: { checked } };
+  if (Platform.OS !== 'web') return native;
+  return { ...native, 'aria-checked': checked } as TextProps;
+}
+
 /**
  * Pads an ordered marker to {@link ORDINAL_COLUMN_DIGITS} digits. A figure
  * space is exactly one tabular digit wide, so with tabular numerals ``9.`` and
@@ -143,26 +195,46 @@ function ordinalText(document: JournalMarkdownDocument, line: JournalMarkdownLin
   return `${pad}${typed.join('')} `;
 }
 
+/** A task line's glyph, plain in feeds and a checkbox on the finished page. */
+function taskDecoration(
+  document: JournalMarkdownDocument,
+  line: JournalMarkdownLine,
+  onTaskPress?: TaskPress,
+): React.ReactNode[] {
+  const checked = line.taskChecked === true;
+  const glyph = checked ? JOURNAL_TASK_GLYPHS.done : JOURNAL_TASK_GLYPHS.open;
+  const label = markdownRuns(document, line.contentStart, line.end)
+    .map((run) => run.text)
+    .join('')
+    .trim();
+  const press = onTaskPress == null ? undefined : onTaskPress;
+  return [
+    indentOf(line),
+    <TaskGlyph
+      key={`checkbox-${line.start}`}
+      style={[styles.marker, press == null ? null : styles.taskTarget]}
+      onPress={taskOnPress(press, line.start)}
+      onKeyDown={taskOnKeyDown(press, line.start)}
+      accessibilityRole={press == null ? undefined : 'checkbox'}
+      {...taskStateProps(press != null, checked)}
+      accessibilityLabel={press == null ? undefined : label || 'Task item'}
+      hitSlop={press == null || Platform.OS === 'web' ? undefined : TASK_HIT_SLOP}
+      testID={`journal-markdown-checkbox-${line.start}`}
+    >
+      {`${glyph} `}
+    </TaskGlyph>,
+  ];
+}
+
 /** What a list line draws in front of its text: indent plus glyph, checkbox or number. */
 export function lineDecoration(
   document: JournalMarkdownDocument,
   block: JournalMarkdownBlock,
   line: JournalMarkdownLine,
+  onTaskPress?: TaskPress,
 ): React.ReactNode[] {
   if (block.kind === 'bullet') return [`${indentOf(line)}${JOURNAL_BULLET_GLYPH}`];
-  if (block.kind === 'task') {
-    const glyph = line.taskChecked === true ? JOURNAL_TASK_GLYPHS.done : JOURNAL_TASK_GLYPHS.open;
-    return [
-      indentOf(line),
-      <Text
-        key={`checkbox-${line.start}`}
-        style={styles.marker}
-        testID={`journal-markdown-checkbox-${line.start}`}
-      >
-        {`${glyph} `}
-      </Text>,
-    ];
-  }
+  if (block.kind === 'task') return taskDecoration(document, line, onTaskPress);
   if (block.kind === 'ordered') {
     return [
       indentOf(line),
@@ -187,8 +259,9 @@ export function renderDecoratedLine(
   block: JournalMarkdownBlock,
   line: JournalMarkdownLine,
   content: React.ReactNode[],
+  onTaskPress?: TaskPress,
 ): React.ReactNode[] {
-  const decoration = lineDecoration(document, block, line);
+  const decoration = lineDecoration(document, block, line, onTaskPress);
   if (line.kind !== 'task' || line.taskChecked !== true) return [...decoration, ...content];
   return [
     ...decoration,
@@ -319,6 +392,13 @@ const styles = StyleSheet.create({
   /** A task's checkbox glyph: soft ink, like the writer's own marker would be. */
   marker: {
     color: colors.paper.inkSoft,
+  },
+  /** Padding plus cancelling margins expands the web DOM box without moving its ink. */
+  taskTarget: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginHorizontal: -14,
+    marginVertical: -12,
   },
   /** The writer's own number, soft ink, tabular so the column holds. */
   ordinal: {

@@ -1,6 +1,7 @@
 """Database models package."""
 
 from .account_deletion_audit import AccountDeletionAudit
+from .admin_balance_adjustment import AdminBalanceAdjustment
 from .auth_identity import AuthIdentity
 from .completion_suggestion import CompletionSuggestion
 from .content_completion import ContentCompletion
@@ -64,6 +65,7 @@ from .wallet_audit import WalletAudit
 
 __all__ = [
     "AccountDeletionAudit",
+    "AdminBalanceAdjustment",
     "AuthIdentity",
     "CompletionSuggestion",
     "ContentCompletion",

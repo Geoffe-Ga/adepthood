@@ -143,8 +143,9 @@ const AVAILABLE_ACTIVATION: VaultActivation = {
  * in, in reading order. Rendered on every path, folded or not.
  */
 const COPY_BLOCKS: [string, string][] = [
-  ['vault-what-it-is', VAULT_WHAT_IT_IS],
   ['vault-higher-self-gain', HIGHER_SELF_GAIN],
+  ['vault-promise', VAULT_PROMISE],
+  ['vault-what-it-is', VAULT_WHAT_IT_IS],
   ['vault-floor', VAULT_FLOOR],
   ['vault-intimate', VAULT_INTIMATE],
 ];
@@ -381,10 +382,10 @@ describe('VaultSettingsScreen — rendering', () => {
     expectNavigationOwnsTitle(view, VAULT_TITLE);
   });
 
-  test('renders the promise inside the header block', async () => {
+  test('renders the promise directly after the leading gain', async () => {
     const { getByTestId } = await renderVault();
 
-    expect(within(getByTestId('vault-header')).getByText(VAULT_PROMISE)).toBeTruthy();
+    expect(within(getByTestId('vault-promise')).getByText(VAULT_PROMISE)).toBeTruthy();
   });
 
   for (const [testID, copy] of COPY_BLOCKS) {
@@ -533,7 +534,7 @@ describe('VaultSettingsScreen — reading the connection', () => {
     const { getByTestId } = await renderUnreachable();
 
     expect(within(getByTestId('vault-error')).getByText(VAULT_LOAD_FAILED)).toBeTruthy();
-    expect(within(getByTestId('vault-header')).getByText(VAULT_PROMISE)).toBeTruthy();
+    expect(within(getByTestId('vault-promise')).getByText(VAULT_PROMISE)).toBeTruthy();
     for (const [testID, copy] of COPY_BLOCKS) {
       expect(within(getByTestId(testID)).getByText(copy)).toBeTruthy();
     }
@@ -915,14 +916,15 @@ describe('VaultSettingsScreen — the key is write-only', () => {
 // What saying yes gives, beside the floor (#3003)
 // ---------------------------------------------------------------------------
 
-describe('VaultSettingsScreen — the gain sits directly above the floor', () => {
-  test('renders the promise deck in reading order, the floor right beneath the gain', async () => {
+describe('VaultSettingsScreen — the gain leads the promise deck', () => {
+  test('renders the gain before every vault explanation and leaves the floor at the end', async () => {
     const view = await renderVault(NOT_CONNECTED);
     const order = testIDsInOrder(view);
     const deck = COPY_BLOCKS.map(([testID]) => order.indexOf(testID));
 
     expect(deck.every((index) => index >= 0)).toBe(true);
-    expect(order.indexOf('vault-floor')).toBe(order.indexOf('vault-higher-self-gain') + 1);
+    expect(order.indexOf('vault-higher-self-gain')).toBeLessThan(order.indexOf('vault-promise'));
+    expect(order.indexOf('vault-floor')).toBeGreaterThan(order.indexOf('vault-what-it-is'));
     expect(deck).toEqual([...deck].sort((a, b) => a - b));
   });
 

@@ -628,10 +628,17 @@ describe('JournalShelfScreen', () => {
     expect(queryByText('Your shelf')).toBeNull();
   });
 
-  it('renames the empty-state title to "Your journal is empty"', async () => {
+  it('explains what the first page grows into without changing its primary action', async () => {
     mockList.mockResolvedValue(page([]));
-    const { findByText } = render(<JournalShelfScreen />);
+    const { findByText, findByTestId } = render(<JournalShelfScreen />);
     expect(await findByText('Your journal is empty')).toBeTruthy();
+    expect(
+      await findByText(
+        'Start your first page. With corpus sorting enabled, every eligible page not marked Intimate joins your private corpus, whether new or already written. Higher Self may draw a few passages from it for a reflection.',
+      ),
+    ).toBeTruthy();
+    expect(await findByTestId('journal-empty-cta')).toBeTruthy();
+    expect(await findByText('Start a page')).toBeTruthy();
   });
 
   it('navigates to the Map tab when the hero position line is pressed', async () => {
