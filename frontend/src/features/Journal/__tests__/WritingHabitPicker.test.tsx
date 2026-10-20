@@ -16,15 +16,20 @@ import {
 import { saveWritingHabitGoals } from '../writingHabitGoals';
 import WritingHabitPicker from '../WritingHabitPicker';
 
+import { beginAuthSession } from '@/api/sessionToken';
 import { touchTarget } from '@/design/tokens';
 import type { Goal, Habit } from '@/features/Habits/Habits.types';
 import { setActiveUser } from '@/storage/userScope';
 import { settle } from '@/testing/asyncSettle';
 
+const tokenFor = (session: string): string =>
+  `e30.${Buffer.from(JSON.stringify({ sub: '1', exp: 4_000_000_000, jti: session })).toString('base64url')}.sig`;
+let mockToken = tokenFor('first');
+
 jest.mock('../writingHabitGoals', () => ({ saveWritingHabitGoals: jest.fn() }));
 
 jest.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ token: 'picker-token', userTimezone: 'UTC' }),
+  useAuth: () => ({ token: mockToken, authStatus: 'authenticated', userTimezone: 'UTC' }),
 }));
 
 const makeGoal = (tier: 'low' | 'clear' | 'stretch', isAdditive = true): Goal => ({
@@ -67,6 +72,8 @@ const HABITS: Habit[] = [
 const noop = (): void => undefined;
 
 beforeEach(() => {
+  setActiveUser(1);
+  mockToken = tokenFor('first');
   jest.mocked(saveWritingHabitGoals).mockReset();
 });
 
@@ -225,6 +232,67 @@ describe('WritingHabitPicker', () => {
     finish!(confirmed);
     await settle();
     expect(onChoose).toHaveBeenCalledWith(confirmed);
+  });
+
+  it('lands a held goal save exactly once across a proactive same-account renewal', async () => {
+    const pages = habit(20, 'Read pages', {
+      goals: ladder().map((goal) => ({ ...goal, target_unit: 'pages' })),
+    });
+    const confirmed = writingGoalDraft(pages);
+    const onChoose = jest.fn();
+    let finish!: (_habit: Habit) => void;
+    jest
+      .mocked(saveWritingHabitGoals)
+      .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    const screen = render(
+      <WritingHabitPicker habits={[pages]} onChoose={onChoose} onCancel={noop} />,
+    );
+    fireEvent.press(screen.getByTestId('writing-habit-configure-20'));
+    fireEvent.press(screen.getByTestId('writing-habit-goals-save'));
+
+    mockToken = tokenFor('renewed');
+    screen.rerender(<WritingHabitPicker habits={[pages]} onChoose={onChoose} onCancel={noop} />);
+    finish(confirmed);
+    await settle();
+
+    expect(saveWritingHabitGoals).toHaveBeenCalledTimes(1);
+    expect(onChoose).toHaveBeenCalledTimes(1);
+    expect(onChoose).toHaveBeenCalledWith(confirmed);
+  });
+
+  it.each([
+    ['same-owner reauthentication', () => beginAuthSession()],
+    ['sign-out', () => setActiveUser(null)],
+    ['account switch', () => setActiveUser(2)],
+    [
+      'A → B → A',
+      () => {
+        setActiveUser(2);
+        setActiveUser(1);
+      },
+    ],
+  ])('drops a held goal save after %s', async (_name, endSession) => {
+    const pages = habit(20, 'Read pages', {
+      goals: ladder().map((goal) => ({ ...goal, target_unit: 'pages' })),
+    });
+    const confirmed = writingGoalDraft(pages);
+    const onChoose = jest.fn();
+    let finish!: (_habit: Habit) => void;
+    jest
+      .mocked(saveWritingHabitGoals)
+      .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    const screen = render(
+      <WritingHabitPicker habits={[pages]} onChoose={onChoose} onCancel={noop} />,
+    );
+    fireEvent.press(screen.getByTestId('writing-habit-configure-20'));
+    fireEvent.press(screen.getByTestId('writing-habit-goals-save'));
+
+    endSession();
+    finish(confirmed);
+    await settle();
+
+    expect(onChoose).not.toHaveBeenCalled();
+    setActiveUser(1);
   });
 
   it('keeps the link unchanged and describes possible partial writes after a failed goal save', async () => {

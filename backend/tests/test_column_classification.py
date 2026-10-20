@@ -39,6 +39,8 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
     # names. None of these is anything a person wrote.
     "IDENTIFIER_OR_DIGEST": frozenset(
         {
+            "adminbalanceadjustment.idempotency_key",
+            "adminbalanceadjustment.request_fingerprint",
             "authidentity.provider",
             "authidentity.subject",
             "coursestage.artifact_schema_version",
@@ -190,6 +192,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
     # describes separately from writing.
     "ACCOUNT_IDENTITY": frozenset(
         {
+            "adminbalanceadjustment.source_ip",
             "authidentity.email_at_link_time",
             "entitlement.metadata",
             "gumroadsale.email",
@@ -206,6 +209,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
     "OPERATIONAL_RECORD": frozenset(
         {
             "accountdeletionaudit.row_counts",
+            "adminbalanceadjustment.reason",
             "vaultactivation.failure_reason",
             "vaultteardownreceipt.failure_reason",
             "voicedraftretraction.safe_failure_code",

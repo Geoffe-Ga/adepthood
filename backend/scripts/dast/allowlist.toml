@@ -173,7 +173,14 @@ reason   = "gated on the admin role rather than on ownership; both identities ar
 # design -- that is the whole point of an operator surface -- so ownership is
 # the wrong axis for them. The admin role is the control, and
 # tests/test_admin_entitlements.py exercises the anonymous and non-admin legs
-# on all three.
+# on the existing three, and tests/test_admin_balance_adjustment.py exercises
+# both legs plus the cross-user mutation and audit rows for the wallet route.
+
+[[route]]
+method   = "POST"
+path     = "/admin/users/{user_id}/tokens"
+category = "admin_only"
+reason   = "gated on the admin role rather than on ownership; both identities are denied"
 
 [[route]]
 method   = "POST"

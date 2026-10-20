@@ -8,6 +8,7 @@ import React from 'react';
 import { Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { invitationCopy } from './invitationCopy';
+import { useInvitationAspect } from './useInvitationAspect';
 
 import type { Invitation } from '@/api';
 import {
@@ -60,11 +61,14 @@ function DeclineButton({
 
 function InvitationNote({ invitation, onDismiss }: InvitationNoteProps): React.JSX.Element {
   const press = usePressScale(useReducedMotion());
-  const copy = invitationCopy(invitation.target_type, invitation.kind);
+  const aspect = useInvitationAspect(invitation);
+  const copy = invitationCopy(invitation.target_type, invitation.kind, { aspect });
   return (
     <Animated.View style={{ transform: [{ scale: press.scale }] }}>
       <View style={styles.card} testID={`invitation-${invitation.id}`}>
-        <Text style={styles.line}>{copy.line}</Text>
+        <Text style={styles.line} testID={`invitation-${invitation.id}-line`}>
+          {copy.line}
+        </Text>
         <DeclineButton
           id={invitation.id}
           label={copy.declineA11y}

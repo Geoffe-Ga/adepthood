@@ -42,11 +42,11 @@ export const VAULT_ROW_LABEL = 'Where your writing lives';
 /**
  * Hub row description. States the offer, both ways to take it, and the floor
  * together, so a user who never opens the screen still learns that declining
- * costs them nothing. The gain is named only as the separate yes to sorting,
- * because a vault turns no sorting on.
+ * costs them nothing. The sorting gain leads, then the copy keeps that yes
+ * separate from the vault because a vault turns no sorting on.
  */
 export const VAULT_ROW_DESCRIPTION =
-  'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.';
+  'Sorting lets reflections reach beyond your last few entries. Saying yes to sorting is a separate choice from an optional copy of what you write, kept in a vault Adepthood manages or one you run. The app is complete without either.';
 
 /** Header eyebrow. Sets the register before the title: this is a choice. */
 export const VAULT_EYEBROW = 'Optional';
@@ -86,7 +86,7 @@ export const VAULT_WHAT_IT_IS =
  * a vault" stays true of the journal and reflections, which are what it names.
  */
 export const VAULT_FLOOR =
-  'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice.';
+  'Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice. Adepthood is complete without a vault.';
 
 /**
  * Said where somebody is about to create a managed vault, so that the press
@@ -150,9 +150,9 @@ export const VAULT_ADVANCED_LEARN_MORE = 'Learn how to run one';
 export const VAULT_MANAGED_UNKNOWN_BODY =
   'You can try again later, or connect a vault you run yourself under Advanced, below.';
 
-/** Managed vaults are not open to this account yet. Keeps the floor, names the fold. */
+/** Managed vaults are not open yet. Names the available fold without echoing the floor. */
 export const VAULT_MANAGED_UNAVAILABLE_BODY =
-  'Creating one is not available for this account yet. Adepthood is complete without it, and you can still connect a vault you run yourself under Advanced, below.';
+  'Creating one is not available for this account yet. You can still connect a vault you run yourself under Advanced, below.';
 
 /** Form heading with nothing connected. A thing to do, not a step outstanding. */
 export const VAULT_ADD_HEADING = 'Connect your vault';

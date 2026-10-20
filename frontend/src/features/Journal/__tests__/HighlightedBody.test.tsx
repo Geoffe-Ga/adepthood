@@ -372,6 +372,49 @@ describe('HighlightedBody -- headings, ordered items, tasks and rules (#3251)', 
     expect(queryByTestId('journal-markdown-task-done-17')).toBeNull();
   });
 
+  it('makes finished-entry task glyphs accessible and pressable without opening an anchor', () => {
+    const body = '- [ ] *buy milk*';
+    const anchored = note({
+      id: 86,
+      anchor_start: 0,
+      anchor_end: Array.from(body).length,
+      anchor_text: body,
+    });
+    const onOpen = jest.fn();
+    const onTaskPress = jest.fn();
+    const { getByTestId } = render(
+      <HighlightedBody body={body} notes={[anchored]} onOpen={onOpen} onTaskPress={onTaskPress} />,
+    );
+
+    const checkbox = getByTestId('journal-markdown-checkbox-0');
+    expect(checkbox.props.accessibilityRole).toBe('checkbox');
+    expect(checkbox.props.accessibilityState).toEqual({ checked: false });
+    expect(checkbox.props.accessibilityLabel).toContain('buy milk');
+    const target = StyleSheet.flatten(checkbox.props.style);
+    expect(target.paddingHorizontal * 2 + editorialType.body.fontSize).toBeGreaterThanOrEqual(44);
+    expect(target.paddingVertical * 2 + editorialType.body.lineHeight).toBeGreaterThanOrEqual(44);
+    expect(target.marginHorizontal).toBe(-target.paddingHorizontal);
+    expect(target.marginVertical).toBe(-target.paddingVertical);
+
+    fireEvent.press(checkbox);
+
+    expect(onTaskPress).toHaveBeenCalledWith(0);
+    expect(onOpen).not.toHaveBeenCalled();
+
+    const keyEvent = {
+      key: ' ',
+      preventDefault: jest.fn(),
+      stopPropagation: jest.fn(),
+    };
+    checkbox.props.onKeyDown(keyEvent);
+
+    expect(keyEvent.preventDefault).toHaveBeenCalled();
+    expect(keyEvent.stopPropagation).toHaveBeenCalled();
+    expect(onTaskPress).toHaveBeenLastCalledWith(0);
+    expect(onTaskPress).toHaveBeenCalledTimes(2);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
   it('draws a rule as a hairline with its characters hidden', () => {
     const { getByTestId } = render(
       <HighlightedBody body={'above\n---\nbelow'} notes={[]} onOpen={jest.fn()} />,

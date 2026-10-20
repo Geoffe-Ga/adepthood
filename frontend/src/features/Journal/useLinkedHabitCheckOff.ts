@@ -17,12 +17,12 @@
  */
 import { useCallback, useEffect, useRef } from 'react';
 
+import { usePaymentScope } from './usePaymentScope';
 import { checkOffLinkedHabit } from './writingHabitCheckOff';
 import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 
 import { useToast } from '@/components/ToastProvider';
 import { useAuth } from '@/context/AuthContext';
-import { getActiveUserGeneration } from '@/storage/userScope';
 import {
   getWritingHabitLinkGeneration,
   useWritingHabitLinkStore,
@@ -35,10 +35,8 @@ export function useLinkedHabitCheckOff(
   onLogged?: (_notice: LoggedWritingSession) => void,
 ): SessionHandler {
   const { token, userTimezone } = useAuth();
-  const ownerGeneration = getActiveUserGeneration();
+  const currentSession = usePaymentScope();
   const { showToast } = useToast();
-  const latestToken = useRef(token);
-  latestToken.current = token;
   const latestResult = useRef<WritingSessionResult | null>(null);
   const mounted = useRef(false);
   useEffect(() => {
@@ -57,7 +55,7 @@ export function useLinkedHabitCheckOff(
     (result: WritingSessionResult) => {
       latestResult.current = result;
       inner(result);
-      if (ownerGeneration !== getActiveUserGeneration()) return;
+      if (!currentSession()) return;
       // Read at the moment the session ends, not at render: a link chosen from
       // the offer mid-page must count for the very next session.
       const { habitId } = useWritingHabitLinkStore.getState();
@@ -68,15 +66,12 @@ export function useLinkedHabitCheckOff(
         result,
         tz: userTimezone,
         showToast,
-        isCurrent: () =>
-          latestToken.current === token &&
-          getActiveUserGeneration() === ownerGeneration &&
-          getWritingHabitLinkGeneration() === linkGeneration,
+        isCurrent: () => currentSession() && getWritingHabitLinkGeneration() === linkGeneration,
         onLogged: (message) => {
           if (mounted.current && latestResult.current === result) onLogged?.({ result, message });
         },
       });
     },
-    [inner, onLogged, ownerGeneration, showToast, token, userTimezone],
+    [currentSession, inner, onLogged, showToast, userTimezone],
   );
 }

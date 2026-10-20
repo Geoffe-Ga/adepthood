@@ -96,6 +96,7 @@ from services.creek_vault_client import (
     build_creek_vault_client,
 )
 from services.creek_vault_telemetry import VaultTelemetryOutcome
+from services.creek_vault_url import vault_base_url
 from services.creek_vault_url_resolution import (
     classify_resolved_user_vault_url_off_the_pool,
 )
@@ -436,11 +437,9 @@ def _degrade_outcome(*, vault_configured: bool) -> VaultTelemetryOutcome:
 
 
 def _normalized_vault_url(vault_url: str) -> str:
-    """Spell one vault URL one way: case-folded scheme and host, no trailing slash."""
-    parts = urlsplit(vault_url.strip())
-    return urlunsplit(
-        (parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, "")
-    )
+    """Spell one vault URL one way: case-folded scheme and host, no trailing slash or ``/v1``."""
+    parts = urlsplit(vault_base_url(vault_url.strip()))
+    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path, parts.query, ""))
 
 
 def _destination_digest(user_id: int, source: str, vault_url: str) -> str:

@@ -1,4 +1,11 @@
-import { expect, test, type Locator, type Page, type Request } from '@playwright/test';
+import {
+  expect,
+  test,
+  type Browser,
+  type Locator,
+  type Page,
+  type Request,
+} from '@playwright/test';
 
 import {
   backendUrl,
@@ -175,6 +182,73 @@ const OPENING_LINES = 30;
 const CLOSING_WORD = 'Onward';
 /** Layout boxes are fractional; this much is rounding, not overlap. */
 const SUBPIXEL_TOLERANCE_PX = 1;
+
+async function expectRetryHit(locator: Locator): Promise<void> {
+  expect(
+    await locator.evaluate((node) => {
+      const box = node.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return hit !== null && (hit === node || node.contains(hit));
+    }),
+  ).toBe(true);
+}
+
+async function failedFoldRetryClear(
+  browser: Browser,
+  scale: number,
+  screenshotPath: string,
+): Promise<void> {
+  const context = await browser.newContext({
+    viewport: { width: PHONE.width / scale, height: PHONE.height / scale },
+    deviceScaleFactor: scale,
+  });
+  const page = await context.newPage();
+  try {
+    const { quoteIds } = await seedPromotedSource(page, `fold-retry-clear-${scale}`);
+    await page.reload();
+    await page.getByTestId('journal-reflection-band').click();
+    await page.getByRole('textbox', { name: 'Entry body' }).fill(OPENING);
+    await expect(page.getByTestId('journal-save-hint')).toHaveText('Saved');
+    await page.locator('[data-testid="reflection-sources-toggle"]:visible').click();
+    await page.locator('[data-testid="pending-quotes-select-toggle"]:visible').click();
+    await page.locator(`[data-testid="pending-quote-${quoteIds[0]}"]:visible`).click();
+    await page.route('**/promotions/*', async (route) => {
+      if (route.request().method() === 'PATCH') {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: '{"detail":"boom"}',
+        });
+      } else await route.continue();
+    });
+    await page.locator('[data-testid="quote-fold-action"]:visible').click();
+    await page.locator('[data-testid="reflection-sources-close"]:visible').click();
+    const retry = page.getByTestId('quote-inclusion-retry');
+    await expect(retry).toBeVisible();
+    await retry.scrollIntoViewIfNeeded();
+    const hint = await boxOf(page.getByTestId('quote-inclusion-hint'));
+    const dock = await boxOf(page.getByTestId('writing-session-band'));
+    expect(hint.bottom, 'the reflection retry must end above the idle dock').toBeLessThanOrEqual(
+      dock.top + SUBPIXEL_TOLERANCE_PX,
+    );
+    await expectRetryHit(retry);
+    await page.screenshot({ path: screenshotPath });
+  } finally {
+    await context.close();
+  }
+}
+
+for (const scale of [1, 2] as const) {
+  test(`a failed folded-quote retry clears the phone dock at ${scale * 100}%`, async ({
+    browser,
+  }, testInfo) => {
+    await failedFoldRetryClear(
+      browser,
+      scale,
+      testInfo.outputPath(`fold-retry-clear-390x844-${scale * 100}.png`),
+    );
+  });
+}
 
 /** A box's top and bottom edges, failing loudly when the element is not laid out. */
 async function boxOf(locator: Locator): Promise<{ top: number; bottom: number }> {

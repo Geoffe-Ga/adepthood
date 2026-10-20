@@ -195,17 +195,20 @@ def test_the_not_consented_band_says_what_saying_yes_gives_and_bounds_it() -> No
     """The band names the gain of the decision, in the words Settings uses (#3003).
 
     The fallback is the last few *entries* -- ``GROUNDING_LIMIT`` of them -- not
-    a span of days, so the band says entries. The gain speaks of everything a
-    person writes, so it names the Intimate exclusion in the same sentence, and
-    it is the decision's gain by Aspect rather than a promise to read it all.
+    a span of days, so the band says entries. The gain leads with the reach
+    beyond that fallback, names the Intimate exclusion, and remains a bounded
+    decision by Aspect rather than a promise to read it all.
     """
     message = VOICE_READINESS_MESSAGES[VoiceReadinessState.NOT_CONSENTED]
 
     assert message is not None
     assert "last few entries" in message
-    assert "Say yes to sorting" in message
+    assert "With sorting on" in message
+    assert "a few passages at a time" in message
     assert "sorted by Aspect" in message
-    assert "apart from Intimate entries" in message
+    assert "When it draws from sorted writing" in message
+    assert "can lean toward where you stand in the course" in message
+    assert "never using an Intimate one" in message
     assert "Perfectly fine to leave as it is." in message
 
 

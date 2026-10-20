@@ -184,7 +184,7 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_ROW_DESCRIPTION names both choices, the separate yes, and the floor', () => {
     expect(VAULT_ROW_DESCRIPTION).toBe(
-      'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.',
+      'Sorting lets reflections reach beyond your last few entries. Saying yes to sorting is a separate choice from an optional copy of what you write, kept in a vault Adepthood manages or one you run. The app is complete without either.',
     );
   });
 
@@ -215,7 +215,7 @@ describe('vaultCopy — the promise deck, verbatim', () => {
 
   it('VAULT_FLOOR states the app is complete without a vault', () => {
     expect(VAULT_FLOOR).toBe(
-      'Adepthood is complete without a vault. Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice.',
+      'Your journal, your reflections, and every entry you have written are all here either way. A vault adds an optional copy of your entries, kept for your account alone; it does not turn sorting on, which stays a separate choice. Adepthood is complete without a vault.',
     );
   });
 
@@ -270,10 +270,32 @@ describe('vaultCopy — the promise deck, verbatim', () => {
     );
   });
 
-  it('VAULT_MANAGED_UNAVAILABLE_BODY keeps the floor and points at the Advanced section', () => {
+  it('VAULT_MANAGED_UNAVAILABLE_BODY points at the Advanced section without repeating the floor', () => {
     expect(vaultCopy.VAULT_MANAGED_UNAVAILABLE_BODY).toBe(
-      'Creating one is not available for this account yet. Adepthood is complete without it, and you can still connect a vault you run yourself under Advanced, below.',
+      'Creating one is not available for this account yet. You can still connect a vault you run yourself under Advanced, below.',
     );
+  });
+});
+
+describe('vaultCopy — the gain leads and the floor does not echo', () => {
+  it('puts the sorting gain before the optional vault in the Settings row', () => {
+    expect(VAULT_ROW_DESCRIPTION.indexOf('Sorting lets reflections')).toBe(0);
+    expect(VAULT_ROW_DESCRIPTION.indexOf('Sorting lets reflections')).toBeLessThan(
+      VAULT_ROW_DESCRIPTION.indexOf('optional copy'),
+    );
+  });
+
+  it('says complete without at most once on each rendered vault surface', () => {
+    const settingsHubSurface = [VAULT_ROW_LABEL, VAULT_ROW_DESCRIPTION].join(' ');
+    const vaultScreenSurface = PROMISE_KEYS.filter(
+      (key) => key !== 'VAULT_ROW_LABEL' && key !== 'VAULT_ROW_DESCRIPTION',
+    )
+      .map((key) => vaultCopy[key])
+      .join(' ');
+
+    for (const surface of [settingsHubSurface, vaultScreenSurface]) {
+      expect(surface.match(/complete without/giu) ?? []).toHaveLength(1);
+    }
   });
 });
 
@@ -559,7 +581,8 @@ describe('vaultCopy — a plain name, with Creek left to the custody statements 
   }
 
   it('the row description names both choices, the optionality and the floor', () => {
-    expect(VAULT_ROW_DESCRIPTION).toMatch(/^An optional copy/u);
+    expect(VAULT_ROW_DESCRIPTION).toMatch(/^Sorting lets reflections/u);
+    expect(VAULT_ROW_DESCRIPTION).toMatch(/an optional copy/u);
     expect(VAULT_ROW_DESCRIPTION).toMatch(/Adepthood manages/u);
     expect(VAULT_ROW_DESCRIPTION).toMatch(/one you run/u);
     expect(VAULT_ROW_DESCRIPTION).toMatch(/complete without either/u);
@@ -613,12 +636,12 @@ describe('vaultCopy — a vault is not the yes to sorting (#3003)', () => {
 
     expect(speaking.length).toBeGreaterThan(0);
     for (const key of speaking) {
-      expect(vaultCopy[key]).toMatch(/say yes to sorting|does not turn sorting on/iu);
+      expect(vaultCopy[key]).toMatch(/with sorting on|yes to sorting|does not turn sorting on/iu);
     }
   });
 
   it('the row description gives the gain only as the separate yes', () => {
-    expect(VAULT_ROW_DESCRIPTION).toMatch(/Saying yes to sorting .* is a separate choice/u);
+    expect(VAULT_ROW_DESCRIPTION).toMatch(/Saying yes to sorting is a separate choice/u);
   });
 
   it('names none of the plumbing the reader never needs to learn', () => {

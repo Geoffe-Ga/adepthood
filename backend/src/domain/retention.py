@@ -357,6 +357,11 @@ RETENTION: Mapping[str, RetentionRule] = {
             ratified=True,
         )
     ),
+    "adminbalanceadjustment": until_account_deletion(
+        "The operator paper trail for corrections to the account's wallet. If "
+        "the operator leaves first, their identity and source address are "
+        "cleared while the target's content-free financial trail survives.",
+    ),
     "authidentity": until_account_deletion("Social sign-in links of a live account."),
     "completionsuggestion": until_account_deletion(
         "Suggestions derived from the account's own entries." + _DERIVED_FROM_ENTRY,

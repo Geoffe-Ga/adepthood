@@ -777,12 +777,13 @@ async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
     assert responses[_LIMIT_5].status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
-# The 31 limits declared with ``@limiter.limit``, frozen. This table is the
+# The 32 limits declared with ``@limiter.limit``, frozen. This table is the
 # ratchet for #2909: the ambient floor was added *underneath* these, and the
 # one way that change could do harm is by disturbing one of them. Reading it
 # back from the limiter proves the decorators registered what the source says,
 # which a grep over the router modules could not.
 _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
+    "routers.admin.adjust_user_balance": ("10 per 1 minute",),
     "routers.admin.grant_entitlement": ("10 per 1 minute",),
     "routers.admin.revoke_entitlement": ("10 per 1 minute",),
     "routers.admin_feedback.act_on_feedback_report": ("60 per 1 minute",),
@@ -828,14 +829,14 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
 _PATH_PARAM_SENTINEL = "1"
 _PATH_PARAM = re.compile(r"\{[^}]+\}")
 
-# 164 mounted ``APIRoute``s share 138 distinct paths. Pinned so a future router
+# 165 mounted ``APIRoute``s share 139 distinct paths. Pinned so a future router
 # that collapses the walk (the failure mode #2909 itself was) fails here rather
 # than quietly guarding fewer paths than it claims.
-_DISTINCT_MOUNTED_PATHS = 138
+_DISTINCT_MOUNTED_PATHS = 139
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
-    """The 31 declared limits: the 27 from before the ambient floor, #2900's three, and #2865's.
+    """The 32 declared limits, including the audited admin wallet correction.
 
     Also a tripwire for the one regression the new layer could hide: slowapi's
     ``@limiter.exempt`` and ``request_filter`` escape hatches govern the

@@ -20,16 +20,16 @@ interface EmptyStateCopy {
 
 const FIRST_RUN_COPY: EmptyStateCopy = {
   title: 'No habits yet',
-  subtitle: 'Add your first habit to start building momentum. Small, daily actions compound.',
+  subtitle: 'Choose one habit. A minute a day begins the practice; you can build from there.',
 };
 
 /** Positive-lap invite: start another set of stages, gently. */
 const LAP_INVITE_SUBTITLE =
-  'Begin a new set whenever it feels right — no pressure either way, or simply keep tending the habits you already have.';
+  'One habit, one minute, three weeks. Begin one, or keep tending what you have; both are the program.';
 
 /** Negative-lap invite: bring an existing practice into the carryover stages. */
 const CARRYOVER_INVITE_SUBTITLE =
-  'Bring a habit you already practice, if it feels right — no pressure either way.';
+  'Bring one habit you already practice into these stages, or leave the set open; both are the program.';
 
 /**
  * Copy for the empty state. With a stage range supplied (any lap besides the

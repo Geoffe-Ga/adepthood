@@ -207,7 +207,7 @@
   },
   {
     "id": "habits.successful-empty-is-first-use",
-    "description": "A newly registered person whose live habits request succeeds with an empty collection sees an honest first-use state with an Add a habit action, never the fictional names, streaks, or completion history reserved for an explicitly configured demo build. The real-wire spec proves the fresh account and production client receive an empty Page; habitManager.test.ts pins that the service preserves the empty list, and HabitsEmptyState.test.tsx pins the rendered CTA.",
+    "description": "A newly registered person whose live habits request succeeds with an empty collection sees an honest first-use state with an Add a habit action, never the fictional names, streaks, or completion history reserved for an explicitly configured demo build. The page-zero fallback explains the gain -- 'Choose one habit. A minute a day begins the practice; you can build from there.' -- without claiming the account's current stage or duration. The real-wire spec proves the fresh account and production client receive an empty Page; empty-state-map-copy.browser.e2e.test.ts pins the rendered gain and reachable action at phone, desktop and effective 200% zoom; habitManager.test.ts pins that the service preserves the empty list, and HabitsEmptyState.test.tsx pins every selectCopy variant with 'no pressure' rendered at most once.",
     "crosses": {
       "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
       "client": ["habits"],
@@ -311,7 +311,7 @@
   },
   {
     "id": "journal.write-list-read-back",
-    "description": "A user first tries to save a page made only of whitespace, a zero-width mark, and a control character; the production client receives the stable journal_message_empty refusal and the live journal remains empty. They then write legitimate Unicode prose, find it in the list, and read the body back unchanged. The backend boundary suite separately sweeps spaces, tabs/newlines, controls, and zero-width-only bodies across create and edit, proving those refusals happen before a journal row, Creek write, corpus classification, pipeline run, or wallet event.",
+    "description": "A user first arrives at an empty Journal whose invitation distinguishes corpus membership from bounded reflection retrieval: with corpus sorting enabled, every eligible page not marked Intimate joins the private corpus, whether new or already written; Higher Self may draw only a few passages from it for a reflection. The Start a page action remains the same. empty-state-map-copy.browser.e2e.test.ts pins that invitation and reachable action at phone, desktop and effective 200% zoom. The Journal-wide word-wrap sweep separately proves every token in the invitation has a safe line-break opportunity at effective 200% zoom. The user first tries to save a page made only of whitespace, a zero-width mark, and a control character; the production client receives the stable journal_message_empty refusal and the live journal remains empty. They then write legitimate Unicode prose, find it in the list, and read the body back unchanged. The backend boundary suite separately sweeps spaces, tabs/newlines, controls, and zero-width-only bodies across create and edit, proving those refusals happen before a journal row, Creek write, corpus classification, pipeline run, or wallet event.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
@@ -550,7 +550,7 @@
   },
   {
     "id": "journal.fold-selected-promoted-quotes",
-    "description": "A writer composing a due weekly review opens Sources, taps 'Select quotes', and the pending quotes become checkboxes whose state the browser reads from aria-checked. With nothing checked the fixed action reads disabled (aria-disabled). Two of three quotes promoted from one source are checked out of order; the action, which sits outside the scroll and stays in the viewport, reads exactly 'Fold 2 quotes into this review'. One press splices both as Markdown blockquotes attributed to the source title, in the order they sit in the source, one blank line apart, after the writer's own text; the review autosaves to 'Saved' and the server holds that exact body; exactly one PATCH /promotions/{promotion_id} per checked quote names the review's id, and the folded rows read as folded (aria-disabled). From the review's own Journal drawer the Promoted quotes screen then reads 'Not yet in a review (1)' and 'Used in a review (2)'; there 'Select quotes' turns the waiting quote into a checkbox, the fixed footer action reads 'Fold 1 quote into this review', and pressing it returns to the review, which folds that quote in once (each passage appears exactly once in the saved body) and marks it included on the review; the screen then reads 'Not yet in a review (0)' and 'Used in a review (3)'. At a 390x844 phone viewport, after a long typed opening and a two-quote fold with no keystroke after it, the body textarea reaches the last folded line the mirror draws, and the save footer and the Finish rail start at or below the textarea's bottom -- a value written from the app re-measures the field just as typing does, so folded text never paints over them (#3001); Sources is an icon in the entry's exit row above the page, not on the rail (#3002). The toolbar leads that body taller than the phone (#3250): scrolled back into view, it bolds a word the writer typed and selected at the end of the text. Pinned only by Jest, not asserted in the browser: one body change and one entry write per batch whatever its size; the partial-failure retry that re-marks only the refused quotes from the composer hint without splicing again; a failed mark's warning kept per quote, so another quote's overlapping successful fold never clears it and Try again re-marks only that quote; a quote removed meanwhile (its PATCH answers 404 promotion_not_found) retiring from the warning and the panel, and a retry marking before it splices so a removed quote's words are never put back (#2754); the duplicate-press and per-quote in-flight guards; identical blocks written once; Select all / Clear all, and on the screen Select all covering only the loaded rows with a visible note while older quotes remain; the selection surviving a resize across the side-pane breakpoint; the exact caret placements; the screen's 'Write a review with N quotes' arm (the review picker opens the chosen review, new or continued, which folds the selection in once after it hydrates); the hand-off token that only travels from a review being written; and a selection addressed to another page being left alone.",
+    "description": "A writer composing a due weekly review opens Sources, taps 'Select quotes', and the pending quotes become checkboxes whose state the browser reads from aria-checked. With nothing checked the fixed action reads disabled (aria-disabled). Two of three quotes promoted from one source are checked out of order; the action, which sits outside the scroll and stays in the viewport, reads exactly 'Fold 2 quotes into this review'. One press splices both as Markdown blockquotes attributed to the source title, in the order they sit in the source, one blank line apart, after the writer's own text; the review autosaves to 'Saved' and the server holds that exact body; exactly one PATCH /promotions/{promotion_id} per checked quote names the review's id, and the folded rows read as folded (aria-disabled). From the review's own Journal drawer the Promoted quotes screen then reads 'Not yet in a review (1)' and 'Used in a review (2)'; there 'Select quotes' turns the waiting quote into a checkbox, the fixed footer action reads 'Fold 1 quote into this review', and pressing it returns to the review, which folds that quote in once (each passage appears exactly once in the saved body) and marks it included on the review; the screen then reads 'Not yet in a review (0)' and 'Used in a review (3)'. At a 390x844 phone viewport, after a long typed opening and a two-quote fold with no keystroke after it, the body textarea reaches the last folded line the mirror draws, and the save footer and the Finish rail start at or below the textarea's bottom -- a value written from the app re-measures the field just as typing does, so folded text never paints over them (#3001); Sources is an icon in the entry's exit row above the page, not on the rail (#3002). The toolbar leads that body taller than the phone (#3250): scrolled back into view, it bolds a word the writer typed and selected at the end of the text. When a folded quote's inclusion mark fails, at 390x844 both normally and at effective 200%, the warning and Try again control remain entirely above the idle timer dock, and the browser hit-tests the retry where it is drawn. Pinned only by Jest, not asserted in the browser: one body change and one entry write per batch whatever its size; the partial-failure retry re-marking only the refused quotes without splicing again; a failed mark's warning kept per quote, so another quote's overlapping successful fold never clears it and Try again re-marks only that quote; a quote removed meanwhile (its PATCH answers 404 promotion_not_found) retiring from the warning and the panel, and a retry marking before it splices so a removed quote's words are never put back (#2754); the duplicate-press and per-quote in-flight guards; identical blocks written once; Select all / Clear all, and on the screen Select all covering only the loaded rows with a visible note while older quotes remain; the selection surviving a resize across the side-pane breakpoint; the exact caret placements; the screen's 'Write a review with N quotes' arm (the review picker opens the chosen review, new or continued, which folds the selection in once after it hydrates); the hand-off token that only travels from a review being written; and a selection addressed to another page being left alone.",
     "crosses": {
       "screen": "frontend/src/features/Journal/ReflectionSourcesPanel.tsx",
       "client": ["journal", "promotions", "reflections"],
@@ -1338,6 +1338,24 @@
     "coveredBy": "frontend/e2e/map.e2e.test.ts"
   },
   {
+    "id": "map.drawer-frames-capacity-without-ranking",
+    "description": "A traveller opens the Map drawer and reads one framing sentence between the journey read and the ten stage rows: 'The Map is a wheel, not a ladder: its ten stages revisit different capacities, never ranking you or the stages.' It appears exactly once, describes only the rendered stage-and-capacity rows, and introduces no invented fullness, altitude or person-ranking vocabulary. The same real-browser walk first visits the successful-empty Journal and Habits surfaces and filters the Practice catalog to its three empty sections, proving each names the gain of filling it. At 390x844, 1280x800 and effective 200% browser zoom it asserts horizontal containment, journey-lead-row order and reachable actions, and saves every product surface for visual inspection with each Practice section captured separately; the enlarged drawer labels wrap instead of clipping.",
+    "crosses": {
+      "screen": "frontend/src/features/Map/MapScreen.tsx",
+      "client": ["auth", "journal", "habits", "practices", "stages"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /journal/",
+        "GET /habits/",
+        "GET /practices/",
+        "GET /stages"
+      ],
+      "tables": ["user", "journalentry", "habit", "practice", "coursestage"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/empty-state-map-copy.browser.e2e.test.ts"
+  },
+  {
     "id": "map.continue-stage-in-course",
     "description": "A traveller opens the current stage on the Map and takes its strongest action, Continue, directly into that stage's Course chapter. The stage modal offers Course exactly once through that primary action; Practice and Journal occupy the two secondary slots, so no destination is duplicated. The component journey separately pins the stage-number route parameter and the close-before-navigation/double-tap guard, while this real-browser journey proves the rendered accessibility name, action hierarchy, modal dismissal, tab hand-off, and selected Course cover together.",
     "crosses": {
@@ -1743,7 +1761,7 @@
   },
   {
     "id": "return.let-go-survives-same-account-renewal",
-    "description": "A person begins a Return from the Journal shelf's offer card and is asked which habits to set down; while they are choosing, the app's own proactive timer renews the same account's token (#3374). Before the fix the let-go card's visibility reset on every credential rotation, because the Return hook mints a new staleness fence per token, so the renewal unmounted the card mid-choice and the active-arc card offered no way back. The covering spec reaches the offer honestly (eligibility via the program anchor, a contraction from a real resonance pass), chooses a habit, then jumps the page clock past the sliding-renewal deadline so the real AuthContext issues POST /auth/refresh against the live server, holding the response only while the clock is set back to the present. It asserts the card and the half-made choice survive the renewal (Release stays live), that the release then leaves with the renewed bearer and exactly the chosen habit id and is recorded on the server, and that Keep them all still closes the moment without a release. Account replacement (A to B, A to B to A) and session teardown still close the card and fence old callbacks; those halves are pinned in Jest (useMettaReturnOwnership.test.tsx, ReturnStackTokenRenewal.test.tsx). Frames at 390 and 1280 px, normal and doubled card text, are written to e2e/artifacts/return-letgo-renewal-3374.",
+    "description": "A person begins a Return from the Journal shelf's offer card and is asked which habits to set down; while they are choosing, the app's own proactive timer renews the same account's token (#3374). Before the fix the let-go card's visibility reset on every credential rotation, because the Return hook mints a new staleness fence per token, so the renewal unmounted the card mid-choice and the active-arc card offered no way back. The covering spec reaches the offer honestly (eligibility via the program anchor, a contraction from a real resonance pass), chooses a habit, then jumps the page clock past the sliding-renewal deadline so the real AuthContext issues POST /auth/refresh against the live server, holding the response only while the clock is set back to the present. It asserts the card and the half-made choice survive the renewal (Release stays live), that the release then leaves with the renewed bearer and exactly the chosen habit id and is recorded on the server, and that Keep them all still closes the moment without a release. Account replacement (A to B, A to B to A) and session teardown still close the card and fence old callbacks; those halves are pinned in Jest (useMettaReturnOwnership.test.tsx, ReturnStackTokenRenewal.test.tsx). #3452 extends that same lineage contract to a held Return-offer decline: proactive renewal and its own 401-refresh-retry land the returned episode once, while a fresh same-owner auth session still refuses the held answer. Reads inside that surviving lineage are ordered independently: an older credential's GET cannot overwrite a newer GET, a completed decline, or a completed start mutation. Frames at 390 and 1280 px, normal and doubled card text, are written to e2e/artifacts/return-letgo-renewal-3374.",
     "crosses": {
       "screen": "frontend/src/features/Return/ReturnLetGoCard.tsx",
       "client": ["auth", "habits", "journal", "resonance", "stages", "mettaReturn"],
@@ -1901,7 +1919,7 @@
   },
   {
     "id": "journal.timer-logs-its-minutes-to-a-linked-habit",
-    "description": "A writing timer logs the amount it measured to the linked open server habit: elapsed rounded minutes (at least one, including an early stop), or one full session for a sessions habit. A second session adds its own amount. The real Chromium witness chooses an existing habit through the offer and confirms its server link, checks POST /goal_completions/ carries the measured completed_units and via_timer:true, verifies a distinct operation identity for each session, and reads the accumulated server totals after repeated sessions, early stop and reload. A sessions habit counts a complete session and ignores an early stop. A committing first request whose response is deliberately replaced by a 503 proves the generic retry keeps its Idempotency-Key and adds the measured minutes once. Confirmed amount notices appear beneath the session summary; unconfirmed logs claim no success. Deleting the habit clears the server link. The same witness creates an immediately open Journaling habit with atomic 10/20/45 minute goals on an account that already has ten habits, at phone/desktop sizes with enlarged text, then logs ten minutes and reloads. Settings uses the shared picker to convert an unsupported existing unit to sessions, confirms every goal before linking, and retains the link on reload. Unit tests pin partial-write and delayed-owner refusal; these are scenarios of this one timer-to-habit journey rather than additional coverage counts.",
+    "description": "A writing timer logs the amount it measured to the linked open server habit: elapsed rounded minutes (at least one, including an early stop), or one full session for a sessions habit. A second session adds its own amount. The real Chromium witness chooses an existing habit through the offer and confirms its server link, checks POST /goal_completions/ carries the measured completed_units and via_timer:true, verifies a distinct operation identity for each session, and reads the accumulated server totals after repeated sessions, early stop and reload. A sessions habit counts a complete session and ignores an early stop. A committing first request whose response is deliberately replaced by a 503 proves the generic retry keeps its Idempotency-Key and adds the measured minutes once. Confirmed amount notices appear beneath the session summary; unconfirmed logs claim no success. Deleting the habit clears the server link. The same witness creates an immediately open Journaling habit with atomic 10/20/45 minute goals on an account that already has ten habits, at phone/desktop sizes with enlarged text, then logs ten minutes and reloads. Settings uses the shared picker to convert an unsupported existing unit to sessions, confirms every goal before linking, and retains the link on reload. #3452 pins the two remaining auth boundaries in Jest: a held picker goal-save and a held linked-habit check-off both survive proactive renewal and their own single 401-refresh-retry, but same-owner reauth, sign-out, account switch and A-to-B-to-A refuse the held completion. Unit tests also pin partial-write and delayed-owner refusal; these are scenarios of this one timer-to-habit journey rather than additional coverage counts.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["auth", "uiFlags", "habits", "goalCompletions", "goals"],
@@ -2374,10 +2392,10 @@
   },
   {
     "id": "auth.zero-payment-newcomer-core-access",
-    "description": "A newcomer claims a $0 APTITUDE membership license and, with no AI allowance on any axis (BOTMASON_MONTHLY_CAP=0, an empty offering balance, BOTMASON_DAILY_GENERATION_CEILING=0), writes, edits and deletes journal entries, exports everything as JSON and Markdown, creates a habit, logs a practice session and finally deletes the account -- none of it charging the wallet or calling Gumroad, and all of it still working after a refund revokes the entitlement (#1938, B21). Uncovered because the e2e lane's Gumroad stub (backend/tests/e2e/server.py _stub_license_check) replaces verification wholesale with a price-less purchase and the lane's allowance env is lane-wide, so a spec cannot set a zero price or a zero allowance for one journey. Pinned meanwhile by backend/tests/test_free_core_access_invariants.py and test_auth_signup_license.py::test_zero_price_membership_license_creates_exactly_one_account.",
+    "description": "A newcomer signs up through the real browser license gate after the lane's isolated Gumroad seam returns an explicit price: 0 purchase. This proves Adepthood's post-verification behavior, not a live Gumroad response or charge. An out-of-band arrange moves only this account to the deployment's served monthly cap with an empty offering balance and advances its reset past the immediately upcoming UTC month boundary, so a boundary crossed during the journey cannot silently restore capacity; the writer then creates and finishes a page, downloads structurally valid JSON and Markdown exports under their dated product filenames, deletes the page and deletes the account through the real screens while forensic wallet reads stay unchanged (#1938, B21). The broader route-by-route matrix for habits, practice and a deployment configured with literal zero monthly/daily caps remains pinned in backend/tests/test_free_core_access_invariants.py; this browser journey does not relabel that in-process matrix as browser evidence.",
     "crosses": {
       "screen": "frontend/src/features/Auth/SignupScreen.tsx",
-      "client": ["auth", "journal", "users", "habits"],
+      "client": ["auth", "journal", "users"],
       "routes": [
         "POST /auth/signup",
         "POST /journal/",
@@ -2385,31 +2403,34 @@
         "DELETE /journal/{entry_id}",
         "GET /users/me/export",
         "GET /users/me/export/journal.md",
-        "POST /habits/",
         "DELETE /users/me"
       ],
-      "tables": ["user", "entitlement", "licensebinding", "walletaudit"]
+      "tables": ["user", "entitlement", "licensebinding", "walletaudit", "journalentry"]
     },
-    "status": "uncovered",
-    "issue": 1938
+    "status": "covered",
+    "coveredBy": "frontend/e2e/zero-payment-core-access.browser.e2e.test.ts"
   },
   {
     "id": "journal.revoked-entitlement-restricts-ai-only",
-    "description": "A member whose APTITUDE entitlement is revoked by a refund, a dispute or an operator (with no live re-grant; a cancelled or ended membership does not restrict while the owner's cancel-timing decision is pending) asks for a resonance pass, a letter, completion detection or a server page read without a key of their own and is refused 403 ai_access_revoked before the minute bucket, the slot, the wallet or any dial, with funded credits left untouched; the client renders the plain ai_access_revoked copy, which says nothing was charged and that the journal, course, habits, practice, export and deletion are unaffected. The page the pass was asked of stays saved, a flagged entry still receives the care surface, a personal key is still admitted, and an account with no entitlement row at all (legacy, never comped) keeps today's access (#1938, B21 E1). Uncovered because the e2e lane cannot revoke an entitlement through the product: revocation arrives only from a Gumroad refund/cancellation ping or the admin route, and the lane's Gumroad stub emits no reversal ping. Pinned meanwhile by backend/tests/test_ai_access_revocation.py, backend/tests/test_free_core_access_invariants.py and frontend/src/api/__tests__/errorMessages.test.ts.",
+    "description": "A member with an available served allowance has their APTITUDE entitlement revoked through the production admin route, then asks for a resonance pass from the real finished-entry screen. The production resonance client and journal route answer 403 ai_access_revoked; the independent production completion-suggestion client then receives a completed, empty 200 check because this account has no habit candidates. The rendered margin says the membership is no longer active, nothing was charged, and export and deletion remain available, with no retry/refill detour. The same browser session then edits and re-finishes the saved page, downloads structurally valid JSON and Markdown exports under their dated product filenames, deletes the page and deletes the account, while a forensic wallet read proves the refusal and core work added no charge (#1938, B21 E1). This is truthful evidence for the operator-revocation resonance and no-candidate completion-detection seams only: refund/dispute webhooks, letters, candidate-bearing completion detection, transcription, care, BYOK and legacy-no-row controls remain pinned by backend/tests/test_ai_access_revocation.py, backend/tests/test_free_core_access_invariants.py and focused frontend tests rather than being claimed by this browser spec.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["journal"],
+      "client": ["journal", "resonance", "completionSuggestions", "users", "botmasonUsage"],
       "routes": [
+        "GET /user/usage",
         "POST /journal/{entry_id}/resonance",
-        "POST /journal/marginalia/{marginalia_id}/essay",
         "POST /journal/{entry_id}/suggestions/detect",
-        "POST /journal/transcribe-page",
-        "GET /journal/{entry_id}"
+        "GET /journal/{entry_id}",
+        "PATCH /journal/{entry_id}",
+        "DELETE /journal/{entry_id}",
+        "GET /users/me/export",
+        "GET /users/me/export/journal.md",
+        "DELETE /users/me"
       ],
-      "tables": ["entitlement", "walletaudit", "journalentry"]
+      "tables": ["user", "entitlement", "walletaudit", "journalentry"]
     },
-    "status": "uncovered",
-    "issue": 1938
+    "status": "covered",
+    "coveredBy": "frontend/e2e/revoked-entitlement-core-access.browser.e2e.test.ts"
   },
   {
     "id": "habits.reveal-without-course",
@@ -2612,6 +2633,22 @@
     "coveredBy": "frontend/e2e/account-decline-choices.browser.e2e.test.ts"
   },
   {
+    "id": "journal.invitation-reason-and-served-aspect",
+    "description": "A course invitation explains why it appeared: a theme across the writer's full corpus has crossed the generation threshold, and the reading is named by that stage's served Aspect rather than its relationship-to-free-will persona (#3104). The browser arranges a real pending course/readiness InvitationSignal whose target_id names stage 2, opens the Notification Center directly from a cold Journal route, and requires its one visit-free GET /stages/correspondence lookup to carry a deliberately long served Aspect while excluding a deliberately distinct served persona. The same real card stays fully readable with a clear one-tap Not now action at 390x844, at an effective 200% size, and at 1280x800; glyph bounds, viewport overflow, line/action separation, the 44px target, the unchanged spoken name and the real dismiss POST are asserted. Eligibility generation itself remains pinned by the backend domain suite; this journey begins from the persisted signal so it can isolate the frontend lookup and copy seam.",
+    "crosses": {
+      "screen": "frontend/src/features/Invitations/InvitationNote.tsx",
+      "client": ["invitations", "stages"],
+      "routes": [
+        "GET /stages/correspondence",
+        "GET /invitations",
+        "POST /invitations/{invitation_id}/dismiss"
+      ],
+      "tables": ["coursestage", "invitationsignal"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/invitation-reason-copy.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.invitation-decline-persistence",
     "description": "Real pending InvitationSignal rows are arranged in the isolated database, without pretending to prove eligibility or generation. The real browser loads GET /invitations, declines two different cards while one request is held, completes the other real POST, then injects a 503 only for the held request. Only the failed card returns in server order; the confirmed card stays absent. The browser retries the failed decline through the real POST and reloads; the real GET retains only the untouched card. Phone and desktop retry controls are keyboard driven at 200% text with frames saved. This covers the invitation persistence seam missing from the fresh-account journal-only proof (#3296).",
     "crosses": {
@@ -2774,6 +2811,18 @@
     "coveredBy": "frontend/e2e/writing-timer-presets-fit.browser.e2e.test.ts"
   },
   {
+    "id": "journal.idle-writing-timer-does-not-obstruct-the-page",
+    "description": "A writer opens a draft at 390x844, at the same physical size under 200% browser zoom (195x422 CSS px at device scale 2), and at 1280x800 (#3456). Before the writer asks the timer to run, phone layouts dock its complete 10/20/30/45-minute tray below the paper instead of floating it over the body; the desktop keeps the established margin rail. The browser proves the timer and textarea have zero overlap, the entire phone tray remains inside the viewport, and Finish receives elementFromPoint hits across its full height after the page is scrolled to its beginning, midpoint and end. Starting the timer returns the existing running surface to its absolute floating band and hit-tests Stop, so #3132's running behavior is not traded away. At the more severe 390x300 physical split-screen under effective 200% (195x150 CSS px), the idle tray is capped inside the viewport and scrolls internally: the browser proves real overflow, hit-tests Start at the top and 45 at the bottom, and retains paired top/bottom frames showing every timer control reachable. Before/after frames are retained under e2e/artifacts/journal-idle-timer-3456 and e2e/artifacts/pr3468-review-followup for human visual review.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["auth", "journal"],
+      "routes": ["POST /auth/signup", "GET /journal/"],
+      "tables": ["user", "journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-idle-timer-obstruction.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.money-copy-route-and-credit-pack",
     "description": "An authenticated writer sees the payer before an ask. The browser checks real server-confirmed armed demo readings and first letters with Demo disclosure, persistence, no wallet charge and no provider calls, plus explicitly controlled production app-provider keyless reading/letter Settings paths without a UI ask, real deployment-owner vault readings charged to the wallet with and without a key, wallet-priced vault first letters with explicit price acknowledgment and free cached reopening, missing-capability refusal without charge or app-provider fallback, and app-provider own-key reading receipts without a wallet debit. A controlled rolling-server response omitting only route metadata proves unknown payment disables asking. A separate explicitly controlled empty-wallet response changes only affordability while preserving the real owner route: optional EXPO_PUBLIC_CREDIT_PACK_URL set/unset determines the exact link and same-email note, and the press sends only one keyless POST ?free_only=true, which the funded real server refuses 409 resonance_payment_unconfirmed rather than charge, with no wallet change. The same controlled empty wallet still lets the real server adjudicate its free exits (#3389): a page made intimate from another device after the screen loaded shows the server's privacy reason, and a locally flagged page shows the reviewed care surface, each with no wallet change and no vault reflection or letter dial. Admission is bound to the disclosed payer route (#3385): a controlled usage read serves the app-provider route a key-holding writer saw before their vault connected, and the real server refuses that reading 409 resonance_payment_unconfirmed and that first letter 409 essay_price_unacknowledged, with no wallet, vault or provider side effect, while the client rereads the real route and shows the new credit price under a nothing-was-charged notice; confirming it then sends disclosed_route=vault_bound and spends exactly one credit for each. Phone390 and desktop1280 computed text at200 percent are inspected with actual pointer hit testing.",
     "crosses": {
@@ -2809,7 +2858,7 @@
   },
   {
     "id": "journal.refinish-an-edited-finished-entry",
-    "description": "A writer finishes a journal entry, reopens it with the pencil and chooses Edit, and can finish it again (#3447). The covering spec writes and finishes a page through the real client, presses the exit row's Edit, confirms Edit, types a line and waits for the real autosave, then finds Finish under the body with at least a 44px target, at 390x844, 1280x720 and 390px at 200% browser zoom (195x422 CSS px at device scale 2). No autosave PATCH during the edit sends status draft. Pressing Finish sends one PATCH /journal/{id} carrying the edited body and status finished, and the page returns to reading with the pencil back in the exit row and no body field. Jest pins that Finish stays withheld while the edited page is empty.",
+    "description": "A writer finishes a journal entry, reopens it with the pencil and chooses Edit, and can finish it again (#3447). The covering spec writes and finishes a page through the real client, presses the exit row's Edit, confirms Edit, types a line and waits for the real autosave, then finds Finish under the body with at least a 44px target, at 390x844, 1280x800 and 390px at 200% browser zoom (195x422 CSS px at device scale 2). No autosave PATCH during the edit sends status draft. Pressing Finish sends one PATCH /journal/{id} carrying the edited body and status finished, and the page returns to reading with the pencil back in the exit row and no body field. On that finished read view, the same three frames sweep the API-key, Edit, Close, Promote a quote and Get resonance siblings; the browser measures the Promote button and every label glyph inside the paper, rejects sideways page overflow, and uses a Range for each word so wrapping at spaces passes while a mid-word split fails (#3457). Jest pins that Finish stays withheld while the edited page is empty and that the read action's row, button and label can all yield inside the 195 CSS-pixel column.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
       "client": ["journal"],
@@ -2818,6 +2867,35 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-refinish-edited-entry.browser.e2e.test.ts"
+  },
+  {
+    "id": "settings.depth-sangha-and-vault-gains-lead",
+    "description": "A newly signed-in writer opens Settings and sees the honest gain beneath each optional depth before its switch (#3106): one habit begins at one minute across three weeks, a practice grows from one minute to 45 minutes across its arc, the Course offers ten capacities at calendar pace, and Sangha offers company whose point is the room the writer is actually in. The configured Sangha door leads with that company before saying the app works without it once, while preserving the one-tap decline hint. The vault row and screen lead with the bounded sorting gain before optional-vault mechanics; the browser crosses the real depth-preference, vault-connection and managed-activation reads, preserves the custody and Intimate disclosures, and proves the gain-to-floor reading order. At 390x844, the same physical size under effective 200% (195x422 CSS pixels at device scale 2), and 1280x800, it rejects horizontal text clipping and sideways document overflow, keeps one reachable switch in every depth row, and retains before/after frames for human inspection.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/SettingsHubScreen.tsx",
+      "client": ["auth", "depthPreferences", "vault", "vaultActivation"],
+      "routes": [
+        "POST /auth/signup",
+        "GET /depth-preferences",
+        "GET /vault/connection",
+        "GET /vault/activation"
+      ],
+      "tables": ["user", "userdepthpreferences", "uservaultconfig", "vaultactivation"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/settings-gain-copy.browser.e2e.test.ts"
+  },
+  {
+    "id": "journal.tick-a-task-on-a-finished-entry",
+    "description": "A writer finishes an entry containing open and nested checked tasks, then ticks the open task directly in read mode without reopening Edit (#3448). The checkbox keeps the existing glyph and dimmed checked-line treatment, exposes its item text and checked state to assistive technology, and has an expanded press target. Its optimistic one-character state swap sends a message-only PATCH through the serialized journal write lane; a cold reload shows both tasks checked while the entry remains finished. The real-client browser journey also delays that PATCH while the writer enters Edit and proves newer typed text survives the response and autosaves, delays an editor PATCH while the writer presses Close and proves text typed after X is durable before navigation, then refuses a task PATCH and its Close-time retry to prove the entry stays open with Retry reachable until persistence succeeds. It saves evidence at 390x844, effective 200% phone zoom and 1280x800 desktop.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["journal"],
+      "routes": ["POST /journal/", "PATCH /journal/{entry_id}", "GET /journal/{entry_id}"],
+      "tables": ["journalentry"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/journal-finished-task-toggle.browser.e2e.test.ts"
   },
   {
     "id": "journal.stat-tiles-wrap-at-200-percent",

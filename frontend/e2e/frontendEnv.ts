@@ -39,6 +39,12 @@ export type LaneEnv = typeof process.env;
 /** The bundle-time flag that seeds the habits demo tiles (`HABIT_DEMO_MODE`). */
 export const HABIT_DEMO_FLAG = 'EXPO_PUBLIC_HABIT_DEMO_MODE';
 
+/** The shared lane always offers the real Sangha door that Settings specs exercise. */
+export const SANGHA_INVITE_FLAG = 'EXPO_PUBLIC_SANGHA_INVITE_URL';
+
+/** A stable HTTPS destination: the lane never follows it, but config validates its scheme. */
+export const SANGHA_INVITE_URL = 'https://example.com/adepthood-e2e-sangha';
+
 /** What a demo-configured server is started with on top of the default env. */
 export const HABIT_DEMO_ENV: Readonly<Record<string, string>> = { [HABIT_DEMO_FLAG]: 'true' };
 
@@ -58,6 +64,8 @@ export function frontendServerEnv(
     ...inherited,
     // Defined, not deleted: see the module note on Expo's dotenv loading.
     [HABIT_DEMO_FLAG]: 'false',
+    // Keep the shared browser build deterministic and expose all four depth choices.
+    [SANGHA_INVITE_FLAG]: SANGHA_INVITE_URL,
     CI: '1',
     EXPO_PUBLIC_API_BASE_URL: apiUrl,
     ...extra,

@@ -31,7 +31,22 @@ export async function offered(page: Page, value: boolean): Promise<void> {
 
 /** Arrange real persisted pending rows; eligibility/generation is outside this
  * journey. The browser then uses unmodified listing/dismissal HTTP handlers. */
-export function seedInvitations(email: string): number[] {
+export interface InvitationSeed {
+  targetType: 'habit' | 'practice' | 'course' | 'sangha' | 'embodied_community';
+  targetId?: number | null;
+  kind: 'readiness' | 'consistency' | 'mastery';
+}
+
+const DECLINE_SEEDS: readonly InvitationSeed[] = [
+  { targetType: 'habit', kind: 'consistency' },
+  { targetType: 'practice', kind: 'consistency' },
+  { targetType: 'course', kind: 'consistency' },
+];
+
+export function seedInvitations(
+  email: string,
+  seeds: readonly InvitationSeed[] = DECLINE_SEEDS,
+): number[] {
   const lane = readLaneState();
   if (lane === null) throw new Error('Missing isolated database');
   const code = `
@@ -45,14 +60,20 @@ async def main():
     engine = create_async_engine(normalize_database_url(os.environ['DATABASE_URL']))
     async with AsyncSession(engine, expire_on_commit=False) as session:
         user = (await session.execute(select(User).where(User.email == sys.argv[1]))).scalar_one()
-        rows = [InvitationSignal(user_id=user.id, target_type=t, kind='consistency') for t in ['habit', 'practice', 'course']]
+        seeds = json.loads(sys.argv[2])
+        rows = [InvitationSignal(
+            user_id=user.id,
+            target_type=seed['targetType'],
+            target_id=seed.get('targetId'),
+            kind=seed['kind'],
+        ) for seed in seeds]
         session.add_all(rows)
         await session.commit()
         print(json.dumps([row.id for row in rows]))
     await engine.dispose()
 asyncio.run(main())
 `;
-  const result = spawnSync(pythonExecutable(), ['-c', code, email], {
+  const result = spawnSync(pythonExecutable(), ['-c', code, email, JSON.stringify(seeds)], {
     cwd: BACKEND_DIR,
     encoding: 'utf8',
     env: { ...process.env, PYTHONPATH: 'src', DATABASE_URL: lane.databaseUrl },

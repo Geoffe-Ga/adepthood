@@ -34,6 +34,7 @@ from sqlalchemy import CursorResult, case, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
+from bounds import INT32_MAX, INT32_MIN
 from domain.dates import seconds_until_next_utc_midnight, utc_day_start
 from domain.entitlements import refuse_if_ai_access_revoked
 from errors import bad_request, payment_required, too_many_requests
@@ -43,6 +44,7 @@ from models.wallet_audit import (
     BUCKET_OFFERING,
     GENERATION_REFUND_REASONS,
     GENERATION_SPEND_REASONS,
+    REASON_ADMIN_ADJUSTMENT,
     REASON_ADMIN_GRANT,
     REASON_GUMROAD_PURCHASE,
     REASON_GUMROAD_REFUND,
@@ -56,6 +58,10 @@ from models.wallet_audit import (
 from services.usage import compute_next_reset, get_daily_generation_ceiling, get_monthly_cap
 
 logger = logging.getLogger(__name__)
+
+
+class WalletBalanceOutOfRangeError(ValueError):
+    """A wallet mutation would exceed the database's signed-int32 range."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,7 +391,10 @@ async def _reverse_offering_spend(
     """
     result = await session.execute(
         update(User)
-        .where(col(User.id) == user_id)
+        .where(
+            col(User.id) == user_id,
+            col(User.offering_balance) < INT32_MAX,
+        )
         .values(offering_balance=col(User.offering_balance) + 1)
         .returning(col(User.monthly_messages_used), col(User.offering_balance))
     )
@@ -622,16 +631,29 @@ async def _credit_offering(
     lets a credit land atomically alongside whatever else it guards.
 
     Returns the post-credit balance, or ``None`` when no row matched
-    ``user_id`` (in which case nothing is staged).
+    ``user_id`` (in which case nothing is staged). Raises
+    :class:`WalletBalanceOutOfRangeError` when the user exists but applying the
+    full delta would exceed the signed-int32 storage range. The guarded
+    predicate prevents PostgreSQL from evaluating an overflowing addition.
     """
+    if not INT32_MIN <= amount <= INT32_MAX:
+        raise WalletBalanceOutOfRangeError
+    range_guard = (
+        col(User.offering_balance) <= INT32_MAX - amount
+        if amount > 0
+        else col(User.offering_balance) >= INT32_MIN - amount
+    )
     result = await session.execute(
         update(User)
-        .where(col(User.id) == user_id)
+        .where(col(User.id) == user_id, range_guard)
         .values(offering_balance=col(User.offering_balance) + amount)
         .returning(col(User.offering_balance))
     )
     new_balance = result.scalar()
     if new_balance is None:
+        user_exists = await session.scalar(select(User.id).where(col(User.id) == user_id))
+        if user_exists is not None:
+            raise WalletBalanceOutOfRangeError
         return None
     new_balance_int = int(new_balance)
     _stage_audit(
@@ -683,6 +705,50 @@ async def add_balance(
     actor = actor_user_id if actor_user_id is not None else user_id
     reason = REASON_ADMIN_GRANT if actor != user_id else REASON_SELF_GRANT
     return await _credit_offering(session, user_id, amount, reason=reason, actor_user_id=actor)
+
+
+async def adjust_balance(
+    session: AsyncSession,
+    user_id: int,
+    delta: int,
+    *,
+    actor_user_id: int,
+) -> int | None:
+    """Atomically apply a signed admin correction and stage its wallet audit.
+
+    ``None`` means the target exists but the resulting value would not fit the
+    PostgreSQL ``integer`` column (or the target disappeared after validation).
+    The guarded predicate is evaluated before addition, so PostgreSQL never has
+    to evaluate an overflowing ``offering_balance + delta`` expression.
+    """
+    range_guard = (
+        col(User.offering_balance) <= INT32_MAX - delta
+        if delta > 0
+        else col(User.offering_balance) >= INT32_MIN - delta
+    )
+    result = await session.execute(
+        update(User)
+        .where(col(User.id) == user_id, range_guard)
+        .values(offering_balance=col(User.offering_balance) + delta)
+        .returning(col(User.offering_balance))
+    )
+    new_balance = result.scalar()
+    if new_balance is None:
+        return None
+    new_balance_int = int(new_balance)
+    _stage_audit(
+        session,
+        _AuditEntry(
+            user_id=user_id,
+            actor_user_id=actor_user_id,
+            bucket=BUCKET_OFFERING,
+            reason=REASON_ADMIN_ADJUSTMENT,
+            delta=Decimal(delta),
+            balance_before=Decimal(new_balance_int - delta),
+            balance_after=Decimal(new_balance_int),
+        ),
+    )
+    return new_balance_int
 
 
 async def grant_purchase_credit(session: AsyncSession, user_id: int, amount: int) -> int | None:

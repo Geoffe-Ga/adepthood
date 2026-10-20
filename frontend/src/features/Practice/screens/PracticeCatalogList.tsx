@@ -446,9 +446,18 @@ interface SectionFooterProps {
 }
 
 const SECTION_EMPTY_COPY: Readonly<Record<Section, { title: string; body: string }>> = {
-  presets: { title: 'No presets here', body: 'No curated practices match this filter yet.' },
-  drafts: { title: 'No drafts yet', body: 'Author a practice and it lands here.' },
-  imported: { title: 'Nothing imported', body: 'Practices shared with you will appear here.' },
+  presets: {
+    title: 'No presets here',
+    body: 'Curated practices that fit this view land here, ready to try.',
+  },
+  drafts: {
+    title: 'No drafts yet',
+    body: 'Practices you author land here, ready to shape and use.',
+  },
+  imported: {
+    title: 'Nothing imported',
+    body: 'Practices shared with you will land here, ready to explore.',
+  },
 };
 
 /**

@@ -46,4 +46,30 @@ describe('useRefreshAfterEdit (#2891)', () => {
       process.off('unhandledRejection', unhandled);
     }
   });
+
+  it('serializes refresh batches so an older response cannot land after a newer one', async () => {
+    let releaseFirst!: () => void;
+    const first = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const notes = jest
+      .fn<Refresher>()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValue(undefined);
+    const { result } = renderHook(() => useRefreshAfterEdit());
+    result.current.refreshersRef.current = [notes];
+
+    act(() => {
+      result.current.refreshNow();
+      result.current.refreshNow();
+    });
+    expect(notes).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      releaseFirst();
+      await first;
+      await Promise.resolve();
+    });
+    expect(notes).toHaveBeenCalledTimes(2);
+  });
 });

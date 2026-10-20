@@ -10,6 +10,8 @@ import {
   DEMO_FRONTEND_PORT,
   HABIT_DEMO_ENV,
   HABIT_DEMO_FLAG,
+  SANGHA_INVITE_FLAG,
+  SANGHA_INVITE_URL,
   frontendServerEnv,
   type LaneEnv,
 } from '../e2e/frontendEnv';
@@ -40,9 +42,19 @@ describe('frontendServerEnv', () => {
     });
 
     expect(env[HABIT_DEMO_FLAG]).toBe('false');
+    expect(env[SANGHA_INVITE_FLAG]).toBe(SANGHA_INVITE_URL);
     expect(env.PATH).toBe('/bin');
     expect(env.CI).toBe('1');
     expect(env.EXPO_PUBLIC_API_BASE_URL).toBe(API_URL);
+  });
+
+  it('never lets inherited shell state hide or redirect the shared lane Sangha door', () => {
+    expect(
+      frontendServerEnv(API_URL, {
+        ...PARENT_ENV,
+        [SANGHA_INVITE_FLAG]: '',
+      })[SANGHA_INVITE_FLAG],
+    ).toBe(SANGHA_INVITE_URL);
   });
 
   it('builds a demo bundle only when the caller asks for one, with exactly "true"', () => {

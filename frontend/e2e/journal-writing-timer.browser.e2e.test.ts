@@ -191,9 +191,9 @@ for (const viewport of [
       idleBand.height,
     );
     expect(
-      idleContent.y + idleContent.height,
-      'short content stays anchored to the bottom of the band',
-    ).toBeCloseTo(idleBand.y + idleBand.height, 1);
+      idleBand.y + idleBand.height - (idleContent.y + idleContent.height),
+      'short content stays anchored above the phone dock padding',
+    ).toBeCloseTo(viewport.width === 390 ? 12 : 0, 1);
     await page.clock.fastForward(4_000);
     await expectReachable(page, 'journal-finish-button');
     await expectReachable(page, 'get-resonance-button');
@@ -202,14 +202,22 @@ for (const viewport of [
     await page.clock.fastForward(4_000);
     await expectReachable(page, 'journal-finish-button');
     await expectReachable(page, 'get-resonance-button');
-    expect((await boxOf(sheet, 'running sheet')).height).toBeCloseTo(idleSheet.height, 2);
+    const runningSheet = await boxOf(sheet, 'running sheet');
+    if (viewport.width === 390) {
+      expect(
+        runningSheet.height,
+        'the running overlay gives the phone sheet back the idle dock reservation',
+      ).toBeGreaterThan(idleSheet.height);
+    } else {
+      expect(runningSheet.height).toBeCloseTo(idleSheet.height, 2);
+    }
     await page.screenshot({ path: testInfo.outputPath('running-timer.png') });
 
     await page.clock.fastForward(20 * 60_000);
     await expect(page.getByTestId('writing-session-banner')).toBeVisible();
     await expectReachable(page, 'journal-finish-button');
     await expectReachable(page, 'get-resonance-button');
-    expect((await boxOf(sheet, 'finished sheet')).height).toBeCloseTo(idleSheet.height, 2);
+    expect((await boxOf(sheet, 'finished sheet')).height).toBeCloseTo(runningSheet.height, 2);
     const note = await boxOf(page.getByTestId('writing-session-banner'), 'finished note');
     expect(note.width).toBeLessThanOrEqual(680);
     await page.screenshot({ path: testInfo.outputPath('finished-note.png') });
@@ -301,6 +309,12 @@ test('a long habit offer scrolls without covering the page actions on a short ph
   await page.clock.install();
   const sheetHeight = (await boxOf(page.getByTestId('journal-sheet'), 'sheet')).height;
   await page.getByTestId('writing-timer-start').click();
+  const floatingSheetHeight = (await boxOf(page.getByTestId('journal-sheet'), 'running sheet'))
+    .height;
+  expect(
+    floatingSheetHeight,
+    'starting restores the space reserved for the idle dock',
+  ).toBeGreaterThan(sheetHeight);
   await page.clock.fastForward(20 * 60_000);
   await page.getByTestId('save-as-habit-accept').click();
   await expect(page.getByTestId('writing-habit-picker')).toBeVisible();
@@ -342,7 +356,7 @@ test('a long habit offer scrolls without covering the page actions on a short ph
   await expectReachable(page, 'journal-finish-button');
   await expectReachable(page, 'get-resonance-button');
   expect((await boxOf(page.getByTestId('journal-sheet'), 'sheet')).height).toBeCloseTo(
-    sheetHeight,
+    floatingSheetHeight,
     2,
   );
   await page.screenshot({ path: testInfo.outputPath('many-habits-dismiss.png') });
