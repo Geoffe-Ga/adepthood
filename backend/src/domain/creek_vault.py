@@ -47,7 +47,7 @@ from uuid import UUID
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.17.0"
+CONTRACT_VERSION = "0.18.0"
 
 
 class CreekCapability(enum.StrEnum):

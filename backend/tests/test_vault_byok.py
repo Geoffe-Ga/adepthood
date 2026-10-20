@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pickle
 from typing import TYPE_CHECKING, Final, cast
 
@@ -13,6 +14,7 @@ from domain.creek_vault import (
     VaultKeyProvider,
     VaultProviderKey,
 )
+from scripts.creek_contract_drift import BUNDLE_ROOT
 from services.creek_vault_client import _parse_handshake
 from services.creek_vault_relay import parse_request_key_providers
 from services.reflection_boundary import ReflectionBoundary
@@ -121,6 +123,23 @@ def test_a_conformant_handshake_carries_its_key_vendors() -> None:
 
     assert parsed.accepts_key(VaultKeyProvider.ANTHROPIC)
     assert not parsed.accepts_key(VaultKeyProvider.OPENAI)
+
+
+def test_creeks_published_capability_example_is_read_through_to_accepts_key() -> None:
+    """The vendored 0.18 ``capabilities/success`` cell, parsed as the client parses it.
+
+    Creek's own published document, not a hand-written one: if the bundle's
+    field name or vendor spelling ever moves, the relay must stop admitting
+    keys rather than keep reading a field nobody serves.
+    """
+    example = json.loads(
+        (BUNDLE_ROOT / "examples" / "capabilities" / "success.json").read_text(encoding="utf-8")
+    )
+
+    parsed = _parse_handshake(example)
+
+    assert parsed.request_key_providers == frozenset(VaultKeyProvider)
+    assert all(parsed.accepts_key(vendor) for vendor in VaultKeyProvider)
 
 
 def test_an_unavailable_vault_accepts_no_key() -> None:
