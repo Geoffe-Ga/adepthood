@@ -9451,7 +9451,7 @@
         "type": "object"
       },
       "VaultKeyProvider": {
-        "description": "A vendor whose writer-supplied key a managed vault will spend (Creek contract 0.18).\n\nCreek's ADR 0015 (Creek-Vault#1873) lets a managed vault answer OPEN and\nPERSONAL work with the writer's own Anthropic or OpenAI key, sent per\nrequest. A vault lists the vendors it accepts in its handshake's\n``request_key_providers``; anything else on the wire is dropped at the parse\nboundary rather than trusted.",
+        "description": "A vendor whose writer-supplied key a managed vault will spend (Creek contract 0.18).\n\nCreek-Vault's ADR-0015 (Creek-Vault#1873) lets a managed vault answer OPEN and\nPERSONAL work with the writer's own Anthropic or OpenAI key, sent per\nrequest. A vault lists the vendors it accepts in its handshake's\n``request_key_providers``; anything else on the wire is dropped at the parse\nboundary rather than trusted.",
         "enum": [
           "anthropic",
           "openai"
