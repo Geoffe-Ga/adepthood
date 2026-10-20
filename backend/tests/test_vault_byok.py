@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import pickle
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final, cast
 
 import pytest
@@ -15,8 +17,16 @@ from domain.creek_vault import (
     VaultProviderKey,
 )
 from scripts.creek_contract_drift import BUNDLE_ROOT
+from services import creek_vault_pipeline as pipeline
 from services.creek_vault_client import _parse_handshake
-from services.creek_vault_relay import parse_request_key_providers
+from services.creek_vault_pipeline import _Continuation as Continuation
+from services.creek_vault_pipeline import _schedule_continuation as schedule_continuation
+from services.creek_vault_relay import (
+    PROVIDER_KEY_HEADER,
+    forwarding_provider_key,
+    parse_request_key_providers,
+    relay_headers,
+)
 from services.reflection_boundary import ReflectionBoundary
 from services.vault_byok import key_vendor, relayable_key, vault_provider_key
 from tests.provider_transport import ANTHROPIC_KEY, OPENAI_KEY
@@ -225,3 +235,50 @@ async def test_no_probe_without_a_vault_bound_key() -> None:
     )
     assert vault.probes == 0
     assert session.commits == 0
+
+
+class _ScheduledLadder:
+    """Stands in for a continuation's ladder: records the headers a send would carry."""
+
+    def __init__(self) -> None:
+        self.headers: Mapping[str, str] | None = None
+
+    async def __call__(self, _continuation: object) -> None:
+        await asyncio.sleep(0)
+        self.headers = relay_headers(spends_key=True, handshake=_handshake(VaultKeyProvider.OPENAI))
+
+
+@pytest.mark.asyncio
+async def test_a_continuation_scheduled_inside_a_keyed_request_carries_no_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The writer's key ends with the reply: a background ladder never inherits it.
+
+    ``asyncio.create_task`` copies the scheduling context, so without care a
+    continuation spawned inside :func:`forwarding_provider_key` would keep
+    relaying the key after the response was sent -- contradicting the promise
+    that nothing of the key is kept once the reply is back.
+    """
+    ladder = _ScheduledLadder()
+    monkeypatch.setattr(pipeline, "_continue_ladder", ladder)
+    continuation = cast(
+        "Continuation",
+        _FakeContinuation(user_id=3437, stage=pipeline.VaultPipelineStage.CLASSIFY),
+    )
+    key = VaultProviderKey(provider=VaultKeyProvider.OPENAI, _secret=_SECRET)
+
+    with forwarding_provider_key(key):
+        in_request = relay_headers(spends_key=True, handshake=_handshake(VaultKeyProvider.OPENAI))
+        assert schedule_continuation(continuation)
+    await pipeline.wait_for_vault_pipeline_tasks()
+
+    assert in_request[PROVIDER_KEY_HEADER] == _SECRET
+    assert ladder.headers == {}
+
+
+class _FakeContinuation:
+    """The two fields scheduling reads from a continuation."""
+
+    def __init__(self, *, user_id: int, stage: pipeline.VaultPipelineStage) -> None:
+        self.user_id = user_id
+        self.stage = stage

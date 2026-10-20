@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import Context, ContextVar, copy_context
 from typing import TYPE_CHECKING, Final
 
 from domain.creek_vault import VaultKeyProvider
@@ -38,7 +38,8 @@ PROVIDER_KEY_HEADER: Final = "X-Creek-Provider-Key"
 # around a vault-bound writer's own dial, and read only by :func:`relay_headers`.
 # A context variable rather than a parameter because the key must reach three
 # sends through protocol methods every fake vault implements; it is reset when the
-# block exits, so nothing outside the dial that set it can read it.
+# block exits, and a task the dial leaves running starts without it
+# (:func:`keyless_context`), so nothing outside the dial that set it can read it.
 _FORWARDED_PROVIDER_KEY: ContextVar[VaultProviderKey | None] = ContextVar(
     "creek_vault_forwarded_provider_key", default=None
 )
@@ -58,6 +59,23 @@ def forwarding_provider_key(key: VaultProviderKey | None) -> Iterator[None]:
         yield
     finally:
         _FORWARDED_PROVIDER_KEY.reset(token)
+
+
+def keyless_context() -> Context:
+    """A copy of the current context with no key forwarding, for work that outlives the request.
+
+    ``asyncio.create_task`` runs a task in a copy of the context that spawned
+    it, so a background task started inside :func:`forwarding_provider_key`
+    would otherwise keep relaying the writer's key after the reply is back.
+    Every task a keyed route can leave running is started in this context
+    instead, so the key ends with the request that carried it.
+
+    Returns:
+        The caller's context, copied, with the forwarded key cleared.
+    """
+    context = copy_context()
+    context.run(_FORWARDED_PROVIDER_KEY.set, None)
+    return context
 
 
 def relay_headers(*, spends_key: bool, handshake: HandshakeResult) -> Mapping[str, str]:
