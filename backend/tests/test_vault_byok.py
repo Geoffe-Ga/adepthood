@@ -237,6 +237,28 @@ async def test_no_probe_without_a_vault_bound_key() -> None:
     assert session.commits == 0
 
 
+def test_a_vault_that_does_not_spend_the_vendor_is_never_sent_the_key() -> None:
+    """The key is forwarding, but the handshake lists another vendor: no header leaves.
+
+    The send-time half of the decision, separate from the onboarding read, which
+    is lenient and does not ask the vault at all.
+    """
+    key = VaultProviderKey(provider=VaultKeyProvider.OPENAI, _secret=_SECRET)
+
+    with forwarding_provider_key(key):
+        spends_openai = relay_headers(
+            spends_key=True, handshake=_handshake(VaultKeyProvider.OPENAI)
+        )
+        spends_anthropic = relay_headers(
+            spends_key=True, handshake=_handshake(VaultKeyProvider.ANTHROPIC)
+        )
+        spends_none = relay_headers(spends_key=True, handshake=_handshake())
+
+    assert spends_openai[PROVIDER_KEY_HEADER] == _SECRET
+    assert spends_anthropic == {}
+    assert spends_none == {}
+
+
 class _ScheduledLadder:
     """Stands in for a continuation's ladder: records the headers a send would carry."""
 
