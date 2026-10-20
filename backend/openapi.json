@@ -8707,13 +8707,6 @@
             ],
             "title": "Resonance Route",
             "type": "string"
-          },
-          "vault_key_vendors": {
-            "items": {
-              "$ref": "#/components/schemas/VaultKeyProvider"
-            },
-            "title": "Vault Key Vendors",
-            "type": "array"
           }
         },
         "required": [
@@ -9465,6 +9458,20 @@
         ],
         "title": "VaultKeyProvider",
         "type": "string"
+      },
+      "VaultKeyVendorsResponse": {
+        "description": "The vendors whose writer key the caller's vault would write with (#3437).\n\nEmpty for an app-provider caller and for any vault that advertises none,\nso the writer is shown a credit price unless their own key will pay.",
+        "properties": {
+          "vendors": {
+            "items": {
+              "$ref": "#/components/schemas/VaultKeyProvider"
+            },
+            "title": "Vendors",
+            "type": "array"
+          }
+        },
+        "title": "VaultKeyVendorsResponse",
+        "type": "object"
       },
       "VaultPraxisKind": {
         "description": "The five kinds a praxis page may be, spelled Creek's way.\n\nCreek's vocabulary rather than one adepthood invented, for the reason\n:class:`VaultReflectionStatus` is: these are wire strings a payload is\nmatched against, and a member spelled our way would never match anything a\nvault sent. Unlike a margin note's kind there is no projection onto an\nadepthood word, because adepthood has no praxis vocabulary of its own to\nproject onto -- a praxis page is the writer's own, named by their vault.",
@@ -28889,7 +28896,7 @@
     },
     "/user/usage": {
       "get": {
-        "description": "Return the authenticated user's message-credit usage for the current month.\n\nBUG-BM-015: compute the monthly rollover without committing — a GET must not\nmutate persistent state. The UPDATE runs inside the session so the response\nreflects the post-reset values, but the transaction lifecycle stays\nconsistent with the rest of the service (the rollover UPDATE is idempotent).\n\n``vault_key_vendors`` tells a vault-bound client which vendors' keys its\nvault would write with (#3437), so a writer whose own key will pay is shown\nthat rather than a credit price. It is read first, before the rollover is\nstaged, and the read-only transaction the dependencies opened is ended\nbefore the probe so no pooled connection is held across it.",
+        "description": "Return the authenticated user's message-credit usage for the current month.\n\nBUG-BM-015: compute the monthly rollover without committing — a GET must not\nmutate persistent state. The UPDATE runs inside the session so the response\nreflects the post-reset values, but the transaction lifecycle stays\nconsistent with the rest of the service (the rollover UPDATE is idempotent).",
         "operationId": "get_usage_user_usage_get",
         "parameters": [
           {
@@ -28982,6 +28989,106 @@
           }
         },
         "summary": "Get Usage",
+        "tags": [
+          "botmason"
+        ]
+      }
+    },
+    "/user/vault-key-vendors": {
+      "get": {
+        "description": "Ask the caller's vault which vendors' writer keys it would write with (#3437).\n\nThe one usage-adjacent read that dials, kept apart from ``GET /user/usage``\nso a price snapshot still never resolves or reaches a vault. Only a\nvault-bound caller is asked about; the probe is the capability handshake,\nwhich carries no stored writing and no key. Empty for an app-provider\ncaller, an unreachable vault, and any vault that advertises none (Creek\ncontract 0.18 ``request_key_providers``).",
+        "operationId": "get_vault_key_vendors_user_vault_key_vendors_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultKeyVendorsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Vault Key Vendors",
         "tags": [
           "botmason"
         ]

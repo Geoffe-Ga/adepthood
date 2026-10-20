@@ -102,6 +102,8 @@ _VAULT_KEY: Final = "creek-vault-matrix-key"  # pragma: allowlist secret
 
 _VAULT_HOST: Final = "vault-own.example.test"
 _REPLACEMENT_HOST: Final = "vault-replacement.example.test"
+#: The read that tells a client which vendors' keys its vault would write with.
+_VENDORS: Final = "/user/vault-key-vendors"
 #: Public answers, so the real pin admits both; distinct, so an address alone
 #: tells which vault a socket went to.
 _ADDRESSES: Final = {_VAULT_HOST: "93.184.216.34", _REPLACEMENT_HOST: "93.184.216.35"}
@@ -136,7 +138,7 @@ _HANDSHAKE: Final[dict[str, object]] = {
     "ontology_version": "1.0.0",
     "attestation": None,
 }
-#: A managed vault (Creek ADR 0015): it will write with a writer's own
+#: A managed vault (Creek-Vault ADR-0015): it will write with a writer's own
 #: Anthropic or OpenAI key, sent per request, and runs the classification pass.
 _MANAGED_HANDSHAKE: Final[dict[str, object]] = {
     **_HANDSHAKE,
@@ -838,7 +840,7 @@ async def test_the_seam_spy_sees_an_app_provider_writer(
     assert harness.edge.names() == set()
 
 
-# ── A managed vault spends the writer's own key (#3437, Creek ADR 0015) ────────
+# ── A managed vault spends the writer's own key (#3437, Creek-Vault ADR-0015) ────────
 
 #: The operations whose vault call runs a model, so the ones a managed vault is
 #: handed the writer's key for. Detection and page reading have no vault
@@ -990,21 +992,35 @@ async def test_an_intimate_entry_with_a_key_never_reaches_the_managed_vault(
 
 
 @pytest.mark.asyncio
-async def test_the_usage_read_discloses_the_vendors_a_managed_vault_writes_with(
+async def test_the_vendor_read_discloses_the_vendors_a_managed_vault_writes_with(
     harness: Harness,
 ) -> None:
-    """The client learns, before any charge, that the writer's key would pay."""
+    """The client learns, before any charge, that the writer's key would pay.
+
+    From its own read, never from the usage snapshot: a price snapshot still
+    dials nothing, even for a managed vault's writer, and the vendor read only
+    handshakes -- no key and no stored writing rides it.
+    """
     managed = await _vault_bound_writer(harness, "usage_managed")
     harness.edge.managed = True
-    managed_usage = await harness.client.get("/user/usage", headers=managed.headers)
+    harness.edge.forget()
+    usage = await harness.client.get("/user/usage", headers=managed.headers)
+    usage_dials = list(harness.edge.dials)
+    managed_vendors = await harness.client.get(_VENDORS, headers=managed.headers)
     harness.edge.managed = False
-    self_connected = await harness.client.get("/user/usage", headers=managed.headers)
+    self_connected = await harness.client.get(_VENDORS, headers=managed.headers)
     app_writer = await _signup(harness.client, harness.session, "usage_app")
-    app_usage = await harness.client.get("/user/usage", headers=app_writer.headers)
+    harness.edge.forget()
+    app_vendors = await harness.client.get(_VENDORS, headers=app_writer.headers)
 
-    assert managed_usage.json()["vault_key_vendors"] == ["anthropic", "openai"]
-    assert self_connected.json()["vault_key_vendors"] == []
-    assert app_usage.json()["vault_key_vendors"] == []
+    assert usage.status_code == HTTPStatus.OK, usage.text
+    assert usage_dials == []
+    assert "vault_key_vendors" not in usage.json()
+    assert managed_vendors.json() == {"vendors": ["anthropic", "openai"]}
+    assert self_connected.json() == {"vendors": []}
+    assert app_vendors.json() == {"vendors": []}
+    assert harness.edge.dials == []
+    assert harness.edge.keyed() == []
 
 
 # ── The canary: the relayed key leaves no trace (#3437) ───────────────────────
@@ -1058,6 +1074,7 @@ async def test_a_relayed_key_is_never_logged_persisted_or_echoed(
             )
         )
         responses.append(await harness.client.get("/user/usage", headers=keyed))
+        responses.append(await harness.client.get(_VENDORS, headers=keyed))
         harness.edge.condition = Condition.VAULT_TIMEOUT
         responses.append(await harness.client.post(f"/journal/{entry_id}/resonance", headers=keyed))
 

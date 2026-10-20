@@ -61,6 +61,13 @@ class UsageResponse(BaseModel):
     resonance_route: PayerRoute
     # Only the explicitly armed test seam can generate a keyless app-provider demo.
     resonance_demo_available: bool = False
-    # Vendors whose writer key the caller's vault would write with (#3437); empty
-    # for an app-provider caller and for any vault that advertises none.
-    vault_key_vendors: list[VaultKeyProvider] = Field(default_factory=list)
+
+
+class VaultKeyVendorsResponse(BaseModel):
+    """The vendors whose writer key the caller's vault would write with (#3437).
+
+    Empty for an app-provider caller and for any vault that advertises none,
+    so the writer is shown a credit price unless their own key will pay.
+    """
+
+    vendors: list[VaultKeyProvider] = Field(default_factory=list)

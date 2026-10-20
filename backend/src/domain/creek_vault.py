@@ -473,7 +473,7 @@ def wire_ceiling_for(ceiling: VaultTierCeiling) -> WireTierCeiling:
 class VaultKeyProvider(enum.StrEnum):
     """A vendor whose writer-supplied key a managed vault will spend (Creek contract 0.18).
 
-    Creek's ADR 0015 (Creek-Vault#1873) lets a managed vault answer OPEN and
+    Creek-Vault's ADR-0015 (Creek-Vault#1873) lets a managed vault answer OPEN and
     PERSONAL work with the writer's own Anthropic or OpenAI key, sent per
     request. A vault lists the vendors it accepts in its handshake's
     ``request_key_providers``; anything else on the wire is dropped at the parse

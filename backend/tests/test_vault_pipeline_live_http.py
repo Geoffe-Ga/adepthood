@@ -137,7 +137,7 @@ class _SlowCreekPeer:
             "contract_version": CONTRACT_VERSION,
             "contract_minor": "0.18",
             "supported_contract_minors": ["0.18"],
-            # A self-connected vault spends no caller's key (Creek ADR 0015).
+            # A self-connected vault spends no caller's key (Creek-Vault ADR-0015).
             "request_key_providers": [],
             "ontology_version": "aptitude-wavelength/2026-05-23",
             "tier_model": {

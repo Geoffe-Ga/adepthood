@@ -1,10 +1,10 @@
 """A writer's own provider key, relayed to their vault for one dial (#3437).
 
 ADR 0009's 2026-10-16 amendment: a vault-bound writer's BYOK key travels device
--> adepthood -> vault, per request, so a managed vault can write with it (Creek
-ADR 0015, contract 0.18). This module is that relay's whole mechanism, kept out
-of :mod:`services.creek_vault_client` so the adapter itself only asks one
-question per send: :func:`relay_headers`.
+-> adepthood -> vault, per request, so a managed vault can write with it
+(Creek-Vault ADR-0015, contract 0.18). This module is that relay's whole
+mechanism, kept out of :mod:`services.creek_vault_client` so the adapter itself
+only asks one question per send: :func:`relay_headers`.
 
 Three conditions, all required, decide whether a send carries the key:
 
