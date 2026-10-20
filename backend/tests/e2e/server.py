@@ -225,6 +225,10 @@ async def _stub_license_check(
         email=_STUB_LICENSE_PURCHASER_EMAIL,
         product_id=_STUB_LICENSE_PRODUCT_ID,
         sale_id=f"{_STUB_LICENSE_SALE_PREFIX}{(license_key or '').strip()}",
+        # An explicit zero-price fixture, not evidence about Gumroad itself.
+        # The browser lane proves what the product does after verification;
+        # integrations.gumroad keeps the real response-contract coverage.
+        price=0,
         refunded=False,
         chargebacked=False,
     )

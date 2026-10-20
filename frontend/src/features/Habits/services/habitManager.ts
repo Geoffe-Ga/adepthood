@@ -51,6 +51,7 @@ import {
   getActiveUserGeneration,
   isActiveUserTransitioning,
   parseUserId,
+  subscribeActiveUser,
 } from '../../../storage/userScope';
 import { useDroppedCheckInStore } from '../../../store/useDroppedCheckInStore';
 import { useHabitStore } from '../../../store/useHabitStore';
@@ -97,6 +98,8 @@ import {
   rebasePendingLogUnitRollbacks,
   takeLogUnitRollbackBaseline,
 } from './logUnitOrder';
+import { ReplayCalendarRegistry } from './replayCalendarRegistry';
+import type { ReplayCalendar } from './replayCalendarRegistry';
 import { classifyReplayFailure, hasExhaustedRetries, nextHeadState } from './replayPolicy';
 import {
   ClientMintedIdError,
@@ -1262,10 +1265,6 @@ const hydrateDroppedCheckIns = async (
  * BUG-FE-HABIT-205). Same-day replays omit the field so the server
  * stamps real wall-clock time — the online path's genuine-backfill rule.
  */
-interface ReplayCalendar {
-  zone: string;
-}
-
 const hasReplayWork = (pending: PendingCheckIn[], scope: HabitMutationScope): boolean =>
   pending.length > 0 && scope.current();
 
@@ -1321,7 +1320,16 @@ const activeReplays = new Map<
   number | null,
   { scope: HabitMutationScope; promise: Promise<void> }
 >();
-const replayCalendars = new Map<number | null, ReplayCalendar>();
+const replayCalendars = new ReplayCalendarRegistry({
+  currentOwner: getActiveUser,
+  transitioning: isActiveUserTransitioning,
+  // A transition invalidates the departing scope before its storage wipe
+  // starts. The registry drops only calendar lookup state: an in-flight drain
+  // still owns its object and remains in activeReplays until its finally block.
+  subscribe: (listener) => {
+    subscribeActiveUser(listener);
+  },
+});
 
 const replayPendingCheckIns = (
   owner: number | null,
@@ -1330,12 +1338,22 @@ const replayPendingCheckIns = (
 ): Promise<void> => {
   const active = activeReplays.get(owner);
   if (active?.scope.current()) return active.promise;
-  const replay = (async () => {
+
+  // A stale replay can still have a POST on the wire after A -> B -> A. Keep
+  // it as an owner-level serialization barrier: the returning session must
+  // retry after that request settles, never concurrently with it. Publishing
+  // this chained promise before waiting also makes every overlapping caller
+  // in the returning session converge on the same follow-up drain.
+  const predecessor = active?.promise;
+  let replay!: Promise<void>;
+  replay = (async () => {
     try {
+      if (predecessor) await predecessor.catch(() => undefined);
+      if (!scope.current()) return;
       await drainPendingCheckIns(owner, calendar, scope);
       if (scope.current()) await hydrateDroppedCheckIns(owner, scope);
     } finally {
-      if (activeReplays.get(owner)?.scope === scope) activeReplays.delete(owner);
+      if (activeReplays.get(owner)?.promise === replay) activeReplays.delete(owner);
     }
   })();
   activeReplays.set(owner, { scope, promise: replay });
@@ -1396,15 +1414,11 @@ const prepareRefreshCalendar = (tz: string | undefined, options: HabitRefreshOpt
   if (tz !== undefined) lastKnownTz = tz;
   const zone = tz ?? lastKnownTz ?? detectDeviceTimezone();
   const owner = getActiveUser();
-  const calendar = replayCalendars.get(owner) ?? { zone };
   const replayReady = options.replayCheckIns !== false && !isUserTimezonePending(owner);
   // Register at request entry, so an older fetch finishing later cannot
   // overwrite the calendar carried by a newer authenticated refresh.
-  if (replayReady) {
-    calendar.zone = zone;
-    replayCalendars.set(owner, calendar);
-  }
-  return { owner, calendar, zone, replayReady };
+  const prepared = replayCalendars.prepare(owner, zone, replayReady);
+  return { owner, calendar: prepared.calendar, zone, replayReady: prepared.replayReady };
 };
 
 const refreshReplayState = async (

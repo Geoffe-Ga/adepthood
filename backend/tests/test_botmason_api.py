@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col
 
 import services.botmason as botmason_mod
+from bounds import INT32_MAX
 from models.user import User
 from services.botmason import (
     LLM_API_KEY_MAX_LENGTH,
@@ -231,6 +232,31 @@ async def test_add_balance_accepts_upper_bound(
     resp = await async_client.post("/user/balance/add", json={"amount": 1_000_000}, headers=headers)
     assert resp.status_code == HTTPStatus.OK
     assert resp.json()["balance"] == 1_000_000
+
+
+@pytest.mark.asyncio
+async def test_add_balance_reports_storage_overflow_without_mutating(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A full wallet gets a stable domain error, never a 500 or missing-user lie."""
+    headers = await _signup_admin(async_client, db_session)
+    await db_session.execute(
+        update(User)
+        .where(col(User.email) == "alice@example.com")
+        .values(offering_balance=INT32_MAX)
+    )
+    await db_session.commit()
+
+    response = await async_client.post(
+        "/user/balance/add",
+        json={"amount": 1},
+        headers=headers,
+    )
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert response.json() == {"detail": "balance_out_of_range"}
+    balance = await async_client.get("/user/balance", headers=headers)
+    assert balance.json()["balance"] == INT32_MAX
 
 
 @pytest.mark.asyncio

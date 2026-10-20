@@ -322,7 +322,7 @@ describe('SettingsHubScreen — vault row', () => {
   // so a break in the copy module cannot take this file's other suites with it.
   const VAULT_ROW_LABEL = 'Where your writing lives';
   const VAULT_ROW_DESCRIPTION =
-    'An optional copy of what you write, kept in a vault Adepthood manages or one you run. Saying yes to sorting your writing by Aspect is a separate choice, and the app is complete without either.';
+    'Sorting lets reflections reach beyond your last few entries. Saying yes to sorting is a separate choice from an optional copy of what you write, kept in a vault Adepthood manages or one you run. The app is complete without either.';
 
   test('renders the vault row first in the Your writing group, before the way in', () => {
     const { getByTestId } = render(<SettingsHubScreen />);

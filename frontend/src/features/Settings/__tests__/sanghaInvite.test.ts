@@ -88,8 +88,16 @@ describe('Sangha copy', () => {
     }
   });
 
-  it('says the app is whole without the Sangha rather than incomplete with it', () => {
-    expect(SANGHA_LEAD).toMatch(/whole without it/u);
+  it('leads with company in the room the reader is in, then names the floor once', () => {
+    expect(SANGHA_LEAD).toBe(
+      'There are people walking this with you, and the point of meeting them is to feel less ' +
+        'alone in the room you are actually in. Adepthood works without it, and the door is ' +
+        'one tap either way.',
+    );
+    expect(SANGHA_LEAD.indexOf('feel less alone')).toBeLessThan(
+      SANGHA_LEAD.indexOf('works without it'),
+    );
+    expect(SANGHA_LEAD.match(/works without it/gu)).toHaveLength(1);
   });
 
   it('names the mechanism that closes the door, so declining needs no hunting', () => {

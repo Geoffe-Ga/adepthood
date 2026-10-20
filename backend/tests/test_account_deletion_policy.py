@@ -451,6 +451,7 @@ async def test_an_erased_actor_is_cleared_off_another_accounts_wallet_history(
     """
     headers, doomed, bystander = seeded_pair
     audit = SQLModel.metadata.tables["walletaudit"]
+    adjustment = SQLModel.metadata.tables["adminbalanceadjustment"]
     await db_session.execute(
         sa.insert(audit).values(
             user_id=bystander.user_id,
@@ -460,6 +461,18 @@ async def test_an_erased_actor_is_cleared_off_another_accounts_wallet_history(
             delta=_GRANTED_CREDITS,
             balance_before=_EMPTY_WALLET,
             balance_after=_GRANTED_CREDITS,
+        ),
+    )
+    await db_session.execute(
+        sa.insert(adjustment).values(
+            target_user_id=bystander.user_id,
+            actor_admin_id=doomed.user_id,
+            delta=int(_GRANTED_CREDITS),
+            balance_after=int(_GRANTED_CREDITS),
+            reason="Corrected after a support review.",
+            source_ip="203.0.113.42",
+            idempotency_key="actor-deletion-regression",
+            request_fingerprint="f" * 64,
         ),
     )
     await db_session.commit()
@@ -486,3 +499,26 @@ async def test_an_erased_actor_is_cleared_off_another_accounts_wallet_history(
         audit.c.actor_user_id.is_(None),
     )
     assert await _count_where(db_session, audit, survivor) == 1
+    adjustment_row = (
+        await db_session.execute(
+            sa.select(
+                adjustment.c.target_user_id,
+                adjustment.c.actor_admin_id,
+                adjustment.c.delta,
+                adjustment.c.balance_after,
+                adjustment.c.reason,
+                adjustment.c.source_ip,
+            ).where(
+                adjustment.c.target_user_id == bystander.user_id,
+                adjustment.c.reason == "Corrected after a support review.",
+            )
+        )
+    ).one()
+    assert adjustment_row == (
+        bystander.user_id,
+        None,
+        int(_GRANTED_CREDITS),
+        int(_GRANTED_CREDITS),
+        "Corrected after a support review.",
+        None,
+    )

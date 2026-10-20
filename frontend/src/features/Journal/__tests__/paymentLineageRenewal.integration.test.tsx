@@ -4,17 +4,25 @@ import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/re
 import React from 'react';
 
 import { fundingOutcome } from '../fundingOutcome';
+import { JOURNAL_HABIT_DEFAULT_GOALS } from '../journalHabitDefaults';
 import ResonanceEssayModal from '../ResonanceEssayModal';
+import { useLinkedHabitCheckOff } from '../useLinkedHabitCheckOff';
 import { usePaymentScope } from '../usePaymentScope';
 import { useResonanceExplainer } from '../useResonanceExplainer';
+import WritingHabitPicker from '../WritingHabitPicker';
+import type { WritingSessionResult } from '../writingSession';
 
 import { auth as authApi, captureSessionToken, refreshSessionToken, resonance } from '@/api';
-import type { Marginalia } from '@/api';
+import type { ApiHabitWithGoals, Marginalia, MettaReturnState } from '@/api';
 import { getAuthSession } from '@/api/sessionToken';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import type { Habit } from '@/features/Habits/Habits.types';
+import { useReturnOfferState } from '@/features/Return/useReturnOfferState';
 import { _resetSerializedWriteForTests } from '@/storage/serializedWrite';
 import { getActiveUser, getActiveUserGeneration, setActiveUser } from '@/storage/userScope';
 import { resetAllStores } from '@/store/registry';
+import { useHabitStore } from '@/store/useHabitStore';
+import { useWritingHabitLinkStore } from '@/store/useWritingHabitLinkStore';
 
 /**
  * #3387, #3409, #3411: Journal payment work across a same-account renewal.
@@ -65,6 +73,7 @@ const HTTP_OK = 200;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_PAYMENT_REQUIRED = 402;
 const HTTP_SERVER_ERROR = 500;
+const HABIT = 20;
 
 const base64Url = (json: object): string =>
   btoa(JSON.stringify(json)).replaceAll('=', '').replaceAll('+', '-').replaceAll('/', '_');
@@ -131,6 +140,78 @@ const LETTER: Reply = {
   },
 };
 
+const apiHabit = (unit: string): ApiHabitWithGoals => ({
+  id: HABIT,
+  name: 'Journaling',
+  icon: '✍️',
+  start_date: '2026-10-01',
+  energy_cost: 1,
+  energy_return: 1,
+  milestone_notifications: false,
+  stage: 'Beige',
+  streak: 0,
+  revealed: true,
+  goals: (['low', 'clear', 'stretch'] as const).map((tier, index) => ({
+    id: index + 1,
+    habit_id: HABIT,
+    title: tier,
+    tier,
+    target: JOURNAL_HABIT_DEFAULT_GOALS[tier],
+    target_unit: unit,
+    frequency: 1,
+    frequency_unit: 'per_day',
+    is_additive: true,
+    goal_group_id: null,
+    completions: [],
+  })),
+});
+
+const localHabit = (unit: string): Habit => ({
+  id: HABIT,
+  name: 'Journaling',
+  icon: '✍️',
+  start_date: new Date('2026-10-01T00:00:00Z'),
+  energy_cost: 1,
+  energy_return: 1,
+  stage: 'Beige',
+  streak: 0,
+  revealed: true,
+  completions: [],
+  goals: apiHabit(unit).goals.map((goal) => ({
+    id: goal.id,
+    title: goal.title,
+    tier: goal.tier as 'low' | 'clear' | 'stretch',
+    target: goal.target,
+    target_unit: goal.target_unit,
+    frequency: goal.frequency,
+    frequency_unit: goal.frequency_unit,
+    is_additive: goal.is_additive,
+    goal_group_id: goal.goal_group_id,
+    days_of_week: goal.days_of_week ?? undefined,
+  })),
+});
+
+const habitPage = (unit: string): Reply => ({
+  status: HTTP_OK,
+  body: { items: [apiHabit(unit)], total: 1, limit: 100, offset: 0, has_more: false },
+});
+
+const returnState = (episode: string, dismissed = false): MettaReturnState => ({
+  eligible: true,
+  weeks: [],
+  arc: null,
+  offer_episode: episode,
+  offer_dismissed: dismissed,
+  released_habits: [],
+});
+
+const WRITING_RESULT: WritingSessionResult = {
+  plannedMinutes: 20,
+  elapsedMs: 20 * 60_000,
+  elapsedMinutes: 20,
+  reachedFullDuration: true,
+};
+
 /**
  * The fake server: each path answers from its own queue, in order, so a test
  * can hold one request open and see exactly which bearer every attempt carried.
@@ -143,6 +224,11 @@ const USAGE_PATH = '/user/usage';
 const ESSAY_PATH = `/journal/marginalia/${NOTE}/essay`;
 const READING_PATH = `/journal/${ENTRY}/resonance`;
 const REFRESH_PATH = '/auth/refresh';
+const GOAL_UNIT_PATH = `/habits/${HABIT}/goals/units`;
+const HABIT_LIST_PATH = '/habits/';
+const COMPLETION_PATH = '/goal_completions/';
+const RETURN_PATH = '/metta-return';
+const RETURN_DISMISS_PATH = '/metta-return/offer/dismiss';
 
 function answer(path: string, ...replies: Responder[]): void {
   queues.set(path, [...(queues.get(path) ?? []), ...replies]);
@@ -570,5 +656,80 @@ describe('#3387: a letter asked for across a renewal', () => {
     expect(view.queryByTestId('essay-loading')).toBeNull();
     // Back to the offer: asking again is answered from the server's cache, uncharged.
     expect(await view.findByTestId('essay-offer')).toBeTruthy();
+  });
+});
+
+describe('#3452: remaining frontend actions retry inside one auth lineage', () => {
+  test('WritingHabitPicker lands its real 401-refresh-retry once and makes no third attempt', async () => {
+    const pages = localHabit('pages');
+    answer(GOAL_UNIT_PATH, UNAUTHORIZED, { status: HTTP_OK, body: apiHabit('minutes').goals });
+    for (const goal of apiHabit('minutes').goals) {
+      answer(`/goals/${goal.id}`, { status: HTTP_OK, body: goal });
+    }
+    answer(HABIT_LIST_PATH, habitPage('minutes'));
+    const onChoose = jest.fn();
+    let auth!: Auth;
+    function Probe() {
+      auth = useAuth();
+      return null;
+    }
+    const view = render(
+      <AuthProvider>
+        <Probe />
+        <WritingHabitPicker habits={[pages]} onChoose={onChoose} onCancel={jest.fn()} />
+      </AuthProvider>,
+    );
+    await waitFor(() => expect(auth.authStatus).not.toBe('loading'));
+    await signIn(() => auth, 'picker');
+    useHabitStore.getState().setHabits([pages]);
+
+    fireEvent.press(view.getByTestId(`writing-habit-configure-${HABIT}`));
+    fireEvent.press(view.getByTestId('writing-habit-goals-save'));
+
+    await waitFor(() => expect(onChoose).toHaveBeenCalledTimes(1));
+    const sent = bearers(GOAL_UNIT_PATH);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).not.toBe(sent[0]);
+    expect(onChoose).toHaveBeenCalledWith(expect.objectContaining({ id: HABIT }));
+  });
+
+  test('useLinkedHabitCheckOff lands its real 401-refresh-retry once and makes no third attempt', async () => {
+    answer(HABIT_LIST_PATH, habitPage('minutes'));
+    answer(COMPLETION_PATH, UNAUTHORIZED, {
+      status: HTTP_OK,
+      body: { streak: 1, milestones: [], reason_code: 'logged', day_units: 20 },
+    });
+    const inner = jest.fn();
+    const onLogged = jest.fn();
+    const mounted = await mountSignedIn(() => useLinkedHabitCheckOff(inner, onLogged));
+    useHabitStore.getState().setHabits([localHabit('minutes')]);
+    useWritingHabitLinkStore.setState({ habitId: HABIT, hydrated: true });
+
+    act(() => mounted.hook()(WRITING_RESULT));
+
+    await waitFor(() => expect(onLogged).toHaveBeenCalledTimes(1));
+    const sent = bearers(COMPLETION_PATH);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).not.toBe(sent[0]);
+    expect(inner).toHaveBeenCalledTimes(1);
+  });
+
+  test('useReturnOfferState lands its real 401-refresh-retry once and makes no third attempt', async () => {
+    answer(RETURN_PATH, { status: HTTP_OK, body: returnState('episode-A') });
+    const mounted = await mountSignedIn(() => useReturnOfferState());
+    await waitFor(() => expect(mounted.hook().offer_episode).toBe('episode-A'));
+    const renewalRead = deferred<Reply>();
+    answer(RETURN_PATH, renewalRead.promise);
+    answer(RETURN_DISMISS_PATH, UNAUTHORIZED, { status: HTTP_OK, body: returnState('episode-B') });
+
+    await act(async () => {
+      await mounted.hook().dismissOffer();
+    });
+
+    const sent = bearers(RETURN_DISMISS_PATH);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).not.toBe(sent[0]);
+    expect(mounted.hook().offer_episode).toBe('episode-B');
+    expect(mounted.hook().dismissed).toBe(false);
   });
 });

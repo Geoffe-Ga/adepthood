@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from urllib.parse import SplitResult, urlsplit
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 # Hosts for which a plaintext ``http://`` vault URL is tolerated: a developer
 # running the vault on the same machine. Every other host must use TLS so the
@@ -229,3 +229,26 @@ def classify_vault_url(url: str) -> VaultUrlFinding | None:
     if parts:
         return VaultUrlFinding(VaultUrlDefect.FORBIDDEN_COMPONENTS, ", ".join(parts))
     return _transport_finding(parsed)
+
+
+# The API version segment every capability path this adapter dials already
+# begins with. Creek's provisioning driver hands its public route over with that
+# segment attached (``https://<pilot>.fly.dev/v1``), so joining the two verbatim
+# doubles it into ``/v1/v1/...``, a route Creek answers ``404``.
+_API_VERSION_SEGMENT = "v1"
+
+
+def vault_base_url(url: str) -> str:
+    """Return the base a capability path is appended to: no trailing slash, no ``/v1``.
+
+    Only a whole trailing ``v1`` *path* segment is removed, and only one: a host
+    named ``v1``, a ``/v10`` or ``/apiv1`` segment, and any prefix before the
+    version all survive. Both spellings Creek and an operator might write name the
+    same vault, so the client, the handoff and the destination fingerprint all
+    read a URL through this one function and cannot disagree about it.
+    """
+    parts = urlsplit(url)
+    segments = parts.path.rstrip("/").split("/")
+    if segments[-1] == _API_VERSION_SEGMENT:
+        segments.pop()
+    return urlunsplit(parts._replace(path="/".join(segments)))

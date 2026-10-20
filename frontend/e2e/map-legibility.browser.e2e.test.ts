@@ -1,7 +1,15 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { expect, test, type CDPSession, type Locator, type Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type Browser,
+  type CDPSession,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from '@playwright/test';
 
 import { signUp } from './journalHabitsBrowserSupport';
 import {
@@ -88,10 +96,22 @@ const SHORT_VIEWPORT = { width: WIDE_VIEWPORT.width, height: 560 } as const;
  * right-column label cell is at its thinnest.
  */
 const NARROWEST_VIEWPORT = { width: 320, height: 568 } as const;
+/** Physical frames used to prove a responsive re-layout cannot sweep the lens across annotations. */
+const ANCHOR_REMEASURE_CASES = [
+  { label: '390x844-100', width: 390, height: 844, scale: 1 },
+  { label: '390x844-200', width: 390, height: 844, scale: 2 },
+  { label: '1280x800-100', width: 1280, height: 800, scale: 1 },
+] as const;
 /** Several full loads of the Map per test, each waiting on its fitted text. */
 const STATE_TIMEOUT_MS = 4 * 60_000;
 
 type Size = { width: number; height: number };
+
+interface AnnotationCollision {
+  frame: number;
+  lens: string;
+  unlock: string;
+}
 
 /** The viewports each state is measured at; the short window only where it bites. */
 const CASES: Readonly<Record<MapState, readonly Size[]>> = {
@@ -371,6 +391,88 @@ for (const [state, sizes] of Object.entries(CASES) as Array<[MapState, readonly 
     const email = await signUp(page, `map-legibility-${state}`);
     await arrangeMapState(page, email, state);
     for (const size of sizes) await holdLegibility(page, state, size);
+  });
+}
+
+/** Watch every painted frame while a responsive re-layout moves the measured stage anchors. */
+async function annotationCollisionsDuringRemeasure(
+  page: Page,
+  finalViewport: Size,
+): Promise<AnnotationCollision[]> {
+  return page.evaluate(async ({ width, height }) => {
+    const collisions: AnnotationCollision[] = [];
+    const lensIds = ['you-are-here', 'magnifier-title', 'magnifier-subtitle'];
+    const overlap = (a: DOMRect, b: DOMRect): boolean =>
+      Math.min(a.right, b.right) - Math.max(a.left, b.left) > 1 &&
+      Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 1;
+    const collisionsAt = (frame: number): AnnotationCollision[] => {
+      const unlocks = [...document.querySelectorAll<HTMLElement>('[data-testid^="stage-unlock-"]')];
+      return lensIds.flatMap((lensId) => {
+        const lens = document.querySelector<HTMLElement>(`[data-testid="${lensId}"]`);
+        if (lens === null) return [];
+        return unlocks
+          .filter((unlock) => overlap(lens.getBoundingClientRect(), unlock.getBoundingClientRect()))
+          .map((unlock) => ({
+            frame,
+            lens: lensId,
+            unlock: unlock.dataset.testid ?? '(missing testID)',
+          }));
+      });
+    };
+    while (window.innerWidth !== width || window.innerHeight !== height) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+    // The size-change callback itself runs before that frame paints. Sample
+    // from the next animation frame so every measured box reached a screen.
+    for (let frame = 0; frame < 45; frame += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      collisions.push(...collisionsAt(frame));
+    }
+    return collisions;
+  }, finalViewport);
+}
+
+async function holdAnchorRemeasureClear(
+  browser: Browser,
+  testInfo: TestInfo,
+  physical: (typeof ANCHOR_REMEASURE_CASES)[number],
+): Promise<void> {
+  const finalViewport = {
+    width: physical.width / physical.scale,
+    height: physical.height / physical.scale,
+  };
+  const context = await browser.newContext({
+    viewport: { width: finalViewport.width - 20, height: finalViewport.height - 60 },
+    deviceScaleFactor: physical.scale,
+  });
+  const page = await context.newPage();
+  try {
+    await signUp(page, `map-anchor-remeasure-${physical.label}`);
+    await openSettledMap(page, 'fresh');
+    const collisionProbe = annotationCollisionsDuringRemeasure(page, finalViewport);
+    await page.setViewportSize(finalViewport);
+    const collisions = await collisionProbe;
+    // Chromium may paint the resized box once before React Native's
+    // ResizeObserver delivers its new grid measurements. The product census
+    // deliberately settles for two frames; a layout-only glide used to keep
+    // crossing annotations for many frames beyond that boundary.
+    expect(
+      collisions.filter(({ frame }) => frame > 0),
+      `${physical.label}: lens caption crossed a locked annotation after measurement delivery`,
+    ).toEqual([]);
+    await page.getByTestId('you-are-here').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`map-anchor-${physical.label}.png`) });
+  } finally {
+    await context.close();
+  }
+}
+
+for (const physical of ANCHOR_REMEASURE_CASES) {
+  test(`a responsive anchor remeasure keeps the lens off annotations at ${physical.label}`, async ({
+    browser,
+  }, testInfo) => {
+    test.setTimeout(STATE_TIMEOUT_MS);
+    await holdAnchorRemeasureClear(browser, testInfo, physical);
   });
 }
 
