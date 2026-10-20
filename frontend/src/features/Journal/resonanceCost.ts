@@ -3,7 +3,7 @@ import { resonanceExplainerCanContinue, resonanceExplainerCost } from './resonan
 import { SOURCE_LABEL_COPY } from './sourceLabel';
 import { vaultKeyCost, type VaultKeyVendor } from './vaultKeyCopy';
 
-import { botmasonUsage, type ResonanceRoute } from '@/api';
+import { botmasonUsage, vaultRequestKeys, type ResonanceRoute } from '@/api';
 
 const READING = 'reading';
 
@@ -72,12 +72,13 @@ function costStateFromUsage(
   usage: Usage,
   hasKey: boolean,
   noun: string,
-  keyVendor: VaultKeyVendor | null,
+  ownKey: { vendor: VaultKeyVendor | null; vaultSpends: readonly VaultKeyVendor[] },
 ): ResonanceCostState {
   if (usage.resonance_route === 'app_provider') return appProviderCost(usage, hasKey, noun);
   if (usage.resonance_route !== 'vault_bound') return unknownCostState(noun);
   // Only a vendor the server said this vault writes with makes the key the payer.
-  if (hasKey && keyVendor && usage.vault_key_vendors?.includes(keyVendor)) {
+  const keyVendor = ownKey.vendor;
+  if (hasKey && keyVendor && ownKey.vaultSpends.includes(keyVendor)) {
     return vaultOwnKeyCost(keyVendor, noun);
   }
   // Any other vault reading or first letter spends credits even with an own key (#3281/#3346).
@@ -131,8 +132,31 @@ export async function loadCostState(
   keyVendor: VaultKeyVendor | null = null,
 ): Promise<ResonanceCostState> {
   try {
-    return costStateFromUsage(await botmasonUsage.get(token), hasKey, noun, keyVendor);
+    const usage = await botmasonUsage.get(token);
+    const vaultSpends = await vaultSpendsFor(usage, hasKey, keyVendor, token);
+    return costStateFromUsage(usage, hasKey, noun, { vendor: keyVendor, vaultSpends });
   } catch {
     return unknownCostState(noun);
+  }
+}
+
+/**
+ * Ask whether a vault-bound writer's vault would spend their own key (#3437).
+ *
+ * Only a key holder on the vault route is asked, so the usage snapshot alone
+ * still prices every other reading. A failed answer reads as "none": the
+ * writer is then shown the credit price, never told a key pays that might not.
+ */
+async function vaultSpendsFor(
+  usage: Usage,
+  hasKey: boolean,
+  keyVendor: VaultKeyVendor | null,
+  token?: string,
+): Promise<readonly VaultKeyVendor[]> {
+  if (!hasKey || keyVendor === null || usage.resonance_route !== 'vault_bound') return [];
+  try {
+    return await vaultRequestKeys.get(token);
+  } catch {
+    return [];
   }
 }

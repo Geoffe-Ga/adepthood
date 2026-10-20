@@ -1356,13 +1356,20 @@ export const botmasonUsageSchema = z.object({
   monthly_cap: z.number().int().nonnegative(),
   monthly_reset_date: isoDateTime,
   offering_balance: z.number().int().nonnegative(),
-  // The vendors whose writer key this caller's vault would write with (#3437).
-  // Older servers omit it, and anything malformed reads as "none": a key is
-  // only ever presented as paying when the server said its vault will spend it.
-  vault_key_vendors: z.array(vaultKeyVendorSchema).optional().catch([]),
 });
 
 export type BotmasonUsageT = z.infer<typeof botmasonUsageSchema>;
+
+/**
+ * ``GET /user/vault-key-vendors`` (#3437): the vendors whose writer key this
+ * caller's vault would write with. Anything malformed reads as "none": a key is
+ * only ever presented as paying when the server said its vault will spend it.
+ */
+export const vaultKeyVendorsSchema = z.object({
+  vendors: z.array(vaultKeyVendorSchema).catch([]),
+});
+
+export type VaultKeyVendorsT = z.infer<typeof vaultKeyVendorsSchema>;
 
 export type CareKindT = z.infer<typeof careKindSchema>;
 export type CareResourceT = z.infer<typeof careResourceSchema>;

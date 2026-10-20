@@ -13,7 +13,11 @@ import { vaultKeyCost, vaultKeyReceiptLabel, vaultKeyVendorFor } from '../vaultK
 import type { BotmasonUsageT, PassProvenanceT } from '@/api/schemas';
 
 const mockUsage = jest.fn<() => Promise<BotmasonUsageT>>();
-jest.mock('@/api', () => ({ botmasonUsage: { get: () => mockUsage() } }));
+const mockVendors = jest.fn<() => Promise<readonly ('anthropic' | 'openai')[]>>();
+jest.mock('@/api', () => ({
+  botmasonUsage: { get: () => mockUsage() },
+  vaultRequestKeys: { get: () => mockVendors() },
+}));
 
 const EMPTY_WALLET = {
   resonance_route: 'vault_bound' as const,
@@ -29,13 +33,15 @@ const OPENAI_KEY = 'sk-proj-abcdef1234567890'; // pragma: allowlist secret
 
 beforeEach(() => {
   mockUsage.mockReset();
+  mockVendors.mockReset();
+  mockUsage.mockResolvedValue(EMPTY_WALLET);
 });
 
 describe('the price line before a vault reading or letter (#3437)', () => {
   it.each(['reading', 'letter'])(
     'says the writer’s own key pays a %s their managed vault writes with it',
     async (noun) => {
-      mockUsage.mockResolvedValue({ ...EMPTY_WALLET, vault_key_vendors: ['anthropic', 'openai'] });
+      mockVendors.mockResolvedValue(['anthropic', 'openai']);
 
       const result = await loadCostState(true, noun, undefined, 'anthropic');
 
@@ -48,7 +54,7 @@ describe('the price line before a vault reading or letter (#3437)', () => {
   );
 
   it('keeps the credit price when the vault does not write with that vendor', async () => {
-    mockUsage.mockResolvedValue({ ...EMPTY_WALLET, vault_key_vendors: ['anthropic'] });
+    mockVendors.mockResolvedValue(['anthropic']);
 
     const result = await loadCostState(true, 'reading', undefined, 'openai');
 
@@ -57,20 +63,30 @@ describe('the price line before a vault reading or letter (#3437)', () => {
     expect(result.copy).not.toMatch(/through your vault/u);
   });
 
-  it('keeps the credit price when an older server says nothing about keys', async () => {
-    mockUsage.mockResolvedValue({ ...EMPTY_WALLET });
+  it('keeps the credit price when the vendor read fails', async () => {
+    mockVendors.mockRejectedValue(new Error('vault unreachable'));
 
     const result = await loadCostState(true, 'reading', undefined, 'anthropic');
 
     expect(result.fundingRequired).toBe('wallet_exhausted');
+    expect(result.copy).not.toMatch(/through your vault/u);
   });
 
-  it('never presents a key as paying without one', async () => {
-    mockUsage.mockResolvedValue({ ...EMPTY_WALLET, vault_key_vendors: ['anthropic'] });
+  it('never asks the vault, or presents a key as paying, without one', async () => {
+    mockVendors.mockResolvedValue(['anthropic']);
 
     const result = await loadCostState(false, 'reading', undefined, 'anthropic');
 
     expect(result.copy).not.toMatch(/your own/u);
+    expect(mockVendors).not.toHaveBeenCalled();
+  });
+
+  it('never asks the vault for an app-provider writer', async () => {
+    mockUsage.mockResolvedValue({ ...EMPTY_WALLET, resonance_route: 'app_provider' });
+
+    await loadCostState(true, 'reading', undefined, 'anthropic');
+
+    expect(mockVendors).not.toHaveBeenCalled();
   });
 });
 

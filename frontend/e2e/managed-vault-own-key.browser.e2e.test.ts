@@ -10,7 +10,7 @@ import { readLaneState } from './laneState';
 
 /**
  * A managed vault writes with the writer's own key (#3437, ADR 0009's
- * 2026-10-16 amendment; Creek ADR 0015).
+ * 2026-10-16 amendment; Creek-Vault ADR-0015).
  *
  * The real client, the real server and the lane's Creek vault, with nothing
  * stubbed in between: the bound owner saves an Anthropic key in Settings, the

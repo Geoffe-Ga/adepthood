@@ -114,7 +114,7 @@ let journalWithdrawalsHeld = false;
 /** An authenticated journey can model a vault that lacks letters. */
 let lettersHeld = false;
 /**
- * A journey can model a managed vault (Creek ADR 0015, #3437): one that lists
+ * A journey can model a managed vault (Creek-Vault ADR-0015, #3437): one that lists
  * the vendors whose writer key it will spend in `request_key_providers`. Off by
  * default, so every other journey sees a self-connected vault, which at contract
  * 0.18 lists none and is never sent a key.

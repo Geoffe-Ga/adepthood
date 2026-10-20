@@ -45,6 +45,7 @@ import {
   resonanceResponseSchema,
   essayResponseSchema,
   botmasonUsageSchema,
+  vaultKeyVendorsSchema,
   stageIntroSchema,
   nextUnreadSchema,
   userPracticeSchema,
@@ -69,6 +70,7 @@ import {
   type AcceptSuggestionResultT,
   type CareKindT,
   type BotmasonUsageT,
+  type VaultKeyVendorsT,
   type CareResourceT,
   type CareResponseT,
   type CompletionSuggestionT,
@@ -510,29 +512,57 @@ export function setLlmApiKeyReset(reset: (() => void) | null) {
  * no-op when no provider has registered a reset.
  */
 export function resetLlmApiKey(): void {
-  vaultKeyVendors = [];
+  vaultKeyVendors = null;
+  vaultKeyEpoch += 1;
   llmApiKeyReset?.();
 }
 
 /**
- * The vendors whose writer key this account's vault said, on its last usage
- * read, that it writes with (#3437). Cleared with the key on session teardown,
- * so one account's answer never decides where another's key goes.
+ * The vendors whose writer key this account's vault said, on its last vendor
+ * read, that it writes with (#3437); ``null`` until it has been asked. Cleared
+ * with the key on session teardown, so one account's answer never decides
+ * where another's key goes.
  */
-let vaultKeyVendors: readonly VaultKeyVendor[] = [];
+let vaultKeyVendors: readonly VaultKeyVendor[] | null = null;
+/** Bumped on teardown, so a read in flight across it cannot refill the cache. */
+let vaultKeyEpoch = 0;
+
+/**
+ * Ask the server which vendors' writer keys this account's vault would write
+ * with (#3437). Its own read, apart from the usage snapshot, because answering
+ * it means the server asks the vault; an app-provider account is answered
+ * empty without that.
+ */
+export const vaultRequestKeys = {
+  async get(token?: string): Promise<readonly VaultKeyVendor[]> {
+    const epoch = vaultKeyEpoch;
+    const answer = await request<VaultKeyVendorsT>('/user/vault-key-vendors', {
+      token,
+      schema: vaultKeyVendorsSchema as unknown as z.ZodType<VaultKeyVendorsT>,
+    });
+    if (epoch === vaultKeyEpoch) vaultKeyVendors = answer.vendors;
+    return answer.vendors;
+  },
+};
 
 /**
  * The key header for a request that hands the vault new writing -- a journal
  * save or a document import -- whose onboarding classification a managed vault
  * runs with the writer's own key (#3437). Attached only when the stored key's
  * vendor is one the vault said it writes with, so the key travels only when a
- * feature uses it; every other save carries no key at all.
+ * feature uses it; every other save carries no key at all. A save never waits
+ * on the vault: before the first answer it goes without the key and starts the
+ * one read later saves use.
  */
-function onboardingKeyHeaders(): Record<string, string> | undefined {
+function onboardingKeyHeaders(token?: string): Record<string, string> | undefined {
   const key = llmApiKeyGetter?.() ?? null;
   const vendor = vaultKeyVendorFor(key);
-  if (key === null || vendor === null || !vaultKeyVendors.includes(vendor)) return undefined;
-  return { [LLM_API_KEY_HEADER]: key };
+  if (key === null || vendor === null) return undefined;
+  if (vaultKeyVendors === null) {
+    vaultRequestKeys.get(token).catch(() => undefined);
+    return undefined;
+  }
+  return vaultKeyVendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
 }
 
 /** How a successful response body is read. */
@@ -2113,7 +2143,7 @@ export const corpus = {
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
         body: { filename, content_base64: contentBase64, classification },
-        headers: onboardingKeyHeaders(),
+        headers: onboardingKeyHeaders(token),
         token,
         timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
         schema: documentImportSchema as unknown as z.ZodType<DocumentImportT>,
@@ -2181,7 +2211,7 @@ export const journal = {
     const idempotency = options.idempotencyKey
       ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
       : undefined;
-    const onboarding = onboardingKeyHeaders();
+    const onboarding = onboardingKeyHeaders(options.token);
     return request<JournalMessage>('/journal/', {
       method: 'POST',
       body: entry,
@@ -2515,7 +2545,6 @@ export const botmasonUsage = {
       token,
       schema: botmasonUsageSchema as unknown as z.ZodType<BotmasonUsageT>,
     });
-    vaultKeyVendors = usage.vault_key_vendors ?? [];
     return usage;
   },
 };
