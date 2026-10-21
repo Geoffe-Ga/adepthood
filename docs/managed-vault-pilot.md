@@ -60,9 +60,11 @@ What happens, per request:
   vault reads that writing in plaintext while the request runs (Creek-Vault ADR
   0014). Intimate entries are not sent: adepthood refuses them before any dial,
   and the vault forces any intimate work onto its local model or refuses it.
-- **The price.** Such a reading or letter takes no BotMason credit. The price
-  line and the pass receipt say "Written by your own Anthropic key, through
-  your vault" (or OpenAI).
+- **The price.** Such a reading or letter takes no BotMason credit. Before it
+  runs, the price line says "Your vault will write this reading with your own
+  Anthropic key. Your key pays for it, not your BotMason messages." After, the
+  receipt's payment route says "Paid by your own Anthropic key, through your
+  vault" (or OpenAI).
 - **Without a key**, nothing changes: the vault's local model, or the existing
   fail-closed `reflection_source_unavailable`.
 

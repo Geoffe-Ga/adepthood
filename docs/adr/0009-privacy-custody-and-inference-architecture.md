@@ -300,10 +300,14 @@ vault directly, because adepthood holds the vault credential.
 5. **The key is not logged, persisted, echoed, or written to telemetry.** It
    travels in `VaultProviderKey`, whose renderings redact it and which refuses
    to pickle; a canary key is swept from responses, every log record and every
-   table (`test_a_relayed_key_is_never_logged_persisted_or_echoed`).
+   table (`test_a_relayed_key_is_never_logged_persisted_or_echoed`). It ends
+   with the request: a pipeline continuation the request leaves running starts
+   in a context with the key cleared, so off-request work goes keyless.
 6. **Labelled on each use.** Before a reading or letter the price line says
-   "Written by your own {Anthropic|OpenAI} key, through your vault"; after a
-   reading the pass receipt says the same, from `own_key_vendor`. The client
+   "Your vault will write this {reading|letter} with your own
+   {Anthropic|OpenAI} key. Your key pays for it, not your BotMason messages.";
+   after a reading the receipt's payment route says "Paid by your own
+   {Anthropic|OpenAI} key, through your vault", from `own_key_vendor`. The client
    learns the vendors from `GET /user/vault-key-vendors`, its own read, and
    asks only for a key holder on the vault route. The usage snapshot still
    never resolves or dials a vault. A failed vendor read shows the credit
