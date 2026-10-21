@@ -25,6 +25,16 @@
   reviewer and the rest of D03 (pairing, revocation, death or incapacity,
   support requests, shared devices and export) are still open, and are listed
   as open questions; the recovery factors are Decision item 11.
+- **Amended 2026-10-20 by the owner (`owner:2026-10-20#attested-inference-pool`),
+  on the decision recorded at
+  [Creek-Vault#1849](https://github.com/Geoffe-Ga/Creek-Vault/issues/1849).**
+  Decision items 3 and 4 now admit a vendor-attested inference runtime
+  verified under Creek-Vault ADR-0016 Decision 3, and D05 is reopened for the
+  inference leg only, with explicit waivers of its nonce-freshness and
+  hostile-host-lab conditions. The selection stays Option BD and the status
+  stays Accepted on 2026-10-07; nothing about stored content, key custody or
+  recovery changes, and this record still unlocks no public claim. Creek-Vault
+  ADR-0016 takes effect only once this amendment merges.
 
 ## Context
 
@@ -124,6 +134,21 @@ answers to this record's follow-up questions, given the same evening.
    key, per feature or per call) is not decided; see open question
    BYOK-CONSENT.
 
+   **Decided exception, 2026-10-20
+   (`owner:2026-10-20#attested-inference-pool`):** a vendor-attested runtime
+   verified under Creek-Vault ADR-0016 Decision 3 may be reached with the app's own
+   credential, because the vendor cannot read what it carries. The definition
+   of a cloud model above is unchanged, and this exception widens nothing
+   else: Anthropic, OpenAI and every other ordinary cloud model still need
+   the person's own key, and a runtime qualifies only while the vault
+   verifies its attestation per connection against the vendor's published
+   measured image, under Creek-Vault ADR-0016 Decision 3 items 1 and 2. What the
+   exclusion of the vendor itself rests on is Decision 3.3 condition (f),
+   reproducible builds rebuilt from source before each re-pin, which Creek-Vault
+   ADR-0016 records as unverified for either candidate vendor. The credential
+   is a per-activation vendor key with the dollar and token caps of Creek-Vault
+   ADR-0016 Decision 3 item 4, not the app's cloud key.
+
    **BYOK calls go from the person's device straight to the vendor.** This
    follows directly from the premise. If the server relayed a BYOK call, it
    would see the plaintext it forwards. So, under the target, the person's
@@ -158,8 +183,11 @@ answers to this record's follow-up questions, given the same evening.
    (`owner:2026-10-07#B12-credits`, `owner:2026-10-07#followup-runtime`)
    That means the vault-local model (B05,
    [Creek-Vault#1849](https://github.com/Geoffe-Ga/Creek-Vault/issues/1849))
-   or a **managed no-retention runtime** we run. Under the decision, credits
-   will never pay for a call made with the app's cloud key.
+   or a **managed no-retention runtime we run, or a vendor-attested runtime
+   verified under Creek-Vault ADR-0016 Decision 3**. Under the decision, credits
+   will never pay for a call made with the app's cloud key. The vendor-attested
+   runtime was added on 2026-10-20 (`owner:2026-10-20#attested-inference-pool`)
+   and is not a cloud model under item 3's decided exception.
 
    **Closed by phase (a)'s first slice (#3067), with #3096: the app-key
    fallback.** Before that slice, when no BYOK key was sent,
@@ -181,12 +209,31 @@ answers to this record's follow-up questions, given the same evening.
    admission limited to vaults the person connected themselves; the owner
    decides which.
 
-   **Honest limit, decided by the owner:** processing in that managed
-   runtime is **not operator-blind while it runs**. The runtime sees the
-   plaintext it processes and stores none of it. The same holds for a
-   vault-local model on an ordinary-Fly managed vault. Every such use is
-   **labelled clearly each time**, for example "processed on Adepthood's
-   private server, not stored". The per-use label is a phase (a) requirement.
+   **Honest limit, decided by the owner:** processing in a managed
+   no-retention runtime we run is **not operator-blind while it runs**. The
+   runtime sees the plaintext it processes and stores none of it. The same
+   holds for a vault-local model on an ordinary-Fly managed vault. Every such
+   use is **labelled clearly each time**, for example "processed on
+   Adepthood's private server, not stored". The per-use label is a phase (a)
+   requirement.
+
+   **Honest limit for the vendor-attested runtime, decided 2026-10-20
+   (`owner:2026-10-20#attested-inference-pool`):** this leg is held to the
+   operator-blind target rather than exempted from it, and under the decision
+   that target is neither met nor certified today. Plaintext exists in the
+   vault process and inside the vendor's enclave, and under Creek-Vault ADR-0016
+   Decision 3 item 1 it crosses no network in the clear, which that record
+   names as its R7 deviation: ciphertext-only egress inside an
+   attestation-bound channel, in place of no egress. The host and the
+   operator are excluded from the enclave by hardware, under the vendor's
+   attestation chain and not an operator-held trust root, so Creek-Vault ADR 0006's
+   trust-root caveat does not apply to it; the operator still chooses the
+   vendor and holds the pin. The vendor keeps request metadata under Creek-Vault
+   ADR-0016 Decision 3.3 condition (g), which is disclosed, not withheld, and
+   reviewed under B11. Every such use is **labelled clearly each time**, for
+   example "processed in an attested private enclave run by `<vendor>`, not
+   stored". The per-use label is a phase (a) requirement, and no public claim
+   follows from any of this until B24 certifies it.
 5. **The web caveat is stated per platform.** (`owner:2026-10-07#B12-web`)
    User-held keys apply on every platform. The guarantee is strongest on
    native apps. On web it rests on trusting the code we serve, mitigated by
@@ -249,8 +296,9 @@ history and future content stand or fall together.
 |---|---|---|---|---|---|---|---|
 | Database thief (no env keys) | blocked | blocked | blocked | blocked | blocked | blocked | blocked |
 | Backup holder (with env keys) | reads | reads | blocked | blocked | blocked | reads | blocked |
-| Privileged operator | reads | reads | blocked on native while the signed build is honest; on web, reads through a served bundle until signed builds ship | blocked\* | same as B | reads | blocked on native while the signed build is honest; **on web, reads all stored history through a served bundle until signed builds ship** (enforced CSP plus SRI does not stop this); sees managed-runtime inputs while they run (labelled on each use) |
-| Hosting provider (Fly, DB host) | reads | reads | blocked | blocked\* | blocked | reads | blocked for storage; same runtime caveat |
+| Privileged operator | reads | reads | blocked on native while the signed build is honest; on web, reads through a served bundle until signed builds ship | blocked\* | same as B | reads | blocked on native while the signed build is honest; **on web, reads all stored history through a served bundle until signed builds ship** (enforced CSP plus SRI does not stop this); sees inputs to a managed runtime we run while they run (labelled on each use); for a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3, excluded from the enclave by hardware under the vendor's attestation chain, but still chooses the vendor, holds the pin and sees the vendor's request metadata |
+| Hosting provider (Fly, DB host) | reads | reads | blocked | blocked\* | blocked | reads | blocked for storage; same runtime caveat for a managed runtime we run; for a vendor-attested runtime, Fly carries ciphertext only, inside the attestation-bound channel of Creek-Vault ADR-0016 Decision 3 item 1 |
+| Inference vendor (vendor-attested runtime only) | n/a | n/a | n/a | n/a | n/a | n/a | excluded from the enclave only while Creek-Vault ADR-0016 Decision 3.3 condition (f) holds, which that record has not verified; keeps request metadata under condition (g) |
 | Malicious or compelled client update | reads | reads | reads all stored history (captured key); harder on signed native | reads on web | reads all stored history (captured key); harder on signed native | reads | reads all stored history once the key is captured: on web until signed or pinned builds ship, on native through a malicious signed build |
 | XSS in the web client | reads | reads | reads open sessions | reads open sessions | reads open sessions | reads | reads open sessions; CSP enforcement narrows it |
 | Compromised device | reads | reads | reads | reads | reads | reads | reads |
@@ -368,15 +416,15 @@ history and future content stand or fall together.
 
 *Selected: user-held keys plus device-side and vault-local inference, BYOK cloud as explicit opt-in.*
 
-- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. (`owner:2026-10-07#B12-premise`)
+- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), inside the enclave of a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 while a labelled request runs there, and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. (`owner:2026-10-07#B12-premise`)
 - **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07#B12-premise`)
 - **Recovery:** A recovery phrase the person writes down plus their passphrase; either unlocks the data key. Losing both means the data is gone, agreed up front at enrolment. Pairing, revocation and the rest of D03 stay open. (`owner:2026-10-07#followup-recovery`)
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
-- **Inference location:** Device first; then the person's vault-local model or a managed no-retention runtime we run (paid by credits, labelled on each use, not operator-blind while it runs); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
+- **Inference location:** Device first; then the person's vault-local model, a managed no-retention runtime we run, or a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 (all paid by credits and labelled on each use; the first two are not operator-blind while they run, and the third is held to the operator-blind target, which is not met until B24 certifies it); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a). (`owner:2026-10-07#B12-cloud-byok`)
 - **Supported platforms:** Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later. (`owner:2026-10-07#B12-web`)
 - **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now (live since phase (b)'s first slice), signed builds later; CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** The 14 in-scope EncryptedString columns of journal_scope_proposal (of the 20; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
-- **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
+- **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; inference in a managed runtime we run is not operator-blind while it runs (labelled on each use); a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 excludes the host and the operator from its enclave by hardware, on the vendor's attestation chain, but only while Decision 3.3 condition (f) holds, and the vendor keeps request metadata under condition (g); until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
 - **Reopen triggers:** Key-non-possession prototype fails; no web anchor is buildable; D03 user testing shows unacceptable loss; B09 finds no supported non-cloud configuration. (`owner:2026-10-07#B12-premise`)
@@ -397,7 +445,7 @@ attackers (who control the code the person runs).
 | Native iOS and Android (store-signed; later, after web) | Ciphertext only | Protected **only while the signed build is honest**. A malicious or compelled signed build could capture the key and decrypt stored history and future content alike | Device-first; vault or credits runtime only with consent; cloud only with BYOK, device to vendor | OS keystore, store signing, and reproducible-build evidence once it exists |
 | Web (served by us) | Ciphertext only | **Rests on trusting the code we serve**, for stored history and future content alike. A malicious or compelled bundle could capture the key at the next load and decrypt everything stored. This stays true until signed builds ship: enforced CSP plus SRI narrows injected script but cannot stop us serving a different bundle. Web accounts may not enrol before CSP plus SRI is live | Same routing as native, with browser runtime limits | Enforced CSP plus SRI now; signed builds later (owner decision, items 6-7) |
 | Person's own vault (self-hosted) | Theirs to protect | Theirs to protect | Vault-local model | The person's own machine |
-| Managed vault on ordinary Fly | Ciphertext only for journal content, once B13 phases (b) and (c) land for the account | The same per-client caveat as the platform the person enrols from | Vault-local inference sees plaintext while it runs; this is not operator-blind, and each use is labelled (Decision item 4) | Creek's runtime plus Fly; provider-managed custody is not operator-blind for anything still stored in plaintext |
+| Managed vault on ordinary Fly | Ciphertext only for journal content, once B13 phases (b) and (c) land for the account | The same per-client caveat as the platform the person enrols from | Vault-local inference, and any managed runtime we run, sees plaintext while it runs; that is not operator-blind, and each use is labelled (Decision item 4). A vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 is held to the operator-blind target for the inference leg instead, with the two waivers named in "Confidential compute (D05)" below; the target is not met until B24 certifies it, and each use is labelled the same way | Creek's runtime plus Fly; provider-managed custody is not operator-blind for anything still stored in plaintext |
 
 No platform may advertise "end-to-end" or "operator-blind" until B24
 certifies that claim for that platform.
@@ -521,19 +569,29 @@ stores. This record consumes them and does not rebuild them.
   their vault answers it. Credits pay only when the caller's vault answers; whether the vault itself uses a cloud model is the vault's boundary (`CREEK_DOWNSTREAM_MODEL`, under the Creek deployment's `CREEK_CLOUD_CONSENT`), and is not yet verified per receipt. That is the known gap recorded under
   Decision item 4.
 - **Decided:** credits fund **non-cloud** inference only. That means the
-  person's vault-local model (B05) or a managed no-retention runtime we run. A
+  person's vault-local model (B05), a managed no-retention runtime we run, or
+  a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3, which
+  Decision item 3's decided exception of 2026-10-20 takes out of the cloud
+  definition. A
   BYOK call pays its own vendor and debits no credits. With neither credits
   routed to a non-cloud runtime nor BYOK, the request is **refused**, with no
   fallback to the app's cloud key. This composes with
   [#3096](https://github.com/Geoffe-Ga/adepthood/issues/3096) (B07: refuse
   without credits or BYOK) and with B07's inference provenance, so every
   receipt names who paid and where the call ran.
-- **Honest limit (owner decision, Decision item 4).** The managed runtime
-  sees plaintext while it runs and stores none of it. The same holds for a
+- **Honest limit (owner decision, Decision item 4).** A managed runtime we
+  run sees plaintext while it runs and stores none of it. The same holds for a
   vault-local model on an ordinary-Fly vault. Neither is operator-blind
   during processing. Each use is labelled clearly, for example "processed on
   Adepthood's private server, not stored". The label is a phase (a)
   requirement.
+- **Honest limit for the vendor-attested runtime (Decision item 4, decided
+  2026-10-20).** Plaintext exists in the vault process and inside the
+  vendor's enclave, and under Creek-Vault ADR-0016 Decision 3 item 1 it crosses no
+  network in the clear. That leg is held to the operator-blind target, with
+  the two waivers of "Confidential compute (D05)" below, and the target is
+  not met until B24 certifies it. Each use is labelled clearly, for example
+  "processed in an attested private enclave run by `<vendor>`, not stored".
 - **Feature loss, said plainly (Decision item 12).** Until the managed
   runtime or B05's local model is live, a person without BYOK has no
   credit-funded inference. Phase (a) ships anyway, and people are told so in
@@ -570,12 +628,51 @@ for B13. They need the cryptography review and user testing.
 
 ## Confidential compute (D05)
 
-D05 is not pursued. C is rejected for now (see below). It reopens only if
-the owner sets an operator-blind target for the managed runtime's processing.
-Decision item 4 says that processing is not operator-blind today. In that case D05's conditions apply in full: real hardware,
-a vendor attestation chain, nonce freshness, user-authorized key release,
-and a hostile-host lab. Creek-Vault ADR 0006's operator-provisioned trust
-root is not evidence.
+**For the storage leg, D05 is not pursued.** C is rejected for now (see
+below). It reopens only if the owner sets an operator-blind target for stored
+content in a runtime we control. For a managed no-retention runtime we run,
+Decision item 4 says that processing is not operator-blind today. In either
+case D05's conditions apply in full: real hardware, a vendor attestation
+chain, nonce freshness, user-authorized key release, and a hostile-host lab.
+Creek-Vault ADR 0006's operator-provisioned trust root is not evidence.
+
+**Reopened for the inference leg only, 2026-10-20
+(`owner:2026-10-20#attested-inference-pool`).** Answering Yes to Creek-Vault
+ADR-0016 Decision 0 Q1 sets the operator-blind target for the inference leg,
+which is D05's own reopen condition, so D05 is reopened for that leg and for
+nothing else. Stored content, key custody and recovery are untouched by this:
+they stay under Decision items 1, 2 and 11. The conditions that apply to the
+reopened leg are Creek-Vault ADR-0016 Decision 3.3's substitute set, not D05's
+original five, because D05's were written for a runtime we control:
+
+- **(a) real hardware:** kept.
+- **(b) a vendor attestation chain:** kept, and because it is not an
+  operator-held key, Creek-Vault ADR 0006's trust-root caveat does not apply to it.
+- **(c) nonce freshness: WAIVED.** This is the first of the two explicit
+  waivers. It is unmet as stated, and is replaced by the vendor's binding of
+  the attested measurement to the live session's key, which the Creek build
+  issue verifies against the vendor's design and T18 exercises. The owner
+  waives the condition as written.
+- **(d) user-authorized key release:** not applicable. No key is released:
+  the vault sends plaintext it already holds under Creek-Vault ADR 0014.
+- **(e) a hostile-host lab: WAIVED.** This is the second of the two explicit
+  waivers. It cannot be run on hardware we do not own, and is replaced by the
+  vendor negative tests of Creek-Vault ADR-0016 T18. The owner waives the condition
+  as written.
+- **(f) reproducible builds:** added for a vendor, and the condition the
+  exclusion of the vendor rests on. Creek-Vault ADR-0016 records it as unverified
+  for either candidate vendor, so until it is verified the exclusion is
+  vendor-asserted.
+- **(g) retention terms and rate limits:** reviewed under B11. Vendor request
+  metadata is disclosed, not withheld.
+- **(h) jurisdiction:** chosen explicitly at vendor selection.
+
+Only (c) and (e) are waived. The waivers are the owner's, recorded here so
+they cannot be read back out of the record as met, and they are a reason the
+operator-blind target stays uncertified: no public claim follows until B24
+certifies it. If a vendor cannot meet (f), or has no per-key caps (Creek-Vault
+ADR-0016 Decision 3 item 4), it fails selection rather than earning a third
+waiver.
 
 ## Budget and staffing
 
@@ -619,7 +716,10 @@ phase (scorecard `reviewers`):
   readable. The dossier's "A for beta" was rejected by the owner.
 - **C (attested confidential compute):** it needs vendor hardware, spend and
   a real attestation spike, and the stored-data guarantee does not need it.
-  It is kept only as a reopen trigger.
+  It is kept only as a reopen trigger. C itself stays rejected after the
+  2026-10-20 amendment: that amendment admits a vendor-attested runtime for
+  the **inference** leg under Creek-Vault ADR-0016 Decision 3, and releases no key
+  into an enclave and moves no stored content there.
 - **E (managed vault, no operator blindness):** provider-managed custody is
   not operator-blind. Only its vault-local inference survives, inside BD and
   under Decision item 4: labelled on each use, and not operator-blind while
@@ -643,10 +743,12 @@ content of a BYOK call reaches our server. Whether a browser can call each
 vendor directly is checked in this phase. Where it cannot, that feature is
 unavailable on web; it does not fall back to a server relay.
 
-Route credit-funded requests only to the vault-local model or a managed
-no-retention runtime we run. Refuse otherwise, with no fallback. Every use of
-the managed runtime is **labelled on each use** in the product, for example
-"processed on Adepthood's private server, not stored". Label every receipt
+Route credit-funded requests only to the vault-local model, a managed
+no-retention runtime we run, or a vendor-attested runtime verified under
+Creek-Vault ADR-0016 Decision 3. Refuse otherwise, with no fallback. Every use of
+either runtime is **labelled on each use** in the product, for example
+"processed on Adepthood's private server, not stored", or "processed in an
+attested private enclave run by `<vendor>`, not stored". Label every receipt
 with payer and location (B07). This composes with #3096.
 
 - **Shippable on its own:** yes, without crypto. It only narrows where
@@ -743,6 +845,12 @@ The B13 epic body that carries this plan is drafted at
   and 6 are amended by an appended section.
 - Creek-Vault ADR 0005, Creek-Vault ADR 0006 and Creek-Vault ADR 0007 are
   amended by appended sections in Creek-Vault (branch `w34/B12-creek`).
+- Creek-Vault ADR-0016 (shared confidential warm inference pool) is not amended by
+  this record; it is the record this record's 2026-10-20 amendment unblocks.
+  Its Status clause makes Accepted conditional on that amendment merging, and
+  its Decision 3 is the contract the admitted runtime is verified against.
+  Decision 5 of that record keeps INTIMATE off the pool entirely, which this
+  amendment does not change.
 - Creek-Vault ADR 0014 is **superseded for journal content as a decided
   target**. The decision is that journal content in a managed vault will be
   ciphertext under the person's key once B13 phases (b) and (c) complete for
@@ -772,6 +880,12 @@ The B13 epic body that carries this plan is drafted at
   invert the tests.
 - Confidential compute becomes affordable enough to set an operator-blind
   target for the runtime-we-control path, once D05 is proven (C).
+- A vendor-attested runtime admitted on 2026-10-20 stops meeting Creek-Vault
+  ADR-0016 Decision 3: attestation fails or is no longer verified per
+  connection, the pin cannot be re-established, condition (f) is refuted
+  rather than merely unverified, or the vendor drops per-key caps. Then the
+  Decision item 3 exception is withdrawn for that vendor and the leg falls
+  back to refusal, never to a cloud model on the app's key.
 - The owner's budget for any phase is exceeded.
 
 ## Open owner questions

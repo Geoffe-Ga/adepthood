@@ -104,6 +104,10 @@ _OWNER_DECISIONS: dict[str, frozenset[str]] = {
             "followup-primitives",
         }
     ),
+    # The owner's 2026-10-20 amendment, recorded on Creek-Vault#1849: a
+    # vendor-attested inference runtime is admitted under Creek-Vault ADR-0016
+    # Decision 3, and D05 reopens for the inference leg alone.
+    "2026-10-20": frozenset({"attested-inference-pool"}),
 }
 # Anchors under which the owner has actually supplied a budget or staffing
 # figure. None exist yet, so no money cell can be owner-sourced until the
@@ -124,6 +128,25 @@ _DECIDER_LINE = "- **Decider:** Geoff"
 _DECIDED_ON_LINE = "- **Decided on:** 2026-10-07"
 _NOT_OPERATOR_BLIND = "provider-managed custody is not operator-blind"
 _AMENDMENT_HEADING = "## Amended by ADR 0009 (2026-10-07)"
+
+# The owner's 2026-10-20 amendment (Creek-Vault#1849), which Creek-Vault ADR-0016
+# Decision 0 Q1 specifies and whose merge its Status clause waits on. The
+# wording is pinned because the amendment is a privacy-posture change: a
+# paraphrase that widened it would pass a looser assertion.
+_AMENDMENT_ANCHOR = "owner:2026-10-20#attested-inference-pool"
+_ATTESTED_EXCEPTION = (
+    "a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 may be reached "
+    "with the app's own credential, because the vendor cannot read what it carries"
+)
+_ATTESTED_CREDIT_PAYEE = (
+    "managed no-retention runtime we run, or a vendor-attested runtime verified under "
+    "Creek-Vault ADR-0016 Decision 3"
+)
+_ATTESTED_LABEL = "processed in an attested private enclave run by `<vendor>`, not stored"
+# The two D05 conditions Creek-Vault ADR-0016 Decision 3.3 says a vendor cannot
+# meet, and so the only two the owner waived. Every other condition is kept,
+# not applicable, or added for a vendor; a third waiver is a widening.
+_D05_WAIVERS = {"c": "nonce freshness", "e": "a hostile-host lab"}
 
 _REQUIRED_SECTIONS = (
     "## Context",
@@ -1353,3 +1376,134 @@ def test_reviewers_and_budget_record_the_owners_2026_10_14_decision() -> None:
     assert "no paid runtime and no paid reviews" in budget
     statuses = {_as_dict(entry).get("status") for entry in _as_list(_card()["reviewers"])}
     assert statuses == {_REVIEW_OWED}
+
+
+# --------------------------------------------------------------------------
+# The owner's 2026-10-20 amendment: a vendor-attested inference runtime
+# --------------------------------------------------------------------------
+
+
+def _amendment() -> dict[str, object]:
+    """The twin's 2026-10-20 amendment entry, or an empty object if it is gone."""
+    entries = [
+        _as_dict(entry)
+        for entry in _as_list(_card().get("amendments"))
+        if _as_dict(entry).get("date") == "2026-10-20"
+    ]
+    return entries[0] if entries else {}
+
+
+def test_decision_items_three_and_four_admit_the_vendor_attested_runtime() -> None:
+    """Item 3 keeps its cloud definition and gains the exception; item 4 gains the payee.
+
+    This is the amendment Creek-Vault ADR-0016 Decision 0 Q1 specifies, and its
+    Status clause makes that record's Accepted conditional on this merging.
+    Deleting either phrase re-blocks Creek-Vault ADR-0016, so rewrite the record
+    here rather than loosening the assertion.
+    """
+    text = _flat(_adr_text())
+    decision = text[text.index("## Decision ") : text.index("## Threat actors")]
+
+    assert _AMENDMENT_ANCHOR in decision
+    assert _ATTESTED_EXCEPTION in decision
+    assert "The definition of a cloud model above is unchanged" in decision
+    assert _ATTESTED_CREDIT_PAYEE in decision
+    # The exception is narrow: an ordinary cloud vendor still needs BYOK.
+    assert "every other ordinary cloud model still need the person's own key" in decision
+    # And it is not sold as a guarantee: (f) is the condition it rests on.
+    assert "Decision 3.3 condition (f)" in decision
+    assert "unverified for either candidate vendor" in decision
+
+
+def test_the_attested_runtime_carries_its_own_honest_limit_and_label() -> None:
+    """The per-use label and the operator-blind caveat cover the new runtime too."""
+    text = _flat(_adr_text())
+    decision = text[text.index("## Decision ") : text.index("## Threat actors")]
+    phase_a = text[text.index("### Phase (a)") : text.index("### Phase (b)")]
+
+    # The runtime we run keeps its original limit, unweakened.
+    assert "not operator-blind while it runs" in decision
+    assert "labelled clearly each time" in decision
+    # The attested runtime is held to the target rather than exempted from it.
+    assert "held to the operator-blind target rather than exempted from it" in decision
+    assert "neither met nor certified today" in decision
+    assert _ATTESTED_LABEL in decision
+    assert _ATTESTED_LABEL in phase_a
+
+
+def test_d05_is_reopened_for_the_inference_leg_with_exactly_two_named_waivers() -> None:
+    """D05 reopens for inference only, and names the two conditions it cannot meet.
+
+    Creek-Vault ADR-0016 Decision 3.3 identifies (c) nonce freshness and (e) a
+    hostile-host lab as the unmeetable pair. A third waiver, or an unnamed
+    one, is a widening of a privacy posture: fail here rather than let it
+    pass as prose.
+    """
+    text = _adr_text()
+    section = _flat(text[text.index("## Confidential compute (D05)") : text.index("## Budget and")])
+
+    assert "Reopened for the inference leg only, 2026-10-20" in section
+    assert _AMENDMENT_ANCHOR in section
+    assert "for that leg and for nothing else" in section
+    # The storage leg is untouched, and so are custody and recovery.
+    assert "For the storage leg, D05 is not pursued" in section
+    assert "they stay under Decision items 1, 2 and 11" in section
+    # Exactly the two waivers Decision 3.3 names, each marked as waived.
+    for condition, name in _D05_WAIVERS.items():
+        assert f"**({condition}) {name}: WAIVED.**" in section
+    assert section.count(": WAIVED.**") == len(_D05_WAIVERS)
+    assert "Only (c) and (e) are waived" in section
+    # A vendor that fails (f) or has no per-key caps is refused, not waived.
+    assert "it fails selection rather than earning a third waiver" in section
+
+
+def test_managed_runtime_rows_separate_the_runtime_we_run_from_the_attested_one() -> None:
+    """The threat-actor and per-platform rows say which runtime each caveat describes."""
+    text = _adr_text()
+    actors = _flat(text[text.index("## Threat actors") : text.index("## Options")])
+    platforms = _flat(
+        text[
+            text.index("## Per-platform claim scoping") : text.index(
+                "## Client delivery and update trust"
+            )
+        ]
+    )
+
+    assert "sees inputs to a managed runtime we run while they run" in actors
+    assert "excluded from the enclave by hardware under the vendor's attestation chain" in actors
+    assert "sees the vendor's request metadata" in actors
+    # The vendor is an actor in its own right once the pool is admitted.
+    assert "| Inference vendor (vendor-attested runtime only) |" in text
+    assert "keeps request metadata under condition (g)" in actors
+    assert "is held to the operator-blind target for the inference leg instead" in platforms
+    assert "the target is not met until B24 certifies it" in platforms
+
+
+def test_the_twin_records_the_amendment_and_changes_nothing_it_may_not() -> None:
+    """The scorecard carries the amendment, its waivers, and the untouched selection."""
+    card = _card()
+    amendment = _amendment()
+
+    assert amendment.get("source") == _AMENDMENT_ANCHOR
+    assert amendment.get("d05_reopened_for") == "inference leg only"
+    waived = {
+        str(_as_dict(entry).get("condition")): str(_as_dict(entry).get("name"))
+        for entry in _as_list(amendment.get("d05_waivers"))
+    }
+    assert waived == _D05_WAIVERS
+    assert {_as_dict(entry).get("status") for entry in _as_list(amendment.get("d05_waivers"))} == {
+        "waived"
+    }
+    # The amendment moves the inference leg and nothing else.
+    assert card["selected_option"] == _SELECTED
+    assert card["status"] == "accepted"
+    assert card["decided_on"] == "2026-10-07"
+    assert card["unlocks_public_claims"] is False
+    assert _as_dict(card["journal_scope_proposal"]).get("status") == (
+        "decided: owner:2026-10-07#followup-scope"
+    )
+    # And the twin's own cells name the new runtime, so prose and JSON agree.
+    selected = _as_dict(_as_dict(card["options"])[_SELECTED])
+    inference = str(_as_dict(selected["inference_location"]).get("value"))
+    assert "vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3" in inference
+    assert inference in _flat(_option_slice(_adr_text(), _SELECTED))
