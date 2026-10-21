@@ -21,6 +21,7 @@ import {
   visibleStagePromptCount,
 } from './StagePromptSection';
 import { useDueReview } from './useDueReview';
+import { useEarlyReviewDismissal } from './useEarlyReviewDismissal';
 import { useVoiceReadinessState } from './VoiceReadinessBand';
 
 import { useAuth } from '@/context/AuthContext';
@@ -42,6 +43,7 @@ export interface NotificationTally {
   /** The voice-readiness band is showing. */
   voiceBand: boolean;
   writingPrompt?: boolean;
+  earlyReviewPrompt?: boolean;
 }
 
 /** The items waiting, summed: each card is one, however it got there. */
@@ -51,7 +53,8 @@ export function countNotifications(tally: NotificationTally): number {
     tally.invitations +
     tally.stagePrompts +
     Number(tally.voiceBand) +
-    Number(tally.writingPrompt === true)
+    Number(tally.writingPrompt === true) +
+    Number(tally.earlyReviewPrompt === true)
   );
 }
 
@@ -76,6 +79,7 @@ export function useFocusRefreshKey(): number {
 export function useNotificationCount(): number {
   const refreshKey = useFocusRefreshKey();
   const due = useDueReview();
+  const { dismissed: earlyReviewDismissed } = useEarlyReviewDismissal(refreshKey);
   const { userTimezone } = useAuth();
   const { state: tip } = useMorningPagesTipState(undefined, refreshKey);
   const morningShown =
@@ -95,5 +99,6 @@ export function useNotificationCount(): number {
     stagePrompts: visibleStagePromptCount(band),
     voiceBand: voice !== null,
     writingPrompt: due.status === 'settled' && (due.review !== null || morningShown),
+    earlyReviewPrompt: earlyReviewDismissed === false,
   });
 }

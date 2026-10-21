@@ -178,6 +178,7 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
     await expect(reopened.getByTestId(`journal-stage-prompt-card-${ordinal}`)).toHaveCount(0);
   }
   await reopened.getByTestId('journal-morning-pages-dismiss').click();
+  await reopened.getByTestId('journal-review-early-dismiss').click();
   // Whether the voice band is offered is the server's answer, so wait for it
   // before deciding there is nothing to decline.
   const voiceDecline = reopened.getByTestId('journal-voice-readiness-dismiss');

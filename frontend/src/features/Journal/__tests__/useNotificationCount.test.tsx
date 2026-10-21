@@ -27,6 +27,10 @@ const mockVoice = jest.fn<(_refreshKey: number) => object | null>();
 let mockFocusCallbacks: (() => void)[] = [];
 
 let mockWritingPrompt = false;
+let mockEarlyDismissed: boolean | null = true;
+jest.mock('../useEarlyReviewDismissal', () => ({
+  useEarlyReviewDismissal: () => ({ dismissed: mockEarlyDismissed }),
+}));
 jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ userTimezone: 'UTC' }) }));
 jest.mock('../useDueReview', () => ({
   useDueReview: () => ({ status: 'settled', review: mockWritingPrompt ? {} : null }),
@@ -91,6 +95,7 @@ function stageWith(dismissed: boolean[]): StagePromptsResponse {
 beforeEach(() => {
   jest.clearAllMocks();
   mockWritingPrompt = false;
+  mockEarlyDismissed = true;
   mockFocusCallbacks = [];
   useDepthPreferencesStore.setState({
     enable_habits: true,
@@ -202,4 +207,16 @@ describe('useNotificationCount', () => {
 it('counts the active writing invitation and excludes recovered/set-aside cards', () => {
   mockWritingPrompt = true;
   expect(renderHook(() => useNotificationCount()).result.current).toBe(1);
+});
+
+it('counts the early-review invitation only while it is offered', () => {
+  mockEarlyDismissed = false;
+  const { result, rerender } = renderHook(() => useNotificationCount());
+  expect(result.current).toBe(1);
+  mockEarlyDismissed = true;
+  rerender({});
+  expect(result.current).toBe(0);
+  mockEarlyDismissed = null;
+  rerender({});
+  expect(result.current).toBe(0);
 });

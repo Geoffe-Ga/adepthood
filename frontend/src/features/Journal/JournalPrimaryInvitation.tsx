@@ -10,11 +10,13 @@
  * declined separately.
  *
  * Beneath either — and beneath neither, when both have been set aside — sits a
- * quiet "Start a review early" link that opens the ``ReviewScopePicker`` for
- * every layer still in progress. Nothing is gated: any review can be begun on
- * any day. Declining the tip — its corner X or its "Don't show this again"
- * link — hands focus to that link, so a keyboard or screen-reader user is not
- * dropped to the top of the page when the card goes (#2860).
+ * declinable "Start a review early" card that explains reviews and opens the
+ * ``ReviewScopePicker`` for every layer still in progress. Nothing is gated:
+ * any review can be begun on any day. Declining the tip — its corner X or its
+ * "Don't show this again" link — hands focus to that card's action, so a
+ * keyboard or screen-reader user is not dropped to the top of the page when
+ * the card goes (#2860). If early reviews are set aside, its restore control
+ * receives that focus instead.
  *
  * The shelf stays mounted across tab switches, so each focus bumps a count the
  * tip re-reads its stored state on: a tip set aside yesterday, or offered again
@@ -27,23 +29,15 @@
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { View } from 'react-native';
 
+import EarlyReviewCard from './EarlyReviewCard';
 import MorningPagesTip from './MorningPagesTip';
 import ReflectionInvitationBand from './ReflectionInvitationBand';
-import {
-  REVIEW_EARLY_A11Y,
-  REVIEW_EARLY_CLOSE,
-  REVIEW_EARLY_CLOSE_A11Y,
-  REVIEW_EARLY_LINK,
-} from './reviewInvitationCopy';
-import ReviewScopePicker from './ReviewScopePicker';
 import { reviewEntryParams, type ReviewEntryParams } from './reviewScopes';
 import SetAsideWritingPrompts from './SetAsideWritingPrompts';
 import { useDueReview } from './useDueReview';
 
-import { Button } from '@/components/Button';
-import { SPACING } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { moveAccessibilityFocus } from '@/utils/accessibilityFocus';
 
@@ -105,7 +99,7 @@ function JournalPrimaryInvitation({
   const navigation = useNavigation<InvitationNavigation>();
   const due = useDueReview();
   const { pickerOpen, togglePicker, chooseEarly } = useEarlyReview(navigation);
-  // Always mounted, so the tip's X can hand focus here synchronously as it goes.
+  // The card's action or restore control receives focus when the tip goes.
   const earlyLinkRef = useRef<View>(null);
   const focusEarlyLink = useCallback(() => {
     moveAccessibilityFocus(earlyLinkRef.current);
@@ -137,16 +131,13 @@ function JournalPrimaryInvitation({
         focusCount={focusCount}
         due={due}
       />
-      <Button
-        ref={earlyLinkRef}
-        variant="tertiary"
-        label={pickerOpen ? REVIEW_EARLY_CLOSE : REVIEW_EARLY_LINK}
-        accessibilityLabel={pickerOpen ? REVIEW_EARLY_CLOSE_A11Y : REVIEW_EARLY_A11Y}
-        testID="journal-review-early"
-        onPress={togglePicker}
-        style={styles.earlyLink}
+      <EarlyReviewCard
+        actionRef={earlyLinkRef}
+        enabled={pickerOpen}
+        onToggle={togglePicker}
+        refreshKey={focusCount}
+        onChoose={chooseEarly}
       />
-      <ReviewScopePicker enabled={pickerOpen} refreshKey={focusCount} onChoose={chooseEarly} />
       <SetAsideWritingPrompts
         review={due.setAsideReview}
         onRestoreReview={due.restore}
@@ -156,17 +147,5 @@ function JournalPrimaryInvitation({
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  // The link sits on the section's left edge, level with the prompt band's
-  // eyebrow above it (#2949). Button.base pads the row by SPACING.xl and
-  // centres its label, so both are overridden here: no side padding, and the
-  // row leads from the left rather than floating its label mid-column.
-  earlyLink: {
-    marginTop: SPACING.sm,
-    paddingHorizontal: 0,
-    justifyContent: 'flex-start',
-  },
-});
 
 export default JournalPrimaryInvitation;
