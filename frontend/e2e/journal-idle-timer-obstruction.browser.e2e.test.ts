@@ -84,9 +84,22 @@ async function expectCenterHit(locator: Locator, message: string): Promise<void>
 }
 
 async function expectIdleTimerClear(page: Page, phone: boolean): Promise<void> {
-  const timer = await boxOf(page.getByTestId('writing-timer-pill'), 'idle timer');
-  const body = await boxOf(page.getByTestId('journal-body-input'), 'writing body');
-  const sheet = await boxOf(page.getByTestId('journal-sheet'), 'journal sheet');
+  // The paper translates upward as it enters. Separate protocol reads can
+  // combine boxes from different animation frames and invent a tiny overlap.
+  await expect(page.getByTestId('journal-sheet')).toHaveCSS('opacity', '1');
+  const { timer, body, sheet } = await page.evaluate(() => {
+    const box = (id: string) => {
+      const node = document.querySelector(`[data-testid="${id}"]`);
+      if (node === null) throw new Error(`missing ${id}`);
+      const { x, y, width, height } = node.getBoundingClientRect();
+      return { x, y, width, height };
+    };
+    return {
+      timer: box('writing-timer-pill'),
+      body: box('journal-body-input'),
+      sheet: box('journal-sheet'),
+    };
+  });
   const visibleBody = intersectionBox(body, sheet);
   expect(
     overlapArea(visibleBody, timer),
