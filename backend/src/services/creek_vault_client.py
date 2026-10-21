@@ -1127,25 +1127,12 @@ _REFLECTION_CALL = _CallDepartures(
     deadline=_VAULT_TOTAL_DEADLINE_SECONDS, forwards_provider_key=True
 )
 
-# The departures one letter runs under, and they are the reflection's exactly.
-# A letter is a generation call on the same ``generation`` chokepoint a
-# reflection is -- the vault wakes the same model and spends the same cap on it
-# -- so the reason #3493 gave the reflection a named deadline applies here
-# unchanged, and this call site simply had not been given it: naming no
-# deadline, it kept the pooled client's per-phase budgets, whose ``read`` is
-# :data:`_VAULT_TIMEOUT_SECONDS`, and a phase budget is checked long
-# before a whole-request deadline is. So a letter died ten seconds from request
-# to first byte, the vault's model wake included, however generous the
-# ``asyncio.timeout`` around it looked.
-#
-# It is also what makes the vault's own admission cap *observable* on this
-# route (Creek-Vault#1903 step 6): a ``429`` the transport cut off before it
-# arrived is reported as a timeout, which is an outage story told about a wait.
-#
-# Spelled as its own constant rather than reusing :data:`_REFLECTION_CALL`,
-# because the two calls agree on a value and not on an identity -- a later
-# change to one route's budget should be a visible edit here rather than a
-# silent change to the other's.
+# The departures one letter runs under: the reflection's values, for the
+# reflection's reason (#3493) -- a letter wakes the same model on the same
+# ``generation`` chokepoint, and this call site had simply not been given the
+# named deadline. Its own constant rather than an alias of
+# :data:`_REFLECTION_CALL`, so the two agree on a value and not an identity;
+# ``test_a_letter_runs_under_the_widened_phase_budgets`` holds both halves.
 _LETTER_CALL = _CallDepartures(deadline=_VAULT_TOTAL_DEADLINE_SECONDS, forwards_provider_key=True)
 
 
@@ -1336,24 +1323,16 @@ def _availability_failure(
 ) -> CreekVaultError:
     """Return the availability failure *response* reports: a wait, or an absence.
 
-    The single place that distinction is made, for every ``/v1`` route and for
-    both the coded and the uncoded path, which is what keeps the two
-    model-backed routes from telling a writer two different stories about one
-    cap (Creek-Vault#1903 step 6).
+    The single place that distinction is made -- every ``/v1`` route, coded
+    and uncoded path alike -- which is what keeps the two model-backed routes
+    from telling a writer two stories about one cap (Creek-Vault#1903 step 6).
 
-    Keyed on the **status**, deliberately, and it does not overturn the
-    code-first rule its callers document. That rule exists so a *coded* answer
-    is never misattributed by its status class -- ``privacy_refused`` at 403
-    read as a rejected credential was the real misreport it was written for --
-    and ``429`` has no competing code to be misattributed from: it is Creek's
-    status for exactly one code, and :data:`ERROR_STATUS` gives no other code
-    that status. Reading the status is also the only thing that classifies a
-    429 from an intermediary shedding load, which never reaches the vault's
-    error vocabulary at all, and the only thing that works while adepthood's
-    vendored bundle is contract 0.18 -- whose ``ErrorCode`` enum has no
-    ``rate_limited`` member, so :func:`_coerce_error_code` drops the string and
-    there is no code to read. When the bundle advances, the coded path arrives
-    here too and agrees rather than competing.
+    Keyed on the **status**, which does not overturn the code-first rule its
+    callers document: that rule exists so a *coded* answer is never
+    misattributed by its status class, and ``429`` carries no competing code
+    to be misattributed from. The full argument, including why a code-keyed
+    branch is unavailable until the vendored bundle passes 0.18, is in
+    :mod:`tests.test_creek_vault_rate_limited`.
 
     Args:
         response: The non-2xx answer being classified.
@@ -1362,8 +1341,8 @@ def _availability_failure(
 
     Returns:
         :class:`CreekVaultRateLimitedError` for a 429, else
-        :class:`CreekVaultUnavailableError`. Both are the same degrade for
-        every existing caller, because the first is a subclass of the second.
+        :class:`CreekVaultUnavailableError` -- the same degrade for every
+        existing caller, since the first is a subclass of the second.
     """
     if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
         return CreekVaultRateLimitedError(message, code=code)
@@ -1560,9 +1539,7 @@ def _coded_read_failure(
     members by the time it gets here.
 
     *response* is carried through only so :func:`_availability_failure` can see
-    the status: a coded answer whose code is the vault reporting on itself may
-    still be a cap rather than an absence, and the status is what tells them
-    apart.
+    the status, which is what tells a cap from an absence.
     """
     if code in _CONTRACT_ERROR_CODES:
         return CreekVaultContractError(
@@ -2337,14 +2314,9 @@ class HttpCreekVaultClient:
         Draft PUT.
 
         It departs on its budget as well as its key (:data:`_LETTER_CALL`), for
-        the reason :meth:`_post_reflection` does and with the same values: the
-        deadline is the standing one, but declaring it carries it into
-        :func:`_widened_phase_budgets` so the transport's ``read`` phase reaches
-        it instead of capping the call at :data:`_VAULT_TIMEOUT_SECONDS`. A
-        letter waits on a model rather than on a lookup, so a letter cut off
-        before the deadline it is measured against is a timeout degrade the
-        vault did nothing to earn -- and a cap it was about to report arrives
-        as that timeout instead of as the wait it is.
+        the reason :meth:`_post_reflection` does and with the same values: a
+        letter waits on a model rather than on a lookup, so the ``read`` phase
+        has to reach the deadline instead of capping the call ten seconds in.
         """
         tier = wire_ceiling_for(request.tier)
         segment = _voice_draft_path_segment(request.external_id)

@@ -266,18 +266,21 @@ def test_a_letter_request_never_renders_its_prose() -> None:
 async def test_a_letter_runs_under_the_widened_phase_budgets() -> None:
     """A letter's read phase reaches the whole-request deadline, as a reflection's does.
 
-    The divergence this closes (Creek-Vault#1903 step 6). ``_post_reflection``
+    The divergence this closes (Creek-Vault#1903 step 6), and the home of the
+    full rationale the client module now points here for. ``_post_reflection``
     was given :data:`_REFLECTION_CALL` by #3493 so the transport's ``read``
     phase would reach the thirty-second deadline instead of capping the call at
-    :data:`_VAULT_TIMEOUT_SECONDS`; the letter call beside it named
-    no deadline at all and so kept dying ten seconds from request to first
-    byte, the vault's model wake included, however generous the ``asyncio.timeout``
-    around it looked. A letter is a generation call on the same chokepoint as a
-    reflection, so it was the same bug on the same seam, one call site over.
+    :data:`_VAULT_TIMEOUT_SECONDS`. The letter call beside it named no deadline
+    at all, so it kept the pooled client's per-phase budgets and died ten
+    seconds from request to first byte -- the vault's model wake included --
+    however generous the ``asyncio.timeout`` around it looked, because a phase
+    budget is checked long before a whole-request deadline is. A letter is a
+    generation call on the same ``generation`` chokepoint as a reflection, so it
+    was the same bug on the same seam, one call site over.
 
-    It is also what makes the vault's own cap *observable*: a refusal the
-    transport cut off before it arrived is reported as a timeout, which is an
-    outage story told about a wait.
+    It is also what makes a vault's admission cap *observable* on this route: a
+    ``429`` the transport cut off before it arrived is reported as a timeout,
+    which is an outage story told about a wait.
 
     Four claims, each catching a different way the widening could be undone:
     the ``read`` equality catches the deadline being dropped from the
