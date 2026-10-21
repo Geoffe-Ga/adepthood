@@ -122,6 +122,16 @@ _REFLECTIONS_PATH = "/v1/reflections"
 
 _REFLECTIONS_URL = f"{_VAULT_URL}{_REFLECTIONS_PATH}"
 
+# The p95 a reflection is held to by Creek-Vault ADR 0016 R2 ("vault POST
+# /v1/reflections p95 <= 25 s from the vault's receipt of the request"),
+# restated here as a number rather than imported, because this file's job is to
+# be the thing that fails when production stops honouring it. The enforced read
+# budget must leave room for it; a budget narrowed back toward the ten-second
+# phase timeout would cut off a reflection the ADR says is still inside its
+# allowance, which is the regression Geoffe-Ga/Creek-Vault#1903 step 2 exists
+# to prevent.
+_R2_REFLECTION_LATENCY_BUDGET_SECONDS = 25.0
+
 _API_KEY = "creek-vault-test-key"  # pragma: allowlist secret
 
 # A configured vault's single bound owner, and somebody who is not them. Two ids
@@ -2588,6 +2598,49 @@ async def test_http_reflect_sends_exactly_the_ratified_request(
     assert "entry_ref" not in body
     for name in _TIER_FIELD_NAMES:
         assert name not in body
+
+
+@pytest.mark.asyncio
+async def test_http_reflect_runs_under_the_widened_phase_budgets(
+    http_clients: ClientFactory,
+) -> None:
+    """A reflection's read phase reaches the whole-request deadline, and only its read phase.
+
+    The regression this pins (Creek-Vault ADR 0016 R2, step 2 of
+    Geoffe-Ga/Creek-Vault#1903): the pooled client carries
+    :data:`_VAULT_HTTP_TIMEOUT`, whose ``read`` phase is ten seconds, and httpx
+    checks a phase budget long before the thirty-second whole-request deadline
+    is reached. So a reflection posted under the standing departures died at
+    ten seconds from request to first byte -- the vault's model wake included
+    -- however generous the
+    ``asyncio.timeout`` around it looked, and R2's latency harness could not
+    honestly report a p95 against a twenty-five second budget that production
+    never allowed a call to reach.
+
+    Four claims rather than one, because each catches a different way the
+    widening could be undone. The ``read`` equality catches the deadline being
+    dropped from the departures. The comparison against
+    :data:`_R2_REFLECTION_LATENCY_BUDGET_SECONDS` catches the deadline itself
+    being narrowed below the published promise, which an equality against the
+    deadline constant alone would follow silently. The three unchanged phases
+    catch a widening that blunts the budgets bounding a genuinely unreachable
+    host. And the capability GET catches the widening having been applied to the
+    pooled client, where it would move every call rather than this one.
+    """
+    handler = _ReflectRouteHandler(_reflection_example("success"))
+    client = await _handshaken_client(handler, http_clients)
+
+    await client.reflect(_ENTRY_BODY, VaultTierCeiling.PERSONAL)
+
+    budgets = handler.reflect_requests[0].extensions["timeout"]
+    assert budgets["read"] == _VAULT_TOTAL_DEADLINE_SECONDS
+    assert budgets["read"] >= _R2_REFLECTION_LATENCY_BUDGET_SECONDS
+    assert budgets["connect"] == _VAULT_TIMEOUT_SECONDS
+    assert budgets["write"] == _VAULT_TIMEOUT_SECONDS
+    assert budgets["pool"] == _VAULT_TIMEOUT_SECONDS
+
+    handshake = next(r for r in handler.requests if r.url.path == _CAPABILITIES_PATH)
+    assert handshake.extensions["timeout"]["read"] == _VAULT_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio

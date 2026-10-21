@@ -1107,6 +1107,25 @@ _STANDING_CALL = _CallDepartures()
 _UNVERSIONED_CALL = _CallDepartures(contract_versioned=False)
 _KEYED_CALL = _CallDepartures(forwards_provider_key=True)
 
+# The departures one reflection runs under: keyed, like the letter route beside
+# it, and the only call that asks for the standing deadline *explicitly*. Its
+# deadline is :data:`_VAULT_TOTAL_DEADLINE_SECONDS` rather than a longer one, so
+# nothing about how long a reflection may take changes here -- what changes is
+# that the deadline becomes *reachable*. Naming it is the only way to say so,
+# because the standing path leaves the pooled client's per-phase budgets in
+# place and that client's ``read`` phase is :data:`_VAULT_TIMEOUT_SECONDS`: a
+# phase budget is checked long before a whole-request deadline is, so a
+# reflection asked for under :data:`_KEYED_CALL` died ten seconds from request
+# to first byte -- the vault's model wake included -- however generous the
+# ``asyncio.timeout`` around it looked. Creek-Vault's ADR 0016 R2 holds a
+# reflection to a p95 of 25 s measured from the vault's receipt of the request,
+# and a promise the transport cuts off at 10 s is not a promise anybody can
+# measure, which is why the warm-pool latency harness names this widening as
+# its prerequisite.
+_REFLECTION_CALL = _CallDepartures(
+    deadline=_VAULT_TOTAL_DEADLINE_SECONDS, forwards_provider_key=True
+)
+
 
 def _widened_phase_budgets(deadline: float) -> httpx.Timeout:
     """The per-phase budgets one over-long call runs under.
@@ -2318,6 +2337,15 @@ class HttpCreekVaultClient:
         (:func:`_admissible_ceiling`): a ceiling declared and a ceiling honoured
         are two different claims.
 
+        It departs on its budget as well as its key (:data:`_REFLECTION_CALL`):
+        the deadline is the standing one, but declaring it carries it into
+        :func:`_widened_phase_budgets` so the transport's ``read`` phase reaches
+        it instead of capping the call at :data:`_VAULT_TIMEOUT_SECONDS`. A
+        reflection is the one read-shaped call that waits on a model rather than
+        on a lookup, which is why it needs what the cold embedding write already
+        has; a reflection cut off before the deadline it is measured against is a
+        timeout degrade the vault did nothing to earn.
+
         Every transport failure (connection refused, a socket error, a URL httpx
         will not build a request for) becomes
         :class:`CreekVaultUnavailableError` with ``from None``, and a call that
@@ -2332,7 +2360,7 @@ class HttpCreekVaultClient:
                 f"{self._url}{_REFLECTIONS_PATH}",
                 _reflection_request_body(body),
                 ceiling=ceiling,
-                departures=_KEYED_CALL,
+                departures=_REFLECTION_CALL,
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_REFLECT_FAILED_MESSAGE) from None
