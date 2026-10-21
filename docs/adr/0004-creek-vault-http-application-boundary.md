@@ -4,7 +4,7 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.18.0 (tracks Creek's published
+- **Pinned contract version:** 0.20.0 (tracks Creek's published
   constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
   of this document, moved to 0.8.0 with the 2026-08-19 note, which
   records why that move became a prerequisite rather than housekeeping,
@@ -14,7 +14,8 @@
   with the 2026-09-12 note, which adopts journal withdrawal, moved to
   0.17.0 with the 2026-10-15 note, which adopts vault-written letters, and
   moved to 0.18.0 with the 2026-10-20 note, which adopts request-scoped keys
-  on a managed vault)
+  on a managed vault, and moved to 0.20.0 with the 2026-10-21 note, which
+  refuses a pool-less managed vault's keyless pass before any charge)
 
 ## Context
 
@@ -1581,3 +1582,36 @@ custody and payment decision; this note records only the contract move.
 INTIMATE content never reaches a key-spending path. The vault routes any
 INTIMATE work it is asked for onto its local model or refuses it, and
 adepthood's own egress gate is unchanged.
+
+## Note, 2026-10-21 — the pin moves to 0.20.0; a pool-less vault's keyless pass is refused before any charge
+
+Creek-Vault#1940 (head `198f2f12`) publishes `keyless_inference` on the
+handshake (Creek-Vault#1938) and Adepthood #3501 adopts it. The vendored bundle
+is re-cut byte-for-byte from that commit. The counts are unchanged: 112
+manifest entries, 41 schemas, a 10 × 7 example matrix. The ontology version is
+unchanged.
+
+**Why.** On 2026-10-21 every reflection on the managed pilot vault failed. A
+managed vault ships no inference runtime and refuses its operator's cloud key,
+so until the shared pool (Creek-Vault ADR-0016) is pinned, the only reflection
+it can write is one powered by the writer's own key. Adepthood could not see
+that ahead of time, so it charged a credit, dialled, was refused, refunded, and
+showed "give it a moment and try again". Retrying could never help.
+
+**What.** `keyless_inference: false` means a model call with no writer key is
+refused before any model is dialled. When a vault-bound pass carries no key
+the vault will spend and its vault says `false`, the pass is answered
+`402 vault_key_required` before the payer gate, the wallet or the reflect
+route. The frontend routes that to the existing add-a-key remedy. A locally
+care-flagged entry still gets care, and a pass with no vault tier is never
+probed. The pre-charge probe's handshake is reused by the reflect gate, so a
+pass still handshakes once.
+
+**What 0.19 brings along.** Moving past 0.19 also opts into its additions.
+`inference_source` on the three model-backed answers is read leniently and
+ignored for now. `rate_limited` (429) is not classified: an uncoded 429
+already reads as the availability story, which is what a shed request is.
+
+**Deploy order.** Adepthood requires its pinned minor in a vault's
+`supported_contract_minors`, so this pin must not ship before a vault speaking
+0.20 is deployed. Otherwise every handshake degrades to `incompatible_version`.

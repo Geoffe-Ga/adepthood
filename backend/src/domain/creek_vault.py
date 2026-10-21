@@ -47,7 +47,7 @@ from uuid import UUID
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.18.0"
+CONTRACT_VERSION = "0.20.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -550,10 +550,19 @@ class HandshakeResult:
     #: PERSONAL work (Creek contract 0.18). Empty for a self-connected vault, an
     #: older vault, and every degraded handshake.
     request_key_providers: frozenset[VaultKeyProvider] = frozenset()
+    #: Whether the vault may attempt a model call carrying no writer key
+    #: (Creek contract 0.20, #3501). ``False`` is a managed vault with no shared
+    #: pool, which refuses every keyless reflection; ``None`` is a vault that
+    #: did not say, and changes nothing.
+    keyless_inference: bool | None = None
 
     def accepts_key(self, provider: VaultKeyProvider) -> bool:
         """Whether this usable vault will spend a writer's ``provider`` key."""
         return self.available and provider in self.request_key_providers
+
+    def refuses_keyless_inference(self) -> bool:
+        """Whether this usable vault said a keyless model call cannot run here."""
+        return self.available and self.keyless_inference is False
 
     @classmethod
     def unavailable(cls) -> HandshakeResult:

@@ -8,11 +8,11 @@ listen on kernel-assigned loopback sockets here and every request uses httpx's
 normal network transport.
 
 The Creek peer is deliberately small rather than a second implementation.  It
-serves only the published 0.18 shapes used by this journey, keeps the uploaded
-fragment and its labels as observable state, and refuses to report a completed
-classification until more than ten real seconds have elapsed.  The contract
-bundle and the adapter's parser suites remain the authorities for every other
-cell of the protocol.
+serves only the published shapes, at the pinned contract minor, used by this
+journey, keeps the uploaded fragment and its labels as observable state, and
+refuses to report a completed classification until more than ten real seconds
+have elapsed.  The contract bundle and the adapter's parser suites remain the
+authorities for every other cell of the protocol.
 """
 
 from __future__ import annotations
@@ -54,6 +54,8 @@ _HOST = "127.0.0.1"
 _API_KEY = "live-boundary-key"  # pragma: allowlist secret
 _PASSWORD = "correct-horse-battery-staple-42"  # pragma: allowlist secret
 _CLASSIFICATION_SECONDS = 10.2
+# The peer speaks whatever minor adepthood pins, so a contract bump moves it too.
+_MINOR = ".".join(CONTRACT_VERSION.split(".")[:2])
 # The foreground stage clock the converging journey runs under, and how long its
 # peers hold each accepted classification's 202. The hold spans two whole clocks
 # on purpose (#2933): the budget is armed before the submit is sent and the hold
@@ -88,7 +90,7 @@ class _Job:
 
 
 class _SlowCreekPeer:
-    """A 0.18 Creek HTTP peer whose LLM job really takes longer than ten seconds."""
+    """A Creek HTTP peer at the pinned minor whose LLM job really takes longer than ten seconds."""
 
     def __init__(
         self,
@@ -124,8 +126,8 @@ class _SlowCreekPeer:
 
     @staticmethod
     def _require_contract(request: Request) -> None:
-        """Fail the peer if a post-handshake request does not declare 0.18."""
-        assert request.headers.get("x-creek-contract-version") == "0.18"
+        """Fail the peer if a post-handshake request does not declare the pinned minor."""
+        assert request.headers.get("x-creek-contract-version") == _MINOR
 
     async def _capabilities(self, request: Request) -> Mapping[str, object]:
         """Advertise the three capabilities used by the two write journeys."""
@@ -135,8 +137,8 @@ class _SlowCreekPeer:
             "vault": {"available": True},
             "capabilities": ["capabilities", "journal-upsert", "upload", "pipeline"],
             "contract_version": CONTRACT_VERSION,
-            "contract_minor": "0.18",
-            "supported_contract_minors": ["0.18"],
+            "contract_minor": _MINOR,
+            "supported_contract_minors": [_MINOR],
             # A self-connected vault spends no caller's key (Creek-Vault ADR-0015).
             "request_key_providers": [],
             "ontology_version": "aptitude-wavelength/2026-05-23",

@@ -15,6 +15,7 @@ from domain.creek_vault import (
     VaultClassification,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultKeyProvider,
     VaultReflection,
     VaultReflectionStatus,
     VaultTierCeiling,
@@ -56,6 +57,10 @@ class ReflectingVaultClient:
         self.reflect_calls: list[tuple[str, VaultTierCeiling]] = []
         self._available = available
         self._capabilities = capabilities
+        # Contract 0.18/0.20 handshake fields; a test sets them after
+        # construction to script a managed vault (#3437, #3501).
+        self.keyless_inference: bool | None = None
+        self.request_key_providers: frozenset[VaultKeyProvider] = frozenset()
         self._reflect_result = reflect_result if reflect_result is not None else empty_reflection()
         self._reflect_error = reflect_error
 
@@ -68,6 +73,8 @@ class ReflectingVaultClient:
             ontology_version="1.0.0",
             capabilities=self._capabilities,
             attestation=None,
+            request_key_providers=self.request_key_providers,
+            keyless_inference=self.keyless_inference,
         )
 
     def is_available(self) -> bool:
