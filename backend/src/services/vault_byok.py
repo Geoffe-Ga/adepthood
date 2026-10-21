@@ -28,13 +28,15 @@ it.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
 from domain.creek_vault import VaultKeyProvider, VaultProviderKey
+from errors import payment_required
 from services.botmason import provider_for_api_key, resolve_chat_api_key
-from services.generation_access import disclosed_route_changed
+from services.generation_access import VAULT_KEY_REQUIRED, disclosed_route_changed
 from services.reflection_boundary import ReflectionBoundary
 
 if TYPE_CHECKING:
@@ -113,6 +115,118 @@ async def reading_vault_key(
     if refused_whatever_pays:
         return None
     return await vault_provider_key(session, vault_client, boundary, supplied_key)
+
+
+def keyless_probe_due(
+    boundary: ReflectionBoundary,
+    vault_key: VaultProviderKey | None,
+    *,
+    refused_whatever_pays: bool,
+    reaches_vault: bool = True,
+) -> bool:
+    """Whether :func:`keyless_vault_refusal` will probe the vault for this pass.
+
+    Only a vault-bound pass that carries no key the vault will spend, is not
+    already refused whoever pays, and would actually reach the vault -- not a
+    locally care-flagged entry, not a classification with no vault tier -- is
+    probed. The router reads the same answer to know the pass's own reflect
+    gate may reuse that handshake rather than dial again.
+    """
+    keyless_vault_pass = boundary is ReflectionBoundary.VAULT_BOUND and vault_key is None
+    return keyless_vault_pass and reaches_vault and not refused_whatever_pays
+
+
+async def keyless_vault_refusal(
+    session: AsyncSession,
+    vault_client: CreekVaultClient,
+    *,
+    due: bool,
+) -> HTTPException | None:
+    """Refuse a keyless pass the caller's vault has said it cannot answer (#3501).
+
+    A managed vault with no shared pool writes only with the writer's own key
+    (Creek contract 0.20, ``keyless_inference: false``). Charging a credit for
+    such a pass would buy a dial, a certain refusal and a refund, and the writer
+    would be told to try again. So it is answered ``402 vault_key_required``
+    first: the add-a-key remedy, before any wallet row or reflect call.
+
+    Probes only when ``due`` -- :func:`keyless_probe_due`'s answer, which the
+    router also keeps to let the reflect gate reuse this handshake -- and
+    commits first so no pooled connection is held across the probe, as
+    :func:`vault_provider_key` does. A vault that is unavailable or did not say
+    is left to the existing paths.
+    """
+    if not due:
+        return None
+    await session.commit()
+    handshake = await vault_client.handshake()
+    return payment_required(VAULT_KEY_REQUIRED) if handshake.refuses_keyless_inference() else None
+
+
+@dataclass(frozen=True)
+class PassReach:
+    """Where a Resonance pass would go, decided before any vault is read.
+
+    ``refused_whatever_pays`` is :func:`refused_whatever_pays`'s answer, and
+    ``reaches_vault`` whether an admitted pass would dial its vault at all
+    (not a care-flagged entry, not a classification with no vault tier).
+    """
+
+    refused_whatever_pays: bool
+    reaches_vault: bool
+
+
+@dataclass(frozen=True)
+class VaultReading:
+    """What a Resonance pass learned from its vault before the payer gate (#3437, #3501).
+
+    ``key`` is the writer's key when the vault will spend it; ``probed`` whether
+    the keyless probe handshook the vault, so the reflect gate may reuse that
+    answer; ``refusal`` the ``402 vault_key_required`` a pool-less vault earns.
+    """
+
+    key: VaultProviderKey | None = field(repr=False)
+    probed: bool
+    refusal: HTTPException | None
+
+    def ahead_of(self, payer: HTTPException | None) -> HTTPException | None:
+        """Answer this pass's keyless refusal ahead of the payer gate's.
+
+        No credit can buy what a pool-less vault will not write, so an
+        empty-wallet writer is told to add a key rather than to refill.
+        """
+        return self.refusal if self.refusal is not None else payer
+
+
+async def resonance_vault_reading(
+    session: AsyncSession,
+    vault_client: CreekVaultClient,
+    boundary: ReflectionBoundary,
+    supplied_key: str | None,
+    *,
+    reach: PassReach,
+) -> VaultReading:
+    """Read a Resonance pass's vault before the payer gate: its key, then the keyless probe.
+
+    The key decision is :func:`reading_vault_key`, unchanged. Then, for a pass
+    :func:`keyless_probe_due` admits, :func:`keyless_vault_refusal` probes
+    whether the vault can answer without the writer's key at all.
+    """
+    key = await reading_vault_key(
+        session,
+        vault_client,
+        boundary,
+        supplied_key,
+        refused_whatever_pays=reach.refused_whatever_pays,
+    )
+    probed = keyless_probe_due(
+        boundary,
+        key,
+        refused_whatever_pays=reach.refused_whatever_pays,
+        reaches_vault=reach.reaches_vault,
+    )
+    refusal = await keyless_vault_refusal(session, vault_client, due=probed)
+    return VaultReading(key=key, probed=probed, refusal=refusal)
 
 
 def refused_whatever_pays(

@@ -94,6 +94,7 @@ from services.reflection_boundary import (
     VaultSourceUnavailableError,
     VaultSourceUnavailableReason,
 )
+from services.resonance_care import care_for
 
 
 @dataclass(frozen=True)
@@ -247,11 +248,38 @@ def reflection_receipt(
     return receipt_since(usage, mark)
 
 
+def maps_to_vault_tier(classification: str) -> bool:
+    """Whether :func:`select_reflection_llm`'s tier gate would admit ``classification``.
+
+    Its step 1 alone, with no handshake, so the router can tell before charging
+    whether a pass would reach the vault at all (#3501). Read through this
+    module's own ``tier_ceiling_for`` so the two can never disagree.
+    """
+    if not admits_egress(classification):
+        return False
+    try:
+        tier_ceiling_for(classification)
+    except ValueError:
+        return False
+    return True
+
+
+def pass_reaches_vault(body: str, classification: str) -> bool:
+    """Whether an admitted vault-bound pass would dial its vault at all (#3501).
+
+    A locally care-flagged entry is answered with care alone, and a
+    classification with no vault tier fails closed before any handshake, so
+    the router's pre-charge keyless probe must reach the vault for neither.
+    """
+    return care_for(body) is None and maps_to_vault_tier(classification)
+
+
 async def select_reflection_llm(
     client: CreekVaultClient,
     *,
     body: str,
     classification: str,
+    probed: bool = False,
 ) -> VaultResonanceLLM:
     """Bind a vault-bound entry's reflection to its vault, or raise that the vault cannot answer.
 
@@ -269,20 +297,20 @@ async def select_reflection_llm(
        closed with the same ``UNKNOWN_TIER``.
     2. A handshake probes the vault; one that is not available raises
        ``UNAVAILABLE``, and one that does not advertise REFLECT raises
-       ``CAPABILITY_MISSING``.
+       ``CAPABILITY_MISSING``. ``probed`` says this request's router already
+       probed this same client before charging (#3501), so its cached answer is
+       read rather than dialling the vault a second time.
     3. Otherwise a :class:`VaultResonanceLLM` bound to the resolved tier is
        returned.
 
     There is deliberately no ``fallback`` parameter: a vault-then-app-provider
     composite is not expressible through this function.
     """
-    if not admits_egress(classification):
+    if not maps_to_vault_tier(classification):
         raise VaultSourceUnavailableError(VaultSourceUnavailableReason.UNKNOWN_TIER)
-    try:
-        tier_ceiling = tier_ceiling_for(classification)
-    except ValueError:
-        raise VaultSourceUnavailableError(VaultSourceUnavailableReason.UNKNOWN_TIER) from None
-    await client.handshake()
+    tier_ceiling = tier_ceiling_for(classification)
+    if not probed:
+        await client.handshake()
     if not client.is_available():
         raise VaultSourceUnavailableError(VaultSourceUnavailableReason.UNAVAILABLE)
     if not client.supports(CreekCapability.REFLECT):

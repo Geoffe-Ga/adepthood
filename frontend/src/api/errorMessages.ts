@@ -235,6 +235,12 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   generation_guard_unavailable:
     "BotMason couldn't start this just now, and nothing was charged. Give it a moment and try again.",
   llm_key_required: LLM_KEY_REQUIRED_COPY,
+  // A managed vault with no shared pool writes only with the writer's own key
+  // (#3501). Refused before any charge, and permanent until a key is added, so
+  // the copy names the remedy and never asks the writer to wait. Pending owner
+  // approval of the wording (#3262 governs money copy).
+  vault_key_required:
+    'Your vault writes reflections and letters only with your own API key for now, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.',
   invalid_llm_api_key_format:
     "That API key doesn't look right. Copy the full key from your OpenAI or Anthropic dashboard and paste it into Settings.",
   // A permanent, billing-level refusal — deliberately NOT inheriting the bare

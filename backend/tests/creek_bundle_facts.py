@@ -31,12 +31,12 @@ PINNED_PATH = "docs/contracts/adepthood-v1"
 #: The upstream commit the vendored copy was fetched at. A sha rather than a
 #: branch: a branch name would let the "pinned" copy move underneath the digests
 #: that are the only thing making it a pin.
-PINNED_COMMIT = "a134bf4440eea0b7bc40b545d32a814cfebd443f"  # pragma: allowlist secret
+PINNED_COMMIT = "198f2f12fb6ac58866e4688bcb036071c267a3e2"  # pragma: allowlist secret
 
 #: The contract version the vendored bundle publishes. Restated rather than read
 #: from ``domain.creek_vault``, so the suites compare two independent claims
 #: instead of agreeing with whatever the pin happens to say.
-PINNED_CONTRACT_VERSION = "0.18.0"
+PINNED_CONTRACT_VERSION = "0.20.0"
 
 #: The ontology the wire vocabulary is drawn from. Unchanged across 0.8 to 0.15.
 ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"

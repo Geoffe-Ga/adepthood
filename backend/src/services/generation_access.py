@@ -71,6 +71,10 @@ KEY_REQUIRED: Final = KEY_REQUIRED_DETAIL
 #: 402: no personal key, and no credits left in either wallet bucket. The same
 #: detail :func:`services.wallet.preflight_deduction` refuses an empty wallet with.
 CREDITS_OR_KEY_REQUIRED: Final = "insufficient_offerings"
+#: 402: the caller's managed vault has no shared pool, so it writes only with the
+#: writer's own key, and this pass carries none it will spend (#3501). Credits
+#: cannot pay for what no model will answer, so the remedy is the key.
+VAULT_KEY_REQUIRED: Final = "vault_key_required"
 #: 409: a ``free_only`` resonance request found a payer that could now pay, but
 #: the writer was shown no price for this pass (#3389). Also the answer to an
 #: ordinary request whose disclosed payer route is no longer the caller's (#3385).
