@@ -1654,7 +1654,7 @@
         "type": "object"
       },
       "EssayResponse": {
-        "description": "A margin note after an essay request, plus the wallet it left behind.\n\nThe balances mirror :class:`ResonanceResponse` so a client reads one shape\nfor \"what this cost me\" on both charged journal depths. They sit on a\nsubclass rather than on :class:`MarginaliaResponse` itself so note listings\ndo not grow a wallet read per row.",
+        "description": "A margin note after an essay request, plus the wallet it left behind.\n\nThe balances mirror :class:`ResonanceResponse` so a client reads one shape\nfor \"what this cost me\" on both charged journal depths. They sit on a\nsubclass rather than on :class:`MarginaliaResponse` itself so note listings\ndo not grow a wallet read per row.\n\n``care`` is ``None`` on every ordinary answer. It carries adepthood's own\nreviewed care surface only when a vault-bound writer's vault answered the\nletter ask with its care escalation instead of a letter (#3380) -- the same\nsurface a resonance pass escalation returns, never the vault's own prose.",
         "properties": {
           "anchor_end": {
             "title": "Anchor End",
@@ -1667,6 +1667,16 @@
           "anchor_text": {
             "title": "Anchor Text",
             "type": "string"
+          },
+          "care": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CareResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "created_at": {
             "format": "date-time",
@@ -18655,7 +18665,7 @@
     },
     "/journal/marginalia/{marginalia_id}/essay": {
       "post": {
-        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call or charge. Ownership is enforced via the marginalia's own\n``user_id`` (404 otherwise). A server-paid first letter costs\n``ESSAY_PRICE_UNITS`` wallet unit and must carry ``price_acknowledged``\n(409 otherwise, before any charge); a failed or empty letter is refunded.\nA first letter whose ``disclosed_route`` is no longer the caller's gets the\nsame 409, before the vault handshake or any dial (#3385).\n\nA note with no ``essay`` on the response is the no-letter state, not an\nerror: the entry is intimate, or the provider's completion was not a letter\n(:func:`domain.resonance.generate_essay`). Either way nothing is cached and\nthe writer can ask again. Every answer carries the wallet balances.",
+        "description": "Lazily generate (and cache) a longer essay expanding one margin note.\n\nIdempotent: once ``essay`` is set the cached value is returned without another\nLLM call or charge. Ownership is enforced via the marginalia's own\n``user_id`` (404 otherwise). A server-paid first letter costs\n``ESSAY_PRICE_UNITS`` wallet unit and must carry ``price_acknowledged``\n(409 otherwise, before any charge); a failed or empty letter is refunded.\nA first letter whose ``disclosed_route`` is no longer the caller's gets the\nsame 409, before the vault handshake or any dial (#3385).\n\nA note with no ``essay`` on the response is the no-letter state, not an\nerror: the entry is intimate, or the provider's completion was not a letter\n(:func:`domain.resonance.generate_essay`). Either way nothing is cached and\nthe writer can ask again. Every answer carries the wallet balances.\n\nA vault-bound writer whose vault's care guard answered instead of a letter\ngets the no-letter note with ``care`` set: adepthood's own reviewed care\nsurface, the one a resonance escalation returns, uncharged (#3380).",
         "operationId": "expand_marginalia_essay_journal_marginalia__marginalia_id__essay_post",
         "parameters": [
           {

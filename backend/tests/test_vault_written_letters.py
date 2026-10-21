@@ -16,19 +16,29 @@ the real route with a scripted vault and pin the four things that must hold:
   Intimate reclassification or a delete withdraws the vault's letter exactly as
   it withdraws a mirrored draft;
 * the INTIMATE floor still returns before the vault is touched.
+
+A care escalation -- Creek's published 200 ``CareEscalationResponse`` cell on
+``letters`` -- is the vault's acute-distress guard answering *instead of*
+writing a letter. It answers with adepthood's own reviewed care surface, the
+one a resonance escalation returns (#3380), and, being a definitive no-letter
+answer, releases the intent row it staged so nothing is left owed (#3379).
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from http import HTTPStatus
+from pathlib import Path
 
+import httpx
 import pytest
 from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
+from domain.care import build_care_payload
 from domain.creek_vault import (
     CONTRACT_VERSION,
     CreekCapability,
@@ -47,9 +57,10 @@ from models.journal_entry import JournalClassification, JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
 from models.user import User
 from models.voice_draft_retraction import VoiceDraftRetraction, VoiceDraftRetractionState
+from routers import journal as journal_router
 from services import marginalia as marginalia_service
 from services.botmason import LLMResponse
-from services.creek_vault_client import LocalFallbackCreekVaultClient
+from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
 from services.creek_vault_voice_drafts import voice_draft_external_id
 from services.reflection_boundary import REFLECTION_SOURCE_UNAVAILABLE, ReflectionBoundary
 from services.usage import get_monthly_cap
@@ -64,6 +75,10 @@ _APP_LETTER = "SENTINEL_APP_LETTER_3203 the app provider must never write this."
 _PRICED = {"price_acknowledged": True}
 _BYOK = {"X-LLM-API-Key": OPENAI_KEY}
 _LETTERS_AND_DRAFTS = frozenset({CreekCapability.LETTERS, CreekCapability.VOICE_DRAFTS})
+_LETTER_EXAMPLES = Path(__file__).parent / "fixtures" / "creek_v1" / "examples" / "letters"
+_VAULT_URL = "https://vault.example.test"
+_VAULT_KEY = "letter-care-test-key"  # pragma: allowlist secret
+_ANOTHER_VAULT = "e" * 32
 
 
 class _LetterVault(LocalFallbackCreekVaultClient):
@@ -324,11 +339,70 @@ async def test_an_answer_that_is_not_a_letter_is_refunded_and_refused(
     assert app_dials.calls == 0
 
 
+def _reviewed_care() -> dict[str, object]:
+    """Adepthood's own reviewed care surface, exactly as a resonance escalation serves it."""
+    payload = build_care_payload()
+    return {
+        "title": payload.title,
+        "message": payload.message,
+        "resources": [
+            {
+                "kind": resource.kind,
+                "name": resource.name,
+                "contact": resource.contact,
+                "what_it_is": resource.what_it_is,
+            }
+            for resource in payload.resources
+        ],
+    }
+
+
+def _creek_letter_escalation() -> dict[str, object]:
+    """Creek's published ``letters`` care-escalation cell, read from the vendored bundle."""
+    payload = json.loads((_LETTER_EXAMPLES / "care-escalation.json").read_text())
+    assert isinstance(payload, dict)
+    return payload
+
+
+def _creek_only_care_texts() -> tuple[str, ...]:
+    """Creek's care prose minus anything adepthood also publishes (both name 988)."""
+    signal = _creek_letter_escalation()["care_signal"]
+    assert isinstance(signal, dict)
+    texts = [str(signal["message"])]
+    for resource in signal["resources"]:
+        texts += [str(resource["name"]), str(resource["contact"])]
+    reviewed = json.dumps(_reviewed_care())
+    return tuple(text for text in texts if text not in reviewed)
+
+
+def _creek_escalating_wire(request: httpx.Request) -> httpx.Response:
+    """A real ``/v1`` wire: the handshake, then Creek's letters care-escalation cell."""
+    if request.url.path.endswith("/v1/capabilities"):
+        minor = ".".join(CONTRACT_VERSION.split(".")[:2])
+        return httpx.Response(
+            HTTPStatus.OK,
+            json={
+                "vault": {"available": True},
+                "capabilities": ["letters", "voice-drafts"],
+                "contract_version": CONTRACT_VERSION,
+                "contract_minor": minor,
+                "supported_contract_minors": [minor],
+                "ontology_version": "aptitude-wavelength/2026-05-23",
+                "attestation": None,
+            },
+        )
+    return httpx.Response(HTTPStatus.OK, json=_creek_letter_escalation())
+
+
 @pytest.mark.asyncio
-async def test_a_care_escalation_answers_no_letter_and_refunds(
-    async_client: AsyncClient, db_session: AsyncSession, vault: _LetterVault, app_dials: _AppDials
+async def test_a_care_escalation_answers_with_the_reviewed_care_surface(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    vault: _LetterVault,
+    app_dials: _AppDials,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The vault's care guard spoke: no letter, no charge, and never the app provider's prose."""
+    """200, no letter, adepthood's care copy, refunded, one vault call, no app dial (#3380)."""
     headers, user_id = await _signup(async_client, "vault_letter_care")
     _, note_id = await _seed_note(db_session, user_id)
     vault.fail = CreekVaultCareEscalationError()
@@ -338,9 +412,151 @@ async def test_a_care_escalation_answers_no_letter_and_refunds(
         f"/journal/marginalia/{note_id}/essay", headers=headers, json=_PRICED
     )
 
-    assert resp.status_code == HTTPStatus.OK
+    assert resp.status_code == HTTPStatus.OK, resp.text
     assert resp.json()["essay"] is None
+    assert resp.json()["care"] == _reviewed_care()
+    assert _BODY not in resp.text
+    assert len(vault.letters) == 1
+    assert app_dials.calls == 0
     assert await _spent(db_session, user_id, before) == 0
+    assert (await _note(db_session, note_id)).essay is None
+    for record in caplog.records:
+        assert "SENTINEL" not in f"{record.getMessage()} {record.__dict__}"
+
+
+@pytest.mark.asyncio
+async def test_creeks_wire_escalation_reaches_the_writer_as_adepthoods_care_only(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    vault: _LetterVault,
+    app_dials: _AppDials,
+) -> None:
+    """Creek's published 200 escalation, through the real adapter, answers with reviewed care.
+
+    Creek's own message and resource list are its writing, dropped at the
+    adapter; none of it reaches the writer. ``vault`` binds the boundary and the
+    destination; its scripted client is replaced by the HTTP one.
+    """
+    http = httpx.AsyncClient(transport=httpx.MockTransport(_creek_escalating_wire))
+    wire_client = HttpCreekVaultClient(_VAULT_URL, _VAULT_KEY, http_client=http)
+    app.dependency_overrides[get_creek_vault_client] = lambda: wire_client
+    headers, user_id = await _signup(async_client, "vault_letter_care_wire")
+    _, note_id = await _seed_note(db_session, user_id)
+
+    try:
+        resp = await _ask(async_client, headers, note_id)
+    finally:
+        await http.aclose()
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["care"] == _reviewed_care()
+    creek_only = _creek_only_care_texts()
+    assert creek_only
+    for text in creek_only:
+        assert text not in resp.text
+    assert vault.letters == []
+    assert app_dials.calls == 0
+    assert await _intent(db_session, note_id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_written_letter_carries_no_care_surface(
+    async_client: AsyncClient, db_session: AsyncSession, vault: _LetterVault, app_dials: _AppDials
+) -> None:
+    """The ordinary letter and the intimate no-letter state are unchanged: ``care`` is null."""
+    headers, user_id = await _signup(async_client, "vault_letter_no_care")
+    _, note_id = await _seed_note(db_session, user_id)
+    _, intimate_id = await _seed_note(db_session, user_id, JournalClassification.INTIMATE)
+
+    written = await _ask(async_client, headers, note_id)
+    intimate = await _ask(async_client, headers, intimate_id)
+
+    assert written.json()["essay"] == _VAULT_LETTER
+    assert written.json()["care"] is None
+    assert intimate.json()["essay"] is None
+    assert intimate.json()["care"] is None
+    assert len(vault.letters) == 1  # the intimate note never reached the vault
+    assert app_dials.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_care_escalation_releases_the_staged_intent(
+    async_client: AsyncClient, db_session: AsyncSession, vault: _LetterVault, app_dials: _AppDials
+) -> None:
+    """The vault stored no letter, so no withdrawal is owed at its id (#3379)."""
+    headers, user_id = await _signup(async_client, "vault_letter_care_intent")
+    _, note_id = await _seed_note(db_session, user_id)
+    vault.fail = CreekVaultCareEscalationError()
+
+    resp = await _ask(async_client, headers, note_id)
+
+    assert resp.status_code == HTTPStatus.OK
+    assert await _intent(db_session, note_id) is None
+    assert app_dials.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_later_ask_after_an_escalation_stages_again_at_another_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    vault: _LetterVault,
+    app_dials: _AppDials,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Escalation, then a permitted ask -- even to a newly bound vault -- is written, not withheld.
+
+    An intent left behind by the escalation would name the old vault, and a
+    later ask to any other destination would be withheld (503) until a
+    deletion or reclassification retracted a letter that never existed.
+    """
+    headers, user_id = await _signup(async_client, "vault_letter_care_retry")
+    entry_id, note_id = await _seed_note(db_session, user_id)
+    external_id = voice_draft_external_id(user_id, note_id)
+    vault.fail = CreekVaultCareEscalationError()
+    assert (await _ask(async_client, headers, note_id)).status_code == HTTPStatus.OK
+
+    async def _rebound(_session: AsyncSession, _user_id: int) -> str:
+        return _ANOTHER_VAULT
+
+    monkeypatch.setattr(journal_router, "resolved_vault_destination", _rebound)
+    vault.fail = None
+    resp = await _ask(async_client, headers, note_id)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert resp.json()["essay"] == _VAULT_LETTER
+    assert [request.external_id for request in vault.letters] == [external_id, external_id]
+    intent = await _intent(db_session, note_id)
+    assert intent is not None
+    assert intent.journal_entry_id == entry_id
+    assert intent.state == VoiceDraftRetractionState.MIRROR_INTENT.value
+    assert intent.destination == _ANOTHER_VAULT
+    assert app_dials.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_an_escalation_over_an_owed_offer_keeps_it_owed(
+    async_client: AsyncClient, db_session: AsyncSession, vault: _LetterVault, app_dials: _AppDials
+) -> None:
+    """A re-armed offer whose earlier answer was lost is put back, still owed, not deleted.
+
+    The first ask's outage may have left a letter in the vault; the escalation
+    on the retry proves nothing about that earlier copy, so its intent stays.
+    """
+    headers, user_id = await _signup(async_client, "vault_letter_care_owed")
+    _, note_id = await _seed_note(db_session, user_id)
+    vault.fail = CreekVaultUnavailableError("synthetic lost answer")
+    assert (await _ask(async_client, headers, note_id)).status_code == (
+        HTTPStatus.SERVICE_UNAVAILABLE
+    )
+    vault.fail = CreekVaultCareEscalationError()
+
+    resp = await _ask(async_client, headers, note_id)
+
+    assert resp.status_code == HTTPStatus.OK
+    intent = await _intent(db_session, note_id)
+    assert intent is not None
+    assert intent.state == VoiceDraftRetractionState.MIRROR_INTENT.value
+    assert intent.destination == RECORDED_VAULT
     assert app_dials.calls == 0
 
 

@@ -18,6 +18,12 @@ Two rules shape it.
   vault-written letter exactly as it does a mirrored one, even when the answer
   was lost. A vault that does not also serve ``voice-drafts`` could hold a
   letter adepthood can never retract, so it is not asked at all.
+* **A care escalation is care, and owes nothing.** Creek's ``letters``
+  capability publishes a 200 care-escalation cell: the vault's acute-distress
+  guard answered instead of writing, so nothing was stored. The writer is
+  answered with adepthood's own reviewed care surface (#3380) -- never Creek's
+  prose -- and the staged intent is released, as a suspended send's is, so no
+  withdrawal of a letter that never existed is owed (#3379).
 * **Closed outcomes, no content in logs.** Every way the call ends is one member
   of :class:`VaultLetterOutcome`; log records carry the external id, an outcome
   word and the vault's store action, never the entry, the note or the letter.
@@ -92,6 +98,28 @@ class VaultLetterAnswer:
     letter: str | None = field(default=None, repr=False)
 
 
+#: The endings that provably left no letter in the vault, so the intent staged for
+#: one is released: a suspended send never left the server, and a care
+#: escalation is Creek's published answer *instead of* a letter -- a 2xx document
+#: carrying no fragment id, so nothing was written under this external id. Every
+#: other ending (a refusal, an outage, an unreadable answer) may have lost the
+#: answer to a stored letter, and keeps the intent owed.
+_NOTHING_STORED_OUTCOMES: Final = frozenset(
+    {VaultLetterOutcome.SUSPENDED, VaultLetterOutcome.ESCALATED}
+)
+
+
+@dataclass(frozen=True)
+class LetterEscalation:
+    """A letter ask the vault's care guard answered instead: the note, still without one.
+
+    Returned rather than the bare note so the route answers it with adepthood's
+    reviewed care surface (#3380); it carries no content of the vault's.
+    """
+
+    note: Marginalia
+
+
 @dataclass(frozen=True)
 class LetterAsk:
     """The margin note a letter expands, its entry, and whose they are.
@@ -146,9 +174,11 @@ async def write_vault_letter(
     row is committed before the call -- it answers ``None`` while an earlier
     withdrawal at this id is still owed, and the letter is then withheld rather
     than written over that obligation. A request the operator's vault-send
-    suspension refused never left the process, so its intent is dropped; every
-    other request that staged one keeps it and is counted as a Voice Draft
-    egress, a raise or a cancellation included -- the safe direction.
+    suspension refused never left the process, and one the vault's care guard
+    answered stored nothing, so either intent is dropped (#3379); every other
+    request that staged one keeps it. Every request but the suspended one is
+    counted as a Voice Draft egress, a raise or a cancellation included -- the
+    safe direction.
 
     Must run under the caller's account hold and this entry's
     :data:`~services.voice_draft_privacy.voice_draft_privacy` hold, the same
@@ -172,7 +202,7 @@ async def write_vault_letter(
         )
         return VaultLetterAnswer(VaultLetterOutcome.WITHHELD)
     answer = await _dial_and_count(session, client, _letter_request(external_id, ask), entry)
-    if answer.outcome is VaultLetterOutcome.SUSPENDED:
+    if answer.outcome in _NOTHING_STORED_OUTCOMES:
         await drop_staged_mirror_intent(session, staged)
     return answer
 
@@ -309,23 +339,17 @@ def letter_ask(note: Marginalia, entry: JournalEntry, body: str) -> LetterAsk:
     )
 
 
-#: The endings that answer the note with no letter rather than a refusal: the
-#: vault's care guard spoke instead (the essay route has no care surface, so the
-#: writer sees the same retryable no-letter state an intimate entry gets), or
-#: the tier admitted no vault at all.
-_NO_LETTER_OUTCOMES: Final = frozenset(
-    {VaultLetterOutcome.ESCALATED, VaultLetterOutcome.NOT_OFFERED}
-)
-
-
 async def answer_vault_letter(
     session: AsyncSession, note: Marginalia, answer: VaultLetterAnswer
-) -> Marginalia:
-    """Answer a settled vault letter: the cached note, the no-letter note, or a 503.
+) -> Marginalia | LetterEscalation:
+    """Answer a settled vault letter: the cached note, a no-letter answer, or a 503.
 
-    Every failure -- a refused, unreadable or unreachable vault, an answer that
-    was not a letter, a withheld or suspended request -- is #3183's refusal
-    under its token. Never a fallback to the app provider.
+    The vault's care guard speaking instead is a :class:`LetterEscalation`, which
+    the route answers with adepthood's reviewed care surface (#3380). A tier that
+    admitted no vault at all is the bare note with no letter. Every failure -- a
+    refused, unreadable or unreachable vault, an answer that was not a letter, a
+    withheld or suspended request -- is #3183's refusal under its token. Never a
+    fallback to the app provider.
 
     Raises:
         HTTPException: The 503 ``reflection_source_unavailable``.
@@ -337,7 +361,9 @@ async def answer_vault_letter(
             extra={"user_id": note.user_id, "id": note.id, "prior_draft_count": 0},
         )
         return note
-    if answer.outcome in _NO_LETTER_OUTCOMES:
+    if answer.outcome is VaultLetterOutcome.ESCALATED:
+        return LetterEscalation(note)
+    if answer.outcome is VaultLetterOutcome.NOT_OFFERED:
         return note
     log_letter_unavailable(note, VaultSourceUnavailableReason.NO_ANSWER)
     raise service_unavailable(REFLECTION_SOURCE_UNAVAILABLE)

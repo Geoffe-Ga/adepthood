@@ -1820,6 +1820,11 @@ export interface EssayResponse extends Marginalia {
   remaining_messages: number;
   remaining_balance: number;
   monthly_reset_date: string;
+  /**
+   * The server's reviewed care surface, present only when a vault's care guard
+   * answered the letter ask instead of writing one (#3380); ``essay`` is then null.
+   */
+  care?: CareResponse | null;
 }
 
 /** How one essay request is sent. */

@@ -11,6 +11,11 @@
  * free. A 402 is not rendered as an error: it is handed to ``onFundingRequired``
  * so the screen can show the same refill remedy a resonance pass gets.
  *
+ * A vault-bound writer's ask can be answered by the vault's care guard instead
+ * of a letter (#3380). The server then sends its own reviewed care surface, and
+ * the card shows exactly that -- the same ``CareSupportNote`` a resonance pass
+ * shows -- rather than a blank-letter error and a nudge to ask again.
+ *
  * The ask carries the payer route its price was disclosed for (#3385). When
  * another device has connected or disconnected a vault since, the server
  * refuses it with ``409 essay_price_unacknowledged`` before anything is
@@ -27,6 +32,7 @@ import {
 } from 'react-native';
 
 import { aiAccessRevoked } from './aiAccessRevoked';
+import CareSupportNote from './CareSupportNote';
 import { ExplainerActionPair, PayerChangedNotice, explainerStyles } from './ExplainerDialogParts';
 import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
@@ -46,7 +52,7 @@ import { usePaymentScope } from './usePaymentScope';
 import type { VaultKeyVendor } from './vaultKeyCopy';
 
 import { resonance } from '@/api';
-import type { Marginalia, ResonanceRoute } from '@/api';
+import type { CareResponse, EssayResponse, Marginalia, ResonanceRoute } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
 import { colors, editorialType, spacing, touchTarget } from '@/design/tokens';
@@ -83,6 +89,8 @@ interface EssayState {
   essaySource?: unknown;
   /** The offer is back because the ask's payer route changed (#3385). */
   payerChanged?: boolean;
+  /** The vault's care guard answered instead of a letter: the server's care surface (#3380). */
+  care?: CareResponse;
 }
 
 const OFFER_STATE: EssayState = { essay: null, loading: false, error: null, offer: true };
@@ -109,11 +117,12 @@ function priceUnacknowledged(error: unknown): boolean {
  */
 type UnansweredNotes = Map<number, Unanswered>;
 
-/** What an ask that produced no letter said, and whether asking again could help. */
-interface Unanswered {
-  message: string;
-  retryable: boolean;
-}
+/**
+ * What an ask that produced no letter said: a refusal and whether asking again
+ * could help, or the server's care surface when the vault's care guard answered.
+ */
+type Unanswered =
+  { kind: 'refused'; message: string; retryable: boolean } | { kind: 'care'; care: CareResponse };
 
 /**
  * The state a note is shown from: its own cached letter, else a remembered ask
@@ -131,23 +140,14 @@ function initialState(note: Marginalia, unanswered: UnansweredNotes): EssayState
     };
   }
   const remembered = unanswered.get(note.id);
-  if (remembered !== undefined) {
-    return {
-      essay: null,
-      loading: false,
-      error: remembered.message,
-      retryable: remembered.retryable,
-      offer: false,
-    };
-  }
-  return OFFER_STATE;
+  return remembered === undefined ? OFFER_STATE : unansweredState(remembered);
 }
 
 /** The three ways an ask settles, handed to {@link askForEssay} by the hook. */
 interface EssaySettlers {
   /** A real letter arrived, and should be cached back onto the note. */
   onLetter: (_updated: Marginalia) => void;
-  /** The ask produced no letter: a refusal, an intimate entry, or a failure. */
+  /** The ask produced no letter: a refusal, an intimate entry, a failure, or care. */
   onUnanswered: (_unanswered: Unanswered) => void;
   /** The ask was refused for want of a payer; nothing was spent. */
   onFunding: (_outcome: FundingOutcome) => void;
@@ -159,12 +159,16 @@ interface EssaySettlers {
 function askForEssay(noteId: number, route: ResonanceRoute, settlers: EssaySettlers): void {
   resonance
     .essay(noteId, { priceAcknowledged: true, disclosedRoute: route })
-    .then((updated) => {
+    .then((updated: EssayResponse) => {
       if (updated.essay) {
         settlers.onLetter(updated);
         return;
       }
-      settlers.onUnanswered({ message: BLANK_ESSAY_MESSAGE, retryable: true });
+      if (updated.care != null) {
+        settlers.onUnanswered({ kind: 'care', care: updated.care });
+        return;
+      }
+      settlers.onUnanswered({ kind: 'refused', message: BLANK_ESSAY_MESSAGE, retryable: true });
     })
     .catch((err: unknown) => {
       if (priceUnacknowledged(err)) {
@@ -177,6 +181,7 @@ function askForEssay(noteId: number, route: ResonanceRoute, settlers: EssaySettl
         return;
       }
       settlers.onUnanswered({
+        kind: 'refused',
         message: formatApiError(err),
         // Neither midnight's ceiling nor a revoked entitlement (#1938) clears on retry.
         retryable: generationRefusal(err) !== 'daily_limit' && !aiAccessRevoked(err),
@@ -248,8 +253,11 @@ function letterState(updated: Marginalia): EssayState {
   };
 }
 
-/** The card after an ask that produced no letter. */
+/** The card after an ask that produced no letter: the refusal, or the server's care. */
 function unansweredState(unanswered: Unanswered): EssayState {
+  if (unanswered.kind === 'care') {
+    return { essay: null, loading: false, error: null, offer: false, care: unanswered.care };
+  }
   return {
     essay: null,
     loading: false,
@@ -420,7 +428,7 @@ function EssayActions({
   );
 }
 
-/** The body region: spinner, the essay, or a friendly error with retry. */
+/** The body region: spinner, the essay, the server's care, or a friendly error with retry. */
 function EssayBody({
   essay,
   loading,
@@ -428,9 +436,15 @@ function EssayBody({
   retryable = true,
   retry,
   essaySource,
+  care,
 }: Omit<EssayState, 'offer'> & { retry: () => void }) {
   if (loading) {
     return <ActivityIndicator testID="essay-loading" color={colors.paper.ink} />;
+  }
+  if (care !== undefined) {
+    // The vault's care guard answered instead of a letter (#3380): only the
+    // server's reviewed copy, and no nudge to ask for the letter again.
+    return <CareSupportNote care={care} flush />;
   }
   if (error != null) {
     // Announced as it appears, like the margin's own error line: a writer on a

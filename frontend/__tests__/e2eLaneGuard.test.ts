@@ -99,6 +99,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-finished-task-toggle.browser.e2e.test.ts',
   'journal-fold-selected-promoted-quotes.browser.e2e.test.ts',
   'journal-idle-timer-obstruction.browser.e2e.test.ts',
+  'journal-letter-care-escalation.browser.e2e.test.ts',
   'journal-list-indent.browser.e2e.test.ts',
   'journal-live-edit-anchors.browser.e2e.test.ts',
   'journal-live-markdown.browser.e2e.test.ts',
