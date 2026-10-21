@@ -32,7 +32,7 @@ export const REVIEW_DISMISS_A11Y = 'Not now, set this reflection invitation asid
 /** The persistent card explaining how daily writing grows into wider reviews. */
 export const REVIEW_EARLY_TITLE = 'Review your Morning Pages';
 export const REVIEW_EARLY_BODY =
-  'Reviews keep the lessons, patterns, and emotional experiences in your Morning Pages alive by revisiting them at regular intervals, carrying quotes from daily entries into broader learnings. What is your self-examination telling you this week, this stage, this trimester, or across the whole course?';
+  'Reviews keep the lessons, patterns, and emotional experiences in your Morning Pages alive by revisiting them at regular intervals, carrying quotes from daily entries into broader learnings. What has your writing revealed this week, this stage, this trimester, or across the whole course?';
 
 /** The action that opens the early-review picker, present every day. */
 export const REVIEW_EARLY_LINK = 'Start a review early';

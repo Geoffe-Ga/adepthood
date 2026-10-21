@@ -322,7 +322,7 @@ describe('the early-review card', () => {
     expect(within(card).getByText('Review your Morning Pages')).toBeTruthy();
     expect(
       within(card).getByText(
-        'Reviews keep the lessons, patterns, and emotional experiences in your Morning Pages alive by revisiting them at regular intervals, carrying quotes from daily entries into broader learnings. What is your self-examination telling you this week, this stage, this trimester, or across the whole course?',
+        'Reviews keep the lessons, patterns, and emotional experiences in your Morning Pages alive by revisiting them at regular intervals, carrying quotes from daily entries into broader learnings. What has your writing revealed this week, this stage, this trimester, or across the whole course?',
       ),
     ).toBeTruthy();
 
