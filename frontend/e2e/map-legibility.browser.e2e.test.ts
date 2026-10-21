@@ -37,6 +37,13 @@ import {
 import { NARROW_VIEWPORT, WIDE_VIEWPORT } from './routeWalk';
 import { overlappingPairs, SUBPIXEL_TOLERANCE, type Box, type TextRecord } from './textCensus';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 /**
  * Issue #2657 -- the Map's stage annotations stay legible at every viewport.
  *

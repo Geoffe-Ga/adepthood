@@ -3,6 +3,13 @@ import { expect, test, type Page } from '@playwright/test';
 import { backendUrl, frontendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 import { readLaneState } from './laneState';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 /**
  * The spend disclosure in front of a resonance pass, in a real browser.
  *

@@ -7,6 +7,13 @@ import { backendUrl, frontendUrl, signUp, tokenFor } from './journalHabitsBrowse
 import { runBackendModule } from './laneDatabase';
 import { readLaneState } from './laneState';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 const BODY = 'The willow bent all night and did not break. I woke grateful beside the water.';
 const ARTIFACTS =
   process.env.MONEY_COPY_ARTIFACTS ?? join(__dirname, 'artifacts', 'money-copy-3262');
@@ -963,9 +970,18 @@ for (const width of WIDTHS) {
 
     // The letter: its offer was priced before the vault connected too.
     staleFor = 'letter';
+    // The corpus invitation is the server's call, read once the page's passes
+    // load; decide on that answer rather than on whether the note is up yet (#3481).
+    const invitationRead = page.waitForResponse(
+      (reply) =>
+        reply.request().method() === 'GET' &&
+        new URL(reply.url()).pathname === '/corpus/invitation',
+    );
     await openPage(page, id);
-    const invitation = page.getByTestId('journal-corpus-invitation-dismiss');
-    if (await invitation.isVisible()) await invitation.click();
+    const invitationReply = await invitationRead;
+    expect(invitationReply.status()).toBe(200);
+    if (((await invitationReply.json()) as { offer: boolean }).offer)
+      await page.getByTestId('journal-corpus-invitation-dismiss').click();
     await page.getByTestId(`margin-note-open-${note!.id}`).click();
     const letterCost = page.getByTestId('essay-ask-cost');
     await expect(letterCost).toHaveText(

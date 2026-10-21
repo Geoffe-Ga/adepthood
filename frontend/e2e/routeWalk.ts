@@ -396,21 +396,28 @@ export const ROUTES: readonly Route[] = [
 export async function openRoute(page: Page, route: Route, context: WalkContext): Promise<void> {
   await route.open(page, context);
   await expect(page.getByTestId(route.anchor).first()).toBeVisible();
-  await settleLens(page);
+  await settleLens(page, route);
 }
 
 /** The Map's magnifier lens, which glides onto the current stage once the grid has measured. */
 const LENS_TEST_ID = 'map-magnifier';
+/** The one walked route that draws the lens. */
+const LENS_ROUTE = 'Map';
 
 /**
  * On the Map, wait for the lens to come to rest: it glides from where the
  * unmeasured grid first put it to the current stage's measured anchor, and a
  * frame taken in flight would hold its caption against text it is only
  * passing over. Every other route has no lens and returns at once.
+ *
+ * The lens mounts only once the grid has a measured size, which can come after
+ * the route's anchor is visible, so the Map waits for it to mount rather than
+ * reading once whether it is there yet (#3481).
  */
-async function settleLens(page: Page): Promise<void> {
+async function settleLens(page: Page, route: Route): Promise<void> {
+  if (route.name !== LENS_ROUTE) return;
   const lens = page.getByTestId(LENS_TEST_ID);
-  if ((await lens.count()) === 0) return;
+  await expect(lens).toHaveCount(1);
   let resting = '';
   await expect
     .poll(async () => {

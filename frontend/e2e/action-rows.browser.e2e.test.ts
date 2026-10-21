@@ -31,6 +31,13 @@ import {
   type WalkContext,
 } from './routeWalk';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 /**
  * The action-row sweep (#2860): every reachable route, at the phone and
  * desktop profiles, screenshotted and reduced to one line per visible element
