@@ -9,7 +9,9 @@
  * what it costs, and two equal arms — and only "Ask for the letter" asks. A
  * letter already written opens straight to the letter, because reopening it is
  * free. A 402 is not rendered as an error: it is handed to ``onFundingRequired``
- * so the screen can show the same refill remedy a resonance pass gets.
+ * so the screen can show the same refill remedy a resonance pass gets. A price
+ * that already says the wallet is empty offers no ask at all, so no 402 could
+ * ever arrive: the offer carries that remedy itself (#3386).
  *
  * A vault-bound writer's ask can be answered by the vault's care guard instead
  * of a letter (#3380). The server then sends its own reviewed care surface, and
@@ -46,10 +48,17 @@ import {
   ESSAY_ASK_PROCEED_A11Y,
   ESSAY_ASK_WHAT,
   ESSAY_NOUN,
+  ESSAY_VAULT_USES_CREDITS,
 } from './resonanceExplainerCopy';
 import { sourceLabel } from './sourceLabel';
 import { usePaymentScope } from './usePaymentScope';
 import type { VaultKeyVendor } from './vaultKeyCopy';
+import {
+  CreditPackOffer,
+  configuredCreditPackUrl,
+  resetAvailabilityCopy,
+  walletCancelA11y,
+} from './WalletRemedy';
 
 import { resonance } from '@/api';
 import type { CareResponse, EssayResponse, Marginalia, ResonanceRoute } from '@/api';
@@ -365,6 +374,7 @@ function EssayOffer({
   onAsk: () => void;
   onDecline: () => void;
 }): React.JSX.Element {
+  const packUrl = configuredCreditPackUrl();
   return (
     <View testID="essay-offer">
       <Text style={explainerStyles.body} testID="essay-ask-what">
@@ -374,22 +384,57 @@ function EssayOffer({
       <Text style={explainerStyles.body} testID="essay-ask-cost">
         {cost.copy}
       </Text>
-      <Text style={explainerStyles.body} testID="essay-ask-choice">
-        {ESSAY_ASK_CHOICE}
-      </Text>
-      <EssayActions {...{ cost, onOpenSettings, onAsk, onDecline }} />
+      {cost.fundingRequired === 'wallet_exhausted' ? (
+        <EssayWalletRemedy cost={cost} packUrl={packUrl} />
+      ) : (
+        <Text style={explainerStyles.body} testID="essay-ask-choice">
+          {ESSAY_ASK_CHOICE}
+        </Text>
+      )}
+      <EssayActions {...{ cost, packUrl, onOpenSettings, onAsk, onDecline }} />
     </View>
   );
+}
+
+/**
+ * An empty wallet, known before any ask (#3386): when it refills, and where to
+ * buy credits if a pack page is configured. Never a key, which a vault-written
+ * letter does not use.
+ */
+function EssayWalletRemedy({
+  cost,
+  packUrl,
+}: {
+  cost: ResonanceCostState;
+  packUrl: string | null;
+}): React.JSX.Element {
+  return (
+    <View testID="essay-wallet-remedy">
+      <Text style={explainerStyles.body} testID="essay-wallet-remedy-text">
+        {ESSAY_VAULT_USES_CREDITS} {resetAvailabilityCopy(cost.monthlyCap, cost.monthlyResetDate)}
+      </Text>
+      {packUrl === null ? null : <CreditPackOffer url={packUrl} testID="essay-credit-pack" />}
+    </View>
+  );
+}
+
+/** What declining says aloud: an empty wallet's remedy is not a letter declined (#3388). */
+function declineLabel(cost: ResonanceCostState, packUrl: string | null): string {
+  return cost.fundingRequired === 'wallet_exhausted'
+    ? walletCancelA11y(packUrl)
+    : ESSAY_ASK_CANCEL_A11Y;
 }
 
 /** The only offered action must be eligible on the recorded route. */
 function EssayActions({
   cost,
+  packUrl,
   onOpenSettings,
   onAsk,
   onDecline,
 }: {
   cost: ResonanceCostState;
+  packUrl: string | null;
   onOpenSettings: () => void;
   onAsk: () => void;
   onDecline: () => void;
@@ -418,7 +463,7 @@ function EssayActions({
           style={explainerStyles.action}
           onPress={onDecline}
           accessibilityRole="button"
-          accessibilityLabel={ESSAY_ASK_CANCEL_A11Y}
+          accessibilityLabel={declineLabel(cost, packUrl)}
           testID="essay-not-now"
         >
           <Text style={explainerStyles.cancelLabel}>{ESSAY_ASK_CANCEL}</Text>
