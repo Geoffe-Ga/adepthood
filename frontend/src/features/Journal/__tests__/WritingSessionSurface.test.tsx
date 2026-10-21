@@ -19,6 +19,8 @@ import { MS_PER_MINUTE } from '@/features/Practice/engine/types';
 const TICK_MS = 100;
 const T0 = 1_700_000_000_000;
 const SHORT_PRESET_MINUTES = 10;
+/** An unmeasured dock is hidden from assistive tech, so queries must opt in to see it. */
+const UNMEASURED = { includeHiddenElements: true } as const;
 
 function renderSurface() {
   return render(
@@ -68,7 +70,9 @@ describe('WritingSessionSurface', () => {
       );
       unmount = view.unmount;
       const { getByTestId } = view;
-      expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style)).toMatchObject({
+      expect(
+        StyleSheet.flatten(getByTestId('writing-session-band', UNMEASURED).props.style),
+      ).toMatchObject({
         position: 'absolute',
         top: 'auto',
         bottom: 0,
@@ -76,22 +80,22 @@ describe('WritingSessionSurface', () => {
         overflow: 'hidden',
       });
       expect(
-        StyleSheet.flatten(getByTestId('writing-session-band-content').props.style),
+        StyleSheet.flatten(getByTestId('writing-session-band-content', UNMEASURED).props.style),
       ).toMatchObject({
         flexShrink: 1,
         maxHeight: 844 - touchTarget.minimum - SPACING.lg,
       });
       expect(onClearanceChange).toHaveBeenLastCalledWith(0);
 
-      fireEvent(getByTestId('writing-session-band-content'), 'layout', {
+      fireEvent(getByTestId('writing-session-band-content', UNMEASURED), 'layout', {
         nativeEvent: { layout: { height: 100 } },
       });
       expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(100 + SPACING.md);
-      fireEvent.press(getByTestId('writing-timer-start'));
+      fireEvent.press(getByTestId('writing-timer-start', UNMEASURED));
 
-      expect(StyleSheet.flatten(getByTestId('writing-session-band').props.style).position).toBe(
-        'absolute',
-      );
+      expect(
+        StyleSheet.flatten(getByTestId('writing-session-band', UNMEASURED).props.style).position,
+      ).toBe('absolute');
       expect(onClearanceChange).toHaveBeenLastCalledWith(WRITING_TIMER_CLEARANCE);
       expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(0);
       expect(getByTestId('writing-timer-stop')).toBeTruthy();
@@ -101,6 +105,42 @@ describe('WritingSessionSurface', () => {
     }
   });
 
+  it('keeps an untouched phone dock unpainted until the page has reserved its height (#3481)', () => {
+    const rn = require('react-native');
+    const dimensions = jest
+      .spyOn(rn, 'useWindowDimensions')
+      .mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
+    const onIdleDockHeightChange = jest.fn();
+    try {
+      const { getByTestId } = render(
+        <WritingSessionSurface onIdleDockHeightChange={onIdleDockHeightChange} />,
+      );
+      const band = () => getByTestId('writing-session-band', UNMEASURED);
+      // Unmeasured, the page has made no room for it: painted, it would sit on the writing.
+      expect(StyleSheet.flatten(band().props.style).opacity).toBe(0);
+      expect(band().props.pointerEvents).toBe('none');
+      expect(band().props['aria-hidden']).toBe(true);
+      expect(onIdleDockHeightChange).not.toHaveBeenCalled();
+
+      fireEvent(getByTestId('writing-session-band-content', UNMEASURED), 'layout', {
+        nativeEvent: { layout: { height: 100 } },
+      });
+      expect(onIdleDockHeightChange).toHaveBeenLastCalledWith(100 + SPACING.md);
+      expect(StyleSheet.flatten(band().props.style).opacity).toBe(1);
+      expect(band().props.pointerEvents).toBe('box-none');
+      expect(band().props['aria-hidden']).toBe(false);
+    } finally {
+      dimensions.mockRestore();
+    }
+  });
+
+  it('paints a floating (laptop) band at once, since the page reserves its clearance up front', () => {
+    const { getByTestId } = renderSurface();
+    const band = getByTestId('writing-session-band');
+    expect(StyleSheet.flatten(band.props.style).opacity).toBe(1);
+    expect(band.props['aria-hidden']).toBe(false);
+  });
+
   it('scrolls an untouched phone dock whose enlarged content exceeds the available height', () => {
     const rn = require('react-native');
     const dimensions = jest
@@ -108,8 +148,8 @@ describe('WritingSessionSurface', () => {
       .mockReturnValue({ width: 195, height: 150, scale: 2, fontScale: 2 });
     try {
       const { getByTestId } = renderSurface();
-      const band = getByTestId('writing-session-band');
-      const content = getByTestId('writing-session-band-content');
+      const band = getByTestId('writing-session-band', UNMEASURED);
+      const content = getByTestId('writing-session-band-content', UNMEASURED);
       fireEvent(content, 'contentSizeChange', 195, 360);
       fireEvent(band, 'layout', { nativeEvent: { layout: { height: 150 } } });
       expect(content.props.scrollEnabled).toBe(true);

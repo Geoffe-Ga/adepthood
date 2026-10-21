@@ -38,8 +38,78 @@ function intersectionBox(a: Box, b: Box): Box {
   };
 }
 
-async function openWritingPage(page: Page, prefix: string): Promise<void> {
+/** Where the painted-overlap watch keeps every offending frame. */
+const OVERLAP_FRAMES = '__idleTimerOverlapFrames';
+
+/** One painted frame in which the timer covered visible writing, rounded for the report. */
+interface OverlapFrame {
+  area: number;
+  timer: number[];
+  writing: number[];
+}
+
+/**
+ * Sample every animation frame, from before the page opens until the idle
+ * check ends, for a painted timer covering visible writing (#3481).
+ *
+ * A single read once the pill is visible says nothing about the frames before
+ * it: the dock used to be painted over the page and given room only once its
+ * measured height arrived, so a read could land in that gap (the CI flake) or
+ * miss it (every other run), while the writer saw the timer over their words
+ * either way. A frame callback measures what that frame will paint, so this
+ * asserts on what a writer could see. Visible writing is the body inside the
+ * sheet inside the page's scroller, since anything past the scroller is clipped.
+ */
+async function watchPaintedOverlap(page: Page): Promise<void> {
+  await page.evaluate((key) => {
+    const frames: OverlapFrame[] = [];
+    const store = window as unknown as Record<string, OverlapFrame[] | (() => void)>;
+    store[key] = frames;
+    let watching = true;
+    store[`${key}Stop`] = () => {
+      watching = false;
+    };
+    const rectOf = (id: string): DOMRect | null =>
+      document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect() ?? null;
+    const sample = (): void => {
+      if (!watching) return;
+      const band = document.querySelector('[data-testid="writing-session-band"]');
+      const timer = rectOf('writing-timer-pill');
+      const clips = ['journal-body-input', 'journal-sheet', 'journal-page-scroll'].map(rectOf);
+      const painted = band !== null && Number(getComputedStyle(band).opacity) > 0;
+      if (painted && timer && clips.every((rect) => rect !== null)) {
+        const rects = clips as DOMRect[];
+        const top = Math.max(...rects.map((r) => r.top));
+        const bottom = Math.min(...rects.map((r) => r.bottom));
+        const left = Math.max(...rects.map((r) => r.left));
+        const right = Math.min(...rects.map((r) => r.right));
+        const width = Math.min(right, timer.right) - Math.max(left, timer.left);
+        const height = Math.min(bottom, timer.bottom) - Math.max(top, timer.top);
+        if (width > 0 && height > 0)
+          frames.push({
+            area: Math.round(width * height),
+            timer: [timer.top, timer.bottom].map(Math.round),
+            writing: [top, bottom].map(Math.round),
+          });
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  }, OVERLAP_FRAMES);
+}
+
+/** Stop the watch and return every painted frame in which the timer covered visible writing. */
+async function paintedOverlaps(page: Page): Promise<OverlapFrame[]> {
+  return page.evaluate((key) => {
+    const store = window as unknown as Record<string, OverlapFrame[] | (() => void)>;
+    (store[`${key}Stop`] as () => void)();
+    return store[key] as OverlapFrame[];
+  }, OVERLAP_FRAMES);
+}
+
+async function openWritingPage(page: Page, prefix: string, watch = false): Promise<void> {
   await signUp(page, prefix);
+  if (watch) await watchPaintedOverlap(page);
   await page.getByTestId('journal-new-entry').click();
   await page
     .getByTestId('journal-body-input')
@@ -83,10 +153,21 @@ async function expectCenterHit(locator: Locator, message: string): Promise<void>
     .toBe(true);
 }
 
+/** The timer, body and sheet boxes read in one task, so no re-render can fall between them. */
+async function layoutSnapshot(page: Page): Promise<{ timer: Box; body: Box; sheet: Box }> {
+  const boxes = await page.evaluate(() =>
+    ['writing-timer-pill', 'journal-body-input', 'journal-sheet'].map((id) => {
+      const rect = document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect();
+      return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null;
+    }),
+  );
+  const [timer, body, sheet] = boxes;
+  if (!timer || !body || !sheet) throw new Error(`a box is missing: ${JSON.stringify(boxes)}`);
+  return { timer, body, sheet };
+}
+
 async function expectIdleTimerClear(page: Page, phone: boolean): Promise<void> {
-  const timer = await boxOf(page.getByTestId('writing-timer-pill'), 'idle timer');
-  const body = await boxOf(page.getByTestId('journal-body-input'), 'writing body');
-  const sheet = await boxOf(page.getByTestId('journal-sheet'), 'journal sheet');
+  const { timer, body, sheet } = await layoutSnapshot(page);
   const visibleBody = intersectionBox(body, sheet);
   expect(
     overlapArea(visibleBody, timer),
@@ -116,6 +197,10 @@ async function expectIdleTimerClear(page: Page, phone: boolean): Promise<void> {
       await expectHitTestClear(finish, 'Finish must receive taps across its full height');
     }
   }
+  expect(
+    await paintedOverlaps(page),
+    'no painted frame may show the untouched timer over the writing',
+  ).toEqual([]);
 }
 
 async function runViewport(
@@ -131,7 +216,7 @@ async function runViewport(
   });
   const page = await context.newPage();
   try {
-    await openWritingPage(page, prefix);
+    await openWritingPage(page, prefix, true);
     await page.screenshot({ path: screenshotPath });
     await expectIdleTimerClear(page, viewport.width === PHONE.width);
 
