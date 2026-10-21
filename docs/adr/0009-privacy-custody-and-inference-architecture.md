@@ -35,6 +35,19 @@
   stays Accepted on 2026-10-07; nothing about stored content, key custody or
   recovery changes, and this record still unlocks no public claim. Creek-Vault
   ADR-0016 takes effect only once this amendment merges.
+- **Amended 2026-10-21 by the owner
+  (`owner:2026-10-21#attested-vendor-and-waivers`), on the decision recorded
+  at [Creek-Vault#1896](https://github.com/Geoffe-Ga/Creek-Vault/issues/1896).**
+  The vendor is **Privatemode, operated by Edgeless Systems GmbH from Bochum,
+  Germany**; Creek-Vault ADR-0016 Decision 3.3 condition (f) is waived on
+  vendor-asserted evidence; and its conditions (c) and (e) are waived with the
+  substitutes recorded in "Confidential compute (D05)" below. Creek-Vault
+  ADR-0016 reached `Accepted` on the owner's 2026-10-20 answers to its
+  Decision 0 (Q1 Yes, selecting O5 and accepting the R7 deviation explicitly;
+  Q2 option (i)), and it still takes effect only once this amendment merges.
+  Creek-Vault ADR-0016 Decision 5 is untouched, exactly as decided: INTIMATE
+  content never reaches the pool, by any route, including the `default` rescue
+  path.
 
 ## Context
 
@@ -136,18 +149,41 @@ answers to this record's follow-up questions, given the same evening.
 
    **Decided exception, 2026-10-20
    (`owner:2026-10-20#attested-inference-pool`):** a vendor-attested runtime
-   verified under Creek-Vault ADR-0016 Decision 3 may be reached with the app's own
-   credential, because the vendor cannot read what it carries. The definition
-   of a cloud model above is unchanged, and this exception widens nothing
-   else: Anthropic, OpenAI and every other ordinary cloud model still need
-   the person's own key, and a runtime qualifies only while the vault
-   verifies its attestation per connection against the vendor's published
-   measured image, under Creek-Vault ADR-0016 Decision 3 items 1 and 2. What the
-   exclusion of the vendor itself rests on is Decision 3.3 condition (f),
-   reproducible builds rebuilt from source before each re-pin, which Creek-Vault
-   ADR-0016 records as unverified for either candidate vendor. The credential
-   is a per-activation vendor key with the dollar and token caps of Creek-Vault
-   ADR-0016 Decision 3 item 4, not the app's cloud key.
+   verified under Creek-Vault ADR-0016 Decision 3 may be reached with the
+   app's own credential, because the vendor cannot read what it carries,
+   which is vendor-asserted under the waiver of condition (f) below and not
+   verified by us. The definition of a cloud model above is unchanged, and
+   this exception widens nothing else: Anthropic, OpenAI and every other
+   ordinary cloud model still need the person's own key, and a runtime
+   qualifies only while the vault verifies its attestation per connection
+   against the vendor's published measured image, under Creek-Vault ADR-0016
+   Decision 3 items 1 and 2. What the exclusion of the vendor itself rests on
+   is Decision 3.3 condition (f), reproducible builds rebuilt from source
+   before each re-pin, which Creek-Vault ADR-0016 records as unverified for
+   either candidate vendor, and which the owner waived on 2026-10-21
+   (`owner:2026-10-21#attested-vendor-and-waivers`): vendor-asserted evidence
+   is accepted in place of independent verification. That exclusion is
+   therefore **vendor-asserted** wherever this record or anything downstream
+   of it describes it, because a waiver of independent verification is not a
+   claim that verification happened. The credential is a per-activation
+   vendor key with the dollar and token caps of Creek-Vault ADR-0016
+   Decision 3 item 4, not the app's cloud key.
+
+   **The vendor, decided 2026-10-21
+   (`owner:2026-10-21#attested-vendor-and-waivers`):** Privatemode, operated
+   by Edgeless Systems GmbH from Bochum, Germany, chosen over Tinfoil, Inc. of
+   San Francisco, California for the EU jurisdiction, which is the reason the
+   option exists at all. The choice also fixes the deployment shape:
+   Privatemode's Python path is a proxy container, so it runs as a **loopback
+   sidecar in each vault image** with one pinned egress destination, and the
+   attestation is verified inside the vendor's client code rather than ours.
+   That is one more moving part in every image, and it is recorded here rather
+   than discovered later.
+
+   **INTIMATE is untouched by this exception.** Creek-Vault ADR-0016 Decision
+   5 stands exactly as decided, and nothing in this amendment reaches it:
+   INTIMATE content never reaches the pool, by any route, including the
+   `default` rescue path. No per-use label may imply otherwise.
 
    **BYOK calls go from the person's device straight to the vendor.** This
    follows directly from the premise. If the server relayed a BYOK call, it
@@ -247,6 +283,22 @@ answers to this record's follow-up questions, given the same evening.
    example "processed in an attested private enclave run by `<vendor>`, not
    stored". The per-use label is a phase (a) requirement, and no public claim
    follows from any of this until B24 certifies it.
+
+   **Grounding embeddings, decided 2026-10-21 (Q2 option (i),
+   `owner:2026-10-21#attested-vendor-and-waivers`):** Creek-Vault ADR-0016's
+   second owner question asks whether a managed vault's grounding embeddings
+   may be computed in the pool, and the answer is its option (i): they may.
+   Under O5 that answer carries a condition, and this record admits it on that
+   condition and no other: the embedding model is **inside the attested
+   measurement set**, which is what makes an embedding call the same kind of
+   call as a reflection. Where it is not, the managed vault stays ungrounded,
+   which is that record's option (iii). An embedding is computed from the same
+   prose as a reflection, so it takes the same per-use label, the same credit
+   payee under this item, and the same INTIMATE refusal, and widens nothing
+   else. A managed vault's vectors then come from the vendor's model, which is
+   Creek-Vault ADR-0004's business; this amendment moves no adepthood-side
+   embedding into the pool, and adepthood's own corpus embedding column stays
+   in the in-scope set of Decision item 9.
 5. **The web caveat is stated per platform.** (`owner:2026-10-07#B12-web`)
    User-held keys apply on every platform. The guarantee is strongest on
    native apps. On web it rests on trusting the code we serve, mitigated by
@@ -378,9 +430,9 @@ history and future content stand or fall together.
 |---|---|---|---|---|---|---|---|
 | Database thief (no env keys) | blocked | blocked | blocked | blocked | blocked | blocked | blocked |
 | Backup holder (with env keys) | reads | reads | blocked | blocked | blocked | reads | blocked |
-| Privileged operator | reads | reads | blocked on native while the signed build is honest; on web, reads through a served bundle until signed builds ship | blocked\* | same as B | reads | blocked on native while the signed build is honest; **on web, reads all stored history through a served bundle until signed builds ship** (enforced CSP plus SRI does not stop this); sees inputs to a managed runtime we run while they run (labelled on each use); for a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3, excluded from the enclave by hardware under the vendor's attestation chain, but still chooses the vendor, holds the pin and sees the vendor's request metadata |
+| Privileged operator | reads | reads | blocked on native while the signed build is honest; on web, reads through a served bundle until signed builds ship | blocked\* | same as B | reads | blocked on native while the signed build is honest; **on web, reads all stored history through a served bundle until signed builds ship** (enforced CSP plus SRI does not stop this); sees inputs to a managed runtime we run while they run (labelled on each use); for a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3, excluded from the enclave by hardware under the vendor's attestation chain (vendor-asserted under the waived condition (f)), but still chooses the vendor, holds the pin and sees the vendor's request metadata |
 | Hosting provider (Fly, DB host) | reads | reads | blocked | blocked\* | blocked | reads | blocked for storage; same runtime caveat for a managed runtime we run; for a vendor-attested runtime, Fly carries ciphertext only, inside the attestation-bound channel of Creek-Vault ADR-0016 Decision 3 item 1 |
-| Inference vendor (vendor-attested runtime only) | n/a | n/a | n/a | n/a | n/a | n/a | excluded from the enclave only while Creek-Vault ADR-0016 Decision 3.3 condition (f) holds, which that record has not verified; keeps request metadata under condition (g) |
+| Inference vendor (vendor-attested runtime only) | n/a | n/a | n/a | n/a | n/a | n/a | excluded from the enclave only while Creek-Vault ADR-0016 Decision 3.3 condition (f) holds, which that record has not verified and which the owner waived on 2026-10-21, so the exclusion is vendor-asserted; keeps request metadata under condition (g) |
 | Malicious or compelled client update | reads | reads | reads all stored history (captured key); harder on signed native | reads on web | reads all stored history (captured key); harder on signed native | reads | reads all stored history once the key is captured: on web until signed or pinned builds ship, on native through a malicious signed build |
 | XSS in the web client | reads | reads | reads open sessions | reads open sessions | reads open sessions | reads | reads open sessions; CSP enforcement narrows it |
 | Compromised device | reads | reads | reads | reads | reads | reads | reads |
@@ -719,42 +771,70 @@ chain, nonce freshness, user-authorized key release, and a hostile-host lab.
 Creek-Vault ADR 0006's operator-provisioned trust root is not evidence.
 
 **Reopened for the inference leg only, 2026-10-20
-(`owner:2026-10-20#attested-inference-pool`).** Answering Yes to Creek-Vault
-ADR-0016 Decision 0 Q1 sets the operator-blind target for the inference leg,
-which is D05's own reopen condition, so D05 is reopened for that leg and for
-nothing else. Stored content, key custody and recovery are untouched by this:
-they stay under Decision items 1, 2 and 11. The conditions that apply to the
+(`owner:2026-10-20#attested-inference-pool`), with the vendor and the waivers
+settled on 2026-10-21 (`owner:2026-10-21#attested-vendor-and-waivers`).**
+Answering Yes to Creek-Vault ADR-0016 Decision 0 Q1 sets the operator-blind
+target for the inference leg, which is D05's own reopen condition, so D05 is
+reopened for that leg and for nothing else. Stored content, key custody and
+recovery are untouched by this: they stay under Decision items 1, 2 and 11. The conditions that apply to the
 reopened leg are Creek-Vault ADR-0016 Decision 3.3's substitute set, not D05's
 original five, because D05's were written for a runtime we control:
 
 - **(a) real hardware:** kept.
 - **(b) a vendor attestation chain:** kept, and because it is not an
   operator-held key, Creek-Vault ADR 0006's trust-root caveat does not apply to it.
-- **(c) nonce freshness: WAIVED.** This is the first of the two explicit
-  waivers. It is unmet as stated, and is replaced by the vendor's binding of
-  the attested measurement to the live session's key, which the Creek build
-  issue verifies against the vendor's design and T18 exercises. The owner
-  waives the condition as written.
+- **(c) nonce freshness: WAIVED.** It is unmet as stated. The substitute the
+  owner named is **the vendor's binding of the attested measurement to the
+  live session key**, which the Creek build issue verifies against the
+  vendor's design and Creek-Vault ADR-0016 T18 exercises. The substitute is
+  load-bearing rather than colour: it is the whole reason the waiver is
+  defensible, so any artifact citing the waiver cites the substitute
+  alongside it.
 - **(d) user-authorized key release:** not applicable. No key is released:
   the vault sends plaintext it already holds under Creek-Vault ADR 0014.
-- **(e) a hostile-host lab: WAIVED.** This is the second of the two explicit
-  waivers. It cannot be run on hardware we do not own, and is replaced by the
-  vendor negative tests of Creek-Vault ADR-0016 T18. The owner waives the condition
-  as written.
-- **(f) reproducible builds:** added for a vendor, and the condition the
-  exclusion of the vendor rests on. Creek-Vault ADR-0016 records it as unverified
-  for either candidate vendor, so until it is verified the exclusion is
-  vendor-asserted.
+- **(e) a hostile-host lab: WAIVED.** It cannot be run on hardware we do not
+  own. The substitute the owner named is **T18's negative tests**: the vendor
+  negative tests of Creek-Vault ADR-0016 T18, each of which must refuse with
+  nothing sent. It is load-bearing on the same terms as (c)'s substitute, and
+  is cited wherever the waiver is.
+- **(f) reproducible builds: WAIVED.** Added for a vendor, and the condition
+  the exclusion of the vendor rests on: the attested image is open-source and
+  reproducibly built, and the pinned measurement is rebuilt from source before
+  each re-pin. Creek-Vault ADR-0016 records it as unverified for either
+  candidate vendor, and on 2026-10-21 the owner waived it rather than hold the
+  decision for evidence about another party's build pipeline: vendor-asserted
+  evidence is accepted in place of independent verification. This waiver
+  differs in kind from (c) and (e), which O5 cannot meet by construction,
+  and the difference is recorded rather than smoothed over. Every artifact
+  that depends on (f) therefore says **vendor-asserted** wherever it would
+  otherwise imply verification, because a waiver of independent verification
+  is not a claim that verification happened.
 - **(g) retention terms and rate limits:** reviewed under B11. Vendor request
   metadata is disclosed, not withheld.
-- **(h) jurisdiction:** chosen explicitly at vendor selection.
+- **(h) jurisdiction:** chosen explicitly on 2026-10-21, and the reason the
+  vendor is the one it is. Privatemode is operated by Edgeless Systems GmbH
+  from Bochum, Germany, so the enclave and the party running it sit in the EU;
+  Tinfoil, Inc. of San Francisco, California was the alternative and was not
+  chosen. Privatemode's Python path is a proxy container, so the vault runs it
+  as a loopback sidecar in each vault image with one pinned egress
+  destination, and the attestation is verified inside the vendor's client code
+  rather than ours.
 
-Only (c) and (e) are waived. The waivers are the owner's, recorded here so
-they cannot be read back out of the record as met, and they are a reason the
-operator-blind target stays uncertified: no public claim follows until B24
-certifies it. If a vendor cannot meet (f), or has no per-key caps (Creek-Vault
-ADR-0016 Decision 3 item 4), it fails selection rather than earning a third
-waiver.
+Three conditions are waived and no others: (c) and (e), which O5 cannot meet
+by construction, and (f), whose evidence is the vendor's own. Each waiver is
+the owner's, recorded here beside its substitute so it cannot be read back out
+of the record as a condition met; a waiver recorded without its substitute is
+a blank cheque, which is why every artifact citing one cites the other. All
+three are a reason the operator-blind target stays uncertified: no public
+claim follows until B24 certifies it. A vendor with no per-key caps
+(Creek-Vault ADR-0016 Decision 3 item 4) fails selection rather than earning a
+fourth waiver, as does a vendor whose assertion of (f) is refuted rather than
+merely unverified.
+
+Decision 5 of Creek-Vault ADR-0016 sits outside all of this, exactly as
+decided: INTIMATE content never reaches the pool, by any route, including the
+`default` rescue path. Nothing waived here touches it, and the vault refuses
+an INTIMATE fragment before any byte leaves its process.
 
 ## Budget and staffing
 
@@ -764,6 +844,16 @@ level is recorded for any option or phase. The scorecard's money cells are `{"st
 "owner_input_required": true}`, and the guard refuses any value that does not
 come from the owner. Fly list prices from the issue are planning inputs,
 not a budget.
+
+**Noted 2026-10-21 (`owner:2026-10-21#attested-vendor-and-waivers`).** The
+runtime admitted by Decision item 3's exception is a **metered, per-token
+vendor service** (Creek-Vault ADR-0016 Decision 3.6), which sits against the
+2026-10-14 answer above rather than inside it. The owner's own reading
+governs: a bounded pilot budget is authorized on the Creek side
+([Creek-Vault#1899](https://github.com/Geoffe-Ga/Creek-Vault/issues/1899)),
+and no figure is recorded here, because none has been given to this record,
+and the money cells stay unknown. Agent work provisions nothing and spends
+nothing under this amendment; the first vendor key is a human action.
 
 ## Reviewers
 
@@ -928,7 +1018,8 @@ The B13 epic body that carries this plan is drafted at
 - Creek-Vault ADR 0005, Creek-Vault ADR 0006 and Creek-Vault ADR 0007 are
   amended by appended sections in Creek-Vault (branch `w34/B12-creek`).
 - Creek-Vault ADR-0016 (shared confidential warm inference pool) is not amended by
-  this record; it is the record this record's 2026-10-20 amendment unblocks.
+  this record; it is the record this record's 2026-10-20 and 2026-10-21
+  amendment unblocks.
   Its Status clause makes Accepted conditional on that amendment merging, and
   its Decision 3 is the contract the admitted runtime is verified against.
   Decision 5 of that record keeps INTIMATE off the pool entirely, which this
@@ -946,6 +1037,13 @@ The B13 epic body that carries this plan is drafted at
 - **2026-10-16 (#3437):** Decision items 3 and 4 are amended by the
   "Amendment 2026-10-16: managed vault + BYOK" section above, with the
   original text kept. Creek-Vault ADR 0015 records the vault's half.
+- **2026-10-20 and 2026-10-21 (Creek-Vault#1849, Creek-Vault#1896):** Decision
+  items 3 and 4 and the "Confidential compute (D05)" section are amended in
+  place by the dated paragraphs above, with the original text kept. The
+  2026-10-20 half admits the vendor-attested runtime and reopens D05 for the
+  inference leg; the 2026-10-21 half names the vendor and records the three
+  waivers with their substitutes. Creek-Vault ADR-0016 holds the vault's half,
+  and takes effect only once this amendment merges.
 
 ## Reopen triggers
 
@@ -968,8 +1066,9 @@ The B13 epic body that carries this plan is drafted at
   target for the runtime-we-control path, once D05 is proven (C).
 - A vendor-attested runtime admitted on 2026-10-20 stops meeting Creek-Vault
   ADR-0016 Decision 3: attestation fails or is no longer verified per
-  connection, the pin cannot be re-established, condition (f) is refuted
-  rather than merely unverified, or the vendor drops per-key caps. Then the
+  connection, the pin cannot be re-established, the vendor's assertion of
+  condition (f) is refuted rather than merely unverified, or the vendor drops
+  per-key caps. Then the
   Decision item 3 exception is withdrawn for that vendor and the leg falls
   back to refusal, never to a cloud model on the app's key.
 - The owner's budget for any phase is exceeded.

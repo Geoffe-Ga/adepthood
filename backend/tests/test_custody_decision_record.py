@@ -108,6 +108,10 @@ _OWNER_DECISIONS: dict[str, frozenset[str]] = {
     # vendor-attested inference runtime is admitted under Creek-Vault ADR-0016
     # Decision 3, and D05 reopens for the inference leg alone.
     "2026-10-20": frozenset({"attested-inference-pool"}),
+    # The owner's 2026-10-21 decisions, recorded on Creek-Vault#1896: the
+    # vendor is Privatemode, Decision 3.3 condition (f) is waived on
+    # vendor-asserted evidence, and (c) and (e) are waived with substitutes.
+    "2026-10-21": frozenset({"attested-vendor-and-waivers"}),
 }
 # Anchors under which the owner has actually supplied a budget or staffing
 # figure. None exist yet, so no money cell can be owner-sourced until the
@@ -146,7 +150,42 @@ _ATTESTED_LABEL = "processed in an attested private enclave run by `<vendor>`, n
 # The two D05 conditions Creek-Vault ADR-0016 Decision 3.3 says a vendor cannot
 # meet, and so the only two the owner waived. Every other condition is kept,
 # not applicable, or added for a vendor; a third waiver is a widening.
-_D05_WAIVERS = {"c": "nonce freshness", "e": "a hostile-host lab"}
+# The conditions the owner waived, and nothing else. (c) and (e) are
+# unmeetable under O5 by construction; (f) is meetable in principle and
+# unverified in fact, so it is waived in a different sense -- see below.
+_D05_WAIVERS = {
+    "c": "nonce freshness",
+    "e": "a hostile-host lab",
+    "f": "reproducible builds",
+}
+# The substitutes the owner named for the two structural waivers, in the
+# owner's own words on Creek-Vault#1896. They are load-bearing: a waiver
+# recorded without its substitute is a blank cheque, so each is pinned.
+# The 2026-10-20 half waived only the structural pair; (f) joined on
+# 2026-10-21, so the first amendment entry is held to the pair it recorded.
+_STRUCTURAL_WAIVERS = {"c": "nonce freshness", "e": "a hostile-host lab"}
+_D05_SUBSTITUTES = {
+    "c": "the vendor's binding of the attested measurement to the live session key",
+    "e": "T18's negative tests",
+}
+_VENDOR_ANCHOR = "owner:2026-10-21#attested-vendor-and-waivers"
+# The vendor, its operator and its jurisdiction, which condition (h) requires
+# to be chosen explicitly rather than inherited from a default.
+_VENDOR_FACTS = (
+    "Privatemode",
+    "Edgeless Systems GmbH",
+    "Bochum",
+    "Germany",
+)
+# A waiver of independent verification is not a claim that verification
+# happened, and the owner required every dependent artifact to say so.
+_VENDOR_ASSERTED = "vendor-asserted"
+_NOT_VERIFIED = "not a claim that verification happened"
+# Decision 5 of Creek-Vault ADR-0016 is untouched by this amendment, and the
+# route that would be easiest to forget is the router's own rescue target.
+_INTIMATE_OFF_THE_POOL = (
+    "INTIMATE content never reaches the pool, by any route, including the `default` rescue path"
+)
 
 _REQUIRED_SECTIONS = (
     "## Context",
@@ -1410,9 +1449,13 @@ def test_decision_items_three_and_four_admit_the_vendor_attested_runtime() -> No
     assert _ATTESTED_CREDIT_PAYEE in decision
     # The exception is narrow: an ordinary cloud vendor still needs BYOK.
     assert "every other ordinary cloud model still need the person's own key" in decision
-    # And it is not sold as a guarantee: (f) is the condition it rests on.
+    # And it is not sold as a guarantee: (f) is the condition it rests on,
+    # it is waived rather than met, and the record says which.
     assert "Decision 3.3 condition (f)" in decision
     assert "unverified for either candidate vendor" in decision
+    assert _VENDOR_ANCHOR in decision
+    assert _VENDOR_ASSERTED in decision
+    assert _NOT_VERIFIED in decision
 
 
 def test_the_attested_runtime_carries_its_own_honest_limit_and_label() -> None:
@@ -1431,13 +1474,15 @@ def test_the_attested_runtime_carries_its_own_honest_limit_and_label() -> None:
     assert _ATTESTED_LABEL in phase_a
 
 
-def test_d05_is_reopened_for_the_inference_leg_with_exactly_two_named_waivers() -> None:
-    """D05 reopens for inference only, and names the two conditions it cannot meet.
+def test_d05_is_reopened_for_the_inference_leg_with_exactly_three_named_waivers() -> None:
+    """D05 reopens for inference only, and names each condition the owner waived.
 
     Creek-Vault ADR-0016 Decision 3.3 identifies (c) nonce freshness and (e) a
-    hostile-host lab as the unmeetable pair. A third waiver, or an unnamed
-    one, is a widening of a privacy posture: fail here rather than let it
-    pass as prose.
+    hostile-host lab as the pair O5 cannot meet, and the owner waived both on
+    2026-10-21 with the substitutes named below; (f) reproducible builds is
+    waived in a different sense, on vendor-asserted evidence. A fourth
+    waiver, or one recorded without its substitute, is a widening of a
+    privacy posture: fail here rather than let it pass as prose.
     """
     text = _adr_text()
     section = _flat(text[text.index("## Confidential compute (D05)") : text.index("## Budget and")])
@@ -1452,9 +1497,14 @@ def test_d05_is_reopened_for_the_inference_leg_with_exactly_two_named_waivers() 
     for condition, name in _D05_WAIVERS.items():
         assert f"**({condition}) {name}: WAIVED.**" in section
     assert section.count(": WAIVED.**") == len(_D05_WAIVERS)
-    assert "Only (c) and (e) are waived" in section
-    # A vendor that fails (f) or has no per-key caps is refused, not waived.
-    assert "it fails selection rather than earning a third waiver" in section
+    assert _VENDOR_ANCHOR in section
+    # Each structural waiver is recorded beside the substitute that is the
+    # reason it is defensible at all.
+    for condition, substitute in _D05_SUBSTITUTES.items():
+        assert substitute in section, condition
+    assert "Three conditions are waived and no others" in section
+    # A vendor with no per-key caps is refused, not waived.
+    assert "fails selection rather than earning a fourth waiver" in section
 
 
 def test_managed_runtime_rows_separate_the_runtime_we_run_from_the_attested_one() -> None:
@@ -1490,7 +1540,7 @@ def test_the_twin_records_the_amendment_and_changes_nothing_it_may_not() -> None
         str(_as_dict(entry).get("condition")): str(_as_dict(entry).get("name"))
         for entry in _as_list(amendment.get("d05_waivers"))
     }
-    assert waived == _D05_WAIVERS
+    assert waived == _STRUCTURAL_WAIVERS
     assert {_as_dict(entry).get("status") for entry in _as_list(amendment.get("d05_waivers"))} == {
         "waived"
     }
@@ -1507,3 +1557,122 @@ def test_the_twin_records_the_amendment_and_changes_nothing_it_may_not() -> None
     inference = str(_as_dict(selected["inference_location"]).get("value"))
     assert "vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3" in inference
     assert inference in _flat(_option_slice(_adr_text(), _SELECTED))
+
+
+def test_the_vendor_is_named_with_its_jurisdiction_and_deployment_shape() -> None:
+    """Condition (h) is a choice, so the record names who runs the enclave and where.
+
+    "A vendor" is not a jurisdiction. The owner chose Privatemode over
+    Tinfoil for the EU domicile, and that choice also fixes the deployment
+    shape: a loopback sidecar per vault image, with the attestation verified
+    inside the vendor's client code rather than ours. Both belong in the
+    record, because both are what the exclusion of the operator rests on.
+    """
+    text = _flat(_adr_text())
+    section = text[text.index("## Confidential compute (D05)") : text.index("## Budget and")]
+
+    for fact in _VENDOR_FACTS:
+        assert fact in section, fact
+    assert "loopback sidecar" in text
+    assert "inside the vendor's client code" in text
+    assert _VENDOR_ANCHOR in section
+
+
+def test_condition_f_is_waived_on_vendor_asserted_evidence_and_says_so() -> None:
+    """(f) is waived, not met, and every dependent sentence reads "vendor-asserted"."""
+    text = _flat(_adr_text())
+    section = text[text.index("## Confidential compute (D05)") : text.index("## Budget and")]
+
+    assert "**(f) reproducible builds: WAIVED.**" in section
+    assert _VENDOR_ASSERTED in section
+    assert _NOT_VERIFIED in section
+    # The threat-actor row the exclusion appears in says it there too, so a
+    # reader who reads only the table is not left with a verified claim.
+    actors = _flat(text[text.index("## Threat actors") : text.index("## Options")])
+    assert _VENDOR_ASSERTED in actors
+
+
+def test_intimate_never_reaches_the_pool_by_any_route() -> None:
+    """Decision 5 of the Creek record is restated here, rescue path included.
+
+    The `default` stage is the router's rescue target, and it is the route an
+    amendment is most likely to leave implicit. Pinned in both places a
+    reader could stop at: the decision items and the D05 section.
+    """
+    text = _flat(_adr_text())
+    decision = text[text.index("## Decision ") : text.index("## Threat actors")]
+    d05 = text[text.index("## Confidential compute (D05)") : text.index("## Budget and")]
+
+    assert _INTIMATE_OFF_THE_POOL in decision
+    assert _INTIMATE_OFF_THE_POOL in d05
+
+
+def test_grounding_embeddings_ride_the_pool_only_inside_the_measurement_set() -> None:
+    """Q2's option (i) is admitted on its own condition, with (iii) as the fallback.
+
+    An embedding is computed from the same prose as a reflection, so letting
+    the pool compute it widens what leaves the vault unless the embedding
+    model is inside the attested measurement set. The record admits it on
+    exactly that condition and names the ungrounded fallback.
+    """
+    decision = _flat(_adr_text())
+    decision = decision[decision.index("## Decision ") : decision.index("## Threat actors")]
+
+    assert "inside the attested measurement set" in decision
+    assert "option (iii)" in decision
+    assert "stays ungrounded" in decision
+
+
+def _vendor_amendment() -> dict[str, object]:
+    """The twin's 2026-10-21 amendment entry, or an empty object if it is gone."""
+    entries = [
+        _as_dict(entry)
+        for entry in _as_list(_card().get("amendments"))
+        if _as_dict(entry).get("date") == "2026-10-21"
+    ]
+    return entries[0] if entries else {}
+
+
+def test_the_twin_records_the_vendor_the_waivers_and_their_substitutes() -> None:
+    """The machine-readable half carries every 2026-10-21 decision, and no more."""
+    amendment = _vendor_amendment()
+
+    assert amendment.get("source") == _VENDOR_ANCHOR
+    vendor = _as_dict(amendment.get("vendor"))
+    assert vendor.get("name") == "Privatemode"
+    assert vendor.get("operator") == "Edgeless Systems GmbH"
+    assert vendor.get("jurisdiction") == "Bochum, Germany"
+    waived = {
+        str(_as_dict(entry).get("condition")): _as_dict(entry)
+        for entry in _as_list(amendment.get("d05_waivers"))
+    }
+    assert {key: str(entry.get("name")) for key, entry in waived.items()} == _D05_WAIVERS
+    assert {str(entry.get("status")) for entry in waived.values()} == {"waived"}
+    # The substitutes travel with the waivers in the twin as well as the prose.
+    for condition, substitute in _D05_SUBSTITUTES.items():
+        assert substitute in str(waived[condition].get("substitute")), condition
+    # (f) is waived on evidence, not on impossibility, and says whose evidence.
+    assert waived["f"].get("evidence") == _VENDOR_ASSERTED
+    # And the amendment still moves nothing it may not.
+    unchanged = " ".join(str(entry) for entry in _as_list(amendment.get("unchanged")))
+    assert _INTIMATE_OFF_THE_POOL in unchanged
+    assert _card()["unlocks_public_claims"] is False
+
+
+def test_the_metered_vendor_line_is_surfaced_against_the_no_paid_runtime_answer() -> None:
+    """The amendment admits a paid runtime, so the record says so where money lives.
+
+    The owner's 2026-10-14 answer was "no paid runtime, for now", and
+    Creek-Vault ADR-0016 Decision 3.6 concedes O5 is metered per token. Both
+    stay in the record, with no figure invented for either: the tension is
+    the owner's to hold, and hiding it would make the budget section read as
+    though the amendment changed nothing.
+    """
+    text = _flat(_adr_text())
+    budget = text[text.index("## Budget and staffing") : text.index("## Reviewers")]
+
+    assert "no paid runtime and no paid reviews" in budget
+    assert "metered, per-token" in budget
+    assert _VENDOR_ANCHOR in budget
+    # And no figure sneaks in with it: the money cells are still unknown.
+    assert _money_violations(_card()) == []

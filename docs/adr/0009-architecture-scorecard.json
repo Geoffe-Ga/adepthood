@@ -38,6 +38,57 @@
         "unlocks_public_claims stays false; B24 still certifies every claim.",
         "INTIMATE stays off the pool (Creek-Vault ADR-0016 Decision 5)."
       ]
+    },
+    {
+      "date": "2026-10-21",
+      "source": "owner:2026-10-21#attested-vendor-and-waivers",
+      "authority": "creek-vault:#1896",
+      "extends": "owner:2026-10-20#attested-inference-pool",
+      "vendor": {
+        "name": "Privatemode",
+        "operator": "Edgeless Systems GmbH",
+        "jurisdiction": "Bochum, Germany",
+        "not_chosen": "Tinfoil, Inc., San Francisco, California",
+        "deployment_shape": "A loopback sidecar in each vault image with one pinned egress destination; the attestation is verified inside the vendor's client code rather than ours."
+      },
+      "changes": [
+        "The vendor is named, with its operator and jurisdiction, so Creek-Vault ADR-0016 Decision 3.3 condition (h) is a choice on the record rather than a default.",
+        "Condition (f) is waived on vendor-asserted evidence, and every artifact depending on it says vendor-asserted wherever it would otherwise imply verification.",
+        "Conditions (c) and (e) are waived with the substitutes the owner named, each cited wherever its waiver is.",
+        "Creek-Vault ADR-0016's Q2 answer, option (i), is admitted for grounding embeddings only while the embedding model is inside the attested measurement set; otherwise the managed vault stays ungrounded, that record's option (iii)."
+      ],
+      "d05_reopened_for": "inference leg only",
+      "d05_waivers": [
+        {
+          "condition": "c",
+          "name": "nonce freshness",
+          "status": "waived",
+          "unmeetable_under_o5": true,
+          "substitute": "the vendor's binding of the attested measurement to the live session key, verified against the vendor's design by the Creek build issue and exercised by Creek-Vault ADR-0016 T18"
+        },
+        {
+          "condition": "e",
+          "name": "a hostile-host lab",
+          "status": "waived",
+          "unmeetable_under_o5": true,
+          "substitute": "T18's negative tests: the vendor negative tests of Creek-Vault ADR-0016 T18, each of which must refuse with nothing sent"
+        },
+        {
+          "condition": "f",
+          "name": "reproducible builds",
+          "status": "waived",
+          "unmeetable_under_o5": false,
+          "evidence": "vendor-asserted",
+          "substitute": "vendor-asserted evidence in place of independent verification; a waiver of independent verification is not a claim that verification happened"
+        }
+      ],
+      "unchanged": [
+        "selected_option stays BD; status stays accepted on 2026-10-07.",
+        "Stored content, key custody and recovery are untouched (Decision items 1, 2 and 11).",
+        "unlocks_public_claims stays false; B24 (issue:#3076) still certifies every claim.",
+        "Creek-Vault ADR-0016 Decision 5 is untouched: INTIMATE content never reaches the pool, by any route, including the `default` rescue path.",
+        "No spend is authorized by this record, and no vendor resource is provisioned by it."
+      ]
     }
   ],
   "selected_option": "BD",
