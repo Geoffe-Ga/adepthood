@@ -2942,12 +2942,18 @@
   },
   {
     "id": "journal.write-from-a-past-prompt",
-    "description": "A writer scrolls below current Prompts to a historical question, presses Write about this, and saves a new plain entry. The original weekly response remains unchanged.",
+    "description": "A writer scrolls below current Prompts to answered and unanswered past weekly questions. A week-24 account with only one answer sees skipped questions, loads a second page and writes a new plain entry from an unanswered prompt without changing weekly response history. Only weeks that have passed in a recorded calendar supply unanswered cards. After a real API begin-again resets the calendar, a fresh browser read still shows all 36 questions from the recorded prior cycle and its single original answer, across both pages. The early-review explanation remains visible above the history.",
     "crosses": {
       "screen": "frontend/src/features/Journal/NotificationCenterScreen.tsx",
-      "client": ["prompts", "journal"],
-      "routes": ["POST /prompts/{week_number}/respond", "GET /prompts/history", "POST /journal/"],
-      "tables": ["promptresponse", "journalentry"]
+      "client": ["prompts", "journal", "stages"],
+      "routes": [
+        "POST /prompts/{week_number}/respond",
+        "GET /prompts/history",
+        "POST /journal/",
+        "GET /stages/program-calendar",
+        "POST /stages/begin-again"
+      ],
+      "tables": ["promptresponse", "journalentry", "stageprogress"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/prompts-history.browser.e2e.test.ts"
