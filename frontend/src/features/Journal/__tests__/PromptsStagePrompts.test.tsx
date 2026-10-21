@@ -78,6 +78,7 @@ jest.mock('@react-navigation/native', () => {
 let mockNotificationCount = 0;
 jest.mock('../useNotificationCount', () => ({
   useNotificationCount: () => mockNotificationCount,
+  useFocusRefreshKey: () => 0,
 }));
 
 jest.mock('../SearchBar', () => {
@@ -103,10 +104,14 @@ jest.mock('@/features/Invitations/InvitationStack', () => {
 jest.mock('../MorningPagesTip', () => {
   const { View } = require('react-native');
   const Stub = () => <View testID="morning-pages-tip-stub" />;
-  return { __esModule: true, default: Stub };
+  return {
+    ...jest.requireActual<Record<string, unknown>>('../MorningPagesTip'),
+    __esModule: true,
+    default: Stub,
+  };
 });
 
-const JournalShelfScreen = require('../JournalShelfScreen').default;
+const JournalShelfScreen = require('../NotificationCenterScreen').default;
 
 // Fixtures only: the shelf must read every one of these strings off the wire.
 const ORANGE_PROMPTS: StagePromptDetail[] = [
@@ -347,7 +352,7 @@ describe('the Journal shelf shows a whole stage of prompts, each with its cadenc
     // and compose the response against the wrong week.
     mockPromptCurrent.mockRejectedValue(new Error('offline'));
     const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
-    expect(await findByTestId('journal-shelf')).toBeTruthy();
+    expect(await findByTestId('journal-notification-center')).toBeTruthy();
     expect(queryByTestId('journal-stage-prompts')).toBeNull();
     expect(mockPromptStage).not.toHaveBeenCalled();
   });
@@ -355,7 +360,7 @@ describe('the Journal shelf shows a whole stage of prompts, each with its cadenc
   it('renders the shelf without the prompt section when the stage fetch fails', async () => {
     mockPromptStage.mockRejectedValue(new Error('offline'));
     const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
-    expect(await findByTestId('journal-shelf')).toBeTruthy();
+    expect(await findByTestId('journal-notification-center')).toBeTruthy();
     expect(queryByTestId('journal-stage-prompts')).toBeNull();
   });
 
@@ -370,7 +375,7 @@ describe('the Journal shelf shows a whole stage of prompts, each with its cadenc
   it('renders no prompt section for a stage that carries no prompts', async () => {
     mockPromptStage.mockResolvedValue(stageResponse(5, 'Orange', []));
     const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
-    expect(await findByTestId('journal-shelf')).toBeTruthy();
+    expect(await findByTestId('journal-notification-center')).toBeTruthy();
     expect(queryByTestId('journal-stage-prompts')).toBeNull();
   });
 });
@@ -383,7 +388,8 @@ describe('a writer can set a stage prompt aside, and bring it back', () => {
     expect(control.props.accessibilityLabel).toBe(
       'Set this prompt aside; you can bring it back later.',
     );
-    expect(within(control).getByText('Set aside')).toBeTruthy();
+    expect(StyleSheet.flatten(control.props.style).position).toBe('absolute');
+    expect(within(control).queryByText('Set aside')).toBeNull();
   });
 
   it('tells the server which prompt was set aside, and stops offering that one', async () => {
@@ -552,14 +558,18 @@ describe('the copy for declining a prompt', () => {
     return [
       ...footerCopy,
       ...controls.map((node) => node.props.accessibilityLabel as string),
-      ...controls.map((node) => within(node).getByText(/./).props.children as string),
+      ...controls.flatMap((node) =>
+        within(node)
+          .queryAllByText(/./)
+          .map((text) => text.props.children as string),
+      ),
     ];
   }
 
   it("ranks or shames nobody, by the repository's own intent rule", async () => {
     const copy = await visibleCopy();
 
-    expect(copy).toHaveLength(6);
+    expect(copy).toHaveLength(5);
     for (const line of copy) {
       expect(line).toBeTruthy();
       expect({ line, ranked: ranksOrShames(line) }).toEqual({ line, ranked: false });

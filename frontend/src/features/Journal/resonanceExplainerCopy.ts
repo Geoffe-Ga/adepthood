@@ -181,3 +181,11 @@ export const ESSAY_ASK_PROCEED_A11Y = 'Ask for the letter for this note';
 
 export const ESSAY_ASK_CANCEL = 'Not now';
 export const ESSAY_ASK_CANCEL_A11Y = 'Not now — do not write this letter';
+
+/**
+ * Why a saved key does not help an empty wallet pay for a first letter: the
+ * vault writes it and never uses the key (#3281/#3346). The letter's half of the
+ * refill dialog's "Readings your vault answers use BotMason credits".
+ */
+export const ESSAY_VAULT_USES_CREDITS =
+  'Letters your vault writes use BotMason credits, even when an API key is saved.';

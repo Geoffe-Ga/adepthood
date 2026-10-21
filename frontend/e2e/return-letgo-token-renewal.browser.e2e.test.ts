@@ -16,11 +16,19 @@ import {
   bearer,
   frontendUrl,
   isoDaysAgo,
+  openPrompts,
   readReturnState,
   reachReturnEligibility,
   signUp,
   tokenFor,
 } from './journalHabitsBrowserSupport';
+
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
 
 /**
  * #3374: the let-go prompt that follows beginning a Return stays open, with the
@@ -122,6 +130,7 @@ async function beginReturnOnShelf(page: Page, prefix: string): Promise<Arranged>
   await askForResonance(page);
   await expect(page.getByTestId('contraction-reflection-title')).toHaveText(RETURN_OFFER_TITLE);
   await page.getByTestId('journal-close-entry').click();
+  await openPrompts(page);
   const started = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&

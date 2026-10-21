@@ -9,7 +9,14 @@
  * what it costs, and two equal arms — and only "Ask for the letter" asks. A
  * letter already written opens straight to the letter, because reopening it is
  * free. A 402 is not rendered as an error: it is handed to ``onFundingRequired``
- * so the screen can show the same refill remedy a resonance pass gets.
+ * so the screen can show the same refill remedy a resonance pass gets. A price
+ * that already says the wallet is empty offers no ask at all, so no 402 could
+ * ever arrive: the offer carries that remedy itself (#3386).
+ *
+ * A vault-bound writer's ask can be answered by the vault's care guard instead
+ * of a letter (#3380). The server then sends its own reviewed care surface, and
+ * the card shows exactly that -- the same ``CareSupportNote`` a resonance pass
+ * shows -- rather than a blank-letter error and a nudge to ask again.
  *
  * The ask carries the payer route its price was disclosed for (#3385). When
  * another device has connected or disconnected a vault since, the server
@@ -27,6 +34,7 @@ import {
 } from 'react-native';
 
 import { aiAccessRevoked } from './aiAccessRevoked';
+import CareSupportNote from './CareSupportNote';
 import { ExplainerActionPair, PayerChangedNotice, explainerStyles } from './ExplainerDialogParts';
 import { fundingOutcome, type FundingOutcome } from './fundingOutcome';
 import { generationRefusal } from './generationRefusal';
@@ -40,12 +48,20 @@ import {
   ESSAY_ASK_PROCEED_A11Y,
   ESSAY_ASK_WHAT,
   ESSAY_NOUN,
+  ESSAY_VAULT_USES_CREDITS,
 } from './resonanceExplainerCopy';
 import { sourceLabel } from './sourceLabel';
 import { usePaymentScope } from './usePaymentScope';
+import type { VaultKeyVendor } from './vaultKeyCopy';
+import {
+  CreditPackOffer,
+  configuredCreditPackUrl,
+  resetAvailabilityCopy,
+  walletCancelA11y,
+} from './WalletRemedy';
 
 import { resonance } from '@/api';
-import type { Marginalia, ResonanceRoute } from '@/api';
+import type { CareResponse, EssayResponse, Marginalia, ResonanceRoute } from '@/api';
 import { formatApiError } from '@/api/errorMessages';
 import { useAuth } from '@/context/AuthContext';
 import { colors, editorialType, spacing, touchTarget } from '@/design/tokens';
@@ -58,6 +74,8 @@ export interface ResonanceEssayModalProps {
   onEssayLoaded?: (_note: Marginalia) => void;
   /** Whether an own key is available; the server route also gates eligibility. */
   hasOwnKey?: boolean;
+  /** The vendor of that key, so a managed vault that writes with it can say so (#3437). */
+  ownKeyVendor?: VaultKeyVendor | null;
   /** A 402 on the ask: the wallet is empty, or a key is required. */
   onFundingRequired?: (_outcome: FundingOutcome) => void;
 }
@@ -80,6 +98,8 @@ interface EssayState {
   essaySource?: unknown;
   /** The offer is back because the ask's payer route changed (#3385). */
   payerChanged?: boolean;
+  /** The vault's care guard answered instead of a letter: the server's care surface (#3380). */
+  care?: CareResponse;
 }
 
 const OFFER_STATE: EssayState = { essay: null, loading: false, error: null, offer: true };
@@ -106,11 +126,12 @@ function priceUnacknowledged(error: unknown): boolean {
  */
 type UnansweredNotes = Map<number, Unanswered>;
 
-/** What an ask that produced no letter said, and whether asking again could help. */
-interface Unanswered {
-  message: string;
-  retryable: boolean;
-}
+/**
+ * What an ask that produced no letter said: a refusal and whether asking again
+ * could help, or the server's care surface when the vault's care guard answered.
+ */
+type Unanswered =
+  { kind: 'refused'; message: string; retryable: boolean } | { kind: 'care'; care: CareResponse };
 
 /**
  * The state a note is shown from: its own cached letter, else a remembered ask
@@ -128,23 +149,14 @@ function initialState(note: Marginalia, unanswered: UnansweredNotes): EssayState
     };
   }
   const remembered = unanswered.get(note.id);
-  if (remembered !== undefined) {
-    return {
-      essay: null,
-      loading: false,
-      error: remembered.message,
-      retryable: remembered.retryable,
-      offer: false,
-    };
-  }
-  return OFFER_STATE;
+  return remembered === undefined ? OFFER_STATE : unansweredState(remembered);
 }
 
 /** The three ways an ask settles, handed to {@link askForEssay} by the hook. */
 interface EssaySettlers {
   /** A real letter arrived, and should be cached back onto the note. */
   onLetter: (_updated: Marginalia) => void;
-  /** The ask produced no letter: a refusal, an intimate entry, or a failure. */
+  /** The ask produced no letter: a refusal, an intimate entry, a failure, or care. */
   onUnanswered: (_unanswered: Unanswered) => void;
   /** The ask was refused for want of a payer; nothing was spent. */
   onFunding: (_outcome: FundingOutcome) => void;
@@ -156,12 +168,16 @@ interface EssaySettlers {
 function askForEssay(noteId: number, route: ResonanceRoute, settlers: EssaySettlers): void {
   resonance
     .essay(noteId, { priceAcknowledged: true, disclosedRoute: route })
-    .then((updated) => {
+    .then((updated: EssayResponse) => {
       if (updated.essay) {
         settlers.onLetter(updated);
         return;
       }
-      settlers.onUnanswered({ message: BLANK_ESSAY_MESSAGE, retryable: true });
+      if (updated.care != null) {
+        settlers.onUnanswered({ kind: 'care', care: updated.care });
+        return;
+      }
+      settlers.onUnanswered({ kind: 'refused', message: BLANK_ESSAY_MESSAGE, retryable: true });
     })
     .catch((err: unknown) => {
       if (priceUnacknowledged(err)) {
@@ -174,6 +190,7 @@ function askForEssay(noteId: number, route: ResonanceRoute, settlers: EssaySettl
         return;
       }
       settlers.onUnanswered({
+        kind: 'refused',
         message: formatApiError(err),
         // Neither midnight's ceiling nor a revoked entitlement (#1938) clears on retry.
         retryable: generationRefusal(err) !== 'daily_limit' && !aiAccessRevoked(err),
@@ -245,8 +262,11 @@ function letterState(updated: Marginalia): EssayState {
   };
 }
 
-/** The card after an ask that produced no letter. */
+/** The card after an ask that produced no letter: the refusal, or the server's care. */
 function unansweredState(unanswered: Unanswered): EssayState {
+  if (unanswered.kind === 'care') {
+    return { essay: null, loading: false, error: null, offer: false, care: unanswered.care };
+  }
   return {
     essay: null,
     loading: false,
@@ -354,6 +374,7 @@ function EssayOffer({
   onAsk: () => void;
   onDecline: () => void;
 }): React.JSX.Element {
+  const packUrl = configuredCreditPackUrl();
   return (
     <View testID="essay-offer">
       <Text style={explainerStyles.body} testID="essay-ask-what">
@@ -363,22 +384,57 @@ function EssayOffer({
       <Text style={explainerStyles.body} testID="essay-ask-cost">
         {cost.copy}
       </Text>
-      <Text style={explainerStyles.body} testID="essay-ask-choice">
-        {ESSAY_ASK_CHOICE}
-      </Text>
-      <EssayActions {...{ cost, onOpenSettings, onAsk, onDecline }} />
+      {cost.fundingRequired === 'wallet_exhausted' ? (
+        <EssayWalletRemedy cost={cost} packUrl={packUrl} />
+      ) : (
+        <Text style={explainerStyles.body} testID="essay-ask-choice">
+          {ESSAY_ASK_CHOICE}
+        </Text>
+      )}
+      <EssayActions {...{ cost, packUrl, onOpenSettings, onAsk, onDecline }} />
     </View>
   );
+}
+
+/**
+ * An empty wallet, known before any ask (#3386): when it refills, and where to
+ * buy credits if a pack page is configured. Never a key, which a vault-written
+ * letter does not use.
+ */
+function EssayWalletRemedy({
+  cost,
+  packUrl,
+}: {
+  cost: ResonanceCostState;
+  packUrl: string | null;
+}): React.JSX.Element {
+  return (
+    <View testID="essay-wallet-remedy">
+      <Text style={explainerStyles.body} testID="essay-wallet-remedy-text">
+        {ESSAY_VAULT_USES_CREDITS} {resetAvailabilityCopy(cost.monthlyCap, cost.monthlyResetDate)}
+      </Text>
+      {packUrl === null ? null : <CreditPackOffer url={packUrl} testID="essay-credit-pack" />}
+    </View>
+  );
+}
+
+/** What declining says aloud: an empty wallet's remedy is not a letter declined (#3388). */
+function declineLabel(cost: ResonanceCostState, packUrl: string | null): string {
+  return cost.fundingRequired === 'wallet_exhausted'
+    ? walletCancelA11y(packUrl)
+    : ESSAY_ASK_CANCEL_A11Y;
 }
 
 /** The only offered action must be eligible on the recorded route. */
 function EssayActions({
   cost,
+  packUrl,
   onOpenSettings,
   onAsk,
   onDecline,
 }: {
   cost: ResonanceCostState;
+  packUrl: string | null;
   onOpenSettings: () => void;
   onAsk: () => void;
   onDecline: () => void;
@@ -407,7 +463,7 @@ function EssayActions({
           style={explainerStyles.action}
           onPress={onDecline}
           accessibilityRole="button"
-          accessibilityLabel={ESSAY_ASK_CANCEL_A11Y}
+          accessibilityLabel={declineLabel(cost, packUrl)}
           testID="essay-not-now"
         >
           <Text style={explainerStyles.cancelLabel}>{ESSAY_ASK_CANCEL}</Text>
@@ -417,7 +473,7 @@ function EssayActions({
   );
 }
 
-/** The body region: spinner, the essay, or a friendly error with retry. */
+/** The body region: spinner, the essay, the server's care, or a friendly error with retry. */
 function EssayBody({
   essay,
   loading,
@@ -425,9 +481,15 @@ function EssayBody({
   retryable = true,
   retry,
   essaySource,
+  care,
 }: Omit<EssayState, 'offer'> & { retry: () => void }) {
   if (loading) {
     return <ActivityIndicator testID="essay-loading" color={colors.paper.ink} />;
+  }
+  if (care !== undefined) {
+    // The vault's care guard answered instead of a letter (#3380): only the
+    // server's reviewed copy, and no nudge to ask for the letter again.
+    return <CareSupportNote care={care} flush />;
   }
   if (error != null) {
     // Announced as it appears, like the margin's own error line: a writer on a
@@ -466,9 +528,15 @@ function EssayBody({
  * Resolve only an uncached offer; responses belong to one note/key showing.
  * A new ``revision`` rereads the route for the same showing (#3385).
  */
+interface OwnKey {
+  hasOwnKey: boolean;
+  /** The key's vendor, so a managed vault that writes with it can say so (#3437). */
+  ownKeyVendor: VaultKeyVendor | null;
+}
+
 function useEssayCost(
   note: Marginalia | null,
-  hasOwnKey: boolean,
+  { hasOwnKey, ownKeyVendor }: OwnKey,
   scopeIsCurrent: () => boolean,
   revision: number,
 ): ResonanceCostState {
@@ -496,13 +564,13 @@ function useEssayCost(
       copy: 'Checking whether a letter can be written…',
       loading: true,
     });
-    void loadCostState(hasOwnKey, ESSAY_NOUN, token).then((next) => {
+    void loadCostState(hasOwnKey, ESSAY_NOUN, token, ownKeyVendor).then((next) => {
       if (current && scopeIsCurrent()) setCost(next);
     });
     return () => {
       current = false;
     };
-  }, [note, hasOwnKey, scopeIsCurrent, revision]);
+  }, [note, hasOwnKey, ownKeyVendor, scopeIsCurrent, revision]);
   return cost;
 }
 
@@ -531,16 +599,13 @@ function ResonanceEssayModal({
   onEssayLoaded,
   onOpenSettings = () => undefined,
   hasOwnKey = false,
+  ownKeyVendor = null,
   onFundingRequired,
 }: ResonanceEssayModalProps): React.JSX.Element {
   const scopeIsCurrent = usePaymentScope();
   const shown = useEssay(note, { onEssayLoaded, onFundingRequired }, scopeIsCurrent);
-  const cost = useEssayCost(
-    shown.offer ? note : null,
-    hasOwnKey,
-    scopeIsCurrent,
-    shown.costRevision,
-  );
+  const offer = shown.offer ? note : null;
+  const cost = useEssayCost(offer, { hasOwnKey, ownKeyVendor }, scopeIsCurrent, shown.costRevision);
 
   return (
     <JournalModalShell

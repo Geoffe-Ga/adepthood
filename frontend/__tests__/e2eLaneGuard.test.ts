@@ -90,6 +90,8 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'habits-resumed-session.browser.e2e.test.ts',
   'journal-care-support.browser.e2e.test.ts',
   'privacy-choices.browser.e2e.test.ts',
+  'prompts-history.browser.e2e.test.ts',
+  'prompts-recovery.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
   'journal-corpus-drawer.browser.e2e.test.ts',
   'journal-entry-controls.browser.e2e.test.ts',
@@ -97,6 +99,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-finished-task-toggle.browser.e2e.test.ts',
   'journal-fold-selected-promoted-quotes.browser.e2e.test.ts',
   'journal-idle-timer-obstruction.browser.e2e.test.ts',
+  'journal-letter-care-escalation.browser.e2e.test.ts',
   'journal-list-indent.browser.e2e.test.ts',
   'journal-live-edit-anchors.browser.e2e.test.ts',
   'journal-live-markdown.browser.e2e.test.ts',
@@ -131,6 +134,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'journal-title-wrap.browser.e2e.test.ts',
   'journal-unlinked-timer-nudge.browser.e2e.test.ts',
   'journal-writing-timer.browser.e2e.test.ts',
+  'managed-vault-own-key.browser.e2e.test.ts',
   'map-continue-course.browser.e2e.test.ts',
   'map-legibility.browser.e2e.test.ts',
   'map-stage-persona.browser.e2e.test.ts',
@@ -666,7 +670,11 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
 
     expect(fake).toContain("const CONTRACT_HEADER = 'x-creek-contract-version'");
-    expect(fake).toContain("const CONTRACT_VERSION = '0.17.0'");
+    expect(fake).toContain("const CONTRACT_VERSION = '0.18.0'");
+    // Contract 0.18 (Creek-Vault ADR-0015): a self-connected vault lists no key vendor.
+    expect(fake).toContain(
+      'request_key_providers: requestKeysAdvertised ? REQUEST_KEY_PROVIDERS : []',
+    );
     expect(fake).toContain('incompatible_version');
     expect(fake).toContain("const ADMITTED_TIERS = ['open', 'personal']");
     // Declared *and* enforced: a constant nothing consults would leave the

@@ -6,6 +6,7 @@ import {
   signUp,
   tokenFor,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * The review composer's Sources panel as navigation (#2883): its heading and X
@@ -89,6 +90,7 @@ async function seedReview(page: Page, prefix: string): Promise<Seeded> {
     sourceIds.push(id);
   }
   await page.reload();
+  await openPrompts(page);
   await page.getByTestId('journal-reflection-band').click();
   await entryBody(page).fill(DRAFT);
   await expect(visible(page, 'journal-save-hint')).toHaveText('Saved');

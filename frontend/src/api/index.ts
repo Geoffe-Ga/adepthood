@@ -45,6 +45,7 @@ import {
   resonanceResponseSchema,
   essayResponseSchema,
   botmasonUsageSchema,
+  vaultKeyVendorsSchema,
   stageIntroSchema,
   nextUnreadSchema,
   userPracticeSchema,
@@ -69,6 +70,7 @@ import {
   type AcceptSuggestionResultT,
   type CareKindT,
   type BotmasonUsageT,
+  type VaultKeyVendorsT,
   type CareResourceT,
   type CareResponseT,
   type CompletionSuggestionT,
@@ -141,6 +143,7 @@ import { classifyTranscription } from './transcriptionContract';
 import { API_BASE_URL, KEYLESS_PAGE_READ_REACHES_SERVER } from '@/config';
 import type { Habit as LocalHabit, HabitGoalSetup } from '@/features/Habits/Habits.types';
 import { aiAccessRevoked } from '@/features/Journal/aiAccessRevoked';
+import { type VaultKeyVendor, vaultKeyVendorFor } from '@/features/Journal/vaultKeyCopy';
 import type { ModeConfig } from '@/features/Practice/engine/types';
 import {
   diagnosticRoute,
@@ -509,7 +512,57 @@ export function setLlmApiKeyReset(reset: (() => void) | null) {
  * no-op when no provider has registered a reset.
  */
 export function resetLlmApiKey(): void {
+  vaultKeyVendors = null;
+  vaultKeyEpoch += 1;
   llmApiKeyReset?.();
+}
+
+/**
+ * The vendors whose writer key this account's vault said, on its last vendor
+ * read, that it writes with (#3437); ``null`` until it has been asked. Cleared
+ * with the key on session teardown, so one account's answer never decides
+ * where another's key goes.
+ */
+let vaultKeyVendors: readonly VaultKeyVendor[] | null = null;
+/** Bumped on teardown, so a read in flight across it cannot refill the cache. */
+let vaultKeyEpoch = 0;
+
+/**
+ * Ask the server which vendors' writer keys this account's vault would write
+ * with (#3437). Its own read, apart from the usage snapshot, because answering
+ * it means the server asks the vault; an app-provider account is answered
+ * empty without that.
+ */
+export const vaultRequestKeys = {
+  async get(token?: string): Promise<readonly VaultKeyVendor[]> {
+    const epoch = vaultKeyEpoch;
+    const answer = await request<VaultKeyVendorsT>('/user/vault-key-vendors', {
+      token,
+      schema: vaultKeyVendorsSchema as unknown as z.ZodType<VaultKeyVendorsT>,
+    });
+    if (epoch === vaultKeyEpoch) vaultKeyVendors = answer.vendors;
+    return answer.vendors;
+  },
+};
+
+/**
+ * The key header for a request that hands the vault new writing -- a journal
+ * save or a document import -- whose onboarding classification a managed vault
+ * runs with the writer's own key (#3437). Attached only when the stored key's
+ * vendor is one the vault said it writes with, so the key travels only when a
+ * feature uses it; every other save carries no key at all. A save never waits
+ * on the vault: before the first answer it goes without the key and starts the
+ * one read later saves use.
+ */
+function onboardingKeyHeaders(token?: string): Record<string, string> | undefined {
+  const key = llmApiKeyGetter?.() ?? null;
+  const vendor = vaultKeyVendorFor(key);
+  if (key === null || vendor === null) return undefined;
+  if (vaultKeyVendors === null) {
+    vaultRequestKeys.get(token).catch(() => undefined);
+    return undefined;
+  }
+  return vaultKeyVendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
 }
 
 /** How a successful response body is read. */
@@ -1767,6 +1820,11 @@ export interface EssayResponse extends Marginalia {
   remaining_messages: number;
   remaining_balance: number;
   monthly_reset_date: string;
+  /**
+   * The server's reviewed care surface, present only when a vault's care guard
+   * answered the letter ask instead of writing one (#3380); ``essay`` is then null.
+   */
+  care?: CareResponse | null;
 }
 
 /** How one essay request is sent. */
@@ -2090,6 +2148,7 @@ export const corpus = {
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
         body: { filename, content_base64: contentBase64, classification },
+        headers: onboardingKeyHeaders(token),
         token,
         timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
         schema: documentImportSchema as unknown as z.ZodType<DocumentImportT>,
@@ -2154,13 +2213,15 @@ export const journal = {
     options: { token?: string; idempotencyKey?: string } = {},
   ): Promise<JournalMessage> {
     // Trailing slash — the collection POST route is `/journal/` (#790).
+    const idempotency = options.idempotencyKey
+      ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
+      : undefined;
+    const onboarding = onboardingKeyHeaders(options.token);
     return request<JournalMessage>('/journal/', {
       method: 'POST',
       body: entry,
       token: options.token,
-      headers: options.idempotencyKey
-        ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
-        : undefined,
+      headers: idempotency || onboarding ? { ...idempotency, ...onboarding } : undefined,
     });
   },
   /**
@@ -2484,11 +2545,12 @@ export const voiceDrafts = {
 
 /** Read the deployment's allowance policy and this account's wallet state. */
 export const botmasonUsage = {
-  get(token?: string): Promise<BotmasonUsageT> {
-    return request<BotmasonUsageT>('/user/usage', {
+  async get(token?: string): Promise<BotmasonUsageT> {
+    const usage = await request<BotmasonUsageT>('/user/usage', {
       token,
       schema: botmasonUsageSchema as unknown as z.ZodType<BotmasonUsageT>,
     });
+    return usage;
   },
 };
 

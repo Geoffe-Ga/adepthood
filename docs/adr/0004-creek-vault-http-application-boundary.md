@@ -4,15 +4,17 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.17.0 (tracks Creek's published
+- **Pinned contract version:** 0.18.0 (tracks Creek's published
   constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
   of this document, moved to 0.8.0 with the 2026-08-19 note, which
   records why that move became a prerequisite rather than housekeeping,
   moved to 0.10.0 with the 2026-08-30 note, moved to 0.14.0 with
   the 2026-09-05 note, moved to 0.15.0 with the 2026-09-06 note,
   which adopts the AI-attributed Voice Draft resource, moved to 0.16.0
-  with the 2026-09-12 note, which adopts journal withdrawal, and moved to
-  0.17.0 with the 2026-10-15 note, which adopts vault-written letters)
+  with the 2026-09-12 note, which adopts journal withdrawal, moved to
+  0.17.0 with the 2026-10-15 note, which adopts vault-written letters, and
+  moved to 0.18.0 with the 2026-10-20 note, which adopts request-scoped keys
+  on a managed vault)
 
 ## Context
 
@@ -1551,3 +1553,31 @@ letter, and a vault-answered letter is charged whatever key header rides along
 under the same external id a mirrored draft uses, so Intimate reclassification
 and deletion withdraw a vault-written letter through `DELETE
 /v1/voice-drafts/{external_id}` exactly as they withdraw a mirrored one.
+
+## Note, 2026-10-20 — the pin moves to 0.18.0; a managed vault writes with the writer's key
+
+Creek-Vault #1876 (merged at `a134bf44`) publishes request-scoped keys
+(Creek-Vault#1873, Creek-Vault ADR-0015) and Adepthood #3437 adopts them. The
+vendored bundle is re-cut byte-for-byte from upstream `a134bf44`. Only four
+files move: the `CapabilitiesResponse` schema, its `success` and `empty`
+examples, and the manifest. The counts are unchanged: 112 manifest entries, 114
+vendored files, 41 schemas, a 10 × 7 example matrix. The ontology version is
+unchanged.
+
+The handshake gains `request_key_providers`, the vendors (`anthropic`,
+`openai`) whose writer key the vault will spend. A managed vault lists both;
+a self-connected vault lists none. The field is minor-gated: Creek withholds it
+from a caller declaring a minor below 0.18. That gate is why this move is a
+prerequisite, not housekeeping. On 0.17, adepthood would never see a managed
+vault's advertisement, and the relay would stay inert. The model routes
+(`POST /v1/reflections`, `POST /v1/letters/{external_id}`, `POST
+/v1/classifications`) accept the optional `X-Creek-Provider` /
+`X-Creek-Provider-Key` header pair whatever minor the caller declares.
+
+Adepthood relays a vault-bound writer's own Anthropic or OpenAI key only on
+those three routes, and only to a vault whose handshake listed that vendor. The
+key then pays instead of a credit. ADR 0009's 2026-10-16 amendment records the
+custody and payment decision; this note records only the contract move.
+INTIMATE content never reaches a key-spending path. The vault routes any
+INTIMATE work it is asked for onto its local model or refuses it, and
+adepthood's own egress gate is unchanged.

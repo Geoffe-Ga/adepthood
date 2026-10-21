@@ -14,18 +14,22 @@
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useRef, useState } from 'react';
 
+import { useMorningPagesTipState } from './MorningPagesTip';
 import {
   useStagePromptPlace,
   useStagePrompts,
   visibleStagePromptCount,
 } from './StagePromptSection';
+import { useDueReview } from './useDueReview';
 import { useVoiceReadinessState } from './VoiceReadinessBand';
 
+import { useAuth } from '@/context/AuthContext';
 import { useEnabledRings, useRingEnabled } from '@/features/Depth/depthRings';
 import { visibleInvitations } from '@/features/Invitations/InvitationStack';
 import { useInvitations } from '@/features/Invitations/useInvitations';
 import { returnSurfaceVisible } from '@/features/Return/ReturnStack';
 import { useMettaReturn } from '@/features/Return/useMettaReturn';
+import { todayInUserTZ } from '@/utils/dateUtils';
 
 /** What each source contributes to the count. */
 export interface NotificationTally {
@@ -37,11 +41,18 @@ export interface NotificationTally {
   stagePrompts: number;
   /** The voice-readiness band is showing. */
   voiceBand: boolean;
+  writingPrompt?: boolean;
 }
 
 /** The items waiting, summed: each card is one, however it got there. */
 export function countNotifications(tally: NotificationTally): number {
-  return Number(tally.returnDue) + tally.invitations + tally.stagePrompts + Number(tally.voiceBand);
+  return (
+    Number(tally.returnDue) +
+    tally.invitations +
+    tally.stagePrompts +
+    Number(tally.voiceBand) +
+    Number(tally.writingPrompt === true)
+  );
 }
 
 /**
@@ -64,6 +75,11 @@ export function useFocusRefreshKey(): number {
 /** The number of items waiting in the Notification Center. */
 export function useNotificationCount(): number {
   const refreshKey = useFocusRefreshKey();
+  const due = useDueReview();
+  const { userTimezone } = useAuth();
+  const { state: tip } = useMorningPagesTipState(undefined, refreshKey);
+  const morningShown =
+    tip !== null && !tip.neverOffer && tip.setAsideOn !== todayInUserTZ(userTimezone);
   // Return is a way back into habits: a declined habits ring neither loads it
   // nor counts it, exactly as ``DepthGate`` keeps it off the home (#3073).
   const habitsOn = useRingEnabled('habits');
@@ -78,5 +94,6 @@ export function useNotificationCount(): number {
     invitations: visibleInvitations(invitations, rings).length,
     stagePrompts: visibleStagePromptCount(band),
     voiceBand: voice !== null,
+    writingPrompt: due.status === 'settled' && (due.review !== null || morningShown),
   });
 }

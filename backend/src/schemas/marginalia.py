@@ -92,20 +92,6 @@ class EssayRequest(BaseModel):
     disclosed_route: PayerRoute | None = None
 
 
-class EssayResponse(MarginaliaResponse):
-    """A margin note after an essay request, plus the wallet it left behind.
-
-    The balances mirror :class:`ResonanceResponse` so a client reads one shape
-    for "what this cost me" on both charged journal depths. They sit on a
-    subclass rather than on :class:`MarginaliaResponse` itself so note listings
-    do not grow a wallet read per row.
-    """
-
-    remaining_messages: int
-    remaining_balance: int
-    monthly_reset_date: datetime
-
-
 class VoiceDraftResponse(BaseModel):
     """One expanded essay on the Voice Drafts shelf.
 
@@ -164,6 +150,26 @@ class CareResponse(BaseModel):
     title: str = Field(min_length=1)
     message: str
     resources: list[CareResourceResponse]
+
+
+class EssayResponse(MarginaliaResponse):
+    """A margin note after an essay request, plus the wallet it left behind.
+
+    The balances mirror :class:`ResonanceResponse` so a client reads one shape
+    for "what this cost me" on both charged journal depths. They sit on a
+    subclass rather than on :class:`MarginaliaResponse` itself so note listings
+    do not grow a wallet read per row.
+
+    ``care`` is ``None`` on every ordinary answer. It carries adepthood's own
+    reviewed care surface only when a vault-bound writer's vault answered the
+    letter ask with its care escalation instead of a letter (#3380) -- the same
+    surface a resonance pass escalation returns, never the vault's own prose.
+    """
+
+    remaining_messages: int
+    remaining_balance: int
+    monthly_reset_date: datetime
+    care: CareResponse | None = None
 
 
 class ContractionReflectionResponse(BaseModel):
@@ -232,12 +238,18 @@ class PassProvenance(BaseModel):
     returned. ``paid_by`` is ``free`` for a demo and for a refunded empty pass,
     ``own_key`` when the caller's key paid, and ``wallet`` when the deduction
     stands.
+
+    ``own_key_vendor`` is set only when the caller's own key was relayed to
+    their vault and the vault wrote the notes with it (#3437): the vendor of
+    that key, so the client can say "Written by your own Anthropic key, through
+    your vault". ``None`` on every other pass.
     """
 
     notes: ProvenanceReceipt
     detection: ProvenanceReceipt
     detection_checked: bool
     paid_by: Literal["own_key", "wallet", "free"]
+    own_key_vendor: Literal["anthropic", "openai"] | None = None
 
 
 class ResonanceResponse(BaseModel):

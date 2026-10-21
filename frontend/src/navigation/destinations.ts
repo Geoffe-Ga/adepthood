@@ -6,6 +6,7 @@
  * reordered here moves every consuming surface in lockstep.
  */
 import {
+  Bell,
   BookOpen,
   Compass,
   Flower2,
@@ -38,6 +39,7 @@ export interface NavDestination {
  */
 export const NAV_DESTINATIONS: ReadonlyArray<NavDestination> = [
   { name: 'Journal', label: 'Journal', icon: NotebookPen },
+  { name: 'Prompts', label: 'Prompts', icon: Bell },
   { name: 'Habits', label: 'Habits', icon: Sprout, ring: 'habits' },
   { name: 'Practice', label: 'Practice', icon: Flower2, ring: 'practices' },
   { name: 'Course', label: 'Course', icon: BookOpen, ring: 'course' },

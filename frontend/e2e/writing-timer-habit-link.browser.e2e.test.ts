@@ -8,6 +8,13 @@ import {
   signUp,
 } from './journalHabitsBrowserSupport';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 const HABIT_NAME = 'Morning pages';
 const BODY = 'The kettle, the window, and a page before anything else.';
 const MINUTE_MS = 60_000;

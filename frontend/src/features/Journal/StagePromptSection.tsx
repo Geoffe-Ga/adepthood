@@ -23,7 +23,7 @@ import ReflectionDismiss from './ReflectionDismiss';
 import { prompts } from '@/api';
 import type { PromptDetail, StagePromptDetail, StagePromptsResponse } from '@/api';
 import { decorativeHidden } from '@/components/a11yHidden';
-import { accent, uiType } from '@/design/tokens';
+import { accent, editorialType, uiType } from '@/design/tokens';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import {
   programStage,
@@ -45,7 +45,6 @@ const WEEK_WRITTEN_NOTE = "This week's prompt is written — the next one opens 
 // "skip", not "dismiss", and never a count of what went unwritten: the depths
 // are declinable invitations, so the way out of one is offered in the same
 // register the invitation was.
-const SET_ASIDE_LABEL = 'Set aside';
 const SET_ASIDE_HINT = 'Set this prompt aside; you can bring it back later.';
 const BRING_BACK_LABEL = 'Bring it back';
 const BRING_BACK_HINT = 'Bring this prompt back; it will appear with the others again.';
@@ -330,13 +329,18 @@ function StagePromptBody({
   const testID = `journal-stage-prompt-${ordinal}`;
   if (!writable) {
     return (
-      <View accessibilityLabel={`The prompt: ${title}`} testID={testID}>
+      <View
+        style={styles.promptOpenArea}
+        accessibilityLabel={`The prompt: ${title}`}
+        testID={testID}
+      >
         <StagePromptFace prompt={prompt} answered={answered} />
       </View>
     );
   }
   return (
     <TouchableOpacity
+      style={styles.promptOpenArea}
       onPress={() => onOpen(prompt)}
       accessibilityRole="button"
       accessibilityLabel={`${answered ? 'Write again to' : 'Write to'} the prompt: ${title}`}
@@ -349,7 +353,7 @@ function StagePromptBody({
 
 /** The declinable half of a prompt: set it aside, or bring it back.
  *
- * Sits below the prompt rather than inside its press target, so declining a
+ * The corner X sits outside the prompt’s press target, so declining a
  * prompt can never be mistaken for opening it. Setting one aside is a
  * preference and not a completion — it neither marks the prompt answered nor
  * changes whether any other prompt can still be written to this week.
@@ -369,13 +373,14 @@ function StagePromptChoice({
     <ReflectionDismiss
       variant="reopen"
       label={BRING_BACK_LABEL}
+      textStyle={editorialType.action}
       accessibilityLabel={BRING_BACK_HINT}
       testID={`journal-stage-prompt-bring-back-${ordinal}`}
       onPress={() => onBringBack(ordinal)}
     />
   ) : (
     <ReflectionDismiss
-      label={SET_ASIDE_LABEL}
+      variant="close"
       accessibilityLabel={SET_ASIDE_HINT}
       testID={`journal-stage-prompt-set-aside-${ordinal}`}
       onPress={() => onSetAside(ordinal)}

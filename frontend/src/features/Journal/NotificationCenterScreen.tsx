@@ -1,35 +1,30 @@
-/**
- * ``NotificationCenterScreen`` (#3142) — one quiet inbox for the prompts,
- * reminders and progress that sit above the fold on the Journal home, so that
- * the start screen can come to hold only the page the writer came to write.
- *
- * Reached by a door the writer opens: the home's "Notifications" button or the
- * Journal drawer's row. It stacks, in order, the stat tiles, Return (behind the
- * habits ring, as on the home), the invitations (which filter themselves by
- * ring), this stage's prompts, and the voice-readiness band. Each section keeps
- * its own data and its own one-tap decline; a plain editorial heading appears
- * only over a section that has something to show, and when no item waits the
- * screen says so once, in the note face, and nothing more.
- */
+/** Prompts: current invitations, quiet recovery, and history in one scroll. */
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import JournalPrimaryInvitation from './JournalPrimaryInvitation';
 import {
   NotificationPresenceProvider,
   usePresenceTally,
   type NotificationSlot,
+  type PresenceTally,
 } from './notificationPresence';
+import PromptHistoryList from './PromptHistoryList';
 import StagePromptSection, {
   useOpenStagePrompt,
   useStagePromptPlace,
   useStagePrompts,
   visibleStagePromptCount,
+  type StagePromptsBand,
 } from './StagePromptSection';
 import StatTileRow from './StatTileRow';
+import { useFocusRefreshKey } from './useNotificationCount';
 import VoiceReadinessBand from './VoiceReadinessBand';
 
+import type { PromptDetail, StagePromptDetail } from '@/api';
+import { DrawerNavSection, ScreenDrawer, useScreenDrawer } from '@/components/drawer';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { editorialType, ink, rhythm } from '@/design/tokens';
 import DepthGate from '@/features/Depth/DepthGate';
@@ -40,6 +35,7 @@ import type { RootStackParamList } from '@/navigation/RootStack';
 /** The section headings, plain words in the order the sections stack. */
 export const NOTIFICATION_CENTER_HEADINGS = {
   today: 'Today',
+  writing: 'Writing invitations',
   return: 'Return',
   invitations: 'Invitations',
   prompts: "This week's prompts",
@@ -104,46 +100,98 @@ function Section({
   );
 }
 
+function CurrentSections({
+  navigation,
+  tally,
+  stagePrompts,
+  openPrompt,
+  refreshKey,
+}: {
+  navigation: CenterNavigation;
+  tally: PresenceTally;
+  stagePrompts: StagePromptsBand;
+  openPrompt: (_prompt: StagePromptDetail) => void;
+  refreshKey: number;
+}): React.JSX.Element {
+  const beginPage = useCallback(
+    (prefillTitle: string) => navigation.navigate('JournalEntry', { prefillTitle }),
+    [navigation],
+  );
+  const promptsShown = stagePrompts.stage !== null && stagePrompts.stage.prompts.length > 0;
+  return (
+    <>
+      <Section slot="today" visible={tally.isVisible}>
+        <StatTileRow />
+      </Section>
+      <Section slot="writing" visible={tally.isVisible}>
+        <JournalPrimaryInvitation onBeginPage={beginPage} />
+      </Section>
+      <Section slot="return" visible={tally.isVisible}>
+        {/* Return is a way back into habits, so a declined habits ring quiets
+              it here exactly as on the home (#3073). */}
+        <DepthGate ring="habits">
+          <ReturnStack key={refreshKey} />
+        </DepthGate>
+      </Section>
+      <Section slot="invitations" visible={tally.isVisible}>
+        <InvitationStack key={refreshKey} />
+      </Section>
+      <View testID="journal-notification-section-prompts">
+        <SectionHeading shown={promptsShown} title={NOTIFICATION_CENTER_HEADINGS.prompts} />
+        <StagePromptSection band={stagePrompts} onOpen={openPrompt} />
+      </View>
+      <Section slot="voice" visible={tally.isVisible}>
+        <VoiceReadinessBand key={refreshKey} />
+      </Section>
+    </>
+  );
+}
+
 function NotificationCenterScreen(): React.JSX.Element {
   const navigation = useNavigation<CenterNavigation>();
+  const drawer = useScreenDrawer('Prompts');
+  const refreshKey = useFocusRefreshKey();
+  const writePast = useCallback(
+    (item: PromptDetail) =>
+      navigation.navigate('JournalEntry', {
+        promptQuestion: item.question,
+        prefillTitle: item.default_title ?? undefined,
+      }),
+    [navigation],
+  );
   const { week, stage } = useStagePromptPlace();
   const stagePrompts = useStagePrompts(stage, week);
   const openPrompt = useOpenStagePrompt(navigation, week);
   const tally = usePresenceTally();
-  const promptsShown = stagePrompts.stage !== null && stagePrompts.stage.prompts.length > 0;
   const waiting = tally.count + visibleStagePromptCount(stagePrompts);
   const settled = useSettled(EMPTY_SETTLE_MS);
 
   return (
-    <ScreenScaffold scroll testID="journal-notification-center">
-      <NotificationPresenceProvider value={tally.report}>
-        <Section slot="today" visible={tally.isVisible}>
-          <StatTileRow />
-        </Section>
-        <Section slot="return" visible={tally.isVisible}>
-          {/* Return is a way back into habits, so a declined habits ring quiets
-              it here exactly as on the home (#3073). */}
-          <DepthGate ring="habits">
-            <ReturnStack />
-          </DepthGate>
-        </Section>
-        <Section slot="invitations" visible={tally.isVisible}>
-          <InvitationStack />
-        </Section>
-        <View testID="journal-notification-section-prompts">
-          <SectionHeading shown={promptsShown} title={NOTIFICATION_CENTER_HEADINGS.prompts} />
-          <StagePromptSection band={stagePrompts} onOpen={openPrompt} />
+    <>
+      <ScreenScaffold scroll testID="journal-notification-center">
+        <NotificationPresenceProvider value={tally.report}>
+          <CurrentSections
+            navigation={navigation}
+            tally={tally}
+            stagePrompts={stagePrompts}
+            openPrompt={openPrompt}
+            refreshKey={refreshKey}
+          />
+        </NotificationPresenceProvider>
+        {settled && waiting === 0 ? (
+          <Text style={styles.empty} testID="journal-notification-center-empty">
+            {NOTIFICATION_CENTER_EMPTY}
+          </Text>
+        ) : null}
+        <View testID="journal-notification-section-past-prompts">
+          <SectionHeading shown title="Past prompts" />
+          <PromptHistoryList key={refreshKey} onWrite={writePast} />
         </View>
-        <Section slot="voice" visible={tally.isVisible}>
-          <VoiceReadinessBand />
-        </Section>
-      </NotificationPresenceProvider>
-      {settled && waiting === 0 ? (
-        <Text style={styles.empty} testID="journal-notification-center-empty">
-          {NOTIFICATION_CENTER_EMPTY}
-        </Text>
-      ) : null}
-    </ScreenScaffold>
+      </ScreenScaffold>
+      <ScreenDrawer visible={drawer.isOpen} onClose={drawer.close} screenName="Prompts">
+        <DrawerNavSection currentScreen="Prompts" onNavigate={drawer.close} />
+      </ScreenDrawer>
+    </>
   );
 }
 

@@ -1,17 +1,4 @@
-/**
- * ``JournalShelfScreen`` — the journal's landing surface, restyled as an
- * editorial library: a warm ``ScreenScaffold`` whose scrolling top matter stacks
- * the ``JournalHero``, ``StatTileRow``, ``ReturnStack``, ``InvitationStack``, a
- * "New entry" action row (with "Past prompts" and the Notification Center's
- * "Notifications" door, #3142), the current stage's prompts
- * (``StagePromptSection``), the
- * ``JournalPrimaryInvitation`` (a due review or the daily page, plus the
- * early-review link), a ``VoiceReadinessBand``, and ``SearchBar`` on the warm
- * palette. Below it, entries group by recency (This
- * week / This month / Earlier) as lifted paper tiles with a reading-time +
- * "saved … ago" caption, over an inviting empty state with a call to action.
- * Tapping a page opens the entry screen by id.
- */
+/** Journal home: headline progress, writing controls, search and saved pages. */
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -24,35 +11,23 @@ import DeleteEntryDialog from './DeleteEntryDialog';
 import { excerpt } from './excerpt';
 import { JournalScreenDrawer } from './JournalDrawer';
 import JournalHero from './JournalHero';
-import JournalPrimaryInvitation from './JournalPrimaryInvitation';
 import styles from './JournalShelf.styles';
 import { usePressScale } from './motion';
-import PromptHistoryModal from './PromptHistoryModal';
 import { formatDate, groupByRecency, MONTH_DAYS, type ShelfSection } from './recency';
 import SearchBar from './SearchBar';
-import StagePromptSection, {
-  useOpenStagePrompt,
-  useStagePromptPlace,
-  useStagePrompts,
-  type StagePromptsBand,
-} from './StagePromptSection';
 import StatTileRow from './StatTileRow';
 import UnreachableVaultChoice from './UnreachableVaultChoice';
 import { useEntryDeletion, type EntryDeletion } from './useEntryDeletion';
 import { useNotificationCount } from './useNotificationCount';
 import { usePagedJournal } from './usePagedJournal';
-import VoiceReadinessBand from './VoiceReadinessBand';
 import { countWords } from './wordCount';
 
-import type { JournalMessage, StagePromptDetail } from '@/api';
+import type { JournalMessage } from '@/api';
 import { Button } from '@/components/Button';
 import { useScreenDrawer } from '@/components/drawer';
 import { EmptyState } from '@/components/feedback/EmptyState';
 import { BottomFade } from '@/components/layout/BottomFade';
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
-import DepthGate from '@/features/Depth/DepthGate';
-import InvitationStack from '@/features/Invitations/InvitationStack';
-import ReturnStack from '@/features/Return/ReturnStack';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import type { RootStackParamList } from '@/navigation/RootStack';
 import { MS_PER_DAY } from '@/utils/dateUtils';
@@ -65,7 +40,7 @@ const WORDS_PER_MINUTE = 200;
 // A single curated opening invitation for a brand-new journal (no rotation).
 const FIRST_PROMPT = 'What brought you here?';
 
-const NOTIFICATIONS_LABEL = 'Notifications';
+const NOTIFICATIONS_LABEL = 'Prompts';
 
 /**
  * The door to the Notification Center (#3142): its name, and the number of
@@ -74,11 +49,11 @@ const NOTIFICATIONS_LABEL = 'Notifications';
  */
 function notificationsDoor(count: number): { label: string; accessibilityLabel: string } {
   if (count === 0) {
-    return { label: NOTIFICATIONS_LABEL, accessibilityLabel: 'Open notifications' };
+    return { label: NOTIFICATIONS_LABEL, accessibilityLabel: 'Open prompts' };
   }
   return {
     label: `${NOTIFICATIONS_LABEL} (${count})`,
-    accessibilityLabel: `Open notifications, ${count} waiting`,
+    accessibilityLabel: `Open prompts, ${count} waiting`,
   };
 }
 
@@ -308,16 +283,14 @@ function ShelfEmpty({
 
 interface TopMatterProps {
   notices: React.ReactNode;
-  stagePrompts: StagePromptsBand;
   /** The shelf's destinations: a prompt, a new or morning page, the Notification Center. */
-  nav: Pick<ShelfNav, 'openPrompt' | 'newEntry' | 'newMorningPage' | 'openNotifications'>;
-  onPastPrompts: () => void;
+  nav: Pick<ShelfNav, 'newEntry' | 'openNotifications'>;
   onSearch: (_query: string) => void;
   query: string;
   resultCount?: number;
 }
 
-/** The scrolling head of the shelf: the New entry action, the prompt band, search.
+/** The scrolling head of the shelf: headline progress, writing controls and search.
  *
  * No screen title: the bottom tab already names this screen and the hero
  * greeting already carries ``accessibilityRole="header"``, so a serif display
@@ -325,9 +298,7 @@ interface TopMatterProps {
  */
 function ShelfTopMatter({
   notices,
-  stagePrompts,
   nav,
-  onPastPrompts,
   onSearch,
   query,
   resultCount,
@@ -338,21 +309,7 @@ function ShelfTopMatter({
       {notices}
       <JournalHero />
       <StatTileRow />
-      {/* Return is a way back into habits, so a declined habits ring quiets it
-          (#3073). Invitations filter their own cards by ring, so one ring's
-          decline drops only that ring's cards. */}
-      <DepthGate ring="habits">
-        <ReturnStack />
-      </DepthGate>
-      <InvitationStack />
       <View style={styles.actionRow}>
-        <Button
-          label="Past prompts"
-          variant="tertiary"
-          onPress={onPastPrompts}
-          accessibilityLabel="Read the weekly prompts you have already answered"
-          testID="journal-past-prompts"
-        />
         <Button
           label={door.label}
           variant="tertiary"
@@ -362,9 +319,6 @@ function ShelfTopMatter({
         />
         <Button label="New entry" onPress={nav.newEntry} testID="journal-new-entry" />
       </View>
-      <StagePromptSection band={stagePrompts} onOpen={nav.openPrompt} />
-      <JournalPrimaryInvitation onBeginPage={nav.newMorningPage} />
-      <VoiceReadinessBand />
       <View style={styles.searchRow}>
         <SearchBar onSearch={onSearch} searchQuery={query || undefined} resultCount={resultCount} />
       </View>
@@ -375,9 +329,7 @@ function ShelfTopMatter({
 interface ShelfNav {
   openEntry: (_id: number) => void;
   newEntry: () => void;
-  newMorningPage: (_prefillTitle: string) => void;
   openPhotograph: () => void;
-  openPrompt: (_prompt: StagePromptDetail) => void;
   openWithPrompt: () => void;
   openCorpus: (_destination: CorpusDestination) => void;
   openVoiceDrafts: () => void;
@@ -386,18 +338,12 @@ interface ShelfNav {
 }
 
 /** Memoized navigation callbacks for the shelf's three destinations. */
-function useShelfNavigation(navigation: ShelfNavigation, week: number | null): ShelfNav {
+function useShelfNavigation(navigation: ShelfNavigation): ShelfNav {
   const openEntry = useCallback(
     (entryId: number) => navigation.navigate('JournalEntry', { entryId }),
     [navigation],
   );
   const newEntry = useCallback(() => navigation.navigate('JournalEntry'), [navigation]);
-  // Morning pages are a client-owned daily practice, not server curriculum:
-  // their generated title belongs on this entrypoint while prompt titles remain server-owned.
-  const newMorningPage = useCallback(
-    (prefillTitle: string) => navigation.navigate('JournalEntry', { prefillTitle }),
-    [navigation],
-  );
   const openPhotograph = useCallback(() => navigation.navigate('JournalPhotograph'), [navigation]);
   const openCorpus = useCallback(
     (destination: CorpusDestination) => navigation.navigate(destination),
@@ -406,20 +352,17 @@ function useShelfNavigation(navigation: ShelfNavigation, week: number | null): S
   const openVoiceDrafts = useCallback(() => navigation.navigate('VoiceDrafts'), [navigation]);
   const openPromotedQuotes = useCallback(() => navigation.navigate('PromotedQuotes'), [navigation]);
   const openNotifications = useCallback(
-    () => navigation.navigate('JournalNotifications'),
+    () => navigation.navigate('Tabs', { screen: 'Prompts' }),
     [navigation],
   );
   const openWithPrompt = useCallback(
     () => navigation.navigate('JournalEntry', { promptQuestion: FIRST_PROMPT }),
     [navigation],
   );
-  const openPrompt = useOpenStagePrompt(navigation, week);
   return {
     openEntry,
     newEntry,
-    newMorningPage,
     openPhotograph,
-    openPrompt,
     openWithPrompt,
     openCorpus,
     openVoiceDrafts,
@@ -444,7 +387,6 @@ interface ShelfDrawer {
   onOpenCorpus: (_destination: CorpusDestination) => void;
   onOpenVoiceDrafts: () => void;
   onOpenPromotedQuotes: () => void;
-  onOpenNotifications: () => void;
 }
 
 /** The header drawer's open state plus its open-then-close row callbacks. From
@@ -474,10 +416,6 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     nav.openPromotedQuotes();
     drawer.close();
   }, [nav, drawer]);
-  const onOpenNotifications = useCallback(() => {
-    nav.openNotifications();
-    drawer.close();
-  }, [nav, drawer]);
   return {
     drawer,
     onSelectEntry,
@@ -486,7 +424,6 @@ function useShelfDrawer(nav: ShelfNav): ShelfDrawer {
     onOpenCorpus: nav.openCorpus,
     onOpenVoiceDrafts,
     onOpenPromotedQuotes,
-    onOpenNotifications,
   };
 }
 
@@ -514,21 +451,12 @@ interface ShelfBodyProps {
   notices: React.ReactNode;
   shelf: ShelfState;
   nav: ShelfNav;
-  stagePrompts: StagePromptsBand;
   now: number;
-  onPastPrompts: () => void;
 }
 
 /** The shelf's scrolling list surface (top matter, recency sections, paging) —
  *  split out so the screen component stays under the line cap. */
-function ShelfBody({
-  notices,
-  shelf,
-  nav,
-  stagePrompts,
-  now,
-  onPastPrompts,
-}: ShelfBodyProps): React.JSX.Element {
+function ShelfBody({ notices, shelf, nav, now }: ShelfBodyProps): React.JSX.Element {
   const { items, total, loading, error, query, hasMore, onSearch, loadMore } = shelf;
   const listRef = useDeletionNoticeScroll(shelf.deletion.error);
   const searching = query.length >= SEARCH_MIN_LENGTH;
@@ -547,9 +475,7 @@ function ShelfBody({
       ListHeaderComponent={
         <ShelfTopMatter
           notices={notices}
-          stagePrompts={stagePrompts}
           nav={nav}
-          onPastPrompts={onPastPrompts}
           onSearch={onSearch}
           query={query}
           resultCount={resultCount}
@@ -630,15 +556,10 @@ function DeletionNotices({
 function JournalShelfScreen(): React.JSX.Element {
   const navigation = useNavigation<ShelfNavigation>();
   const shelf = useShelf();
-  const { week, stage } = useStagePromptPlace();
-  const stagePrompts = useStagePrompts(stage, week);
-  const nav = useShelfNavigation(navigation, week);
+  const nav = useShelfNavigation(navigation);
   const shelfDrawer = useShelfDrawer(nav);
   const { deletion } = shelf;
   const now = Date.now();
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const openHistory = useCallback(() => setHistoryOpen(true), []);
-  const closeHistory = useCallback(() => setHistoryOpen(false), []);
 
   return (
     <ScreenScaffold testID="journal-shelf">
@@ -646,11 +567,8 @@ function JournalShelfScreen(): React.JSX.Element {
         notices={<DeletionNotices deletion={deletion} navigation={navigation} />}
         shelf={shelf}
         nav={nav}
-        stagePrompts={stagePrompts}
         now={now}
-        onPastPrompts={openHistory}
       />
-      <PromptHistoryModal visible={historyOpen} onDismiss={closeHistory} />
       <BottomFade />
       <JournalScreenDrawer
         drawer={shelfDrawer.drawer}
@@ -660,7 +578,6 @@ function JournalShelfScreen(): React.JSX.Element {
         onOpenCorpus={shelfDrawer.onOpenCorpus}
         onOpenVoiceDrafts={shelfDrawer.onOpenVoiceDrafts}
         onOpenPromotedQuotes={shelfDrawer.onOpenPromotedQuotes}
-        onOpenNotifications={shelfDrawer.onOpenNotifications}
       />
       <DeleteEntryDialog
         visible={deletion.pending !== null}

@@ -1,6 +1,8 @@
 /** Styles for the journal shelf (the editorial library of entry "pages"). */
 import { StyleSheet } from 'react-native';
 
+import { closeCornerReserve } from './ReflectionDismiss';
+
 import {
   BORDER_RADIUS,
   SPACING,
@@ -207,6 +209,9 @@ const styles = StyleSheet.create({
     color: accent.primary,
     paddingTop: spacing(0.5),
   },
+  // Put the open target below the corner X so narrow cards retain their full
+  // text width, and the two touch targets never overlap.
+  promptOpenArea: { marginTop: closeCornerReserve(SPACING.lg), minHeight: touchTarget.minimum },
   promptQuestion: {
     ...editorialType.heading,
     color: ink.primary,

@@ -74,7 +74,7 @@ async function assertCardGeometry(page: Page, id: number): Promise<void> {
   await expect(card).toContainText(expectedLine);
   await expect(card).not.toContainText(PRIVATE_PERSONA);
   await expect(decline).toHaveAccessibleName('Dismiss this invitation');
-  await expect(decline).toContainText('Not now');
+  await expect(decline.locator('svg')).toHaveCount(1);
 
   const geometry = await card.evaluate(
     (root, dismissTestId) => {
@@ -105,7 +105,8 @@ async function assertCardGeometry(page: Page, id: number): Promise<void> {
           width: declineBox.width,
           height: declineBox.height,
         },
-        lineBottom: lineBox.bottom,
+        lineRight: lineBox.right,
+        declineLeft: declineBox.left,
         clippedText,
         viewportHeight: window.innerHeight,
         documentOverflow: document.documentElement.scrollWidth - window.innerWidth,
@@ -118,7 +119,8 @@ async function assertCardGeometry(page: Page, id: number): Promise<void> {
   expect(geometry.documentOverflow).toBeLessThanOrEqual(1);
   expect(geometry.card.top).toBeGreaterThanOrEqual(-1);
   expect(geometry.card.bottom).toBeLessThanOrEqual(geometry.viewportHeight + 1);
-  expect(geometry.decline.top).toBeGreaterThanOrEqual(geometry.lineBottom);
+  expect(geometry.decline.top).toBeCloseTo(geometry.card.top, 0);
+  expect(geometry.lineRight).toBeLessThanOrEqual(geometry.declineLeft + 1);
   expect(geometry.decline.width).toBeGreaterThanOrEqual(44);
   expect(geometry.decline.height).toBeGreaterThanOrEqual(44);
 }

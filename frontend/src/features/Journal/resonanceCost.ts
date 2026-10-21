@@ -1,8 +1,9 @@
 /** Payment copy follows the server's reading route, never key presence alone. */
 import { resonanceExplainerCanContinue, resonanceExplainerCost } from './resonanceExplainerCopy';
 import { SOURCE_LABEL_COPY } from './sourceLabel';
+import { vaultKeyCost, type VaultKeyVendor } from './vaultKeyCopy';
 
-import { botmasonUsage, type ResonanceRoute } from '@/api';
+import { botmasonUsage, vaultRequestKeys, type ResonanceRoute } from '@/api';
 
 const READING = 'reading';
 
@@ -53,10 +54,34 @@ function ownKeyCost(hasKey: boolean, noun: string): ResonanceCostState {
   };
 }
 
-function costStateFromUsage(usage: Usage, hasKey: boolean, noun: string): ResonanceCostState {
+/** A managed vault writes with the writer's own key, which pays (#3437). */
+function vaultOwnKeyCost(vendor: VaultKeyVendor, noun: string): ResonanceCostState {
+  return {
+    route: 'vault_bound',
+    keyNeeded: false,
+    copy: vaultKeyCost(vendor, noun),
+    canContinue: true,
+    fundingRequired: null,
+    loading: false,
+    monthlyResetDate: null,
+    monthlyCap: null,
+  };
+}
+
+function costStateFromUsage(
+  usage: Usage,
+  hasKey: boolean,
+  noun: string,
+  ownKey: { vendor: VaultKeyVendor | null; vaultSpends: readonly VaultKeyVendor[] },
+): ResonanceCostState {
   if (usage.resonance_route === 'app_provider') return appProviderCost(usage, hasKey, noun);
   if (usage.resonance_route !== 'vault_bound') return unknownCostState(noun);
-  // Vault readings and first letters spend credits even with an own key (#3281/#3346).
+  // Only a vendor the server said this vault writes with makes the key the payer.
+  const keyVendor = ownKey.vendor;
+  if (hasKey && keyVendor && ownKey.vaultSpends.includes(keyVendor)) {
+    return vaultOwnKeyCost(keyVendor, noun);
+  }
+  // Any other vault reading or first letter spends credits even with an own key (#3281/#3346).
   const canContinue = resonanceExplainerCanContinue(
     false,
     usage.monthly_messages_remaining,
@@ -104,10 +129,34 @@ export async function loadCostState(
   hasKey: boolean,
   noun: string = READING,
   token?: string,
+  keyVendor: VaultKeyVendor | null = null,
 ): Promise<ResonanceCostState> {
   try {
-    return costStateFromUsage(await botmasonUsage.get(token), hasKey, noun);
+    const usage = await botmasonUsage.get(token);
+    const vaultSpends = await vaultSpendsFor(usage, hasKey, keyVendor, token);
+    return costStateFromUsage(usage, hasKey, noun, { vendor: keyVendor, vaultSpends });
   } catch {
     return unknownCostState(noun);
+  }
+}
+
+/**
+ * Ask whether a vault-bound writer's vault would spend their own key (#3437).
+ *
+ * Only a key holder on the vault route is asked, so the usage snapshot alone
+ * still prices every other reading. A failed answer reads as "none": the
+ * writer is then shown the credit price, never told a key pays that might not.
+ */
+async function vaultSpendsFor(
+  usage: Usage,
+  hasKey: boolean,
+  keyVendor: VaultKeyVendor | null,
+  token?: string,
+): Promise<readonly VaultKeyVendor[]> {
+  if (!hasKey || keyVendor === null || usage.resonance_route !== 'vault_bound') return [];
+  try {
+    return await vaultRequestKeys.get(token);
+  } catch {
+    return [];
   }
 }
