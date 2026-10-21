@@ -65,8 +65,8 @@ const HTTP_SERVICE_UNAVAILABLE = 503;
 const ADEPTHOOD_DELETE_ATTEMPTS = 3;
 
 /** The contract this vault serves, and the minor a caller must declare to use it. */
-const CONTRACT_VERSION = '0.17.0';
-const CONTRACT_MINOR = '0.17';
+const CONTRACT_VERSION = '0.18.0';
+const CONTRACT_MINOR = '0.18';
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
 
@@ -139,6 +139,23 @@ let journalWithdrawalsHeld = false;
 let lettersHeld = false;
 /** One letter request a journey armed to meet the vault's care guard instead. */
 let letterEscalationArmed = false;
+/**
+ * A journey can model a managed vault (Creek-Vault ADR-0015, #3437): one that lists
+ * the vendors whose writer key it will spend in `request_key_providers`. Off by
+ * default, so every other journey sees a self-connected vault, which at contract
+ * 0.18 lists none and is never sent a key.
+ */
+let requestKeysAdvertised = false;
+/** The vendors a managed Creek vault spends a writer's own key for. */
+const REQUEST_KEY_PROVIDERS = ['anthropic', 'openai'];
+const PROVIDER_HEADER = 'x-creek-provider';
+const PROVIDER_KEY_HEADER = 'x-creek-provider-key';
+/**
+ * Every request that carried a writer's key, by route, vendor and a digest of
+ * the key -- never the key itself -- so a journey can prove which call the key
+ * rode, and that it was exactly the writer's, without this process holding it.
+ */
+const keyed = [];
 
 function requiredFile(name) {
   const path = process.env[name];
@@ -179,6 +196,7 @@ function capabilities(response) {
     contract_minor: CONTRACT_MINOR,
     contract_version: CONTRACT_VERSION,
     ontology_version: ONTOLOGY_VERSION,
+    request_key_providers: requestKeysAdvertised ? REQUEST_KEY_PROVIDERS : [],
     status: 'ok',
     supported_contract_minors: [CONTRACT_MINOR],
     tier_model: { ceilings: ADMITTED_TIERS, default: 'open', intimate_never_egresses: true },
@@ -556,8 +574,27 @@ const server = createServer((request, response) => {
     // reports, or a spec comparing two snapshots would see its own question.
     if (request.method === 'GET' && pathname === '/__lane/uploads') {
       request.resume();
-      send(response, HTTP_OK, { received, fragments: [...fragments.values()] });
+      send(response, HTTP_OK, { received, fragments: [...fragments.values()], keyed });
       return;
+    }
+    if (
+      request.method === 'POST' &&
+      (pathname === '/__lane/advertise-request-keys' ||
+        pathname === '/__lane/withdraw-request-keys')
+    ) {
+      request.resume();
+      requestKeysAdvertised = pathname === '/__lane/advertise-request-keys';
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    const providerKey = request.headers[PROVIDER_KEY_HEADER];
+    if (typeof providerKey === 'string') {
+      keyed.push({
+        method: request.method,
+        path: pathname,
+        provider: request.headers[PROVIDER_HEADER] ?? null,
+        keyDigest: createHash('sha256').update(providerKey, 'utf8').digest('hex'),
+      });
     }
     if (
       request.method === 'POST' &&

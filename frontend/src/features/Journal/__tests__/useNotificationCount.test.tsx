@@ -26,6 +26,13 @@ const mockStagePrompts = jest.fn<() => { stage: StagePromptsResponse | null }>()
 const mockVoice = jest.fn<(_refreshKey: number) => object | null>();
 let mockFocusCallbacks: (() => void)[] = [];
 
+let mockWritingPrompt = false;
+jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ userTimezone: 'UTC' }) }));
+jest.mock('../useDueReview', () => ({
+  useDueReview: () => ({ status: 'settled', review: mockWritingPrompt ? {} : null }),
+}));
+jest.mock('../MorningPagesTip', () => ({ useMorningPagesTipState: () => ({ state: null }) }));
+
 jest.mock('@react-navigation/native', () => ({
   // Keyed on the callback, the way React Navigation re-runs a focus effect; the
   // callback is kept so a test can simulate the screen regaining focus.
@@ -83,6 +90,7 @@ function stageWith(dismissed: boolean[]): StagePromptsResponse {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockWritingPrompt = false;
   mockFocusCallbacks = [];
   useDepthPreferencesStore.setState({
     enable_habits: true,
@@ -189,4 +197,9 @@ describe('useNotificationCount', () => {
     expect(mockVoice).toHaveBeenLastCalledWith(1);
     expect(mockReturn).toHaveBeenLastCalledWith(expect.objectContaining({ refreshKey: 1 }));
   });
+});
+
+it('counts the active writing invitation and excludes recovered/set-aside cards', () => {
+  mockWritingPrompt = true;
+  expect(renderHook(() => useNotificationCount()).result.current).toBe(1);
 });

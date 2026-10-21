@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
 from dependencies.auth import require_admin
-from dependencies.creek_vault import get_reflection_boundary
+from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
+from domain.creek_vault import CreekVaultClient, VaultKeyProvider
 from error_responses import build_router
 from errors import forbidden, unprocessable
 from models.user import User
@@ -30,6 +31,7 @@ from schemas.botmason import (
     BalanceAddResponse,
     BalanceResponse,
     UsageResponse,
+    VaultKeyVendorsResponse,
 )
 from services import wallet as wallet_service
 from services.botmason import server_generation_available
@@ -82,6 +84,36 @@ async def get_usage(
         resonance_demo_available=(
             boundary is ReflectionBoundary.APP_PROVIDER and server_generation_available()
         ),
+    )
+
+
+@router.get(
+    "/user/vault-key-vendors",
+    response_model=VaultKeyVendorsResponse,
+    dependencies=[Depends(get_current_user)],
+)
+async def get_vault_key_vendors(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    boundary: Annotated[ReflectionBoundary, Depends(get_reflection_boundary)],
+    vault_client: Annotated[CreekVaultClient, Depends(get_creek_vault_client)],
+) -> VaultKeyVendorsResponse:
+    """Ask the caller's vault which vendors' writer keys it would write with (#3437).
+
+    The one usage-adjacent read that dials, kept apart from ``GET /user/usage``
+    so a price snapshot still never resolves or reaches a vault. Only a
+    vault-bound caller is asked about; the probe is the capability handshake,
+    which carries no stored writing and no key. Empty for an app-provider
+    caller, an unreachable vault, and any vault that advertises none (Creek
+    contract 0.18 ``request_key_providers``).
+    """
+    if boundary is not ReflectionBoundary.VAULT_BOUND:
+        return VaultKeyVendorsResponse()
+    # Nothing is staged: end the dependencies' read-only transaction so the
+    # probe holds no pooled connection.
+    await session.commit()
+    handshake = await vault_client.handshake()
+    return VaultKeyVendorsResponse(
+        vendors=sorted(provider for provider in VaultKeyProvider if handshake.accepts_key(provider))
     )
 
 

@@ -214,7 +214,7 @@ const JournalScreens = (): React.JSX.Element => (
     <Stack.Screen
       name="JournalNotifications"
       component={NotificationCenterScreen}
-      options={{ title: 'Notifications' }}
+      options={{ title: 'Prompts' }}
     />
   </>
 );

@@ -7,6 +7,7 @@ import {
   sessionFor,
   signUp,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * "Don't show this again" retires the morning-pages tip for good, and
@@ -34,6 +35,7 @@ test('“Don’t show this again” retires the morning-pages tip until Settings
   const owner = await page.evaluate(() => localStorage.getItem('@adepthood/device_owner'));
   expect(owner).toMatch(/^[1-9]\d*$/);
   const neverOfferKey = `${NEVER_OFFER_KEY}#u${owner}`;
+  await openPrompts(page);
   const band = page.getByTestId('journal-morning-pages-band');
   await expect(band).toBeVisible();
 
@@ -81,6 +83,6 @@ test('“Don’t show this again” retires the morning-pages tip until Settings
   expect(await page.evaluate((key) => localStorage.getItem(key), neverOfferKey)).toBe('false');
 
   // 5. And the shelf offers it again.
-  await page.goto(`${frontendUrl()}/journal`);
+  await page.goto(`${frontendUrl()}/prompts`);
   await expect(page.getByTestId('journal-morning-pages-band')).toBeVisible();
 });

@@ -8,6 +8,7 @@ import {
   signUp,
   tokenFor,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * The account's zone, pinned for this spec. The server counts elapsed program
@@ -119,6 +120,7 @@ test('on the last day of stage 3 the shelf offers the Section Review — Red and
   setProgramAnchorDaysAgo(email, SECTION_RED_CLOSE_DAYS_AGO);
   await expectDue(page.request, token, SECTION_LEVEL, SECTION_RED_SCOPE);
   await page.reload();
+  await openPrompts(page);
 
   const cta = page.getByRole('button', { name: /^Write your Section Review/ });
   await expect(cta).toBeVisible();
@@ -186,6 +188,7 @@ test('on the program’s final day the Course Review gathers the three sections 
   expect(items.map(({ title }) => title)).toEqual([...SECTION_TITLES, STAGE_TEN_DAILY_TITLE]);
 
   await page.reload();
+  await openPrompts(page);
   const cta = page.getByRole('button', { name: /^Write your Course Review/ });
   await expect(cta).toBeVisible();
   await cta.click();

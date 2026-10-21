@@ -238,12 +238,18 @@ class PassProvenance(BaseModel):
     returned. ``paid_by`` is ``free`` for a demo and for a refunded empty pass,
     ``own_key`` when the caller's key paid, and ``wallet`` when the deduction
     stands.
+
+    ``own_key_vendor`` is set only when the caller's own key was relayed to
+    their vault and the vault wrote the notes with it (#3437): the vendor of
+    that key, so the client can say "Written by your own Anthropic key, through
+    your vault". ``None`` on every other pass.
     """
 
     notes: ProvenanceReceipt
     detection: ProvenanceReceipt
     detection_checked: bool
     paid_by: Literal["own_key", "wallet", "free"]
+    own_key_vendor: Literal["anthropic", "openai"] | None = None
 
 
 class ResonanceResponse(BaseModel):

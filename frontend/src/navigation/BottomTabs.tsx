@@ -15,6 +15,7 @@ import { openFeedbackComposer } from '../features/Feedback/navigation';
 import { SendFeedbackButton } from '../features/Feedback/SendFeedbackButton';
 import HabitsScreen from '../features/Habits/HabitsScreen';
 import JournalShelfScreen from '../features/Journal/JournalShelfScreen';
+import NotificationCenterScreen from '../features/Journal/NotificationCenterScreen';
 import MapScreen from '../features/Map/MapScreen';
 import PracticeScreen from '../features/Practice/PracticeScreen';
 
@@ -43,6 +44,7 @@ export type RootTabParamList = {
   // contentId/scrollOffset are optional restore hints from a Back-to-reading return.
   Course: { stageNumber?: number; contentId?: number; scrollOffset?: number } | undefined;
   Journal: undefined;
+  Prompts: undefined;
   Map: undefined;
 };
 
@@ -69,6 +71,7 @@ const HabitsTab = withBoundary('Habits', HabitsScreen);
 const PracticeTab = withBoundary('Practice', PracticeScreen);
 const CourseTab = withBoundary('Course', CourseScreen);
 const JournalTab = withBoundary('Journal', JournalShelfScreen);
+const PromptsTab = withBoundary('Prompts', NotificationCenterScreen);
 const MapTab = withBoundary('Map', MapScreen);
 
 const SETTINGS_ICON_SIZE = 24;
@@ -87,6 +90,7 @@ const SCREEN_COMPONENT_BY_NAME: Readonly<
   Record<keyof RootTabParamList, React.ComponentType<object>>
 > = {
   Journal: JournalTab,
+  Prompts: PromptsTab,
   Habits: HabitsTab,
   Practice: PracticeTab,
   Course: CourseTab,

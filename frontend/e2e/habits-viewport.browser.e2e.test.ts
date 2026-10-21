@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 
 import { readBrowserLaneState } from './browserState';
+import { skipWelcome } from './journalHabitsBrowserSupport';
 import { readLaneState } from './laneState';
 import { freshLicenseKey } from './licenseKey';
 
@@ -151,7 +152,8 @@ async function signUp(page: Page, email: string): Promise<void> {
   await page.getByRole('textbox', { name: 'Confirm password' }).fill(ACCOUNT_PHRASE);
   await page.getByRole('textbox', { name: 'Gumroad license key' }).fill(freshLicenseKey());
   await page.getByRole('button', { name: 'Create account' }).click();
-  await page.getByRole('button', { name: 'Skip the welcome' }).click();
+  // This spec reloads later, so the welcome's decline must reach the server first (#3481).
+  await skipWelcome(page);
   await expect(page.getByRole('button', { name: 'Open Journal menu' })).toBeVisible();
 }
 
@@ -488,7 +490,8 @@ test('a full page of habits clears its footer controls and every tile is reachab
   await page.reload();
   await openHabits(page);
 
-  expect(await tiles(page).count()).toBe(SEEDED_HABITS.length);
+  // The tiles arrive with the habits read; wait for all of them, not the first paint (#3481).
+  await expect(tiles(page)).toHaveCount(SEEDED_HABITS.length);
   await measureAt(page, 'wide');
 
   // The same page, re-laid-out for a phone: one column of ten rows. Driven on

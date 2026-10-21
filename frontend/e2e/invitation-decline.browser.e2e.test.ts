@@ -8,7 +8,7 @@ import {
   expectTextWithinViewport,
   seedInvitations,
 } from './declineOwnershipBrowserSupport';
-import { backendUrl, bearer, sessionFor, signUp } from './journalHabitsBrowserSupport';
+import { backendUrl, bearer, sessionFor, signUp, openPrompts } from './journalHabitsBrowserSupport';
 
 for (const width of [390, 1280]) {
   test(`real invitation decline selectively restores one failed row and retries at ${width}`, async ({
@@ -27,6 +27,7 @@ for (const width of [390, 1280]) {
         response.request().method() === 'GET',
     );
     await page.reload();
+    await openPrompts(page);
     expect((await listed).status()).toBe(200);
     for (const id of ids) await expect(page.getByTestId(`invitation-${id}`)).toBeVisible();
     let release!: () => void;

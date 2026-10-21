@@ -55,6 +55,7 @@ const PROMISE_KEYS = [
   'VAULT_ADVANCED_LEARN_MORE',
   'VAULT_MANAGED_UNKNOWN_BODY',
   'VAULT_MANAGED_UNAVAILABLE_BODY',
+  'MANAGED_VAULT_OWN_KEY_NOTICE',
 ] as const;
 
 /** The deck that asks for a vault. Swept by the same ban minus the transport. */
