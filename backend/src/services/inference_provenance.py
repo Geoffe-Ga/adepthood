@@ -15,11 +15,14 @@ safe to hand an operator.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from models.marginalia import RECEIPT_VERSION, Marginalia, MarginaliaSource
 from schemas.marginalia import OperationSource, PassProvenance, ProvenanceReceipt
 from services.marginalia import InferenceReceipt, attempted_receipt
+
+if TYPE_CHECKING:
+    from domain.creek_vault import VaultProviderKey
 
 PaidBy = Literal["own_key", "wallet", "free"]
 
@@ -105,27 +108,69 @@ def _app_provider_answered(receipts: PassReceipts) -> bool:
     )
 
 
-def paid_by(receipts: PassReceipts, *, byok: bool, charge_kept: bool) -> PaidBy:
+def _vault_wrote_with_key(receipts: PassReceipts, vault_key: VaultProviderKey | None) -> bool:
+    """Whether the writer's own key powered a vault answer (#3437).
+
+    True only when the key was relayed to the vault for this pass and the vault
+    is what answered the notes.
+    """
+    notes = receipts.notes
+    return (
+        vault_key is not None and notes is not None and notes.source is MarginaliaSource.CREEK_VAULT
+    )
+
+
+def paid_by(
+    receipts: PassReceipts,
+    *,
+    byok: bool,
+    charge_kept: bool,
+    vault_key: VaultProviderKey | None = None,
+) -> PaidBy:
     """Return who paid for a settled pass.
 
-    A demo costs nobody anything. The caller's own key paid only when an
-    app-provider operation actually used it -- the client attaches its key to
-    every request, and a vault-bound pass never sends it anywhere. Otherwise
-    the wallet when its deduction stood, or nobody when it was handed back or
-    never taken.
+    A demo costs nobody anything. The caller's own key paid when an
+    app-provider operation actually used it, or when it was relayed to the
+    caller's vault and the vault answered (#3437) -- the client attaches its
+    key to every request, and a vault that does not spend it never receives it.
+    Otherwise the wallet when its deduction stood, or nobody when it was handed
+    back or never taken.
     """
     if is_demo(receipts.notes):
         return "free"
-    if byok and _app_provider_answered(receipts):
+    if _own_key_paid(receipts, byok=byok, vault_key=vault_key):
         return "own_key"
     return "wallet" if charge_kept else "free"
 
 
-def pass_provenance(receipts: PassReceipts, *, byok: bool, charge_kept: bool) -> PassProvenance:
-    """Build the response's pass-level provenance from what the pass observed."""
+def _own_key_paid(
+    receipts: PassReceipts, *, byok: bool, vault_key: VaultProviderKey | None
+) -> bool:
+    """Whether the caller's own key paid: the app provider used it, or the vault did."""
+    return (byok and _app_provider_answered(receipts)) or _vault_wrote_with_key(receipts, vault_key)
+
+
+def pass_provenance(
+    receipts: PassReceipts,
+    *,
+    byok: bool,
+    charge_kept: bool,
+    vault_key: VaultProviderKey | None = None,
+) -> PassProvenance:
+    """Build the response's pass-level provenance from what the pass observed.
+
+    ``own_key_vendor`` names the vendor whose key the vault wrote with, so the
+    client can label the answer "Written by your own ... key, through your
+    vault" (ADR 0009, 2026-10-16 amendment). It is a vendor word, never the key.
+    """
     return PassProvenance(
         notes=operation_receipt(receipts.notes),
         detection=operation_receipt(receipts.detection),
         detection_checked=receipts.detection_checked,
-        paid_by=paid_by(receipts, byok=byok, charge_kept=charge_kept),
+        paid_by=paid_by(receipts, byok=byok, charge_kept=charge_kept, vault_key=vault_key),
+        own_key_vendor=(
+            vault_key.provider.value
+            if vault_key is not None and _vault_wrote_with_key(receipts, vault_key)
+            else None
+        ),
     )

@@ -28,8 +28,11 @@ operator's revocation, and which was not re-granted (#1938, B21 E1). It is
 decided by :func:`domain.entitlements.refuse_if_ai_access_revoked` after the
 key check, so a personal key the app provider will use is still admitted, and
 before the wallet is read, so the client is never offered a refill that could
-not help. A key never admits a vault-answered request: the vault does not use
-it, so that request is a credit request whatever header it carries (#3258).
+not help. A key admits a vault-answered request only when the vault spends it:
+since ADR 0009's 2026-10-16 amendment (#3437) a managed vault that advertises the
+key's vendor is handed the key and the writer's key pays; any other vault does
+not use it, so that request is a credit request whatever header it carries
+(#3258).
 
 ADR 0009 phase (a) (#3067): the server's ``LLM_API_KEY`` never pays for a
 request carrying a person's content, so credits buy nothing on the app-provider
@@ -80,6 +83,7 @@ async def require_ai_payer(
     supplied_key: str | None,
     *,
     app_provider: bool = True,
+    vault_spends_key: bool = False,
 ) -> None:
     """Admit a generation only when a personal key or BotMason credits can pay for it.
 
@@ -94,8 +98,12 @@ async def require_ai_payer(
     account's entitlement was revoked (#1938, B21 E1); a personal key the app
     provider will use is admitted whatever the entitlement, since it funds
     nothing of the operator's. Reads only; spends nothing.
+
+    ``vault_spends_key`` is the vault-bound exception (#3437): the caller's
+    managed vault advertised the key's vendor and will be handed the key, so
+    the key pays exactly as it would the app provider.
     """
-    if _key_pays(supplied_key, app_provider=app_provider):
+    if _key_pays(supplied_key, app_provider=app_provider, vault_spends_key=vault_spends_key):
         return
     if app_provider and not server_generation_available():
         raise payment_required(KEY_REQUIRED)
@@ -109,14 +117,16 @@ async def require_ai_payer(
         raise payment_required(CREDITS_OR_KEY_REQUIRED)
 
 
-def _key_pays(supplied_key: str | None, *, app_provider: bool) -> bool:
-    """Whether the writer's own key pays for this request (#3258).
+def _key_pays(supplied_key: str | None, *, app_provider: bool, vault_spends_key: bool) -> bool:
+    """Whether the writer's own key pays for this request (#3258, #3437).
 
     The key is validated either way -- a malformed one is the usual 400 -- but
-    it pays only when the app's own provider answers: a vault answer never uses
-    it, so that request takes a credit whatever header rides along.
+    it pays only when something spends it: the app's own provider, or a vault
+    that said it writes with the key's vendor. Any other vault answer does not
+    use it, so that request takes a credit whatever header rides along.
     """
-    return resolve_chat_api_key(supplied_key) is not None and app_provider
+    spent = app_provider or vault_spends_key
+    return resolve_chat_api_key(supplied_key) is not None and spent
 
 
 async def payer_refusal(
@@ -125,6 +135,7 @@ async def payer_refusal(
     supplied_key: str | None,
     *,
     app_provider: bool = True,
+    vault_spends_key: bool = False,
 ) -> HTTPException | None:
     """Run :func:`require_ai_payer`, handing back its refusal instead of raising it.
 
@@ -135,7 +146,13 @@ async def payer_refusal(
     raises.
     """
     try:
-        await require_ai_payer(session, user_id, supplied_key, app_provider=app_provider)
+        await require_ai_payer(
+            session,
+            user_id,
+            supplied_key,
+            app_provider=app_provider,
+            vault_spends_key=vault_spends_key,
+        )
     except HTTPException as refusal:
         if not _is_payer_refusal(refusal):
             raise

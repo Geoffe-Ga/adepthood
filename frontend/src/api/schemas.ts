@@ -1266,11 +1266,17 @@ export const provenanceReceiptSchema = z
   .refine(consistentReceipt);
 
 /** The server's complete wire contract; recovered display fields are a separate local type. */
+/** A vendor whose writer key a managed vault writes with (#3437). */
+export const vaultKeyVendorSchema = z.enum(['anthropic', 'openai']);
+
 export const passProvenanceSchema = z.object({
   notes: provenanceReceiptSchema,
   detection: provenanceReceiptSchema,
   detection_checked: z.boolean(),
   paid_by: z.enum(['own_key', 'wallet', 'free']),
+  // Set only when the writer's own key was relayed to their vault and the vault
+  // wrote the notes with it (#3437); older servers omit it.
+  own_key_vendor: vaultKeyVendorSchema.nullish(),
 });
 
 /** The v1 server refunds demo notes; conflicting live payer data is unrecorded. */
@@ -1291,6 +1297,7 @@ const recordedPassProvenanceSchema = z.preprocess(
     detection: provenanceReceiptSchema.nullable().catch(null),
     detection_checked: z.boolean().nullable().catch(null),
     paid_by: z.enum(['own_key', 'wallet', 'free']).nullable().catch(null),
+    own_key_vendor: vaultKeyVendorSchema.nullish().catch(null),
   }),
 );
 
@@ -1352,6 +1359,17 @@ export const botmasonUsageSchema = z.object({
 });
 
 export type BotmasonUsageT = z.infer<typeof botmasonUsageSchema>;
+
+/**
+ * ``GET /user/vault-key-vendors`` (#3437): the vendors whose writer key this
+ * caller's vault would write with. Anything malformed reads as "none": a key is
+ * only ever presented as paying when the server said its vault will spend it.
+ */
+export const vaultKeyVendorsSchema = z.object({
+  vendors: z.array(vaultKeyVendorSchema).catch([]),
+});
+
+export type VaultKeyVendorsT = z.infer<typeof vaultKeyVendorsSchema>;
 
 export type CareKindT = z.infer<typeof careKindSchema>;
 export type CareResourceT = z.infer<typeof careResourceSchema>;

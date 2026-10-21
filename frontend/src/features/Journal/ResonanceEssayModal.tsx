@@ -43,6 +43,7 @@ import {
 } from './resonanceExplainerCopy';
 import { sourceLabel } from './sourceLabel';
 import { usePaymentScope } from './usePaymentScope';
+import type { VaultKeyVendor } from './vaultKeyCopy';
 
 import { resonance } from '@/api';
 import type { Marginalia, ResonanceRoute } from '@/api';
@@ -58,6 +59,8 @@ export interface ResonanceEssayModalProps {
   onEssayLoaded?: (_note: Marginalia) => void;
   /** Whether an own key is available; the server route also gates eligibility. */
   hasOwnKey?: boolean;
+  /** The vendor of that key, so a managed vault that writes with it can say so (#3437). */
+  ownKeyVendor?: VaultKeyVendor | null;
   /** A 402 on the ask: the wallet is empty, or a key is required. */
   onFundingRequired?: (_outcome: FundingOutcome) => void;
 }
@@ -466,9 +469,15 @@ function EssayBody({
  * Resolve only an uncached offer; responses belong to one note/key showing.
  * A new ``revision`` rereads the route for the same showing (#3385).
  */
+interface OwnKey {
+  hasOwnKey: boolean;
+  /** The key's vendor, so a managed vault that writes with it can say so (#3437). */
+  ownKeyVendor: VaultKeyVendor | null;
+}
+
 function useEssayCost(
   note: Marginalia | null,
-  hasOwnKey: boolean,
+  { hasOwnKey, ownKeyVendor }: OwnKey,
   scopeIsCurrent: () => boolean,
   revision: number,
 ): ResonanceCostState {
@@ -496,13 +505,13 @@ function useEssayCost(
       copy: 'Checking whether a letter can be written…',
       loading: true,
     });
-    void loadCostState(hasOwnKey, ESSAY_NOUN, token).then((next) => {
+    void loadCostState(hasOwnKey, ESSAY_NOUN, token, ownKeyVendor).then((next) => {
       if (current && scopeIsCurrent()) setCost(next);
     });
     return () => {
       current = false;
     };
-  }, [note, hasOwnKey, scopeIsCurrent, revision]);
+  }, [note, hasOwnKey, ownKeyVendor, scopeIsCurrent, revision]);
   return cost;
 }
 
@@ -531,16 +540,13 @@ function ResonanceEssayModal({
   onEssayLoaded,
   onOpenSettings = () => undefined,
   hasOwnKey = false,
+  ownKeyVendor = null,
   onFundingRequired,
 }: ResonanceEssayModalProps): React.JSX.Element {
   const scopeIsCurrent = usePaymentScope();
   const shown = useEssay(note, { onEssayLoaded, onFundingRequired }, scopeIsCurrent);
-  const cost = useEssayCost(
-    shown.offer ? note : null,
-    hasOwnKey,
-    scopeIsCurrent,
-    shown.costRevision,
-  );
+  const offer = shown.offer ? note : null;
+  const cost = useEssayCost(offer, { hasOwnKey, ownKeyVendor }, scopeIsCurrent, shown.costRevision);
 
   return (
     <JournalModalShell

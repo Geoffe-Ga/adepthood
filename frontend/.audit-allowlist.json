@@ -18,9 +18,9 @@
     {
       "id": "GHSA-vfj7-8cjw-p6xm",
       "package": "braces",
-      "expires": "2026-10-19",
+      "expires": "2026-11-02",
       "issue": 3054,
-      "reason": "No recognized patched braces release exists (affected <=3.0.3; latest 3.0.3). The existing patch-package postinstall backports the mandatory parser and compile/expand/stringify recursion-depth guard from upstream PR78; installed regressions cover excessive nesting and ordinary behavior (#3280). This does not resolve all expansion/CPU risks or change advisory status. Reached through Expo/Metro and Jest tooling; the web deployment serves the static export through nginx. Owner-approved time box ending 2026-10-19 remains enforced; re-check patched dependency and remove the exception per #3054."
+      "reason": "No recognized patched braces release exists (affected <=3.0.3; latest 3.0.3). The existing patch-package postinstall backports the mandatory parser and compile/expand/stringify recursion-depth guard from upstream PR78; installed regressions cover excessive nesting and ordinary behavior (#3280). This does not resolve all expansion/CPU risks or change advisory status. Reached through Expo/Metro and Jest tooling; the web deployment serves the static export through nginx. Owner renewed the hard expiry 2026-10-19 -> 2026-11-02 on 2026-10-20 (the single renewal pre-approved in #3054 on 2026-10-13), after `npm view braces version` still returned 3.0.3 with no patched release. The vulnerability is NOT fixed; re-check npm then and remove the exception per #3054."
     }
   ]
 }

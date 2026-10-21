@@ -142,6 +142,13 @@ answers to this record's follow-up questions, given the same evening.
    habits) and their results are stored with receipts the server observed;
    how to move them is an open owner decision.
 
+   **Managed vault + BYOK (amended 2026-10-16, #3437; see
+   [the amendment](#amendment-2026-10-16-managed-vault--byok)).** For a
+   vault-bound writer whose managed vault accepts a writer's key, the key
+   travels device -> adepthood -> vault, per request, for vault-bound
+   operations: a relay, like the known gap above. The vault, not adepthood,
+   then sends the writing to the writer's own vendor.
+
    **Narrowed by phase (a)'s second slice (#3067): page reading.** With the
    person's key, the device sends a page straight to that key's vendor
    (`frontend/src/api/byokDirect.ts`). The page-read route declares no
@@ -180,6 +187,12 @@ answers to this record's follow-up questions, given the same evening.
    vault contract field that reports a local route per answer, or credit
    admission limited to vaults the person connected themselves; the owner
    decides which.
+
+   **Updated 2026-10-16 (#3437; see
+   [the amendment](#amendment-2026-10-16-managed-vault--byok)):** a vault answer
+   powered by the writer's own key is cloud inference **by the writer's own
+   key**, through their vault, and is labelled that way on each use. It is paid
+   by that key, not by credits, so it is outside this credit gap.
 
    **Honest limit, decided by the owner:** processing in that managed
    runtime is **not operator-blind while it runs**. The runtime sees the
@@ -237,6 +250,75 @@ answers to this record's follow-up questions, given the same evening.
 web may not enrol before CSP plus SRI (item 7), and native comes later
 (item 8). Together these mean **nobody can enrol in user-held keys until the
 CSP and SRI work ships**. Phase (b) therefore starts with that work.
+
+## Amendment 2026-10-16: managed vault + BYOK
+
+- **Decider:** Geoff (owner decision, 2026-10-16, recorded on
+  [#3437](https://github.com/Geoffe-Ga/adepthood/issues/3437)). The text of
+  items 3 and 4 above is kept as decided on 2026-10-07; each now carries a
+  short pointer here.
+- **Paired record:** Creek-Vault ADR 0015 (request-scoped BYOK on managed
+  vaults, [Creek-Vault#1873](https://github.com/Geoffe-Ga/Creek-Vault/issues/1873)).
+
+**The owner's decision, verbatim in intent:** "When the user chooses to BYOK
+from Anthropic or OpenAI, and a managed vault is activated, the expected
+behavior is that cloud model's output is generated informed by the creek vault
+voice draft pipeline, with the key being the method that a draft is generated
+and that the 3rd party BYOK is also what powers it when new entries and
+uploads are classified and onboarded into the vault generally."
+
+**Why.** A managed-vault writer had no working Resonance at all: managed
+vaults refuse cloud consent (Creek-Vault#1864), the vault-local model
+(Creek-Vault#1849) has not shipped, and a vault-bound pass ignored the writer's
+key (#3258). The voice pipeline and the corpus live in the vault, so the vault,
+not adepthood, has to assemble the prompt; the device cannot reach a managed
+vault directly, because adepthood holds the vault credential.
+
+**What changes.**
+
+1. **The key travels device -> adepthood -> vault, per request.** For a
+   vault-bound writer whose vault's handshake advertises the key's vendor
+   (`request_key_providers`, Creek contract 0.18), adepthood relays the
+   `X-LLM-API-Key` value to the vault in `X-Creek-Provider` /
+   `X-Creek-Provider-Key` on the vault's model routes only: reflections,
+   letters, and the classification pass that onboards new entries and
+   uploads. The vault writes with the writer's own vendor, through its own
+   grounding and voice pipeline. No other vault call carries the key, and a
+   vault that does not advertise the vendor (a self-connected or older vault)
+   is not sent it.
+2. **The key pays.** Such a reading or letter takes no BotMason credit; a
+   writer with a key and an empty wallet is served. A failed pass rolls back
+   exactly as an app-provider BYOK pass does.
+3. **The boundary is unchanged.** The writer still dials only their vault;
+   the vault dials the vendor (the #3161 matrix,
+   `backend/tests/security/test_ai_boundary_network_matrix.py`). Completion
+   detection has no vault capability, so a vault-bound pass still skips it.
+4. **INTIMATE content is not sent with a BYOK key, whatever the boundary.**
+   The privacy floor (`admits_egress`) refuses before any key is relayed; the
+   vault forces any INTIMATE work it is asked for onto its local model or
+   refuses it (Creek-Vault ADR-0015).
+5. **The key is not logged, persisted, echoed, or written to telemetry.** It
+   travels in `VaultProviderKey`, whose renderings redact it and which refuses
+   to pickle; a canary key is swept from responses, every log record and every
+   table (`test_a_relayed_key_is_never_logged_persisted_or_echoed`). It ends
+   with the request: a pipeline continuation the request leaves running starts
+   in a context with the key cleared, so off-request work goes keyless.
+6. **Labelled on each use.** Before a reading or letter the price line says
+   "Your vault will write this {reading|letter} with your own
+   {Anthropic|OpenAI} key. Your key pays for it, not your BotMason messages.";
+   after a reading the receipt's payment route says "Paid by your own
+   {Anthropic|OpenAI} key, through your vault", from `own_key_vendor`. The client
+   learns the vendors from `GET /user/vault-key-vendors`, its own read, and
+   asks only for a key holder on the vault route. The usage snapshot still
+   never resolves or dials a vault. A failed vendor read shows the credit
+   price, never a key that might not pay.
+
+**The honest limit.** Item 1's premise does not cover this path: adepthood
+relays the key and the plaintext, and the managed vault processes the writing
+in plaintext while it runs, as Creek-Vault ADR 0014 describes. Neither is
+operator-blind while the request runs. The operator's own cloud key still
+carries no journal content (item 3 stands for that), and credits still pay
+only for vault answers that do not use the writer's key.
 
 ## Threat actors
 
@@ -368,7 +450,7 @@ history and future content stand or fall together.
 
 *Selected: user-held keys plus device-side and vault-local inference, BYOK cloud as explicit opt-in.*
 
-- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. (`owner:2026-10-07#B12-premise`)
+- **Boundary:** Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. Amended 2026-10-16 (#3437): with a managed vault, the writer's key and writing are relayed through our server to their vault per request, and the vault sends them to the writer's vendor, labelled on each use. (`owner:2026-10-07#B12-premise`)
 - **Key custody:** User-held keys generated on the person's device; no operator escrow; the server stores ciphertext and public parameters only. (`owner:2026-10-07#B12-premise`)
 - **Recovery:** A recovery phrase the person writes down plus their passphrase; either unlocks the data key. Losing both means the data is gone, agreed up front at enrolment. Pairing, revocation and the rest of D03 stay open. (`owner:2026-10-07#followup-recovery`)
 - **Metadata leakage:** Sizes, timestamps, counts, object ids, tier labels, credit receipts and network metadata stay visible to the operator; content does not. (`repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS`)
@@ -376,7 +458,7 @@ history and future content stand or fall together.
 - **Supported platforms:** Web first, native later. Native apps carry the strongest guarantee; on web the guarantee rests on trusting the code we serve. Web accounts may not enrol until enforced CSP plus SRI is live; signed builds come later. (`owner:2026-10-07#B12-web`)
 - **Client delivery and update trust:** Native: store-signed builds (later). Web: enforced CSP plus SRI now (live since phase (b)'s first slice), signed builds later; CSP plus SRI cannot stop us serving a different bundle. (`repo:frontend/nginx.conf`)
 - **Primary-copy and derivative removal:** The 14 in-scope EncryptedString columns of journal_scope_proposal (of the 20; feedback and the vault credential stay out), DERIVED_FROM_PROSE plaintext, completion detection output, Creek copies, vendor copies and backups are re-encrypted client-side, withdrawn or expired before an account is labelled protected. (`repo:backend/src/services/encryption_inventory.py::encrypted_columns`)
-- **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
+- **Threat actors:** Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext; with a managed vault it relays the key and the writing to the vault per request (amendment 2026-10-16, #3437), and neither is operator-blind while that request runs. (`repo:backend/src/services/botmason.py::resolve_chat_api_key`)
 - **Budget (USD per active account-month):** **unknown; owner input required.**
 - **Staffing:** **unknown; owner input required.**
 - **Reopen triggers:** Key-non-possession prototype fails; no web anchor is buildable; D03 user testing shows unacceptable loss; B09 finds no supported non-cloud configuration. (`owner:2026-10-07#B12-premise`)
@@ -752,6 +834,10 @@ The B13 epic body that carries this plan is drafted at
   (credentials, job state, configuration). Inference that sees plaintext falls
   under Decision item 4: labelled on each use, and not operator-blind while
   it runs.
+
+- **2026-10-16 (#3437):** Decision items 3 and 4 are amended by the
+  "Amendment 2026-10-16: managed vault + BYOK" section above, with the
+  original text kept. Creek-Vault ADR 0015 records the vault's half.
 
 ## Reopen triggers
 

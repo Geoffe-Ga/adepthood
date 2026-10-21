@@ -2839,6 +2839,25 @@
     "coveredBy": "frontend/e2e/money-copy.browser.e2e.test.ts"
   },
   {
+    "id": "journal.managed-vault-own-key",
+    "description": "A vault-bound writer with their own Anthropic or OpenAI key, whose managed vault advertises request_key_providers (Creek contract 0.18, Creek-Vault ADR-0015), asks for a reading (#3437, ADR 0009 2026-10-16 amendment). The browser spec saves the key in Settings and sees the managed-vault sentence in the key disclosure; the price line before the reading says \"Your vault will write this reading with your own Anthropic key\" and the receipt after it says \"Paid by your own Anthropic key, through your vault\"; the real server answers paid_by own_key with own_key_vendor anthropic and draws nothing from the wallet; and the lane vault's ledger shows the key arrived by digest on POST /v1/reflections and on no other call. The managed-vault offer's notice, reached through the real Settings -> vault -> create path with only activation availability controlled, says what happens to the key and the writing. The backend matrix (backend/tests/security/test_ai_boundary_network_matrix.py) pins the rest: the writer dials only their vault, the key rides only reflections, letters and the classification pass, a self-connected vault is never sent it and still takes a credit, an intimate entry dials nothing, and a canary key never reaches a response, a log record or a table.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["botmasonUsage", "vaultRequestKeys", "resonance", "journal"],
+      "routes": [
+        "GET /user/usage",
+        "GET /user/vault-key-vendors",
+        "POST /journal/{entry_id}/resonance",
+        "POST /journal/marginalia/{marginalia_id}/essay",
+        "POST /journal/",
+        "POST /corpus/import"
+      ],
+      "tables": ["user", "journalentry", "marginalia", "walletaudit"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/managed-vault-own-key.browser.e2e.test.ts"
+  },
+  {
     "id": "journal.refinish-an-edited-finished-entry",
     "description": "A writer finishes a journal entry, reopens it with the pencil and chooses Edit, and can finish it again (#3447). The covering spec writes and finishes a page through the real client, presses the exit row's Edit, confirms Edit, types a line and waits for the real autosave, then finds Finish under the body with at least a 44px target, at 390x844, 1280x800 and 390px at 200% browser zoom (195x422 CSS px at device scale 2). No autosave PATCH during the edit sends status draft. Pressing Finish sends one PATCH /journal/{id} carrying the edited body and status finished, and the page returns to reading with the pencil back in the exit row and no body field. On that finished read view, the same three frames sweep the API-key, Edit, Close, Promote a quote and Get resonance siblings; the browser measures the Promote button and every label glyph inside the paper, rejects sideways page overflow, and uses a Range for each word so wrapping at spaces passes while a mid-word split fails (#3457). Jest pins that Finish stays withheld while the edited page is empty and that the read action's row, button and label can all yield inside the 195 CSS-pixel column.",
     "crosses": {
