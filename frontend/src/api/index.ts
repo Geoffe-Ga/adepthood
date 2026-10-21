@@ -2827,12 +2827,14 @@ export const prompts = {
     );
   },
   history(
-    params: { limit?: number; offset?: number } = {},
+    params: { limit?: number; offset?: number; include_unanswered?: boolean } = {},
     token?: string,
   ): Promise<PromptListResponse> {
     const query = new URLSearchParams();
     if (params.limit != null) query.set('limit', String(params.limit));
     if (params.offset != null) query.set('offset', String(params.offset));
+    if (params.include_unanswered != null)
+      query.set('include_unanswered', String(params.include_unanswered));
     const qs = query.toString();
     const options = {
       token,
