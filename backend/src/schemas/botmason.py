@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from domain.creek_vault import VaultKeyProvider
+
 #: Which side a generation's payer disclosure named (#3262): the writer's own key
 #: on the app provider, or a wallet credit when their vault answers. A charged
 #: request echoes the route it disclosed so admission can refuse a stale one (#3385).
@@ -59,3 +61,13 @@ class UsageResponse(BaseModel):
     resonance_route: PayerRoute
     # Only the explicitly armed test seam can generate a keyless app-provider demo.
     resonance_demo_available: bool = False
+
+
+class VaultKeyVendorsResponse(BaseModel):
+    """The vendors whose writer key the caller's vault would write with (#3437).
+
+    Empty for an app-provider caller and for any vault that advertises none,
+    so the writer is shown a credit price unless their own key will pay.
+    """
+
+    vendors: list[VaultKeyProvider] = Field(default_factory=list)

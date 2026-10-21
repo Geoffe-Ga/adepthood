@@ -2,7 +2,12 @@ import React, { useCallback, useEffect, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
-import { HIGHER_SELF_GAIN, VAULT_SORTING_CHOICE, VAULT_TITLE } from './vaultCopy';
+import {
+  HIGHER_SELF_GAIN,
+  MANAGED_VAULT_OWN_KEY_NOTICE,
+  VAULT_SORTING_CHOICE,
+  VAULT_TITLE,
+} from './vaultCopy';
 
 import { vaultActivation, type VaultActivation } from '@/api';
 import { Button } from '@/components/Button';
@@ -59,6 +64,9 @@ const CustodyNotice = (): React.JSX.Element => (
     <Text style={styles.body}>
       Entries you mark Intimate stay in Adepthood and are never sent to a managed vault or to any
       AI. Creating a vault does not change that.
+    </Text>
+    <Text style={styles.body} testID="activation-own-key-notice">
+      {MANAGED_VAULT_OWN_KEY_NOTICE}
     </Text>
   </View>
 );

@@ -306,11 +306,17 @@ test('a long habit offer scrolls without covering the page actions on a short ph
   await page
     .getByTestId('journal-body-input')
     .fill('A page with more habits than fit on a small screen.');
+  const sheet = page.getByTestId('journal-sheet');
+  const canvas = page.getByTestId('journal-compose-stack');
+  // Finish the paper entrance and its asynchronous idle-dock measurement
+  // before freezing time or recording the two layout states.
+  await expect(sheet).toHaveCSS('opacity', '1');
+  await expect(canvas).not.toHaveCSS('margin-bottom', '0px');
   await page.clock.install();
-  const sheetHeight = (await boxOf(page.getByTestId('journal-sheet'), 'sheet')).height;
+  const sheetHeight = (await boxOf(sheet, 'sheet')).height;
   await page.getByTestId('writing-timer-start').click();
-  const floatingSheetHeight = (await boxOf(page.getByTestId('journal-sheet'), 'running sheet'))
-    .height;
+  await expect(canvas).toHaveCSS('margin-bottom', '0px');
+  const floatingSheetHeight = (await boxOf(sheet, 'running sheet')).height;
   expect(
     floatingSheetHeight,
     'starting restores the space reserved for the idle dock',

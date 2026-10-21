@@ -7,6 +7,13 @@ import { backendUrl, frontendUrl, signUp, tokenFor } from './journalHabitsBrowse
 import { runBackendModule } from './laneDatabase';
 import { readLaneState } from './laneState';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 const BODY = 'The willow bent all night and did not break. I woke grateful beside the water.';
 const ARTIFACTS =
   process.env.MONEY_COPY_ARTIFACTS ?? join(__dirname, 'artifacts', 'money-copy-3262');

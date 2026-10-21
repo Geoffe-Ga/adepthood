@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import enum
 import json
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -71,7 +72,7 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col, select
+from sqlmodel import SQLModel, col, select
 
 from domain.creek_vault import CONTRACT_VERSION
 from models.goal import Goal
@@ -101,6 +102,8 @@ _VAULT_KEY: Final = "creek-vault-matrix-key"  # pragma: allowlist secret
 
 _VAULT_HOST: Final = "vault-own.example.test"
 _REPLACEMENT_HOST: Final = "vault-replacement.example.test"
+#: The read that tells a client which vendors' keys its vault would write with.
+_VENDORS: Final = "/user/vault-key-vendors"
 #: Public answers, so the real pin admits both; distinct, so an address alone
 #: tells which vault a socket went to.
 _ADDRESSES: Final = {_VAULT_HOST: "93.184.216.34", _REPLACEMENT_HOST: "93.184.216.35"}
@@ -135,6 +138,16 @@ _HANDSHAKE: Final[dict[str, object]] = {
     "ontology_version": "1.0.0",
     "attestation": None,
 }
+#: A managed vault (Creek-Vault ADR-0015): it will write with a writer's own
+#: Anthropic or OpenAI key, sent per request, and runs the classification pass.
+_MANAGED_HANDSHAKE: Final[dict[str, object]] = {
+    **_HANDSHAKE,
+    "capabilities": ["journal-upsert", "reflections", "voice-drafts", "letters", "pipeline"],
+    "request_key_providers": ["anthropic", "openai"],
+}
+_PROVIDER_KEY_HEADER: Final = "X-Creek-Provider-Key"
+#: The only vault routes that call a model, so the only ones a key may ride.
+_KEYED_PATHS: Final = (_REFLECTIONS_PATH, _LETTERS_PATH, "/v1/classifications")
 _REFLECTION: Final[dict[str, object]] = {
     "status": "ok",
     "notes": [{"kind": "pattern", "quote": _QUOTE, "note": _VAULT_NOTE}],
@@ -202,11 +215,17 @@ class Condition(enum.StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Dial:
-    """One request that reached the last call before a socket."""
+    """One request that reached the last call before a socket.
+
+    ``provider_key`` is the writer's key when the request carried one in Creek's
+    ``X-Creek-Provider-Key`` header (#3437), so a row can say exactly which
+    destination was handed it.
+    """
 
     name: str
     address: str
     path: str
+    provider_key: str | None = None
 
 
 class _Refused(enum.Enum):
@@ -244,6 +263,13 @@ class NetworkEdge:
     dials: list[Dial] = field(default_factory=list)
     replace: Callable[[], Awaitable[httpx.Response]] | None = None
     replaced_status: int | None = None
+    #: A managed vault: its handshake advertises the vendors whose writer key it
+    #: will spend (Creek contract 0.18, #3437). Off for every pre-#3437 row.
+    managed: bool = False
+
+    def keyed(self) -> list[Dial]:
+        """Every dial that carried a writer's provider key."""
+        return [dial for dial in self.dials if dial.provider_key is not None]
 
     def names(self) -> set[str]:
         """Every destination name dialed."""
@@ -257,9 +283,11 @@ class NetworkEdge:
         """Drop what arrangement dialed, so only the operation under test is judged."""
         self.dials.clear()
 
-    async def answer(self, name: str, address: str, path: str) -> _Answer:
+    async def answer(
+        self, name: str, address: str, path: str, provider_key: str | None = None
+    ) -> _Answer:
         """Record the request, then answer it as the scripted network would."""
-        self.dials.append(Dial(name=name, address=address, path=path))
+        self.dials.append(Dial(name=name, address=address, path=path, provider_key=provider_key))
         if name in _PROVIDER_HOSTS:
             return self._provider()
         if name in _ADDRESSES:
@@ -288,6 +316,8 @@ class NetworkEdge:
     def _capabilities(self) -> _Answer:
         if self.condition is Condition.MALFORMED_CAPABILITY:
             return _Answer(text="<html>not a capability document</html>")
+        if self.managed:
+            return _Answer(body=_MANAGED_HANDSHAKE)
         return _Answer(body=_HANDSHAKE)
 
     async def _replaced(self) -> _Answer:
@@ -337,11 +367,13 @@ async def network_edge(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Network
 
     async def _httpx(_transport: object, request: httpx.Request) -> httpx.Response:
         name, address = _dial_identity(request.url.host, dict(request.extensions))
-        return _httpx_response(await edge.answer(name, address, request.url.path), request)
+        key = request.headers.get(_PROVIDER_KEY_HEADER)
+        return _httpx_response(await edge.answer(name, address, request.url.path, key), request)
 
     async def _httpx2(_transport: object, request: httpx2.Request) -> httpx2.Response:
         name, address = _dial_identity(request.url.host, dict(request.extensions))
-        return _httpx2_response(await edge.answer(name, address, request.url.path), request)
+        key = request.headers.get(_PROVIDER_KEY_HEADER)
+        return _httpx2_response(await edge.answer(name, address, request.url.path, key), request)
 
     async def _resolve(host: str) -> tuple[str, ...]:
         return (_ADDRESSES[host],) if host in _ADDRESSES else ()
@@ -665,6 +697,8 @@ async def test_vault_bound_operation_dials_only_its_vault(
 
     assert harness.edge.names() <= {_VAULT_HOST}, harness.edge.dials
     assert harness.edge.addresses() <= {_ADDRESSES[_VAULT_HOST]}, harness.edge.dials
+    # A vault that never advertised request keys is never handed one (#3437).
+    assert harness.edge.keyed() == [], harness.edge.dials
     _assert_result_or_closed_refusal(resp)
     _assert_the_row_is_not_vacuous(op, condition, harness.edge, resp)
 
@@ -804,3 +838,251 @@ async def test_the_seam_spy_sees_an_app_provider_writer(
     # Keyless, so no cloud provider is reached (ADR 0009 phase (a)): the seam,
     # not the socket, is the only place these calls can be seen.
     assert harness.edge.names() == set()
+
+
+# ── A managed vault spends the writer's own key (#3437, Creek-Vault ADR-0015) ────────
+
+#: The operations whose vault call runs a model, so the ones a managed vault is
+#: handed the writer's key for. Detection and page reading have no vault
+#: capability and never carry it.
+_KEY_SPENDING: Final = ("resonance", "reflection_detection", "essay", "corpus_classification")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("byok", [False, True], ids=["keyless", "byok"])
+@pytest.mark.parametrize("operation", [op.name for op in _OPERATIONS])
+async def test_a_managed_vault_writer_dials_only_their_vault_which_alone_is_handed_the_key(
+    harness: Harness,
+    operation: str,
+    byok: bool,
+) -> None:
+    """The boundary under ADR 0009's 2026-10-16 amendment: the vault dials the vendor, not us.
+
+    A vault-bound writer whose managed vault advertises request keys still
+    dials nothing but that vault. When they carry a key, it rides only on the
+    vault's model routes -- reflections, letters, the classification pass --
+    and on nothing else this request sends; without one, nothing carries a key.
+    """
+    op = _BY_NAME[operation]
+    writer = await _vault_bound_writer(harness, f"managed_{operation}_{int(byok)}")
+    await op.arrange(harness.client, harness.session, writer)
+    # Advertised only now, so arranging an entry starts no pipeline pass of its own.
+    harness.edge.managed = True
+    harness.edge.forget()
+
+    resp = await op.drive(harness.client, writer, byok=byok)
+
+    assert harness.edge.names() <= {_VAULT_HOST}, harness.edge.dials
+    assert harness.edge.addresses() <= {_ADDRESSES[_VAULT_HOST]}, harness.edge.dials
+    _assert_result_or_closed_refusal(resp)
+    keyed = harness.edge.keyed()
+    assert all(dial.name == _VAULT_HOST for dial in keyed), keyed
+    assert all(dial.path.startswith(_KEYED_PATHS) for dial in keyed), keyed
+    assert all(dial.provider_key == OPENAI_KEY for dial in keyed), "key altered in transit"
+    if byok and operation in _KEY_SPENDING:
+        assert keyed, f"{operation}: the managed vault was never handed the writer's key"
+    if not byok or operation not in _KEY_SPENDING:
+        assert keyed == [], keyed
+
+
+async def _exhaust_wallet(session: AsyncSession, writer: Writer) -> None:
+    """Spend every unit in both wallet buckets, so only a key can pay."""
+    user = await session.get(User, writer.user_id)
+    assert user is not None
+    user.offering_balance = 0
+    user.monthly_messages_used = 10_000
+    session.add(user)
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_managed_vault_reading_is_paid_by_the_key_and_labelled_with_its_vendor(
+    harness: Harness,
+) -> None:
+    """No credits, a key: the managed vault answers, nothing is charged, and the pass says why."""
+    writer = await _vault_bound_writer(harness, "managed_pays")
+    await _arrange_entry(harness.client, harness.session, writer)
+    harness.edge.managed = True
+    await _exhaust_wallet(harness.session, writer)
+    harness.edge.forget()
+
+    resp = await _resonance(harness.client, writer, byok=True)
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    body = resp.json()
+    assert _VAULT_NOTE in resp.text
+    assert body["provenance"]["paid_by"] == "own_key"
+    assert body["provenance"]["own_key_vendor"] == "openai"
+    assert body["provenance"]["notes"]["source"] == "creek_vault"
+    assert body["remaining_balance"] == 0
+    assert OPENAI_KEY not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_a_keyless_managed_vault_reading_still_needs_credits(harness: Harness) -> None:
+    """Without a key, behaviour is unchanged: an empty wallet is the payer refusal."""
+    writer = await _vault_bound_writer(harness, "managed_keyless")
+    await _arrange_entry(harness.client, harness.session, writer)
+    harness.edge.managed = True
+    await _exhaust_wallet(harness.session, writer)
+    harness.edge.forget()
+
+    resp = await _resonance(harness.client, writer, byok=False)
+
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert harness.edge.keyed() == []
+
+
+@pytest.mark.asyncio
+async def test_a_self_connected_vault_reading_with_a_key_still_takes_a_credit(
+    harness: Harness,
+) -> None:
+    """A vault that does not advertise request keys never gets one, so credits pay (#3258)."""
+    writer = await _vault_bound_writer(harness, "self_connected_key")
+    await _arrange_entry(harness.client, harness.session, writer)
+    await _exhaust_wallet(harness.session, writer)
+    harness.edge.forget()
+
+    resp = await _resonance(harness.client, writer, byok=True)
+
+    assert resp.status_code == HTTPStatus.PAYMENT_REQUIRED, resp.text
+    assert harness.edge.keyed() == []
+
+
+@pytest.mark.asyncio
+async def test_a_managed_vault_letter_is_paid_by_the_key(harness: Harness) -> None:
+    """The essay route: no credits, a key, a managed vault -- the vault writes it, free."""
+    writer = await _vault_bound_writer(harness, "managed_letter")
+    harness.edge.managed = True
+    await _arrange_note(harness.client, harness.session, writer)
+    await _exhaust_wallet(harness.session, writer)
+    harness.edge.forget()
+
+    resp = await harness.client.post(
+        f"/journal/marginalia/{writer.target}/essay",
+        json={},
+        headers=writer.with_key(byok=True),
+    )
+
+    assert resp.status_code == HTTPStatus.OK, resp.text
+    assert _VAULT_LETTER in resp.text
+    assert resp.json()["remaining_balance"] == 0
+    assert [dial.path.startswith(_LETTERS_PATH) for dial in harness.edge.keyed()] == [True]
+
+
+@pytest.mark.asyncio
+async def test_an_intimate_entry_with_a_key_never_reaches_the_managed_vault(
+    harness: Harness,
+) -> None:
+    """The privacy floor holds first: an intimate entry is answered privately, nothing dialled."""
+    writer = await _vault_bound_writer(harness, "managed_intimate")
+    harness.edge.managed = True
+    resp = await harness.client.post(
+        "/journal/", json={"message": _BODY, "classification": "intimate"}, headers=writer.headers
+    )
+    assert resp.status_code == HTTPStatus.CREATED
+    writer.target = int(resp.json()["id"])
+    harness.edge.forget()
+
+    reading = await _resonance(harness.client, writer, byok=True)
+
+    assert reading.status_code == HTTPStatus.OK, reading.text
+    assert reading.json()["private"] is True
+    assert harness.edge.dials == []
+
+
+@pytest.mark.asyncio
+async def test_the_vendor_read_discloses_the_vendors_a_managed_vault_writes_with(
+    harness: Harness,
+) -> None:
+    """The client learns, before any charge, that the writer's key would pay.
+
+    From its own read, never from the usage snapshot: a price snapshot still
+    dials nothing, even for a managed vault's writer, and the vendor read only
+    handshakes -- no key and no stored writing rides it.
+    """
+    managed = await _vault_bound_writer(harness, "usage_managed")
+    harness.edge.managed = True
+    harness.edge.forget()
+    usage = await harness.client.get("/user/usage", headers=managed.headers)
+    usage_dials = list(harness.edge.dials)
+    managed_vendors = await harness.client.get(_VENDORS, headers=managed.headers)
+    harness.edge.managed = False
+    self_connected = await harness.client.get(_VENDORS, headers=managed.headers)
+    app_writer = await _signup(harness.client, harness.session, "usage_app")
+    harness.edge.forget()
+    app_vendors = await harness.client.get(_VENDORS, headers=app_writer.headers)
+
+    assert usage.status_code == HTTPStatus.OK, usage.text
+    assert usage_dials == []
+    assert "vault_key_vendors" not in usage.json()
+    assert managed_vendors.json() == {"vendors": ["anthropic", "openai"]}
+    assert self_connected.json() == {"vendors": []}
+    assert app_vendors.json() == {"vendors": []}
+    assert harness.edge.dials == []
+    assert harness.edge.keyed() == []
+
+
+# ── The canary: the relayed key leaves no trace (#3437) ───────────────────────
+
+_CANARY_KEYS: Final = (
+    "sk-ant-api03-CANARY3437relayedKEYneverSTOREDzz",  # pragma: allowlist secret
+    "sk-proj-CANARY3437relayedKEYneverSTOREDzz",  # pragma: allowlist secret
+)
+
+
+async def _database_text(session: AsyncSession) -> str:
+    """Every row of every table, rendered: the persisted state a key could hide in."""
+    rendered: list[str] = []
+    for table in SQLModel.metadata.sorted_tables:
+        result = await session.execute(table.select())
+        rendered.append(repr(result.all()))
+    return "\n".join(rendered)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("canary", _CANARY_KEYS, ids=["anthropic", "openai"])
+async def test_a_relayed_key_is_never_logged_persisted_or_echoed(
+    harness: Harness,
+    caplog: pytest.LogCaptureFixture,
+    canary: str,
+) -> None:
+    """Relay a canary key through every keyed operation and a failing one, then sweep.
+
+    The canary must reach the vault -- that is the feature -- and nowhere else:
+    not a response body or header, not a log record at any level (the vault
+    client's and the SDKs' DEBUG included), and not a row in any table.
+    """
+    writer = await _vault_bound_writer(harness, f"canary_{canary[:6]}")
+    await _arrange_entry(harness.client, harness.session, writer)
+    entry_id = writer.target
+    await _arrange_note(harness.client, harness.session, writer)
+    harness.edge.managed = True
+    keyed = {**writer.headers, _BYOK_HEADER: canary}
+    responses: list[httpx.Response] = []
+
+    with caplog.at_level(logging.DEBUG):
+        responses.append(await harness.client.post(f"/journal/{entry_id}/resonance", headers=keyed))
+        responses.append(
+            await harness.client.post(
+                f"/journal/marginalia/{writer.target}/essay", json={}, headers=keyed
+            )
+        )
+        responses.append(
+            await harness.client.post(
+                "/journal/", json={"message": _BODY, "classification": "personal"}, headers=keyed
+            )
+        )
+        responses.append(await harness.client.get("/user/usage", headers=keyed))
+        responses.append(await harness.client.get(_VENDORS, headers=keyed))
+        harness.edge.condition = Condition.VAULT_TIMEOUT
+        responses.append(await harness.client.post(f"/journal/{entry_id}/resonance", headers=keyed))
+
+    assert {dial.provider_key for dial in harness.edge.keyed()} == {canary}
+    for response in responses:
+        assert canary not in response.text
+        assert canary not in str(dict(response.headers))
+    for record in caplog.records:
+        assert canary not in record.getMessage()
+        assert canary not in str(record.__dict__)
+    assert canary not in await _database_text(harness.session)

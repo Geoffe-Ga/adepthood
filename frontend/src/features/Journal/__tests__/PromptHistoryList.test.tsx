@@ -1,11 +1,25 @@
 /* eslint-env jest */
-import { jest, describe, it, expect } from '@jest/globals';
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
 import React from 'react';
 
-import PromptHistoryModal from '../PromptHistoryModal';
+import PromptHistoryList from '../PromptHistoryList';
+import { usePromptHistory } from '../usePromptHistory';
 
 import type { PromptDetail, PromptListResponse } from '@/api';
+import { setActiveUser, getActiveUser } from '@/storage/userScope';
+
+const ACCOUNT_A = 'x.eyJzdWIiOiIxIiwiZXhwIjo0MDAwMDAwMDAwfQ.y';
+const ACCOUNT_B = 'x.eyJzdWIiOiIyIiwiZXhwIjo0MDAwMDAwMDAwfQ.y';
+let mockToken = ACCOUNT_A;
+jest.mock('@/context/AuthContext', () => ({ useAuth: () => ({ token: mockToken }) }));
+beforeEach(() => {
+  mockToken = ACCOUNT_A;
+  setActiveUser(1);
+});
+afterEach(() => {
+  setActiveUser(null);
+});
 
 function answered(week: number, overrides: Partial<PromptDetail> = {}): PromptDetail {
   return {
@@ -29,15 +43,15 @@ type Fetch = (
 
 function mount(fetchHistory: Fetch, visible = true): ReturnType<typeof render> {
   return render(
-    <PromptHistoryModal
+    <PromptHistoryList
       visible={visible}
-      onDismiss={jest.fn()}
+      onWrite={jest.fn()}
       fetchHistory={fetchHistory as never}
     />,
   );
 }
 
-describe('PromptHistoryModal', () => {
+describe('PromptHistoryList', () => {
   it('lists every past prompt with the answer the person wrote', async () => {
     const fetchHistory = jest.fn(async () => page([answered(3), answered(2)]));
     const utils = mount(fetchHistory as unknown as Fetch);
@@ -137,4 +151,74 @@ describe('PromptHistoryModal', () => {
     await waitFor(() => expect(utils.getByTestId('prompt-history-row-4')).toBeTruthy());
     expect(utils.queryByTestId('prompt-history-response-4')).toBeNull();
   });
+});
+
+it('offers a plain entry from a past question without replacing its stored response', async () => {
+  const onWrite = jest.fn();
+  const item = answered(3, { default_title: 'An earlier question' });
+  const view = render(
+    <PromptHistoryList visible onWrite={onWrite} fetchHistory={async () => page([item])} />,
+  );
+  const write = await view.findByTestId('prompt-history-write-3');
+  expect(write.props.accessibilityLabel).toBe(
+    'Write about this: start a new entry from the week 3 prompt',
+  );
+  fireEvent.press(write);
+  expect(onWrite).toHaveBeenCalledWith(item);
+  expect(view.getByText('What I wrote in week 3.')).toBeTruthy();
+});
+
+it('can retry the first page without leaving Prompts', async () => {
+  const fetchHistory = jest
+    .fn<Fetch>()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValue(page([answered(2)]));
+  const view = mount(fetchHistory);
+  fireEvent.press(await view.findByTestId('prompt-history-retry'));
+  expect(await view.findByTestId('prompt-history-row-2')).toBeTruthy();
+});
+
+it('keeps a late history response in its original account when the active owner changes', async () => {
+  const previousOwner = getActiveUser();
+  let finish!: (_page: PromptListResponse) => void;
+  const fetchHistory = jest
+    .fn<Fetch>()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    )
+    .mockResolvedValue(page([answered(2, { question: 'The incoming account question' })]));
+  setActiveUser(1);
+  try {
+    const { result, rerender } = renderHook(() => usePromptHistory(true, fetchHistory));
+    await act(async () => setActiveUser(2));
+    expect(fetchHistory).toHaveBeenCalledTimes(1);
+    mockToken = ACCOUNT_B;
+    rerender({});
+    await waitFor(() =>
+      expect(result.current.items[0]?.question).toBe('The incoming account question'),
+    );
+    await act(async () =>
+      finish(page([answered(1, { question: 'The outgoing account question' })])),
+    );
+    expect(result.current.items.map((item: PromptDetail) => item.question)).toEqual([
+      'The incoming account question',
+    ]);
+  } finally {
+    await act(async () => setActiveUser(previousOwner));
+  }
+});
+
+it('renders historical Markdown as readable text while keeping the original question for writing', async () => {
+  const item = answered(3, { question: '**What matters?**', response: '- A *quiet* morning.' });
+  const onWrite = jest.fn();
+  const view = render(
+    <PromptHistoryList visible onWrite={onWrite} fetchHistory={async () => page([item])} />,
+  );
+  expect(await view.findByText('What matters?')).toBeTruthy();
+  expect(view.getByText('A quiet morning.')).toBeTruthy();
+  fireEvent.press(view.getByTestId('prompt-history-write-3'));
+  expect(onWrite).toHaveBeenCalledWith(item);
 });

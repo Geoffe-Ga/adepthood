@@ -389,3 +389,10 @@ export const VAULT_ADDRESS_NOT_FOUND =
  */
 export const VAULT_KEY_REFUSED =
   'That key has a space or a character Adepthood cannot send. Copy it again from your vault.';
+
+/**
+ * What a managed vault does with the writer's own key (#3437, ADR 0009's
+ * 2026-10-16 amendment): what happens to the key, and to the writing.
+ */
+export const MANAGED_VAULT_OWN_KEY_NOTICE =
+  'If you save your own Anthropic or OpenAI key, your managed vault writes your readings and letters, and sorts new writing, with it. Each time, Adepthood passes the key to your vault and your vault sends that writing to your provider. Neither keeps the key, and nothing is drawn from your BotMason messages.';

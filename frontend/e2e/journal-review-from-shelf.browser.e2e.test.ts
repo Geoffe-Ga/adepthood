@@ -6,6 +6,7 @@ import {
   signUp,
   tokenFor,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /** Program day 7: the first week closes, so its review is the shelf's call to write. */
 const DAY_SEVEN = 6;
@@ -23,6 +24,7 @@ test('on a review day the shelf’s one call to write is the Weekly Review', asy
   const email = await signUp(page, 'review-cta-day-seven');
   setProgramAnchorDaysAgo(email, DAY_SEVEN);
   await page.reload();
+  await openPrompts(page);
 
   const cta = page.getByRole('button', { name: /^Write your Weekly Review/ });
   await expect(cta).toBeVisible();
@@ -41,6 +43,7 @@ test('a review can be begun early from the shelf on a day nothing is due', async
   const headers = { Authorization: `Bearer ${token}` };
   setProgramAnchorDaysAgo(email, DAY_NINE);
   await page.reload();
+  await openPrompts(page);
 
   // Nothing is due on day 9, so the daily page holds the primary slot.
   await expect(page.getByRole('button', { name: 'Begin a page of morning pages' })).toBeVisible();
@@ -65,6 +68,7 @@ test('a review can be begun early from the shelf on a day nothing is due', async
   // Back on the shelf, the picker offers to CONTINUE that review rather than
   // start a second one, and pressing it reopens the very page just written.
   await page.getByTestId('journal-close-entry').click();
+  await openPrompts(page);
   await page.getByRole('button', { name: /^Start a review early/ }).click();
   const continueRow = page.getByRole('button', { name: /^Continue — Weekly Review — Week 2/ });
   await expect(continueRow).toBeVisible();

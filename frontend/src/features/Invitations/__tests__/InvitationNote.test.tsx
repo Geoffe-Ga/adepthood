@@ -1,20 +1,16 @@
 /* eslint-env jest */
 import { jest, afterEach, beforeEach, describe, it, expect } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
+import { X } from 'lucide-react-native';
 import React from 'react';
-
-const mockPressIn = jest.fn();
-const mockPressOut = jest.fn();
-jest.mock('@/hooks/usePressScale', () => ({
-  usePressScale: () => ({ scale: 1, onPressIn: mockPressIn, onPressOut: mockPressOut }),
-}));
+import { StyleSheet } from 'react-native';
 
 import { invitationCopy, INVITATION_COPY_ENTRIES } from '../invitationCopy';
 import InvitationNote from '../InvitationNote';
 import { resetInvitationAspectCacheForTests } from '../useInvitationAspect';
 
 import { stages, type Invitation, type StageCorrespondence } from '@/api';
-import { touchTarget } from '@/design/tokens';
+import { accent, ink, touchTarget } from '@/design/tokens';
 import type { StageData } from '@/features/Map/stageData';
 import { useStageStore } from '@/store/useStageStore';
 import { BANNED_PHRASES } from '@/testing/bannedInvitationPhrases';
@@ -191,18 +187,18 @@ describe('InvitationNote', () => {
     expect(correspondence).toHaveBeenCalledTimes(1);
   });
 
-  it('wires the press-scale handlers to the decline touchable', () => {
+  it('uses a corner X with pressed-ink feedback', () => {
     // Pressing the decline button must drive usePressScale's handlers, so the
     // scale animation is live (the regression: they were never wired).
-    mockPressIn.mockClear();
-    mockPressOut.mockClear();
-    const inv = invitation({ id: 7 });
-    const { getByTestId } = render(<InvitationNote invitation={inv} onDismiss={noop} />);
+    const { getByTestId } = render(
+      <InvitationNote invitation={invitation({ id: 7 })} onDismiss={noop} />,
+    );
     const btn = getByTestId('invitation-7-dismiss');
+    expect(StyleSheet.flatten(btn.props.style).position).toBe('absolute');
     fireEvent(btn, 'pressIn');
+    expect(btn.findByType(X).props.color).toBe(accent.primary);
     fireEvent(btn, 'pressOut');
-    expect(mockPressIn).toHaveBeenCalledTimes(1);
-    expect(mockPressOut).toHaveBeenCalledTimes(1);
+    expect(btn.findByType(X).props.color).toBe(ink.soft);
   });
 });
 

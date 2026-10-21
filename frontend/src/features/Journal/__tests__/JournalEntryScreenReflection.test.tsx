@@ -601,9 +601,14 @@ describe('JournalEntryScreen -- reflection mode', () => {
 
       expect(getByTestId('journal-save-hint').props.children).toBe('Saved');
       expect(getByTestId('quote-inclusion-hint')).toBeTruthy();
-      fireEvent(getByTestId('writing-session-band-content'), 'layout', {
-        nativeEvent: { layout: { height: 120 } },
-      });
+      // The unmeasured dock is hidden from assistive tech until the page makes room (#3481).
+      fireEvent(
+        getByTestId('writing-session-band-content', { includeHiddenElements: true }),
+        'layout',
+        {
+          nativeEvent: { layout: { height: 120 } },
+        },
+      );
       expect(
         StyleSheet.flatten(getByTestId('journal-compose-stack').props.style).marginBottom,
       ).toBe(120 + SPACING.md);

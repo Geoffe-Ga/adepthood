@@ -65,6 +65,10 @@ jest.mock('@/storage/reflectionDismissalStorage', () => ({
 
 jest.mock('@/storage/morningPagesTipStorage', () => ({
   MORNING_PAGES_TIP_OPEN: { setAsideOn: null, neverOffer: false },
+  clearMorningPagesTipSetAside: async () => {
+    mockLoadTipState.mockResolvedValue(TIP_OPEN);
+    return true;
+  },
   loadMorningPagesTipState: (...a: unknown[]) =>
     (mockLoadTipState as unknown as (...x: unknown[]) => unknown)(...a),
   saveMorningPagesTipSetAside: (...a: unknown[]) =>
@@ -167,14 +171,19 @@ beforeEach(() => {
   ]) {
     mock.mockReset();
   }
+  mockSaveTipSetAside.mockImplementation(async (day) => {
+    mockLoadTipState.mockResolvedValue({ setAsideOn: day, neverOffer: false });
+  });
+  mockSaveTipNever.mockImplementation(async (neverOffer) => {
+    mockLoadTipState.mockResolvedValue({ setAsideOn: null, neverOffer });
+  });
   mockDue.mockResolvedValue({ due: due() });
   mockCurrent.mockResolvedValue({ scopes: [] });
   mockStagesListAll.mockResolvedValue([SURVIVAL]);
   mockLoadDismissed.mockResolvedValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
   mockLoadTipState.mockResolvedValue(TIP_OPEN);
-  mockSaveTipSetAside.mockResolvedValue(undefined);
-  mockSaveTipNever.mockResolvedValue(undefined);
+
   mockFocusCallbacks.current = null;
 });
 
@@ -519,8 +528,12 @@ describe('every invitation control is named by the words it shows (WCAG 2.5.3)',
       expect(buttons.length).toBeGreaterThanOrEqual(4);
       for (const button of buttons) {
         const [label] = visibleText(button);
-        expect(label).toBeDefined();
-        expect(button.props.accessibilityLabel).toContain(label);
+        if (button.props.testID === 'journal-reflection-dismiss') {
+          expect(button.props.accessibilityLabel).toBeTruthy();
+        } else {
+          expect(label).toBeDefined();
+          expect(button.props.accessibilityLabel).toContain(label);
+        }
       }
     },
   );
@@ -535,5 +548,19 @@ describe('every invitation control is named by the words it shows (WCAG 2.5.3)',
     const folded = getByTestId('journal-review-early');
     expect(visibleText(folded)[0]).toBe('Fold the reviews away');
     expect(folded.props.accessibilityLabel).toContain('Fold the reviews away');
+  });
+});
+
+describe('writing prompts set aside in Prompts', () => {
+  it('restores a daily page without changing the permanent decline', async () => {
+    mockDue.mockResolvedValue({ due: null });
+    mockSaveTipSetAside.mockImplementation(async (day) => {
+      mockLoadTipState.mockResolvedValue({ setAsideOn: day, neverOffer: false });
+    });
+    const view = render(<JournalPrimaryInvitation onBeginPage={jest.fn()} />);
+    await view.findByTestId('journal-morning-pages-dismiss');
+    await act(async () => fireEvent.press(view.getByTestId('journal-morning-pages-dismiss')));
+    fireEvent.press(await view.findByTestId('notification-bring-back-morning'));
+    expect(await view.findByTestId('journal-morning-pages-tip')).toBeTruthy();
   });
 });

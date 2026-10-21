@@ -94,6 +94,7 @@ import {
   type SaveRetry,
 } from './useSaveRetry';
 import { useTierWriteQueue, type TierWriteKind } from './useTierWriteQueue';
+import { vaultKeyVendorFor } from './vaultKeyCopy';
 import { countWords, wordCountLabel } from './wordCount';
 import type { LoggedWritingSession, WritingSessionResult } from './writingSession';
 import WritingSessionOffer from './WritingSessionOffer';
@@ -4861,6 +4862,7 @@ function EssayOverlay({
       onClose={modal.onCloseNote}
       onEssayLoaded={modal.onEssayLoaded}
       hasOwnKey={apiKey !== null}
+      ownKeyVendor={vaultKeyVendorFor(apiKey)}
       onFundingRequired={onEssayFundingRequired}
       onOpenSettings={openSettingsFromEssay}
     />

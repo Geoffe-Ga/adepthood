@@ -35,7 +35,7 @@
  * What this buys the banner's ``children`` slot is written out in
  * {@link WritingSessionBanner}.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ScrollView,
   StyleSheet,
@@ -53,6 +53,7 @@ import type { LoggedWritingSession, WritingSessionResult } from './writingSessio
 import WritingSessionBanner from './WritingSessionBanner';
 import WritingTimer from './WritingTimer';
 
+import { decorativeHidden } from '@/components/a11yHidden';
 import { SPACING, journalSheet, touchTarget } from '@/design/tokens';
 import type { EngineDeps } from '@/features/Practice/engine/types';
 
@@ -125,7 +126,10 @@ function useBandClearance(
   const reportLayout = useCallback((event: LayoutChangeEvent) => {
     setVisibleHeight(event.nativeEvent.layout.height);
   }, []);
-  useEffect(() => {
+  // A layout effect, not a passive one: the page makes room for the band in
+  // the same commit that measured it, so no frame is painted between the two
+  // with the band over writing that has not yet moved out of its way (#3481).
+  useLayoutEffect(() => {
     if (idleDocked) {
       onClearanceChange?.(0);
       if (visibleHeight !== null) onIdleDockHeightChange?.(visibleHeight + SPACING.md);
@@ -150,7 +154,7 @@ function useBandClearance(
     },
     [onIdleDockHeightChange],
   );
-  return reportLayout;
+  return { reportLayout, measured: visibleHeight !== null };
 }
 
 function useStandingNote(
@@ -260,18 +264,17 @@ function StandingSessionNote({
 }
 
 function writingBandStyle(
-  idleDocked: boolean,
-  idleDockMaxHeight: number,
+  layout: { idleDocked: boolean; idleDockMaxHeight: number; lift: number; unreserved: boolean },
   rightInset: number,
-  lift: number,
 ) {
   return [
     styles.band,
-    idleDocked ? styles.idleDock : null,
+    layout.idleDocked ? styles.idleDock : null,
     {
       right: rightInset,
-      bottom: idleDocked ? 0 : lift,
-      maxHeight: idleDocked ? idleDockMaxHeight : undefined,
+      bottom: layout.idleDocked ? 0 : layout.lift,
+      maxHeight: layout.idleDocked ? layout.idleDockMaxHeight : undefined,
+      opacity: layout.unreserved ? 0 : 1,
     },
   ];
 }
@@ -290,14 +293,24 @@ function useWritingBandLayout(
 ) {
   const { idleDocked, idleDockMaxHeight, beginFloatingSession } = useIdleTimerDock();
   const bounds = useBandBounds();
-  const reportLayout = useBandClearance(
+  const { reportLayout, measured } = useBandClearance(
     onClearanceChange,
     onIdleDockHeightChange,
     bounds.scrollWholeSurface,
     bounds.lift,
     idleDocked,
   );
-  return { ...bounds, idleDocked, idleDockMaxHeight, beginFloatingSession, reportLayout };
+  // An untouched dock has room on the page only once it has been measured, so
+  // until then it lays out unpainted and untouchable instead of over the writing.
+  const unreserved = idleDocked && !measured;
+  return {
+    ...bounds,
+    idleDocked,
+    idleDockMaxHeight,
+    beginFloatingSession,
+    reportLayout,
+    unreserved,
+  };
 }
 
 function WritingSessionSurface({
@@ -315,8 +328,9 @@ function WritingSessionSurface({
   const layout = useWritingBandLayout(onClearanceChange, onIdleDockHeightChange);
   return (
     <View
-      style={writingBandStyle(layout.idleDocked, layout.idleDockMaxHeight, rightInset, layout.lift)}
-      pointerEvents="box-none"
+      style={writingBandStyle(layout, rightInset)}
+      pointerEvents={layout.unreserved ? 'none' : 'box-none'}
+      {...decorativeHidden(layout.unreserved)}
       onLayout={layout.reportBandLayout}
       testID="writing-session-band"
     >
@@ -368,8 +382,9 @@ const styles = StyleSheet.create({
   },
   /**
    * An untouched phone timer is a quiet tray below the paper, not an overlay.
-   * It gives the writing sheet the remaining flex height and needs no synthetic
-   * page clearance because it cannot cover anything inside that sheet.
+   * The page takes its measured height off the bottom of the writing column,
+   * so it covers nothing inside the sheet; until that height is known it is
+   * not painted at all (#3481).
    */
   idleDock: {
     position: 'absolute',

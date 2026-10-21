@@ -16,6 +16,7 @@ import {
   setProgramAnchorDaysAgo,
   signUp,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * Due-review dismissal is the fourth account-owned decline store (#3289,
@@ -94,12 +95,14 @@ function dismissControl(page: Page): Locator {
 
 /** The shelf settled on the daily page: the review was set aside, not still loading. */
 async function expectSetAside(page: Page): Promise<void> {
+  await openPrompts(page);
   await expect(morningPages(page)).toBeVisible();
   await expect(band(page)).toHaveCount(0);
 }
 
 /** The shelf settled on the due review. */
 async function expectOffered(page: Page): Promise<void> {
+  await openPrompts(page);
   await expect(band(page)).toBeVisible();
   await expect(morningPages(page)).toHaveCount(0);
 }

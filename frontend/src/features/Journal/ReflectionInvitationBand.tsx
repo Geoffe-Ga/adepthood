@@ -11,10 +11,10 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import ReflectionDismiss from './ReflectionDismiss';
+import { useReportNotificationPresence } from './notificationPresence';
+import ReflectionDismiss, { closeCornerReserve } from './ReflectionDismiss';
 import {
   REVIEW_BAND_LABEL,
-  REVIEW_DISMISS,
   REVIEW_DISMISS_A11Y,
   REVIEW_INVITE_SUBLINE,
   REVIEW_RESUME_SUBLINE,
@@ -50,6 +50,7 @@ function ReflectionInvitationBand({
   onOpen,
   onDismiss,
 }: ReflectionInvitationBandProps): React.JSX.Element {
+  useReportNotificationPresence('writing', true, 1);
   const { scope, stageTitle } = review;
   const title = reviewTitle(scope, stageTitle);
   const resuming = scope.existing_entry_id != null;
@@ -75,7 +76,7 @@ function ReflectionInvitationBand({
         </Text>
       </TouchableOpacity>
       <ReflectionDismiss
-        label={REVIEW_DISMISS}
+        variant="close"
         accessibilityLabel={REVIEW_DISMISS_A11Y}
         testID="journal-reflection-dismiss"
         onPress={onDismiss}
@@ -98,6 +99,7 @@ const styles = StyleSheet.create({
   },
   openArea: {
     minHeight: touchTarget.minimum,
+    marginRight: closeCornerReserve(SPACING.lg),
   },
   label: {
     ...editorialType.caption,

@@ -1,4 +1,11 @@
-import { expect, test, type Page, type TestInfo } from '@playwright/test';
+import {
+  expect,
+  test,
+  type Locator,
+  type Page,
+  type Request,
+  type TestInfo,
+} from '@playwright/test';
 
 import { signUp } from './journalHabitsBrowserSupport';
 
@@ -21,14 +28,90 @@ const LAPTOP = { width: 1280, height: 720 } as const;
 const ZOOM_200 = 2;
 const DOOR = 'journal-notifications-open';
 const CENTER = 'journal-notification-center';
-const COUNTED_LABEL = /^Notifications \((\d+)\)$/u;
+const COUNTED_LABEL = /^Prompts \((\d+)\)$/u;
 
-/** The number of items the home's door says are waiting, once it has loaded. */
-async function waitingCount(page: Page): Promise<number> {
-  const door = page.getByTestId(DOOR);
-  await expect(door).toHaveText(COUNTED_LABEL);
+/**
+ * The reads the door's count sums (`useNotificationCount`): the Return check,
+ * the invitations, the stage's prompts, voice readiness and the due review.
+ * Each loads on its own, and the label shows as soon as any one has answered
+ * (#3481). The morning-pages tip is read from device storage, not the network.
+ */
+const COUNT_SOURCES = [
+  /^\/metta-return$/u,
+  /^\/invitations$/u,
+  /^\/prompts\/stage\/\d+$/u,
+  /^\/corpus\/voice-readiness$/u,
+  /^\/reflections\/due$/u,
+];
+/** How long a settled reading must hold still before it is trusted. */
+const STEADY_MS = 500;
+
+interface CountSources {
+  /** Every source has answered at least once, and none is still out. */
+  settled: () => boolean;
+}
+
+/** Follow the count's source reads from before the app first asks for them. */
+function trackCountSources(page: Page): CountSources {
+  const inFlight = new Set<Request>();
+  const answered = new Set<number>();
+  const source = (request: Request): number =>
+    request.method() === 'GET'
+      ? COUNT_SOURCES.findIndex((pattern) => pattern.test(new URL(request.url()).pathname))
+      : -1;
+  page.on('request', (request) => {
+    if (source(request) >= 0) inFlight.add(request);
+  });
+  const finished = (request: Request): void => {
+    const index = source(request);
+    if (index < 0) return;
+    inFlight.delete(request);
+    answered.add(index);
+  };
+  page.on('requestfinished', finished);
+  page.on('requestfailed', finished);
+  return { settled: () => inFlight.size === 0 && answered.size === COUNT_SOURCES.length };
+}
+
+/**
+ * Read `read` once the count's sources have all answered and the reading has
+ * held still for {@link STEADY_MS}: an answer arrives a moment before it is
+ * rendered, so a single read can still catch the page between the two.
+ */
+async function settledReading<T>(
+  sources: CountSources,
+  read: () => Promise<T>,
+  what: string,
+): Promise<T> {
+  await expect
+    .poll(sources.settled, { message: `every source of the count has answered (${what})` })
+    .toBe(true);
+  let last: T | undefined;
+  let held = false;
+  await expect
+    .poll(
+      async () => {
+        const now = await read();
+        held = last !== undefined && now === last;
+        last = now;
+        return held && sources.settled();
+      },
+      { intervals: [STEADY_MS], message: `${what} has settled` },
+    )
+    .toBe(true);
+  return last as T;
+}
+
+async function countOn(door: Locator): Promise<number> {
   const match = COUNTED_LABEL.exec((await door.textContent()) ?? '');
   return Number(match?.[1]);
+}
+
+/** The number of items the home's door says are waiting, once every source has loaded. */
+async function waitingCount(page: Page, sources: CountSources): Promise<number> {
+  const door = page.getByTestId(DOOR);
+  await expect(door).toHaveText(COUNTED_LABEL);
+  return settledReading(sources, () => countOn(door), 'the door count');
 }
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -39,11 +122,12 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
   page,
 }, testInfo) => {
   await page.setViewportSize(PHONE);
+  const sources = trackCountSources(page);
   await signUp(page, 'notification-center');
 
   // A fresh account is in Beige, whose three prompts are all still offered, so
   // the door counts at least those three; it is a number in words, no badge.
-  const before = await waitingCount(page);
+  const before = await waitingCount(page, sources);
   expect(before).toBeGreaterThanOrEqual(3);
   await capture(page, testInfo, 'home-door-390');
 
@@ -72,13 +156,14 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
   );
 
   // Back on the home, the door has re-read its sources: one fewer card waits.
-  await page.goBack();
-  await expect(page.getByTestId(DOOR)).toHaveText(`Notifications (${before - 1})`);
+  await page.getByRole('button', { name: 'Open Prompts menu' }).click();
+  await page.getByTestId('drawer-nav-Journal').click();
+  await expect(page.getByTestId(DOOR)).toHaveText(`Prompts (${before - 1})`);
 
   // The drawer's door carries no count and opens the same screen.
   await page.getByRole('button', { name: 'Open Journal menu' }).click();
-  const drawerDoor = page.getByRole('dialog').getByTestId('journal-drawer-notifications');
-  await expect(drawerDoor).toHaveText('Notifications');
+  const drawerDoor = page.getByRole('dialog').getByTestId('drawer-nav-Prompts');
+  await expect(drawerDoor).toHaveText('Prompts');
   await drawerDoor.click();
   const reopened = page.getByTestId(CENTER);
   await expect(reopened).toBeVisible();
@@ -92,16 +177,21 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
     await reopened.getByTestId(`journal-stage-prompt-set-aside-${ordinal}`).click();
     await expect(reopened.getByTestId(`journal-stage-prompt-card-${ordinal}`)).toHaveCount(0);
   }
+  await reopened.getByTestId('journal-morning-pages-dismiss').click();
+  // Whether the voice band is offered is the server's answer, so wait for it
+  // before deciding there is nothing to decline.
   const voiceDecline = reopened.getByTestId('journal-voice-readiness-dismiss');
-  if ((await voiceDecline.count()) > 0) await voiceDecline.click();
+  if ((await settledReading(sources, () => voiceDecline.count(), 'the voice band')) > 0)
+    await voiceDecline.click();
   await expect(reopened.getByTestId('journal-notification-center-empty')).toHaveText(
     'Nothing waiting.',
   );
   await capture(page, testInfo, 'center-empty-1280');
   await page.setViewportSize(PHONE);
   await capture(page, testInfo, 'center-empty-390');
-  await page.goBack();
-  await expect(page.getByTestId(DOOR)).toHaveText('Notifications');
+  await page.getByRole('button', { name: 'Open Prompts menu' }).click();
+  await page.getByTestId('drawer-nav-Journal').click();
+  await expect(page.getByTestId(DOOR)).toHaveText('Prompts');
 });
 
 test('the Notification Center and its door hold together at 200% text, phone and laptop', async ({
@@ -117,9 +207,11 @@ test('the Notification Center and its door hold together at 200% text, phone and
     });
     const page = await context.newPage();
     try {
+      const sources = trackCountSources(page);
       await signUp(page, `notification-center-zoom-${label}`);
       const door = page.getByTestId(DOOR);
-      await expect(door).toHaveText(COUNTED_LABEL);
+      // Measure the door at its settled label, not a narrower partial count.
+      await waitingCount(page, sources);
       // The three doors may wrap at this size, but none may leave the screen.
       const box = await door.boundingBox();
       const width = viewport.width / ZOOM_200;

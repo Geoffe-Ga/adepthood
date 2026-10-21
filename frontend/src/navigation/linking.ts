@@ -51,6 +51,7 @@ export const linking: LinkingOptions<LinkedRootParamList> = {
             },
           },
           Journal: 'journal',
+          Prompts: 'prompts',
           Map: 'map',
         },
       },

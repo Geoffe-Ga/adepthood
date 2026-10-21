@@ -136,3 +136,8 @@ export async function restoreMorningPagesTip(): Promise<boolean> {
     return false;
   }
 }
+
+/** Restore today's card without undoing the separate never-offer preference. */
+export async function clearMorningPagesTipSetAside(): Promise<boolean> {
+  return saveDecline(scopedKey(SET_ASIDE_ON_KEY), '');
+}
