@@ -59,43 +59,57 @@ interface OverlapFrame {
  * either way. A frame callback measures what that frame will paint, so this
  * asserts on what a writer could see. Visible writing is the body inside the
  * sheet inside the page's scroller, since anything past the scroller is clipped.
+ *
+ * The sheet's entrance (`useEntrance`) fades it in while it slides up a few
+ * pixels from below, so for its first frames the paper is drawn lower than
+ * where it is laid out. That slide is a deliberate visual offset, not where the
+ * page put the writing, so each frame is measured at the sheet's laid-out
+ * position: the entrance's current translation is taken back out. Taking it
+ * out leaves sub-pixel residue at the paper's edge, so an overlap counts once
+ * it is deeper than the file's edge tolerance.
  */
 async function watchPaintedOverlap(page: Page): Promise<void> {
-  await page.evaluate((key) => {
-    const frames: OverlapFrame[] = [];
-    const store = window as unknown as Record<string, OverlapFrame[] | (() => void)>;
-    store[key] = frames;
-    let watching = true;
-    store[`${key}Stop`] = () => {
-      watching = false;
-    };
-    const rectOf = (id: string): DOMRect | null =>
-      document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect() ?? null;
-    const sample = (): void => {
-      if (!watching) return;
-      const band = document.querySelector('[data-testid="writing-session-band"]');
-      const timer = rectOf('writing-timer-pill');
-      const clips = ['journal-body-input', 'journal-sheet', 'journal-page-scroll'].map(rectOf);
-      const painted = band !== null && Number(getComputedStyle(band).opacity) > 0;
-      if (painted && timer && clips.every((rect) => rect !== null)) {
-        const rects = clips as DOMRect[];
-        const top = Math.max(...rects.map((r) => r.top));
-        const bottom = Math.min(...rects.map((r) => r.bottom));
-        const left = Math.max(...rects.map((r) => r.left));
-        const right = Math.min(...rects.map((r) => r.right));
-        const width = Math.min(right, timer.right) - Math.max(left, timer.left);
-        const height = Math.min(bottom, timer.bottom) - Math.max(top, timer.top);
-        if (width > 0 && height > 0)
-          frames.push({
-            area: Math.round(width * height),
-            timer: [timer.top, timer.bottom].map(Math.round),
-            writing: [top, bottom].map(Math.round),
-          });
-      }
+  await page.evaluate(
+    ({ key, tolerance }) => {
+      const frames: OverlapFrame[] = [];
+      const store = window as unknown as Record<string, OverlapFrame[] | (() => void)>;
+      store[key] = frames;
+      let watching = true;
+      store[`${key}Stop`] = () => {
+        watching = false;
+      };
+      const rectOf = (id: string): DOMRect | null =>
+        document.querySelector(`[data-testid="${id}"]`)?.getBoundingClientRect() ?? null;
+      const sample = (): void => {
+        if (!watching) return;
+        const band = document.querySelector('[data-testid="writing-session-band"]');
+        const sheetNode = document.querySelector('[data-testid="journal-sheet"]');
+        const timer = rectOf('writing-timer-pill');
+        const clips = ['journal-body-input', 'journal-sheet', 'journal-page-scroll'].map(rectOf);
+        const painted = band !== null && Number(getComputedStyle(band).opacity) > 0;
+        if (painted && sheetNode && timer && clips.every((rect) => rect !== null)) {
+          const rects = clips as DOMRect[];
+          const transform = getComputedStyle(sheetNode).transform;
+          const slide = transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m42;
+          const top = Math.max(...rects.map((r) => r.top)) - slide;
+          const bottom = Math.min(...rects.map((r) => r.bottom)) - slide;
+          const left = Math.max(...rects.map((r) => r.left));
+          const right = Math.min(...rects.map((r) => r.right));
+          const width = Math.min(right, timer.right) - Math.max(left, timer.left);
+          const height = Math.min(bottom, timer.bottom) - Math.max(top, timer.top);
+          if (width > 0 && height > tolerance)
+            frames.push({
+              area: Math.round(width * height),
+              timer: [timer.top, timer.bottom].map(Math.round),
+              writing: [top, bottom].map(Math.round),
+            });
+        }
+        requestAnimationFrame(sample);
+      };
       requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
-  }, OVERLAP_FRAMES);
+    },
+    { key: OVERLAP_FRAMES, tolerance: EDGE_TOLERANCE },
+  );
 }
 
 /** Stop the watch and return every painted frame in which the timer covered visible writing. */
