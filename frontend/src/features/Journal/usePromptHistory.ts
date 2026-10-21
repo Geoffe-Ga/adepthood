@@ -52,7 +52,7 @@ async function readHistoryPage(
   setPage((prev) => ({ ...prev, loading: true, error: null }));
   try {
     const page = await fetchHistory(
-      { limit: PROMPT_HISTORY_PAGE_SIZE, offset },
+      { limit: PROMPT_HISTORY_PAGE_SIZE, offset, include_unanswered: true },
       account.token ?? undefined,
     );
     if (!isCurrent()) return;

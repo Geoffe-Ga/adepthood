@@ -52,6 +52,22 @@ function mount(fetchHistory: Fetch, visible = true): ReturnType<typeof render> {
 }
 
 describe('PromptHistoryList', () => {
+  it('requests unanswered past questions and lets the writer begin one', async () => {
+    const item = answered(3, { has_responded: false, response: null, timestamp: null });
+    const fetchHistory = jest.fn(async () => page([item]));
+    const onWrite = jest.fn();
+    const view = render(<PromptHistoryList onWrite={onWrite} fetchHistory={fetchHistory} />);
+    const write = await view.findByTestId('prompt-history-write-3');
+    expect(fetchHistory).toHaveBeenCalledWith(
+      { limit: 20, offset: 0, include_unanswered: true },
+      ACCOUNT_A,
+    );
+    expect(view.getByText(item.question)).toBeTruthy();
+    expect(view.queryByTestId('prompt-history-response-3')).toBeNull();
+    fireEvent.press(write);
+    expect(onWrite).toHaveBeenCalledWith(item);
+  });
+
   it('lists every past prompt with the answer the person wrote', async () => {
     const fetchHistory = jest.fn(async () => page([answered(3), answered(2)]));
     const utils = mount(fetchHistory as unknown as Fetch);
@@ -90,10 +106,13 @@ describe('PromptHistoryList', () => {
     expect((second[0] as { offset?: number }).offset).toBe(1);
   });
 
-  it('says so plainly when nothing has been answered yet', async () => {
+  it('describes an empty timeline without implying that answers are required', async () => {
     const fetchHistory = jest.fn(async () => page([]));
     const utils = mount(fetchHistory as unknown as Fetch);
     await waitFor(() => expect(utils.getByTestId('prompt-history-empty')).toBeTruthy());
+    expect(utils.getByTestId('prompt-history-empty').props.children).toBe(
+      'No past prompts yet. Current prompts appear above.',
+    );
   });
 
   it('reports a load failure instead of showing an empty history', async () => {
