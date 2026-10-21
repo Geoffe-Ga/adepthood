@@ -2,7 +2,7 @@
 /**
  * The shelf's one primary writing invitation (issue #2867): on a review day an
  * undismissed review is THE call to write, otherwise the daily page is, and
- * the quiet "Start a review early" link is always beneath either.
+ * the explanatory "Start a review early" card is always beneath either.
  *
  * Retargeted from the old self-contained ``ReflectionInvitationBand`` suite:
  * the band is now a presentational card this component chooses, so every
@@ -293,7 +293,7 @@ describe('JournalPrimaryInvitation on a review day', () => {
 });
 
 describe('JournalPrimaryInvitation on any other day', () => {
-  it('offers the daily page, with the early-review link beneath it', async () => {
+  it('offers the daily page, with the early-review card beneath it', async () => {
     mockDue.mockResolvedValue({ due: null });
     const { findByTestId, getByText, getByTestId, queryByTestId } = renderInvitation();
     await findByTestId('journal-morning-pages-tip');
@@ -312,16 +312,27 @@ describe('JournalPrimaryInvitation on any other day', () => {
   });
 });
 
-describe('the early-review link', () => {
-  it('sits on the section edge in the button face, level with the set-aside count', async () => {
+describe('the early-review card', () => {
+  it('keeps the explanation and picker action together inside a Morning Pages-style card', async () => {
     mockDue.mockResolvedValue({ due: null });
     const { findByTestId, getByTestId } = renderInvitation();
     await findByTestId('journal-morning-pages-tip');
-    const link = getByTestId('journal-review-early');
+    const card = getByTestId('journal-review-early-card');
+    const link = within(card).getByTestId('journal-review-early');
+    expect(within(card).getByText('Review your Morning Pages')).toBeTruthy();
+    expect(
+      within(card).getByText(
+        'Reviews keep the lessons, patterns, and emotional experiences in your Morning Pages alive by revisiting them at regular intervals, carrying quotes from daily entries into broader learnings. What is your self-examination telling you this week, this stage, this trimester, or across the whole course?',
+      ),
+    ).toBeTruthy();
 
-    // No self-indent and no side padding: the label starts where the eyebrow
-    // above it starts. Button.base centres its label, so the row must be told
-    // to lead from the left or the link would float mid-column.
+    const morning = StyleSheet.flatten(getByTestId('journal-morning-pages-band').props.style);
+    const review = StyleSheet.flatten(card.props.style);
+    expect(review.backgroundColor).toBe(morning.backgroundColor);
+    expect(review.borderLeftColor).toBe(morning.borderLeftColor);
+    expect(review.borderRadius).toBe(morning.borderRadius);
+
+    // The action shares the explanation's edge, inside its own card.
     const control = StyleSheet.flatten(link.props.style);
     expect(control.alignSelf).toBeUndefined();
     expect(control.paddingHorizontal).toBe(0);

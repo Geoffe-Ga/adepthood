@@ -29,7 +29,12 @@ export const REVIEW_DISMISS = 'Not now';
  */
 export const REVIEW_DISMISS_A11Y = 'Not now, set this reflection invitation aside';
 
-/** The quiet link that opens the early-review picker, present every day. */
+/** The persistent card explaining how daily writing grows into wider reviews. */
+export const REVIEW_EARLY_TITLE = 'Review your Morning Pages';
+export const REVIEW_EARLY_BODY =
+  'Reviews keep the lessons, patterns, and emotional experiences in your Morning Pages alive by revisiting them at regular intervals, carrying quotes from daily entries into broader learnings. What is your self-examination telling you this week, this stage, this trimester, or across the whole course?';
+
+/** The action that opens the early-review picker, present every day. */
 export const REVIEW_EARLY_LINK = 'Start a review early';
 
 /** The accessibility label for opening the early-review picker. */
@@ -92,6 +97,8 @@ export const REVIEW_INVITATION_COPY_ENTRIES: readonly string[] = [
   REVIEW_RESUME_SUBLINE,
   REVIEW_DISMISS,
   REVIEW_DISMISS_A11Y,
+  REVIEW_EARLY_TITLE,
+  REVIEW_EARLY_BODY,
   REVIEW_EARLY_LINK,
   REVIEW_EARLY_A11Y,
   REVIEW_EARLY_CLOSE,
