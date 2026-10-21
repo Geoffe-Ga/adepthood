@@ -16,8 +16,8 @@ from sqlmodel import col, select
 from bounds import PromptOrdinalPath, StageNumberPath, WeekNumberPath
 from database import get_session
 from dependencies.timezone import current_user_timezone
-from domain.constants import TOTAL_PROGRAM_DAYS
-from domain.program_calendar import calendar_week, elapsed_days, resolve_program_anchor
+from domain.program_calendar import calendar_week, resolve_program_anchor
+from domain.prompt_history import past_prompt_weeks
 from domain.stage_progress import get_user_progress
 from domain.weekly_prompts import (
     TOTAL_WEEKS,
@@ -246,14 +246,8 @@ async def _history_with_unanswered(
     or retired question), and remain readable even in the current week.
     """
     now = datetime.now(UTC)
-    last_past_week = await _get_user_week(session, user_id, tz, now=now) - 1
     progress = await get_user_progress(session, user_id)
-    if (
-        progress
-        and elapsed_days(resolve_program_anchor(progress), now, tz=tz) >= TOTAL_PROGRAM_DAYS
-    ):
-        # calendar_week saturates at 36; the last week can still become past.
-        last_past_week = TOTAL_WEEKS
+    last_past_week = past_prompt_weeks(progress, now, tz)
     responses = (
         (await session.execute(select(PromptResponse).where(PromptResponse.user_id == user_id)))
         .scalars()
@@ -279,9 +273,11 @@ async def list_prompt_history(
 ) -> PromptListResponse:
     """List saved responses, optionally including unanswered past weekly prompts.
 
-    ``include_unanswered`` adds questions from past program weeks using the
-    caller's local calendar. The default remains answered-only for clients
-    that use history to determine which prompts have been written to.
+    ``include_unanswered`` adds questions from completed weeks across recorded
+    program cycles, counted in the caller's timezone. Past questions survive
+    begin-again; missing historical calendars are never guessed. The default
+    remains answered-only for clients that use history to determine which
+    prompts have been written to.
 
     With ``include_total=true`` (default) the count subquery runs and
     ``has_more`` is ``offset + limit < total``.  With

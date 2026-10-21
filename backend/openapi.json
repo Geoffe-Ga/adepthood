@@ -25602,7 +25602,7 @@
     },
     "/prompts/history": {
       "get": {
-        "description": "List saved responses, optionally including unanswered past weekly prompts.\n\n``include_unanswered`` adds questions from past program weeks using the\ncaller's local calendar. The default remains answered-only for clients\nthat use history to determine which prompts have been written to.\n\nWith ``include_total=true`` (default) the count subquery runs and\n``has_more`` is ``offset + limit < total``.  With\n``include_total=false`` the response carries ``total=None`` and\nuses a peek pattern -- fetch ``limit + 1`` rows, return at most\n``limit`` items, set ``has_more`` from whether the peek row\nmaterialised -- so cursor pagination stays accurate for mid-\ncurriculum users without paying for ``COUNT(*)``.",
+        "description": "List saved responses, optionally including unanswered past weekly prompts.\n\n``include_unanswered`` adds questions from completed weeks across recorded\nprogram cycles, counted in the caller's timezone. Past questions survive\nbegin-again; missing historical calendars are never guessed. The default\nremains answered-only for clients that use history to determine which\nprompts have been written to.\n\nWith ``include_total=true`` (default) the count subquery runs and\n``has_more`` is ``offset + limit < total``.  With\n``include_total=false`` the response carries ``total=None`` and\nuses a peek pattern -- fetch ``limit + 1`` rows, return at most\n``limit`` items, set ``has_more`` from whether the peek row\nmaterialised -- so cursor pagination stays accurate for mid-\ncurriculum users without paying for ``COUNT(*)``.",
         "operationId": "list_prompt_history_prompts_history_get",
         "parameters": [
           {

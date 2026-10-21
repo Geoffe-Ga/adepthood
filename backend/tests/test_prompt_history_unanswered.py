@@ -7,10 +7,13 @@ from typing import Self
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from domain import weekly_prompts
+from domain.constants import TOTAL_STAGES
 from domain.stage_progress import ensure_user_progress
 from domain.weekly_prompts import TOTAL_WEEKS, resolve_week_prompt
+from models.stage_progress import StageProgress
 from routers import prompts
 
 NOW = datetime(2026, 10, 21, 12, tzinfo=UTC)
@@ -183,3 +186,58 @@ async def test_retired_questions_keep_the_saved_answer_without_inventing_missing
     assert body["items"][0]["question"] == saved.json()["question"]
     assert body["items"][0]["response"] == saved.json()["response"]
     assert body["items"][0]["default_title"] is None
+
+
+async def finish_and_restart(client: AsyncClient, session: AsyncSession) -> dict[str, str]:
+    """A completed calendar with one sparse response, restarted over the real API."""
+    headers = await arrange(client, session, days=252)
+    saved = await client.post(
+        "/prompts/10/respond",
+        headers=headers,
+        json={"response": "Only one prior answer.", "prompt_ordinal": 2},
+    )
+    assert saved.status_code == HTTPStatus.CREATED, saved.json()
+    progress = (await session.execute(select(StageProgress))).scalars().one()
+    progress.current_stage = TOTAL_STAGES
+    progress.completed_stages = list(range(1, TOTAL_STAGES))
+    session.add(progress)
+    await session.commit()
+    reset = await client.post("/stages/begin-again", headers=headers)
+    assert reset.status_code == HTTPStatus.OK, reset.json()
+    assert reset.json()["cycle_number"] == 2
+    return headers
+
+
+@pytest.mark.asyncio
+async def test_past_questions_survive_a_real_begin_again(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await finish_and_restart(async_client, db_session)
+    body = (
+        await async_client.get("/prompts/history?include_unanswered=true", headers=headers)
+    ).json()
+    assert body["total"] == TOTAL_WEEKS
+    assert [row["week_number"] for row in body["items"]] == list(range(TOTAL_WEEKS, 0, -1))
+    answers = [row for row in body["items"] if row["has_responded"]]
+    assert [row["week_number"] for row in answers] == [10]
+    assert answers[0]["response"] == "Only one prior answer."
+    default = (await async_client.get("/prompts/history", headers=headers)).json()
+    assert default["items"] == answers
+
+
+@pytest.mark.asyncio
+async def test_unknown_cycle_calendar_does_not_guess_weeks_from_lifetime_answers(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    headers = await finish_and_restart(async_client, db_session)
+    progress = (await db_session.execute(select(StageProgress))).scalars().one()
+    # A cycle left before anchors were retained; there is no date to recover.
+    progress.past_cycle_anchors = [None]
+    db_session.add(progress)
+    await db_session.commit()
+    body = (
+        await async_client.get("/prompts/history?include_unanswered=true", headers=headers)
+    ).json()
+    assert body["total"] == 1
+    assert [row["week_number"] for row in body["items"]] == [10]
+    assert body["items"][0]["response"] == "Only one prior answer."
