@@ -40,6 +40,7 @@ from domain.creek_vault import (
     CreekVaultContractError,
     CreekVaultError,
     CreekVaultPayloadError,
+    CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultErrorCode,
@@ -2007,8 +2008,8 @@ async def test_ingest_connect_failure_raises_unavailable(
         ),
         pytest.param(
             _IngestReply(status=HTTPStatus.TOO_MANY_REQUESTS, payload={"detail": "slow down"}),
-            CreekVaultUnavailableError,
-            id="uncoded_429_is_throttling",
+            CreekVaultRateLimitedError,
+            id="uncoded_429_is_a_wait",
         ),
         pytest.param(
             _IngestReply(status=HTTPStatus.INTERNAL_SERVER_ERROR, payload={"detail": "boom"}),
@@ -2033,7 +2034,17 @@ async def test_ingest_classifies_an_uncoded_status_by_class(
     expected: type[CreekVaultError],
     http_clients: ClientFactory,
 ) -> None:
-    """Uncoded, a 4xx is our contract fault -- except the two that describe the vault."""
+    """Uncoded, a 4xx is our contract fault -- except the two that describe the vault.
+
+    The ``type(...) is expected`` identity is what makes the 429 row a claim
+    rather than a tautology: that status is narrowed to
+    :class:`CreekVaultRateLimitedError`, a *subclass* of the unavailable type
+    (Creek-Vault#1903 step 6), so an assertion by ``isinstance`` would have
+    passed before and after the narrowing, and one naming the parent would pass
+    for a classifier that had stopped narrowing at all. Every other row asserts,
+    by the same identity, that the narrowing did **not** reach it: a 408 and a
+    500 are still plain absences, because waiting is not what clears them.
+    """
     client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
     with pytest.raises(expected) as exc_info:
         await client.ingest(_ingest_request())

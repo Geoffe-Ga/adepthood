@@ -111,6 +111,7 @@ from domain.creek_vault import (
     CreekVaultError,
     CreekVaultPayloadError,
     CreekVaultPipelineClient,
+    CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultClassification,
@@ -1105,17 +1106,17 @@ class _CallDepartures:
 #: each site, so the common case allocates nothing and reads as the default it is.
 _STANDING_CALL = _CallDepartures()
 _UNVERSIONED_CALL = _CallDepartures(contract_versioned=False)
-_KEYED_CALL = _CallDepartures(forwards_provider_key=True)
 
 # The departures one reflection runs under: keyed, like the letter route beside
-# it, and the only call that asks for the standing deadline *explicitly*. Its
+# it, and one of the two calls that ask for the standing deadline *explicitly*.
+# Its
 # deadline is :data:`_VAULT_TOTAL_DEADLINE_SECONDS` rather than a longer one, so
 # nothing about how long a reflection may take changes here -- what changes is
 # that the deadline becomes *reachable*. Naming it is the only way to say so,
 # because the standing path leaves the pooled client's per-phase budgets in
 # place and that client's ``read`` phase is :data:`_VAULT_TIMEOUT_SECONDS`: a
 # phase budget is checked long before a whole-request deadline is, so a
-# reflection asked for under :data:`_KEYED_CALL` died ten seconds from request
+# reflection asked for without a named deadline died ten seconds from request
 # to first byte -- the vault's model wake included -- however generous the
 # ``asyncio.timeout`` around it looked. Creek-Vault's ADR 0016 R2 holds a
 # reflection to a p95 of 25 s measured from the vault's receipt of the request,
@@ -1125,6 +1126,27 @@ _KEYED_CALL = _CallDepartures(forwards_provider_key=True)
 _REFLECTION_CALL = _CallDepartures(
     deadline=_VAULT_TOTAL_DEADLINE_SECONDS, forwards_provider_key=True
 )
+
+# The departures one letter runs under, and they are the reflection's exactly.
+# A letter is a generation call on the same ``generation`` chokepoint a
+# reflection is -- the vault wakes the same model and spends the same cap on it
+# -- so the reason #3493 gave the reflection a named deadline applies here
+# unchanged, and this call site simply had not been given it: naming no
+# deadline, it kept the pooled client's per-phase budgets, whose ``read`` is
+# :data:`_VAULT_TIMEOUT_SECONDS`, and a phase budget is checked long
+# before a whole-request deadline is. So a letter died ten seconds from request
+# to first byte, the vault's model wake included, however generous the
+# ``asyncio.timeout`` around it looked.
+#
+# It is also what makes the vault's own admission cap *observable* on this
+# route (Creek-Vault#1903 step 6): a ``429`` the transport cut off before it
+# arrived is reported as a timeout, which is an outage story told about a wait.
+#
+# Spelled as its own constant rather than reusing :data:`_REFLECTION_CALL`,
+# because the two calls agree on a value and not on an identity -- a later
+# change to one route's budget should be a visible edit here rather than a
+# silent change to the other's.
+_LETTER_CALL = _CallDepartures(deadline=_VAULT_TOTAL_DEADLINE_SECONDS, forwards_provider_key=True)
 
 
 def _widened_phase_budgets(deadline: float) -> httpx.Timeout:
@@ -1309,6 +1331,45 @@ def _coerce_error_code(raw: object) -> VaultErrorCode | None:
         return None
 
 
+def _availability_failure(
+    response: httpx.Response, message: str, code: VaultErrorCode | None = None
+) -> CreekVaultError:
+    """Return the availability failure *response* reports: a wait, or an absence.
+
+    The single place that distinction is made, for every ``/v1`` route and for
+    both the coded and the uncoded path, which is what keeps the two
+    model-backed routes from telling a writer two different stories about one
+    cap (Creek-Vault#1903 step 6).
+
+    Keyed on the **status**, deliberately, and it does not overturn the
+    code-first rule its callers document. That rule exists so a *coded* answer
+    is never misattributed by its status class -- ``privacy_refused`` at 403
+    read as a rejected credential was the real misreport it was written for --
+    and ``429`` has no competing code to be misattributed from: it is Creek's
+    status for exactly one code, and :data:`ERROR_STATUS` gives no other code
+    that status. Reading the status is also the only thing that classifies a
+    429 from an intermediary shedding load, which never reaches the vault's
+    error vocabulary at all, and the only thing that works while adepthood's
+    vendored bundle is contract 0.18 -- whose ``ErrorCode`` enum has no
+    ``rate_limited`` member, so :func:`_coerce_error_code` drops the string and
+    there is no code to read. When the bundle advances, the coded path arrives
+    here too and agrees rather than competing.
+
+    Args:
+        response: The non-2xx answer being classified.
+        message: The static, capability-named message to raise with.
+        code: The vault's own reason, when it named one we recognize.
+
+    Returns:
+        :class:`CreekVaultRateLimitedError` for a 429, else
+        :class:`CreekVaultUnavailableError`. Both are the same degrade for
+        every existing caller, because the first is a subclass of the second.
+    """
+    if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+        return CreekVaultRateLimitedError(message, code=code)
+    return CreekVaultUnavailableError(message, code=code)
+
+
 def _faults_our_request(response: httpx.Response) -> bool:
     """Return whether an uncoded status blames the request adepthood sent.
 
@@ -1360,7 +1421,7 @@ def _write_failure(
         return (
             CreekVaultContractError(request_rejected, code=code)
             if code in _CONTRACT_ERROR_CODES
-            else CreekVaultUnavailableError(call_failed, code=code)
+            else _availability_failure(response, call_failed, code)
         )
     return _uncoded_write_failure(
         response,
@@ -1419,7 +1480,7 @@ def _uncoded_write_failure(
         return CreekVaultAuthError(credential_rejected)
     if _faults_our_request(response):
         return CreekVaultContractError(request_rejected)
-    return CreekVaultUnavailableError(call_failed)
+    return _availability_failure(response, call_failed)
 
 
 def _ingest_failure(response: httpx.Response) -> CreekVaultError:
@@ -1482,7 +1543,9 @@ def _letter_failure(response: httpx.Response) -> CreekVaultError:
     )
 
 
-def _coded_read_failure(capability: CreekCapability, code: VaultErrorCode) -> CreekVaultError:
+def _coded_read_failure(
+    capability: CreekCapability, code: VaultErrorCode, response: httpx.Response
+) -> CreekVaultError:
     """Classify a read error from the code the vault itself named.
 
     Total by construction: :data:`_CONTRACT_ERROR_CODES` names the codes that
@@ -1495,12 +1558,17 @@ def _coded_read_failure(capability: CreekCapability, code: VaultErrorCode) -> Cr
     request, and guessing "contract" sends someone hunting a bug that is not
     there. The code travels on the error either way, since it is one of our own
     members by the time it gets here.
+
+    *response* is carried through only so :func:`_availability_failure` can see
+    the status: a coded answer whose code is the vault reporting on itself may
+    still be a cap rather than an absence, and the status is what tells them
+    apart.
     """
     if code in _CONTRACT_ERROR_CODES:
         return CreekVaultContractError(
             _capability_message(_REQUEST_REJECTED, capability), code=code
         )
-    return CreekVaultUnavailableError(_capability_message(_CALL_FAILED, capability), code=code)
+    return _availability_failure(response, _capability_message(_CALL_FAILED, capability), code)
 
 
 def _uncoded_read_failure(capability: CreekCapability, response: httpx.Response) -> CreekVaultError:
@@ -1515,7 +1583,7 @@ def _uncoded_read_failure(capability: CreekCapability, response: httpx.Response)
         return CreekVaultAuthError(_capability_message(_CREDENTIAL_REJECTED, capability))
     if _faults_our_request(response):
         return CreekVaultContractError(_capability_message(_REQUEST_REJECTED, capability))
-    return CreekVaultUnavailableError(_capability_message(_CALL_FAILED, capability))
+    return _availability_failure(response, _capability_message(_CALL_FAILED, capability))
 
 
 def _read_failure(capability: CreekCapability, response: httpx.Response) -> CreekVaultError:
@@ -1545,7 +1613,7 @@ def _read_failure(capability: CreekCapability, response: httpx.Response) -> Cree
     """
     code = _vault_error_code(response)
     if code is not None:
-        return _coded_read_failure(capability, code)
+        return _coded_read_failure(capability, code, response)
     return _uncoded_read_failure(capability, response)
 
 
@@ -2267,6 +2335,16 @@ class HttpCreekVaultClient:
         refused while its text is still a field on a frozen request. It is both
         the stored draft's tier and the admission ceiling, as on the Voice
         Draft PUT.
+
+        It departs on its budget as well as its key (:data:`_LETTER_CALL`), for
+        the reason :meth:`_post_reflection` does and with the same values: the
+        deadline is the standing one, but declaring it carries it into
+        :func:`_widened_phase_budgets` so the transport's ``read`` phase reaches
+        it instead of capping the call at :data:`_VAULT_TIMEOUT_SECONDS`. A
+        letter waits on a model rather than on a lookup, so a letter cut off
+        before the deadline it is measured against is a timeout degrade the
+        vault did nothing to earn -- and a cap it was about to report arrives
+        as that timeout instead of as the wait it is.
         """
         tier = wire_ceiling_for(request.tier)
         segment = _voice_draft_path_segment(request.external_id)
@@ -2276,7 +2354,7 @@ class HttpCreekVaultClient:
                 f"{self._url}{_LETTERS_PATH}{segment}",
                 _letter_body(request, tier),
                 ceiling=tier,
-                departures=_KEYED_CALL,
+                departures=_LETTER_CALL,
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_LETTER_FAILED_MESSAGE) from None

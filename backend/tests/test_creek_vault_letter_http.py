@@ -28,6 +28,10 @@ from domain.creek_vault import (
     VaultTierCeiling,
 )
 from services.creek_vault_client import (
+    _LETTER_CALL,
+    _REFLECTION_CALL,
+    _VAULT_TIMEOUT_SECONDS,
+    _VAULT_TOTAL_DEADLINE_SECONDS,
     CONTRACT_MINOR,
     HttpCreekVaultClient,
     LocalFallbackCreekVaultClient,
@@ -256,3 +260,61 @@ def test_a_letter_request_never_renders_its_prose() -> None:
 
     assert "SENTINEL" not in rendered
     assert _ANCHOR not in rendered
+
+
+@pytest.mark.asyncio
+async def test_a_letter_runs_under_the_widened_phase_budgets() -> None:
+    """A letter's read phase reaches the whole-request deadline, as a reflection's does.
+
+    The divergence this closes (Creek-Vault#1903 step 6). ``_post_reflection``
+    was given :data:`_REFLECTION_CALL` by #3493 so the transport's ``read``
+    phase would reach the thirty-second deadline instead of capping the call at
+    :data:`_VAULT_TIMEOUT_SECONDS`; the letter call beside it named
+    no deadline at all and so kept dying ten seconds from request to first
+    byte, the vault's model wake included, however generous the ``asyncio.timeout``
+    around it looked. A letter is a generation call on the same chokepoint as a
+    reflection, so it was the same bug on the same seam, one call site over.
+
+    It is also what makes the vault's own cap *observable*: a refusal the
+    transport cut off before it arrived is reported as a timeout, which is an
+    outage story told about a wait.
+
+    Four claims, each catching a different way the widening could be undone:
+    the ``read`` equality catches the deadline being dropped from the
+    departures; the three unchanged phases catch a widening that blunts the
+    budgets bounding a genuinely unreachable host; and the capability GET
+    catches the widening having been applied to the pooled client, where it
+    would move every call rather than this one. That last one asserts
+    *inequality* rather than a value: this suite's client is built without
+    :data:`_VAULT_HTTP_TIMEOUT`, so the handshake runs on httpx's own default,
+    and the claim being made is "the widening did not reach this call" rather
+    than any particular number.
+    """
+    route = _LetterRoute(_example("success"))
+    client = await _client(route)
+
+    await client.write_letter(_request())
+
+    post = next(r for r in route.requests if r.url.path.startswith("/v1/letters/"))
+    budgets = post.extensions["timeout"]
+    assert budgets["read"] == _VAULT_TOTAL_DEADLINE_SECONDS
+    assert budgets["connect"] == _VAULT_TIMEOUT_SECONDS
+    assert budgets["write"] == _VAULT_TIMEOUT_SECONDS
+    assert budgets["pool"] == _VAULT_TIMEOUT_SECONDS
+
+    handshake = next(r for r in route.requests if r.url.path == "/v1/capabilities")
+    assert handshake.extensions["timeout"]["read"] != _VAULT_TOTAL_DEADLINE_SECONDS
+
+
+def test_the_two_model_backed_call_sites_depart_on_the_same_budget() -> None:
+    """The reflection and the letter run under one departure shape, not two.
+
+    Asserted on the values rather than on their identity, so a second constant
+    spelling the same thing still passes while a *narrowing* of either does
+    not. The brief for #1903 step 6 names these two call sites as having
+    diverged before; this is the pin that makes the next divergence a failing
+    test rather than a debugging cycle.
+    """
+    assert _LETTER_CALL.deadline == _REFLECTION_CALL.deadline
+    assert _LETTER_CALL.forwards_provider_key is _REFLECTION_CALL.forwards_provider_key
+    assert _LETTER_CALL.contract_versioned is _REFLECTION_CALL.contract_versioned

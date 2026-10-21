@@ -288,6 +288,33 @@ class CreekVaultUnavailableError(CreekVaultError):
         self.code = code
 
 
+class CreekVaultRateLimitedError(CreekVaultUnavailableError):
+    """The vault refused the call at its own per-account cap: a wait, not an outage.
+
+    Creek's admission cap is not a per-route counter. Both of its model-backed
+    routes -- ``POST /v1/reflections`` and ``POST /v1/letters/{external_id}``
+    -- resolve the one ``generation`` stage through the same provider
+    chokepoint, so the refusal is the shared inference pool's admission
+    decision or a 429 from the vendor the writer's own key is spending on, and
+    a writer held at it is held at it on both. Creek reports it identically on
+    both from contract 0.20 (``429 rate_limited``, Creek-Vault#1903 step 6),
+    and this is adepthood's side of that: one type, raised from one place, so
+    the two routes cannot tell a writer two different stories about one limit.
+
+    It subclasses :class:`CreekVaultUnavailableError` rather than sitting
+    beside it, which is the whole of the design. A cap *is* a reason the call
+    did not land, so every caller that already degrades on an absent vault
+    keeps degrading untouched -- the narrowing costs no call site anything --
+    and only a caller that wants to show a wait rather than an outage has to
+    know the difference. :class:`VaultCallTimedOutError` is the same shape for
+    the same reason.
+
+    It is never a :class:`CreekVaultContractError`: a cap says nothing about
+    the request adepthood sent, and classifying it as a contract defect would
+    send an operator hunting a payload bug that is not there.
+    """
+
+
 class VaultSendSuspendedError(CreekVaultUnavailableError):
     """The operator has suspended content-bearing vault requests (#3075).
 
