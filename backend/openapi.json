@@ -6477,7 +6477,7 @@
         "type": "object"
       },
       "PromptListResponse": {
-        "description": "Paginated list of prompt responses; ``total`` is ``None`` when not requested.",
+        "description": "Prompt history, optionally including unanswered weeks; total is nullable.",
         "properties": {
           "has_more": {
             "title": "Has More",
@@ -25602,7 +25602,7 @@
     },
     "/prompts/history": {
       "get": {
-        "description": "List all past prompts and responses for the user, paginated.\n\nWith ``include_total=true`` (default) the count subquery runs and\n``has_more`` is ``offset + limit < total``.  With\n``include_total=false`` the response carries ``total=None`` and\nuses a peek pattern -- fetch ``limit + 1`` rows, return at most\n``limit`` items, set ``has_more`` from whether the peek row\nmaterialised -- so cursor pagination stays accurate for mid-\ncurriculum users without paying for ``COUNT(*)``.",
+        "description": "List saved responses, optionally including unanswered past weekly prompts.\n\n``include_unanswered`` adds questions from past program weeks using the\ncaller's local calendar. The default remains answered-only for clients\nthat use history to determine which prompts have been written to.\n\nWith ``include_total=true`` (default) the count subquery runs and\n``has_more`` is ``offset + limit < total``.  With\n``include_total=false`` the response carries ``total=None`` and\nuses a peek pattern -- fetch ``limit + 1`` rows, return at most\n``limit`` items, set ``has_more`` from whether the peek row\nmaterialised -- so cursor pagination stays accurate for mid-\ncurriculum users without paying for ``COUNT(*)``.",
         "operationId": "list_prompt_history_prompts_history_get",
         "parameters": [
           {
@@ -25636,6 +25636,16 @@
             "schema": {
               "default": true,
               "title": "Include Total",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_unanswered",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Unanswered",
               "type": "boolean"
             }
           },

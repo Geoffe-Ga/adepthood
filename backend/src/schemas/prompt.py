@@ -107,7 +107,7 @@ class PromptSubmit(BaseModel):
 
 
 class PromptListResponse(BaseModel):
-    """Paginated list of prompt responses; ``total`` is ``None`` when not requested."""
+    """Prompt history, optionally including unanswered weeks; total is nullable."""
 
     items: list[PromptDetail]
     total: int | None
