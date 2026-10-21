@@ -27,7 +27,7 @@ const mockBand = jest.fn<() => { stage: StagePromptsResponse | null }>();
 const mockSlots: Record<string, { visible: boolean; count: number }> = {};
 
 jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: mockNavigate }),
+  useNavigation: () => ({ navigate: mockNavigate, setOptions: jest.fn() }),
   useFocusEffect: () => undefined,
 }));
 
@@ -41,6 +41,13 @@ function mockStubSection(slot: string, testID: string) {
     return presence.visible ? <Text testID={testID}>{slot}</Text> : null;
   };
 }
+
+jest.mock('../JournalPrimaryInvitation', () => ({
+  __esModule: true,
+  default: mockStubSection('writing', 'stub-writing'),
+}));
+jest.mock('../PromptHistoryList', () => ({ __esModule: true, default: () => null }));
+jest.mock('../useNotificationCount', () => ({ useFocusRefreshKey: () => 0 }));
 
 jest.mock('../StatTileRow', () => ({
   __esModule: true,
@@ -161,6 +168,7 @@ describe('NotificationCenterScreen', () => {
   it('uses the plain editorial headings the design names', () => {
     expect(NOTIFICATION_CENTER_HEADINGS).toEqual({
       today: 'Today',
+      writing: 'Writing invitations',
       return: 'Return',
       invitations: 'Invitations',
       prompts: "This week's prompts",

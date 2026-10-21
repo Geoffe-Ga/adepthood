@@ -233,6 +233,7 @@ const settingsRow = (name: string, label: string, row: string, anchor: string): 
 
 export const ROUTES: readonly Route[] = [
   tab('Journal', 'Journal shelf', '/journal', 'journal-shelf'),
+  tab('Prompts', 'Prompts', '/prompts', 'journal-notification-center'),
   tab('Habits', 'Habits grid', '/habits', 'habits-list'),
   tab('Practice', 'Practice player', PRACTICE_PATH, 'practice-screen'),
   {

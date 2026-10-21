@@ -118,3 +118,15 @@ describe('Notification Center deep link (#3142)', () => {
     expect(path).toBe('/journal/notifications');
   });
 });
+
+it('opens Prompts as a primary destination from its own path', () => {
+  const state = getStateFromPath('prompts', linking.config);
+  expect(state?.routes[0]?.name).toBe('Tabs');
+  expect(state?.routes[0]?.state?.routes[0]?.name).toBe('Prompts');
+  expect(
+    getPathFromState(
+      { routes: [{ name: 'Tabs', state: { routes: [{ name: 'Prompts' }] } }] },
+      linking.config,
+    ),
+  ).toBe('/prompts');
+});

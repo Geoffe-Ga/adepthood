@@ -130,7 +130,8 @@ const SKIPPED_BUTTONS: readonly ButtonSkip[] = [
  * ran under its own corner X, and the sweep saw it one run in several).
  */
 const SETTLES_ON: Readonly<Record<string, readonly string[]>> = {
-  Journal: ['journal-voice-readiness-band', 'journal-voice-readiness-dismiss'],
+  Prompts: ['journal-voice-readiness-band', 'journal-voice-readiness-dismiss'],
+  JournalNotifications: ['journal-voice-readiness-band', 'journal-voice-readiness-dismiss'],
 };
 
 /**
@@ -168,11 +169,10 @@ const EXTRA_ROUTES: readonly Route[] = [
   },
   {
     name: 'JournalNotifications',
-    label: 'Notification Center',
+    label: 'Prompts (legacy link)',
     anchor: 'journal-notification-center',
     open: async (page) => {
-      await page.goto(`${frontendUrl()}/journal`);
-      await page.getByTestId('journal-notifications-open').click();
+      await page.goto(`${frontendUrl()}/journal/notifications`);
     },
   },
 ];

@@ -24,13 +24,14 @@ beforeEach(() => {
 });
 
 describe('DrawerNavSection', () => {
-  it('renders exactly five rows when every ring is on', () => {
+  it('renders exactly six rows when every ring is on', () => {
     const onNavigate = jest.fn();
     const { getByTestId } = render(
       <DrawerNavSection currentScreen="Journal" onNavigate={onNavigate} />,
     );
 
     expect(getByTestId('drawer-nav-Journal')).toBeTruthy();
+    expect(getByTestId('drawer-nav-Prompts')).toBeTruthy();
     expect(getByTestId('drawer-nav-Habits')).toBeTruthy();
     expect(getByTestId('drawer-nav-Practice')).toBeTruthy();
     expect(getByTestId('drawer-nav-Course')).toBeTruthy();
@@ -46,12 +47,13 @@ describe('DrawerNavSection', () => {
 
     expect(queryByTestId('drawer-nav-Habits')).toBeNull();
     expect(getByTestId('drawer-nav-Journal')).toBeTruthy();
+    expect(getByTestId('drawer-nav-Prompts')).toBeTruthy();
     expect(getByTestId('drawer-nav-Practice')).toBeTruthy();
     expect(getByTestId('drawer-nav-Course')).toBeTruthy();
     expect(getByTestId('drawer-nav-Map')).toBeTruthy();
   });
 
-  it('renders only Journal and Map when every gated ring is off', () => {
+  it('renders Journal, Prompts and Map when every gated ring is off', () => {
     useDepthPreferencesStore.setState({
       enable_habits: false,
       enable_practices: false,
@@ -63,6 +65,7 @@ describe('DrawerNavSection', () => {
     );
 
     expect(getByTestId('drawer-nav-Journal')).toBeTruthy();
+    expect(getByTestId('drawer-nav-Prompts')).toBeTruthy();
     expect(getByTestId('drawer-nav-Map')).toBeTruthy();
     expect(queryByTestId('drawer-nav-Habits')).toBeNull();
     expect(queryByTestId('drawer-nav-Practice')).toBeNull();
@@ -133,4 +136,12 @@ describe('DrawerNavSection', () => {
     expect(flatStyle.height).toBe(StyleSheet.hairlineWidth);
     expect(flatStyle.backgroundColor).toBe(surface.hairline);
   });
+});
+
+it('opens Prompts through primary navigation and closes the shelf', () => {
+  const close = jest.fn();
+  const view = render(<DrawerNavSection currentScreen="Journal" onNavigate={close} />);
+  fireEvent.press(view.getByTestId('drawer-nav-Prompts'));
+  expect(mockRootNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Prompts' });
+  expect(close).toHaveBeenCalledTimes(1);
 });

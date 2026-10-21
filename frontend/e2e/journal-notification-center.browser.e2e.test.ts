@@ -28,18 +28,20 @@ const LAPTOP = { width: 1280, height: 720 } as const;
 const ZOOM_200 = 2;
 const DOOR = 'journal-notifications-open';
 const CENTER = 'journal-notification-center';
-const COUNTED_LABEL = /^Notifications \((\d+)\)$/u;
+const COUNTED_LABEL = /^Prompts \((\d+)\)$/u;
 
 /**
  * The reads the door's count sums (`useNotificationCount`): the Return check,
- * the invitations, the stage's prompts and voice readiness. Each loads on its
- * own, and the label shows as soon as any one has answered (#3481).
+ * the invitations, the stage's prompts, voice readiness and the due review.
+ * Each loads on its own, and the label shows as soon as any one has answered
+ * (#3481). The morning-pages tip is read from device storage, not the network.
  */
 const COUNT_SOURCES = [
   /^\/metta-return$/u,
   /^\/invitations$/u,
   /^\/prompts\/stage\/\d+$/u,
   /^\/corpus\/voice-readiness$/u,
+  /^\/reflections\/due$/u,
 ];
 /** How long a settled reading must hold still before it is trusted. */
 const STEADY_MS = 500;
@@ -154,13 +156,14 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
   );
 
   // Back on the home, the door has re-read its sources: one fewer card waits.
-  await page.goBack();
-  await expect(page.getByTestId(DOOR)).toHaveText(`Notifications (${before - 1})`);
+  await page.getByRole('button', { name: 'Open Prompts menu' }).click();
+  await page.getByTestId('drawer-nav-Journal').click();
+  await expect(page.getByTestId(DOOR)).toHaveText(`Prompts (${before - 1})`);
 
   // The drawer's door carries no count and opens the same screen.
   await page.getByRole('button', { name: 'Open Journal menu' }).click();
-  const drawerDoor = page.getByRole('dialog').getByTestId('journal-drawer-notifications');
-  await expect(drawerDoor).toHaveText('Notifications');
+  const drawerDoor = page.getByRole('dialog').getByTestId('drawer-nav-Prompts');
+  await expect(drawerDoor).toHaveText('Prompts');
   await drawerDoor.click();
   const reopened = page.getByTestId(CENTER);
   await expect(reopened).toBeVisible();
@@ -174,6 +177,7 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
     await reopened.getByTestId(`journal-stage-prompt-set-aside-${ordinal}`).click();
     await expect(reopened.getByTestId(`journal-stage-prompt-card-${ordinal}`)).toHaveCount(0);
   }
+  await reopened.getByTestId('journal-morning-pages-dismiss').click();
   // Whether the voice band is offered is the server's answer, so wait for it
   // before deciding there is nothing to decline.
   const voiceDecline = reopened.getByTestId('journal-voice-readiness-dismiss');
@@ -185,8 +189,9 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
   await capture(page, testInfo, 'center-empty-1280');
   await page.setViewportSize(PHONE);
   await capture(page, testInfo, 'center-empty-390');
-  await page.goBack();
-  await expect(page.getByTestId(DOOR)).toHaveText('Notifications');
+  await page.getByRole('button', { name: 'Open Prompts menu' }).click();
+  await page.getByTestId('drawer-nav-Journal').click();
+  await expect(page.getByTestId(DOOR)).toHaveText('Prompts');
 });
 
 test('the Notification Center and its door hold together at 200% text, phone and laptop', async ({

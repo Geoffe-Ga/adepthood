@@ -181,6 +181,8 @@ async function layoutSnapshot(page: Page): Promise<{ timer: Box; body: Box; shee
 }
 
 async function expectIdleTimerClear(page: Page, phone: boolean): Promise<void> {
+  // The paper translates upward as it enters; read the steady state once it is at rest.
+  await expect(page.getByTestId('journal-sheet')).toHaveCSS('opacity', '1');
   const { timer, body, sheet } = await layoutSnapshot(page);
   const visibleBody = intersectionBox(body, sheet);
   expect(

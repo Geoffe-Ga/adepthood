@@ -90,6 +90,8 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'habits-resumed-session.browser.e2e.test.ts',
   'journal-care-support.browser.e2e.test.ts',
   'privacy-choices.browser.e2e.test.ts',
+  'prompts-history.browser.e2e.test.ts',
+  'prompts-recovery.browser.e2e.test.ts',
   'journal-close-save.browser.e2e.test.ts',
   'journal-corpus-drawer.browser.e2e.test.ts',
   'journal-entry-controls.browser.e2e.test.ts',

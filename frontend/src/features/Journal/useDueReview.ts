@@ -11,7 +11,14 @@
  * review a moment later — a tap in that window would open the wrong page.
  */
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import {
+  useCallback,
+  useRef,
+  useState,
+  type RefObject,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 
 import { resolveStageTitles, type ReviewScope } from './reviewScopes';
 
@@ -43,55 +50,94 @@ export type DueReviewStatus = 'loading' | 'settled';
 async function resolveDueReview(
   isCurrent: () => boolean,
   token: string,
-): Promise<DueReview | null> {
+): Promise<{ review: DueReview; dismissed: boolean } | null> {
   try {
     const { due } = await reflections.due(token);
     if (due == null || !isCurrent()) return null;
-    if (await loadReflectionDismissed(due.scope_key)) return null;
+    const dismissed = await loadReflectionDismissed(due.scope_key);
     if (!isCurrent()) return null;
     const titles = await resolveStageTitles([due]);
-    return { scope: due, stageTitle: titles.get(due.scope_key) ?? null };
+    return { review: { scope: due, stageTitle: titles.get(due.scope_key) ?? null }, dismissed };
   } catch {
     return null;
   }
 }
 
-export function useDueReview(): {
-  status: DueReviewStatus;
+interface ReviewAnswer {
+  epoch: number;
   review: DueReview | null;
-  dismiss: () => void;
-} {
+  dismissed: boolean;
+}
+
+function useReviewChoices(
+  current: ReviewAnswer | null,
+  epoch: number,
+  isCurrent: () => boolean,
+  setAnswer: Dispatch<SetStateAction<ReviewAnswer | null>>,
+  revision: RefObject<number>,
+) {
+  const change = useCallback(
+    async (dismissed: boolean) => {
+      const review = current?.review;
+      if (review == null || !isCurrent()) return;
+      revision.current += 1;
+      const startedAt = revision.current;
+      // A decline is immediate; a restore is shown only once it is durable.
+      if (dismissed) setAnswer({ epoch, review, dismissed: true });
+      try {
+        await saveReflectionDismissed(review.scope.scope_key, dismissed);
+        if (isCurrent() && startedAt === revision.current) setAnswer({ epoch, review, dismissed });
+      } catch {
+        if (isCurrent() && startedAt === revision.current) setAnswer(current);
+      }
+    },
+    [current, epoch, isCurrent, setAnswer, revision],
+  );
+  return {
+    dismiss: () => {
+      void change(true);
+    },
+    restore: () => change(false),
+  };
+}
+
+function reviewViews(current: ReviewAnswer | null) {
+  return {
+    review: current?.dismissed === false ? current.review : null,
+    setAsideReview: current?.dismissed === true ? current.review : null,
+  };
+}
+
+export function useDueReview() {
   const { token } = useAuth();
   const { owner, epoch, isCurrent } = useAccountScope();
-  // Auth adopts the durable namespace before committing its token to React.
-  // That transition must not start an old credential's read in the new scope.
+  // Auth adopts the namespace before committing its token to React.
   const credentialOwner = token ? parseUserId(decodeJwtPayload(token)?.sub) : null;
   const authenticated = owner !== null && credentialOwner === owner;
-  const [answer, setAnswer] = useState<{ epoch: number; review: DueReview | null } | null>(null);
-  const status: DueReviewStatus = authenticated && answer?.epoch === epoch ? 'settled' : 'loading';
-  const review = authenticated && answer?.epoch === epoch ? answer.review : null;
+  const revision = useRef(0);
+  const [answer, setAnswer] = useState<ReviewAnswer | null>(null);
+  const current = authenticated && answer?.epoch === epoch ? answer : null;
+  const status: DueReviewStatus = current === null ? 'loading' : 'settled';
 
   useFocusEffect(
     useCallback(() => {
-      if (!authenticated || token === null || owner === null) return;
+      if (!authenticated || token === null) return;
       let active = true;
+      const startedAt = revision.current;
       void resolveDueReview(isCurrent, token).then((resolved) => {
-        if (!active || !isCurrent()) return;
-        // Null is written too: a review that has since closed must go away.
-        setAnswer({ epoch, review: resolved });
+        if (!active || !isCurrent() || startedAt !== revision.current) return;
+        setAnswer({
+          epoch,
+          review: resolved?.review ?? null,
+          dismissed: resolved?.dismissed ?? false,
+        });
       });
       return () => {
         active = false;
       };
-    }, [owner, epoch, isCurrent, token, authenticated]),
+    }, [epoch, isCurrent, token, authenticated]),
   );
 
-  const dismiss = useCallback(() => {
-    if (review == null || !isCurrent()) return;
-    // Only this scope is set aside; the morning-pages tip keeps its own say.
-    void saveReflectionDismissed(review.scope.scope_key, true);
-    setAnswer({ epoch, review: null });
-  }, [review, epoch, isCurrent]);
-
-  return { status, review, dismiss };
+  const choices = useReviewChoices(current, epoch, isCurrent, setAnswer, revision);
+  return { status, ...reviewViews(current), ...choices };
 }

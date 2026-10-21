@@ -16,6 +16,7 @@ import {
   bearer,
   frontendUrl,
   isoDaysAgo,
+  openPrompts,
   readReturnState,
   reachReturnEligibility,
   signUp,
@@ -129,6 +130,7 @@ async function beginReturnOnShelf(page: Page, prefix: string): Promise<Arranged>
   await askForResonance(page);
   await expect(page.getByTestId('contraction-reflection-title')).toHaveText(RETURN_OFFER_TITLE);
   await page.getByTestId('journal-close-entry').click();
+  await openPrompts(page);
   const started = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' &&

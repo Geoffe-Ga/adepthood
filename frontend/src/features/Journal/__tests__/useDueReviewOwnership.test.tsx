@@ -158,3 +158,27 @@ it('sets the review aside for the same account', async () => {
   expect(mockSaveDismissed).toHaveBeenCalledWith(DUE.scope_key, true);
   expect(result.current).toMatchObject({ status: 'settled', review: null });
 });
+
+it('restores only the set-aside review scope and rejects a stale restore', async () => {
+  const { result } = renderHook(() => useDueReview());
+  await waitFor(() => expect(result.current.review).not.toBeNull());
+  act(() => result.current.dismiss());
+  expect(result.current.setAsideReview?.scope.scope_key).toBe(DUE.scope_key);
+  await act(async () => result.current.restore());
+  expect(mockSaveDismissed).toHaveBeenLastCalledWith(DUE.scope_key, false);
+  expect(result.current.review?.scope.scope_key).toBe(DUE.scope_key);
+  act(() => result.current.dismiss());
+  const staleRestore = result.current.restore;
+  mockSaveDismissed.mockClear();
+  await act(async () => setActiveUser(2));
+  await act(async () => staleRestore());
+  expect(mockSaveDismissed).not.toHaveBeenCalled();
+});
+
+it('keeps a review offered when persisting its decline is refused', async () => {
+  const { result } = renderHook(() => useDueReview());
+  await waitFor(() => expect(result.current.review).not.toBeNull());
+  mockSaveDismissed.mockRejectedValue(new Error('storage refused'));
+  await act(async () => result.current.dismiss());
+  expect(result.current.review?.scope.scope_key).toBe(DUE.scope_key);
+});

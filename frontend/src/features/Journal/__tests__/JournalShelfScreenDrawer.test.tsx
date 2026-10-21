@@ -302,20 +302,19 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
 
     fireEvent.press(getByLabelText('Open Journal menu'));
-    await waitFor(() => expect(getByTestId('journal-drawer-notifications')).toBeTruthy());
+    await waitFor(() => expect(getByTestId('drawer-nav-Prompts')).toBeTruthy());
 
     await act(async () => {
-      fireEvent.press(getByTestId('journal-drawer-notifications'));
+      fireEvent.press(getByTestId('drawer-nav-Prompts'));
     });
 
-    expect(mockNavigate).toHaveBeenCalledWith('JournalNotifications');
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Prompts' });
     expect(queryByTestId('screen-drawer')).toBeNull();
   });
 
   it("keeps Everything you've written in the drawer and routes an undecided account to consent", async () => {
     const { getByTestId, getByLabelText, queryByTestId } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
-    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
     const callsBeforeDrawerPress = mockVoiceReadiness.mock.calls.length;
 
     fireEvent.press(getByLabelText('Open Journal menu'));
@@ -352,7 +351,6 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     });
     const { getByTestId, getByLabelText } = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
-    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
     mockVoiceReadiness.mockClear();
     mockVoiceReadiness.mockReturnValue(heldReadiness);
 
@@ -381,7 +379,6 @@ describe('Journal header drawer from JournalShelfScreen', () => {
       <ShelfScreenWithHeader />,
     );
     await waitFor(() => expect(getByTestId('journal-shelf-card-1')).toBeTruthy());
-    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
     mockVoiceReadiness.mockRejectedValueOnce(new Error('offline'));
 
     fireEvent.press(getByLabelText('Open Journal menu'));
@@ -406,7 +403,6 @@ describe('Journal header drawer from JournalShelfScreen', () => {
     });
     const result = render(<ShelfScreenWithHeader />);
     await waitFor(() => expect(result.getByTestId('journal-shelf-card-1')).toBeTruthy());
-    await waitFor(() => expect(mockVoiceReadiness).toHaveBeenCalled());
     mockVoiceReadiness.mockClear();
     mockVoiceReadiness.mockReturnValue(heldReadiness);
 

@@ -14,6 +14,7 @@ import {
   signUp,
   tokenFor,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 const SOURCE_TITLE = 'Morning walk';
 const SOURCE_BODY = 'I walked by the river. The heron stood still. Rain came at noon.';
@@ -79,6 +80,7 @@ test('a writer checks several promoted quotes and folds them into the review at 
 
   // Begin the due weekly review and let it save, so it has an id to fold into.
   await page.reload();
+  await openPrompts(page);
   await page.getByTestId('journal-reflection-band').click();
   const bodyField = page.getByRole('textbox', { name: 'Entry body' });
   await bodyField.fill(OPENING);
@@ -206,6 +208,7 @@ async function failedFoldRetryClear(
   try {
     const { quoteIds } = await seedPromotedSource(page, `fold-retry-clear-${scale}`);
     await page.reload();
+    await openPrompts(page);
     await page.getByTestId('journal-reflection-band').click();
     await page.getByRole('textbox', { name: 'Entry body' }).fill(OPENING);
     await expect(page.getByTestId('journal-save-hint')).toHaveText('Saved');
@@ -265,6 +268,7 @@ test('folded quotes stay inside the body frame at phone width (#3001)', async ({
 
   // A long opening, typed, so the field has already grown once the way typing grows it.
   await page.reload();
+  await openPrompts(page);
   await page.getByTestId('journal-reflection-band').click();
   const bodyField = page.locator('[data-testid="journal-body-input"]:visible');
   const opening = Array.from(

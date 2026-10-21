@@ -1,6 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
 import { backendUrl, bearer, signUp, tokenFor } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 const SAVED = 'Saved';
 const SAVE_ERROR = "Couldn't save — keep writing, we'll retry";
@@ -93,6 +94,7 @@ async function onlyEntry(request: APIRequestContext, email: string): Promise<Sto
 
 /** Open the shelf's first stage prompt: a weekly-prompt compose for week 1. */
 async function composeFirstPrompt(page: Page): Promise<void> {
+  await openPrompts(page);
   await page.getByTestId('journal-stage-prompt-1').click();
   await expect(page.getByTestId('journal-body-input')).toBeVisible();
 }
