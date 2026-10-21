@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { setProgramAnchorSixDaysAgo, signUp } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * Every control on the journal entry screen has one home, at every width
@@ -368,6 +369,7 @@ test('journal entry controls keep one home each while writing and reading, at ph
   await page.reload();
   // The shelf, not the page, is on screen here; the loop below waits on the page.
   await page.setViewportSize(BREAKPOINT);
+  await openPrompts(page);
   await page.getByTestId('journal-reflection-band').click();
   const sources = exitRow.getByRole('button', { name: SOURCES_NAME });
   await expect(sources).toBeVisible();

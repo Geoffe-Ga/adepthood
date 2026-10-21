@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { signUp } from './journalHabitsBrowserSupport';
+import { openPrompts, signUp } from './journalHabitsBrowserSupport';
 
 test('morning pages open dated and editable while ordinary new entries stay untitled', async ({
   page,
@@ -17,6 +17,7 @@ test('morning pages open dated and editable while ordinary new entries stay unti
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     return new Intl.DateTimeFormat('en-CA', { timeZone }).format(new Date());
   });
+  await openPrompts(page);
   await page.getByRole('button', { name: 'Begin a page of morning pages' }).click();
 
   // React Navigation keeps the prior entry mounted under the active route;

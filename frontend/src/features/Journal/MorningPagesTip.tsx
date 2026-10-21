@@ -41,6 +41,7 @@ import {
   MORNING_PAGES_TITLE,
   morningPageTitle,
 } from './morningPagesCopy';
+import { useReportNotificationPresence } from './notificationPresence';
 import ReflectionDismiss, { closeCornerReserve } from './ReflectionDismiss';
 
 import { useAuth } from '@/context/AuthContext';
@@ -57,6 +58,7 @@ import {
 } from '@/design/tokens';
 import {
   MORNING_PAGES_TIP_OPEN,
+  clearMorningPagesTipSetAside,
   loadMorningPagesTipState,
   saveMorningPagesTipNeverOffer,
   saveMorningPagesTipSetAside,
@@ -97,16 +99,41 @@ export interface MorningPagesTipProps {
  * away if the writer declined while it was in flight: ``writeSeq`` counts the
  * local writes, so a stale read cannot hand back a card just set down.
  */
-function useMorningPagesTipState(
+interface TipAnswer {
+  owner: number | null;
+  epoch: number;
+  value: MorningPagesTipState;
+}
+
+function useRestoreTip(
+  setAnswer: React.Dispatch<React.SetStateAction<TipAnswer | null>>,
+  writeSeq: React.RefObject<number>,
+) {
+  const { owner, epoch, isCurrent } = useAccountScope();
+  return useCallback(async () => {
+    if (!isCurrent()) return false;
+    writeSeq.current += 1;
+    const saved = await clearMorningPagesTipSetAside();
+    if (saved && isCurrent()) {
+      setAnswer((prev) => ({
+        owner,
+        epoch,
+        value: {
+          ...(prev?.epoch === epoch ? prev.value : MORNING_PAGES_TIP_OPEN),
+          setAsideOn: null,
+        },
+      }));
+    }
+    return saved && isCurrent();
+  }, [owner, epoch, isCurrent, setAnswer, writeSeq]);
+}
+
+export function useMorningPagesTipState(
   onDismissed: (() => void) | undefined,
   refreshKey: number | undefined,
 ) {
   const { owner, epoch, isCurrent } = useAccountScope();
-  const [answer, setAnswer] = useState<{
-    owner: number | null;
-    epoch: number;
-    value: MorningPagesTipState;
-  } | null>(null);
+  const [answer, setAnswer] = useState<TipAnswer | null>(null);
   const state = answer?.epoch === epoch ? answer.value : null;
   const writeSeq = useRef(0);
 
@@ -126,18 +153,22 @@ function useMorningPagesTipState(
     (change: Partial<MorningPagesTipState>, persist: () => Promise<unknown>) => {
       if (!isCurrent()) return;
       writeSeq.current += 1;
-      void persist();
+      const saved = persist();
       setAnswer((prev) => ({
         owner,
         epoch,
         value: { ...(prev?.epoch === epoch ? prev.value : MORNING_PAGES_TIP_OPEN), ...change },
       }));
-      onDismissed?.();
+      void saved.then(() => {
+        if (isCurrent()) onDismissed?.();
+      });
     },
     [onDismissed, owner, epoch, isCurrent],
   );
 
-  return { state, decline };
+  const restore = useRestoreTip(setAnswer, writeSeq);
+
+  return { state, decline, restore };
 }
 
 function useMorningPagesTip(
@@ -175,6 +206,7 @@ function MorningPagesTip({
     onDismissed,
     refreshKey,
   );
+  useReportNotificationPresence('writing', shown, shown ? 1 : 0);
   // Quiet while loading (no flash), set aside for today, or declined for good.
   if (!shown) return null;
 

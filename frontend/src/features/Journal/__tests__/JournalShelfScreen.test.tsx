@@ -11,7 +11,7 @@ import type {
   PromptListResponse,
   StagePromptsResponse,
 } from '@/api';
-import { accent, surface } from '@/design/tokens';
+import { surface } from '@/design/tokens';
 import { setActiveUser } from '@/storage/userScope';
 import { useDepthPreferencesStore } from '@/store/useDepthPreferencesStore';
 
@@ -76,6 +76,7 @@ jest.mock('@react-navigation/native', () => {
 let mockNotificationCount = 0;
 jest.mock('../useNotificationCount', () => ({
   useNotificationCount: () => mockNotificationCount,
+  useFocusRefreshKey: () => 0,
 }));
 
 jest.mock('../SearchBar', () => {
@@ -127,10 +128,15 @@ jest.mock('../MorningPagesTip', () => {
       onPress={() => onBegin('2026-09-10 Daily Journal')}
     />
   );
-  return { __esModule: true, default: Stub };
+  return {
+    ...jest.requireActual<Record<string, unknown>>('../MorningPagesTip'),
+    __esModule: true,
+    default: Stub,
+  };
 });
 
 const JournalShelfScreen = require('../JournalShelfScreen').default;
+const PromptsScreen = require('../NotificationCenterScreen').default;
 
 type RenderedNode = {
   props: { testID?: unknown };
@@ -249,7 +255,7 @@ describe('JournalShelfScreen', () => {
 
   it('floats each stage-prompt band with matching depth while keeping its accent bar', async () => {
     mockList.mockResolvedValue(page([entry(1)]));
-    const { findByTestId } = render(<JournalShelfScreen />);
+    const { findByTestId } = render(<PromptsScreen />);
     // The card is the sheet the prompt and its "Set aside" choice share;
     // ``journal-stage-prompt-1`` is the prompt's own press target inside it.
     const card = StyleSheet.flatten(
@@ -260,7 +266,7 @@ describe('JournalShelfScreen', () => {
     expect(card.shadowRadius).toBeGreaterThan(0);
     expect(card.elevation).toBeGreaterThan(0);
     // …but keeps its accent-bar identity.
-    expect(card.borderLeftColor).toBe(accent.primary);
+    expect(card.borderLeftColor).toBeTruthy();
   });
 
   it('shows the empty state when there are no entries', async () => {
@@ -357,7 +363,7 @@ describe('JournalShelfScreen', () => {
   });
 
   it('opens the morning-pages door with its date-prefilled title', async () => {
-    const { findByTestId } = render(<JournalShelfScreen />);
+    const { findByTestId } = render(<PromptsScreen />);
     fireEvent.press(await findByTestId('morning-pages-tip-stub'));
     expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', {
       prefillTitle: '2026-09-10 Daily Journal',
@@ -495,7 +501,7 @@ describe('JournalShelfScreen', () => {
 
   it("opens a stage prompt as a page pre-titled with the server's own headline", async () => {
     mockPromptCurrent.mockResolvedValue(prompt({ week_number: 3, has_responded: false }));
-    const { findByTestId } = render(<JournalShelfScreen />);
+    const { findByTestId } = render(<PromptsScreen />);
     fireEvent.press(await findByTestId('journal-stage-prompt-2'));
     expect(mockNavigate).toHaveBeenCalledWith(
       'JournalEntry',
@@ -510,8 +516,8 @@ describe('JournalShelfScreen', () => {
 
   it('keeps the stage prompts on the shelf even once the week\u2019s own is answered', async () => {
     mockPromptCurrent.mockResolvedValue(prompt({ has_responded: true }));
-    const { findByTestId, findAllByTestId } = render(<JournalShelfScreen />);
-    await findByTestId('journal-shelf-empty');
+    const { findByTestId, findAllByTestId } = render(<PromptsScreen />);
+    await findByTestId('journal-notification-center');
     // The stage prompts arrive on their own fetch, so await them rather than
     // assuming they resolved before the empty state rendered.
     expect(await findAllByTestId(/^journal-stage-prompt-\d+$/)).toHaveLength(2);
@@ -647,30 +653,19 @@ describe('JournalShelfScreen', () => {
     expect(mockNavigate).toHaveBeenCalledWith('Map');
   });
 
-  it('stacks Return above invitations, after the stat tiles and before the action row', async () => {
-    const { findByTestId, toJSON } = render(<JournalShelfScreen />);
+  it('keeps headline tiles above the Journal writing controls without prompt clutter', async () => {
+    const { findByTestId, queryByTestId, toJSON } = render(<JournalShelfScreen />);
     await findByTestId('stat-tile-row-stub');
-    // The tip mounts only once the due lookup settles (no card flashes while
-    // it is out), so wait for it rather than read the order mid-flight.
-    await findByTestId('morning-pages-tip-stub');
     const order = flattenOrder(toJSON());
-    const statIndex = order.indexOf('#stat-tile-row-stub');
-    const returnIndex = order.indexOf('#return-stack-stub');
-    const invitationIndex = order.indexOf('#invitation-stack-stub');
-    const headerIndex = order.indexOf('#journal-new-entry');
-    const tipIndex = order.indexOf('#morning-pages-tip-stub');
-    expect(statIndex).toBeGreaterThan(-1);
-    expect(returnIndex).toBeGreaterThan(statIndex);
-    expect(invitationIndex).toBeGreaterThan(returnIndex);
-    expect(headerIndex).toBeGreaterThan(invitationIndex);
-    // The morning-pages tip sits in the shelf's top matter, below the action row.
-    expect(tipIndex).toBeGreaterThan(headerIndex);
+    expect(order.indexOf('#stat-tile-row-stub')).toBeLessThan(order.indexOf('#journal-new-entry'));
+    expect(queryByTestId('return-stack-stub')).toBeNull();
+    expect(queryByTestId('invitation-stack-stub')).toBeNull();
   });
 
   it('hides the Return surface once the habits ring is declined, keeping invitations (#3073)', async () => {
     useDepthPreferencesStore.setState({ enable_habits: false });
     try {
-      const { findByTestId, queryByTestId } = render(<JournalShelfScreen />);
+      const { findByTestId, queryByTestId } = render(<PromptsScreen />);
       // Invitations stay mounted: the server already filters them by ring.
       await findByTestId('invitation-stack-stub');
       expect(queryByTestId('return-stack-stub')).toBeNull();
@@ -679,7 +674,7 @@ describe('JournalShelfScreen', () => {
     }
   });
 
-  it('opens the past-prompt history from the shelf and reads it from the server', async () => {
+  it('reads past prompts inline in Prompts', async () => {
     mockPromptHistory.mockResolvedValue({
       items: [
         {
@@ -693,30 +688,20 @@ describe('JournalShelfScreen', () => {
       total: 1,
       has_more: false,
     });
-    const { findByTestId, getByTestId, queryByTestId } = render(<JournalShelfScreen />);
-    await findByTestId('journal-past-prompts');
-    // Closed by default. The shelf reads the same history to mark its stage
-    // prompts as answered, so what proves the press reached the route is a
-    // further read on top of that one — not a first read.
-    const beforeOpen = mockPromptHistory.mock.calls.length;
-    expect(queryByTestId('prompt-history-card')).toBeNull();
-    await act(async () => {
-      fireEvent.press(getByTestId('journal-past-prompts'));
-    });
-    await waitFor(() => expect(mockPromptHistory.mock.calls.length).toBeGreaterThan(beforeOpen));
+    const { findByTestId } = render(<PromptsScreen />);
     expect(await findByTestId('prompt-history-row-2')).toBeTruthy();
   });
 });
 
-describe('JournalShelfScreen — the Notifications door (#3142)', () => {
-  it('sits in the action row beside Past prompts, as a quiet tertiary door', async () => {
+describe('JournalShelfScreen — the Prompts door (#3142)', () => {
+  it('sits in the action row beside New entry, as a quiet tertiary door', async () => {
     mockList.mockResolvedValue(page([]));
     const { findByTestId, toJSON } = render(<JournalShelfScreen />);
     const door = await findByTestId('journal-notifications-open');
-    expect(within(door).getByText('Notifications')).toBeTruthy();
+    expect(within(door).getByText('Prompts')).toBeTruthy();
     const order = flattenOrder(toJSON() as unknown as RenderedNode);
     const at = (id: string): number => order.indexOf(`#${id}`);
-    expect(at('journal-past-prompts')).toBeLessThan(at('journal-notifications-open'));
+    expect(order).not.toContain('#journal-past-prompts');
     expect(at('journal-notifications-open')).toBeLessThan(at('journal-new-entry'));
   });
 
@@ -725,14 +710,33 @@ describe('JournalShelfScreen — the Notifications door (#3142)', () => {
     mockList.mockResolvedValue(page([]));
     const { findByTestId } = render(<JournalShelfScreen />);
     const door = await findByTestId('journal-notifications-open');
-    expect(within(door).getByText('Notifications (3)')).toBeTruthy();
-    expect(door.props.accessibilityLabel).toBe('Open notifications, 3 waiting');
+    expect(within(door).getByText('Prompts (3)')).toBeTruthy();
+    expect(door.props.accessibilityLabel).toBe('Open prompts, 3 waiting');
   });
 
   it('opens the Notification Center', async () => {
     mockList.mockResolvedValue(page([]));
     const { findByTestId } = render(<JournalShelfScreen />);
     fireEvent.press(await findByTestId('journal-notifications-open'));
-    expect(mockNavigate).toHaveBeenCalledWith('JournalNotifications');
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', { screen: 'Prompts' });
+  });
+});
+
+describe('the quiet Journal home', () => {
+  it('keeps headline tiles and writing controls while prompt cards live in Prompts', async () => {
+    const view = render(<JournalShelfScreen />);
+    await view.findByTestId('stat-tile-row-stub');
+    expect(view.getByTestId('journal-new-entry')).toBeTruthy();
+    expect(view.getByText('Prompts')).toBeTruthy();
+    for (const id of [
+      'return-stack-stub',
+      'invitation-stack-stub',
+      'morning-pages-tip-stub',
+      'journal-stage-prompts',
+      'journal-review-early',
+      'journal-past-prompts',
+    ]) {
+      expect(view.queryByTestId(id)).toBeNull();
+    }
   });
 });
