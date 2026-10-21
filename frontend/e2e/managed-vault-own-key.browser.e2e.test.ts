@@ -23,7 +23,10 @@ import { readLaneState } from './laneState';
 const PAGE_BODY = 'The willow bent all night and did not break. I woke grateful beside the water.';
 /** A well-formed lane key; the lane vault never calls a vendor, so it is never used. */
 const OWN_KEY = 'sk-ant-api03-lane3437managedVAULTownKEYzz'; // pragma: allowlist secret
-const LABEL = 'Written by your own Anthropic key, through your vault';
+/** The receipt's payment route, after the pass. */
+const LABEL = 'Paid by your own Anthropic key, through your vault';
+/** The price line, before anything runs: future tense, naming the hop. */
+const EXPLAINER = 'Your vault will write this reading with your own Anthropic key.';
 const ARTIFACTS =
   process.env.MANAGED_VAULT_KEY_ARTIFACTS ?? join(__dirname, 'artifacts', 'managed-vault-own-key');
 
@@ -161,8 +164,8 @@ for (const width of [390, 1280]) {
     await expect(page.getByTestId('journal-body-read')).toBeVisible();
     await page.getByRole('button', { name: 'Get resonance' }).click();
     const cost = page.getByTestId('resonance-explainer-cost');
-    await expect(cost).toContainText(LABEL);
-    await expect(cost).toContainText('nothing is drawn from your BotMason messages');
+    await expect(cost).toContainText(EXPLAINER);
+    await expect(cost).toContainText('Your key pays for it, not your BotMason messages.');
     await fits(cost);
     await frame(page, `explainer-${width}`, cost);
 

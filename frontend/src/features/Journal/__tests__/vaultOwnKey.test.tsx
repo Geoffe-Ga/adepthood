@@ -46,7 +46,11 @@ describe('the price line before a vault reading or letter (#3437)', () => {
       const result = await loadCostState(true, noun, undefined, 'anthropic');
 
       expect(result.copy).toBe(vaultKeyCost('anthropic', noun));
-      expect(result.copy).toContain('Written by your own Anthropic key, through your vault');
+      // Future tense before anything runs, naming the hop and the payer.
+      expect(result.copy).toBe(
+        `Your vault will write this ${noun} with your own Anthropic key. Your key pays for it, not your BotMason messages.`,
+      );
+      expect(result.copy).not.toMatch(/\bWritten\b/u);
       expect(result.canContinue).toBe(true);
       expect(result.fundingRequired).toBeNull();
       expect(result.route).toBe('vault_bound');
@@ -60,7 +64,7 @@ describe('the price line before a vault reading or letter (#3437)', () => {
 
     expect(result.canContinue).toBe(false);
     expect(result.fundingRequired).toBe('wallet_exhausted');
-    expect(result.copy).not.toMatch(/through your vault/u);
+    expect(result.copy).not.toMatch(/your own \w+ key/u);
   });
 
   it('keeps the credit price when the vendor read fails', async () => {
@@ -69,7 +73,7 @@ describe('the price line before a vault reading or letter (#3437)', () => {
     const result = await loadCostState(true, 'reading', undefined, 'anthropic');
 
     expect(result.fundingRequired).toBe('wallet_exhausted');
-    expect(result.copy).not.toMatch(/through your vault/u);
+    expect(result.copy).not.toMatch(/your own \w+ key/u);
   });
 
   it('never asks the vault, or presents a key as paying, without one', async () => {
@@ -101,8 +105,8 @@ describe('the per-use label after the pass (#3437)', () => {
   });
 
   it.each<['anthropic' | 'openai', string]>([
-    ['anthropic', 'Written by your own Anthropic key, through your vault'],
-    ['openai', 'Written by your own OpenAI key, through your vault'],
+    ['anthropic', 'Paid by your own Anthropic key, through your vault'],
+    ['openai', 'Paid by your own OpenAI key, through your vault'],
   ])('names the %s key the vault wrote with', (vendor, label) => {
     const { getByTestId } = render(
       <PassReceiptNotice provenance={pass({ own_key_vendor: vendor })} empty={false} />,
