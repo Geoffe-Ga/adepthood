@@ -130,6 +130,11 @@ const SCHEMA_VERDICTS: Readonly<Record<string, SchemaVerdict>> = {
         'Optional for the same reason as mode, and read only through the mode discriminator, which is itself absent on pre-mode payloads.',
     },
   },
+  vaultKeyVendorSchema: {
+    component: 'VaultKeyProvider',
+    reason:
+      'The client names the value by what it means to a writer (the vendor of their own key) while the server names the domain enum it validates against; mapping it pins the two vendors to the published set (#3437).',
+  },
   relatedPraxisKindSchema: {
     component: 'VaultPraxisKind',
     reason:

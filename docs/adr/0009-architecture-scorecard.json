@@ -429,7 +429,7 @@
     },
     "BD": {
       "boundary": {
-        "value": "Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server.",
+        "value": "Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. Amended 2026-10-16 (#3437): with a managed vault, the writer's key and writing are relayed through our server to their vault per request, and the vault sends them to the writer's vendor, labelled on each use.",
         "source": "owner:2026-10-07#B12-premise"
       },
       "key_custody": {
@@ -461,7 +461,7 @@
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {
-        "value": "Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext.",
+        "value": "Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext; with a managed vault it relays the key and the writing to the vault per request (amendment 2026-10-16, #3437), and neither is operator-blind while that request runs.",
         "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
       },
       "budget_usd_per_active_account_month": {

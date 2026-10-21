@@ -80,10 +80,13 @@ from fastapi import Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
-from dependencies.creek_vault import get_creek_vault_client, resolve_reflection_boundary
+from dependencies.creek_vault import (
+    OnboardingVault,
+    get_onboarding_vault,
+    resolve_reflection_boundary,
+)
 from dependencies.document_payload import guard_document_payload
 from domain.corpus_import import ImportDestination
-from domain.creek_vault import CreekVaultPipelineClient
 from error_responses import build_router
 from models.corpus_fragment import CorpusSource
 from rate_limit import limiter
@@ -110,6 +113,7 @@ from services.corpus_import import (
 )
 from services.corpus_invitation import InvitationOffer, dismiss_invitation, load_invitation
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
+from services.creek_vault_relay import forwarding_provider_key
 from services.creek_vault_upload import UploadedDocument
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
 
@@ -364,7 +368,7 @@ async def import_corpus_document(
     payload: UploadDocumentRequest,
     user_id: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    vault: Annotated[OnboardingVault, Depends(get_onboarding_vault)],
 ) -> DocumentImportResponse:
     """Take one document to this account's vault, or answer that it needs one.
 
@@ -390,12 +394,16 @@ async def import_corpus_document(
     Bounded and synchronous, like everything else on this route: the pass stands
     down inside its own per-stage intervals, starts no stage it cannot afford,
     and never raises.
+
+    The optional ``X-LLM-API-Key`` is relayed to the vault only for that pass's
+    classification call, and only when the vault advertised the key's vendor
+    (#3437); the upload itself never carries it.
     """
     guard_document_payload(payload.content_base64)
     async with hold_account(session, user_id):
         await ensure_account_live(session, user_id)
         result = await import_document(
-            vault_client,
+            vault.client,
             UploadedDocument(
                 owner_user_id=user_id,
                 filename=payload.filename,
@@ -406,10 +414,11 @@ async def import_corpus_document(
         )
         await session.commit()
         if isinstance(result, VaultImportResult) and result.stored:
-            await drive_vault_pipeline(
-                session,
-                vault_client,
-                user_id=user_id,
-                trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
-            )
+            with forwarding_provider_key(vault.relay_key):
+                await drive_vault_pipeline(
+                    session,
+                    vault.client,
+                    user_id=user_id,
+                    trigger=VaultPipelineTrigger.DOCUMENT_IMPORT,
+                )
     return _to_import_response(result)

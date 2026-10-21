@@ -5081,7 +5081,7 @@
         "type": "object"
       },
       "PassProvenance": {
-        "description": "Who answered each operation of a resonance pass, and who paid for it (#3062).\n\n``notes`` is the reflection -- including one that answered with nothing, so\nan empty pass still says which source was empty. ``detection`` is the\ncompletion check, with ``detection_checked`` saying whether it actually\nreturned. ``paid_by`` is ``free`` for a demo and for a refunded empty pass,\n``own_key`` when the caller's key paid, and ``wallet`` when the deduction\nstands.",
+        "description": "Who answered each operation of a resonance pass, and who paid for it (#3062).\n\n``notes`` is the reflection -- including one that answered with nothing, so\nan empty pass still says which source was empty. ``detection`` is the\ncompletion check, with ``detection_checked`` saying whether it actually\nreturned. ``paid_by`` is ``free`` for a demo and for a refunded empty pass,\n``own_key`` when the caller's key paid, and ``wallet`` when the deduction\nstands.\n\n``own_key_vendor`` is set only when the caller's own key was relayed to\ntheir vault and the vault wrote the notes with it (#3437): the vendor of\nthat key, so the client can say \"Written by your own Anthropic key, through\nyour vault\". ``None`` on every other pass.",
         "properties": {
           "detection": {
             "$ref": "#/components/schemas/ProvenanceReceipt"
@@ -5092,6 +5092,21 @@
           },
           "notes": {
             "$ref": "#/components/schemas/ProvenanceReceipt"
+          },
+          "own_key_vendor": {
+            "anyOf": [
+              {
+                "enum": [
+                  "anthropic",
+                  "openai"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Own Key Vendor"
           },
           "paid_by": {
             "enum": [
@@ -9435,6 +9450,29 @@
         "title": "VaultDisposition",
         "type": "object"
       },
+      "VaultKeyProvider": {
+        "description": "A vendor whose writer-supplied key a managed vault will spend (Creek contract 0.18).\n\nCreek-Vault's ADR-0015 (Creek-Vault#1873) lets a managed vault answer OPEN and\nPERSONAL work with the writer's own Anthropic or OpenAI key, sent per\nrequest. A vault lists the vendors it accepts in its handshake's\n``request_key_providers``; anything else on the wire is dropped at the parse\nboundary rather than trusted.",
+        "enum": [
+          "anthropic",
+          "openai"
+        ],
+        "title": "VaultKeyProvider",
+        "type": "string"
+      },
+      "VaultKeyVendorsResponse": {
+        "description": "The vendors whose writer key the caller's vault would write with (#3437).\n\nEmpty for an app-provider caller and for any vault that advertises none,\nso the writer is shown a credit price unless their own key will pay.",
+        "properties": {
+          "vendors": {
+            "items": {
+              "$ref": "#/components/schemas/VaultKeyProvider"
+            },
+            "title": "Vendors",
+            "type": "array"
+          }
+        },
+        "title": "VaultKeyVendorsResponse",
+        "type": "object"
+      },
       "VaultPraxisKind": {
         "description": "The five kinds a praxis page may be, spelled Creek's way.\n\nCreek's vocabulary rather than one adepthood invented, for the reason\n:class:`VaultReflectionStatus` is: these are wire strings a payload is\nmatched against, and a member spelled our way would never match anything a\nvault sent. Unlike a margin note's kind there is no projection onto an\nadepthood word, because adepthood has no praxis vocabulary of its own to\nproject onto -- a praxis page is the writer's own, named by their vault.",
         "enum": [
@@ -13421,7 +13459,7 @@
     },
     "/corpus/import": {
       "post": {
-        "description": "Take one document to this account's vault, or answer that it needs one.\n\n202 for every outcome, including the ones that stored nothing: adepthood\naccepted the request and acted on it, and what became of the document is in\nthe body where a client can render a specific sentence rather than infer one\nfrom a status code. A vault that is missing, unreachable or unable to take\nfiles is a normal condition of an optional integration. An account with no\nvault at all is answered ``vault_required`` (#3015): a corpus lives in a\nvault, so there is nowhere to keep the document.\n\nThe payload guard runs first, for every caller, so an oversized or\nundecodable document is refused as such whether or not the account has a\nvault. It is the only thing done with the document on the no-vault answer.\n\nThe commit is here rather than in the service because the service commits\nnothing and the caller owns the transaction. The vault ontologization pass\nis driven from here, after that commit, for the same reason: the service\nwould have to break that promise to schedule anything. The router is also\nthe layer that can tell the two answers apart without asking anything twice:\nthe import's result *type* already says whether a vault was reached, so a\n``vault_required`` answer never consults a vault the account does not have.\nBounded and synchronous, like everything else on this route: the pass stands\ndown inside its own per-stage intervals, starts no stage it cannot afford,\nand never raises.",
+        "description": "Take one document to this account's vault, or answer that it needs one.\n\n202 for every outcome, including the ones that stored nothing: adepthood\naccepted the request and acted on it, and what became of the document is in\nthe body where a client can render a specific sentence rather than infer one\nfrom a status code. A vault that is missing, unreachable or unable to take\nfiles is a normal condition of an optional integration. An account with no\nvault at all is answered ``vault_required`` (#3015): a corpus lives in a\nvault, so there is nowhere to keep the document.\n\nThe payload guard runs first, for every caller, so an oversized or\nundecodable document is refused as such whether or not the account has a\nvault. It is the only thing done with the document on the no-vault answer.\n\nThe commit is here rather than in the service because the service commits\nnothing and the caller owns the transaction. The vault ontologization pass\nis driven from here, after that commit, for the same reason: the service\nwould have to break that promise to schedule anything. The router is also\nthe layer that can tell the two answers apart without asking anything twice:\nthe import's result *type* already says whether a vault was reached, so a\n``vault_required`` answer never consults a vault the account does not have.\nBounded and synchronous, like everything else on this route: the pass stands\ndown inside its own per-stage intervals, starts no stage it cannot afford,\nand never raises.\n\nThe optional ``X-LLM-API-Key`` is relayed to the vault only for that pass's\nclassification call, and only when the vault advertised the key's vendor\n(#3437); the upload itself never carries it.",
         "operationId": "import_corpus_document_corpus_import_post",
         "parameters": [
           {
@@ -13438,6 +13476,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-LLM-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Llm-Api-Key"
             }
           }
         ],
@@ -18418,7 +18472,7 @@
         ]
       },
       "post": {
-        "description": "Create a journal message for the authenticated user.\n\nThe message body is sanitized at the router boundary\n(BUG-JOURNAL-003) so the row that lands in the DB has no control\ncharacters, zero-width, or bidi-override codepoints — defense\nagainst stored-XSS payloads in journal renderers and Trojan-Source\nsmuggling in log viewers.\n\n``user_practice_id`` and ``practice_session_id`` are authorized before the\nrow is constructed -- and before any replay is looked up, so a replay can\nnever be used to skip the check: an id that exists for nobody is a 404,\nanother user's id is a 403, and neither can reach the session, so no\nforged link is ever persisted.\n\nA create carrying an ``Idempotency-Key`` this account has already used is\nanswered with the entry that key created (#2936): one row, 201, and no\nsecond vault write, corpus ingest or ``journal_entry_created`` event. The\nbody of the retry is not compared -- a client whose retry carries newer text\nmust PATCH it -- and a key whose entry was since deleted is a 404. An\nunkeyed create is always a new entry.",
+        "description": "Create a journal message for the authenticated user.\n\nThe message body is sanitized at the router boundary\n(BUG-JOURNAL-003) so the row that lands in the DB has no control\ncharacters, zero-width, or bidi-override codepoints — defense\nagainst stored-XSS payloads in journal renderers and Trojan-Source\nsmuggling in log viewers.\n\n``user_practice_id`` and ``practice_session_id`` are authorized before the\nrow is constructed -- and before any replay is looked up, so a replay can\nnever be used to skip the check: an id that exists for nobody is a 404,\nanother user's id is a 403, and neither can reach the session, so no\nforged link is ever persisted.\n\nA create carrying an ``Idempotency-Key`` this account has already used is\nanswered with the entry that key created (#2936): one row, 201, and no\nsecond vault write, corpus ingest or ``journal_entry_created`` event. The\nbody of the retry is not compared -- a client whose retry carries newer text\nmust PATCH it -- and a key whose entry was since deleted is a 404. An\nunkeyed create is always a new entry.\n\nThe optional ``X-LLM-API-Key`` is relayed to the writer's vault only for the\nclassification pass that onboards the new entry, and only when the vault\nadvertised that vendor (#3437); a malformed header relays nothing and never\nfails the save.",
         "operationId": "create_journal_entry_journal__post",
         "parameters": [
           {
@@ -18452,6 +18506,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-LLM-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Llm-Api-Key"
             }
           }
         ],
@@ -28917,6 +28987,106 @@
           }
         },
         "summary": "Get Usage",
+        "tags": [
+          "botmason"
+        ]
+      }
+    },
+    "/user/vault-key-vendors": {
+      "get": {
+        "description": "Ask the caller's vault which vendors' writer keys it would write with (#3437).\n\nThe one usage-adjacent read that dials, kept apart from ``GET /user/usage``\nso a price snapshot still never resolves or reaches a vault. Only a\nvault-bound caller is asked about; the probe is the capability handshake,\nwhich carries no stored writing and no key. Empty for an app-provider\ncaller, an unreachable vault, and any vault that advertises none (Creek\ncontract 0.18 ``request_key_providers``).",
+        "operationId": "get_vault_key_vendors_user_vault_key_vendors_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VaultKeyVendorsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Vault Key Vendors",
         "tags": [
           "botmason"
         ]

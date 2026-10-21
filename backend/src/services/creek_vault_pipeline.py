@@ -95,6 +95,7 @@ from models.vault_pipeline_follow_up import VaultPipelineFollowUp
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from services.account_egress_barrier import account_is_live, hold_account
 from services.advisory_lock_namespaces import CLASSIFICATION_SCHEDULER_LOCK_NAMESPACE
+from services.creek_vault_relay import keyless_context
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -1800,7 +1801,8 @@ def _schedule_continuation(continuation: _Continuation) -> bool:
     active = _BACKGROUND_TASKS.get(key)
     if active is not None and not active.done():
         return False
-    task = asyncio.create_task(_continue_ladder(continuation))
+    # Off the request's context: a writer's relayed key ends with the reply (#3437).
+    task = asyncio.create_task(_continue_ladder(continuation), context=keyless_context())
     _BACKGROUND_TASKS[key] = task
     task.add_done_callback(lambda completed: _forget_background_task(key, completed))
     return True
