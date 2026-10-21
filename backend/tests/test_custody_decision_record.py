@@ -147,12 +147,13 @@ _ATTESTED_CREDIT_PAYEE = (
     "Creek-Vault ADR-0016 Decision 3"
 )
 _ATTESTED_LABEL = "processed in an attested private enclave run by `<vendor>`, not stored"
-# The two D05 conditions Creek-Vault ADR-0016 Decision 3.3 says a vendor cannot
-# meet, and so the only two the owner waived. Every other condition is kept,
-# not applicable, or added for a vendor; a third waiver is a widening.
-# The conditions the owner waived, and nothing else. (c) and (e) are
-# unmeetable under O5 by construction; (f) is meetable in principle and
-# unverified in fact, so it is waived in a different sense -- see below.
+# The conditions the owner waived, and nothing else. (c) and (e) are the pair
+# Creek-Vault ADR-0016 Decision 3.3 says a vendor cannot meet, unmeetable under
+# O5 by construction; (f) is meetable in principle and unverified in fact, so
+# it is waived in a different sense, on vendor-asserted evidence -- see below.
+# Every other condition is kept, not applicable, or added for a vendor, so a
+# fourth entry here is a widening. Shrinking this dict un-waives a condition
+# the owner waived on 2026-10-21, which is the direction that is wrong.
 _D05_WAIVERS = {
     "c": "nonce freshness",
     "e": "a hostile-host lab",
@@ -1493,7 +1494,7 @@ def test_d05_is_reopened_for_the_inference_leg_with_exactly_three_named_waivers(
     # The storage leg is untouched, and so are custody and recovery.
     assert "For the storage leg, D05 is not pursued" in section
     assert "they stay under Decision items 1, 2 and 11" in section
-    # Exactly the two waivers Decision 3.3 names, each marked as waived.
+    # Exactly the three conditions the owner waived, each marked as waived.
     for condition, name in _D05_WAIVERS.items():
         assert f"**({condition}) {name}: WAIVED.**" in section
     assert section.count(": WAIVED.**") == len(_D05_WAIVERS)

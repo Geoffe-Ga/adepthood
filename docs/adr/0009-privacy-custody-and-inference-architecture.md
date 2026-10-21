@@ -31,7 +31,9 @@
   Decision items 3 and 4 now admit a vendor-attested inference runtime
   verified under Creek-Vault ADR-0016 Decision 3, and D05 is reopened for the
   inference leg only, with explicit waivers of its nonce-freshness and
-  hostile-host-lab conditions. The selection stays Option BD and the status
+  hostile-host-lab conditions (the 2026-10-21 bullet below adds the waiver of
+  condition (f), so the waivers in force are the three the "Confidential
+  compute (D05)" section records). The selection stays Option BD and the status
   stays Accepted on 2026-10-07; nothing about stored content, key custody or
   recovery changes, and this record still unlocks no public claim. Creek-Vault
   ADR-0016 takes effect only once this amendment merges.
@@ -579,7 +581,7 @@ attackers (who control the code the person runs).
 | Native iOS and Android (store-signed; later, after web) | Ciphertext only | Protected **only while the signed build is honest**. A malicious or compelled signed build could capture the key and decrypt stored history and future content alike | Device-first; vault or credits runtime only with consent; cloud only with BYOK, device to vendor | OS keystore, store signing, and reproducible-build evidence once it exists |
 | Web (served by us) | Ciphertext only | **Rests on trusting the code we serve**, for stored history and future content alike. A malicious or compelled bundle could capture the key at the next load and decrypt everything stored. This stays true until signed builds ship: enforced CSP plus SRI narrows injected script but cannot stop us serving a different bundle. Web accounts may not enrol before CSP plus SRI is live | Same routing as native, with browser runtime limits | Enforced CSP plus SRI now; signed builds later (owner decision, items 6-7) |
 | Person's own vault (self-hosted) | Theirs to protect | Theirs to protect | Vault-local model | The person's own machine |
-| Managed vault on ordinary Fly | Ciphertext only for journal content, once B13 phases (b) and (c) land for the account | The same per-client caveat as the platform the person enrols from | Vault-local inference, and any managed runtime we run, sees plaintext while it runs; that is not operator-blind, and each use is labelled (Decision item 4). A vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 is held to the operator-blind target for the inference leg instead, with the two waivers named in "Confidential compute (D05)" below; the target is not met until B24 certifies it, and each use is labelled the same way | Creek's runtime plus Fly; provider-managed custody is not operator-blind for anything still stored in plaintext |
+| Managed vault on ordinary Fly | Ciphertext only for journal content, once B13 phases (b) and (c) land for the account | The same per-client caveat as the platform the person enrols from | Vault-local inference, and any managed runtime we run, sees plaintext while it runs; that is not operator-blind, and each use is labelled (Decision item 4). A vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 is held to the operator-blind target for the inference leg instead, with the waivers named in "Confidential compute (D05)" below; the target is not met until B24 certifies it, and each use is labelled the same way | Creek's runtime plus Fly; provider-managed custody is not operator-blind for anything still stored in plaintext |
 
 No platform may advertise "end-to-end" or "operator-blind" until B24
 certifies that claim for that platform.
@@ -723,7 +725,7 @@ stores. This record consumes them and does not rebuild them.
   2026-10-20).** Plaintext exists in the vault process and inside the
   vendor's enclave, and under Creek-Vault ADR-0016 Decision 3 item 1 it crosses no
   network in the clear. That leg is held to the operator-blind target, with
-  the two waivers of "Confidential compute (D05)" below, and the target is
+  the waivers of "Confidential compute (D05)" below, and the target is
   not met until B24 certifies it. Each use is labelled clearly, for example
   "processed in an attested private enclave run by `<vendor>`, not stored".
 - **Feature loss, said plainly (Decision item 12).** Until the managed
