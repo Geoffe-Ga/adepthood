@@ -23,6 +23,7 @@ from httpx import AsyncClient, MockTransport, Request, Response
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import CONTRACT_VERSION
 from main import app
+from services.botmason import LLM_API_KEY_MAX_LENGTH
 from services.creek_vault_client import HttpCreekVaultClient
 from services.creek_vault_pipeline import wait_for_vault_pipeline_tasks
 from services.creek_vault_relay import PROVIDER_KEY_HEADER
@@ -34,6 +35,8 @@ _CLASSIFICATIONS: Final = "/v1/classifications"
 _UPLOADS: Final = "/v1/uploads"
 _JOURNAL_ENTRIES: Final = "/v1/journal-entries/"
 _MINOR: Final = ".".join(CONTRACT_VERSION.split(".")[:2])
+#: Longer than the header limit the reading routes enforce, and shaped like a key.
+_OVERLONG_KEY: Final = "sk-ant-api03-" + "x" * LLM_API_KEY_MAX_LENGTH
 
 
 def _counts(**extra: object) -> dict[str, object]:
@@ -171,3 +174,29 @@ async def test_an_import_relays_the_key_to_classification_and_never_to_the_uploa
     assert managed_vault.keyed() == [_CLASSIFICATIONS], managed_vault.sends
     assert {key for _path, key in managed_vault.sends if key} == {ANTHROPIC_KEY}
     assert ANTHROPIC_KEY not in response.text
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("/corpus/import", _document()),
+        ("/journal/", {"message": "the willow bent", "classification": "personal"}),
+    ],
+    ids=["import", "journal-save"],
+)
+@pytest.mark.asyncio
+async def test_an_overlong_key_header_never_fails_the_save(
+    async_client: AsyncClient, managed_vault: _ManagedVault, path: str, body: dict[str, str]
+) -> None:
+    """A key header past the length limit is ignored: the writing is kept, nothing relayed."""
+    headers = await _signup(async_client, f"overlong_{path.strip('/').replace('/', '_')}")
+
+    response = await async_client.post(
+        path, json=body, headers={**headers, _BYOK_HEADER: _OVERLONG_KEY}
+    )
+    await wait_for_vault_pipeline_tasks()
+
+    assert response.status_code in {HTTPStatus.CREATED, HTTPStatus.ACCEPTED}, response.text
+    assert managed_vault.keyed() == [], managed_vault.sends
+    assert _OVERLONG_KEY not in response.text
+    assert _OVERLONG_KEY[:40] not in response.text

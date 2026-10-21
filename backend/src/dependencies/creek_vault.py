@@ -88,7 +88,6 @@ from models.journal_entry import VAULT_DESTINATION_WIDTH
 from models.user_vault_config import UserVaultConfig
 from models.vault_activation import VaultActivationState
 from routers.auth import get_current_user
-from services.botmason import LLM_API_KEY_MAX_LENGTH
 from services.creek_provisioning import load_vault_activation
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
@@ -549,9 +548,10 @@ class OnboardingVault:
 
 def get_onboarding_vault(
     client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
-    x_llm_api_key: Annotated[
-        str | None, Header(alias="X-LLM-API-Key", max_length=LLM_API_KEY_MAX_LENGTH)
-    ] = None,
+    # No ``max_length`` here, unlike the reading routes: an over-long header is a
+    # malformed key, which :func:`relayable_key` ignores, and a save must never
+    # fail over a key header (#3437).
+    x_llm_api_key: Annotated[str | None, Header(alias="X-LLM-API-Key")] = None,
 ) -> OnboardingVault:
     """Bundle the caller's vault client with the key its onboarding pass may relay."""
     return OnboardingVault(client=client, relay_key=relayable_key(x_llm_api_key))
