@@ -153,6 +153,7 @@ from services.corpus_ingest import (
 from services.corpus_invitation import record_completed_pass
 from services.creek_vault_client import LocalFallbackCreekVaultClient
 from services.creek_vault_letters import (
+    LetterEscalation,
     VaultLetterSettlement,
     answer_vault_letter,
     letter_ask,
@@ -178,6 +179,7 @@ from services.creek_vault_write import (
     VaultWriteStatus,
     store_and_classify,
 )
+from services.essay_answer import LetterToMirror, essay_response, letter_to_mirror
 from services.essay_settlement import (
     ESSAY_ATTEMPTS,
     EssayCharge,
@@ -269,7 +271,6 @@ from services.wallet import (
     preflight_deduction,
     refund_one_message,
     require_user_fresh,
-    reset_monthly_usage_if_due,
 )
 
 
@@ -3361,26 +3362,15 @@ async def expand_marginalia_essay(
     error: the entry is intimate, or the provider's completion was not a letter
     (:func:`domain.resonance.generate_essay`). Either way nothing is cached and
     the writer can ask again. Every answer carries the wallet balances.
+
+    A vault-bound writer whose vault's care guard answered instead of a letter
+    gets the no-letter note with ``care`` set: adepthood's own reviewed care
+    surface, the one a resonance escalation returns, uncharged (#3380).
     """
-    note = await _expand_essay(session, marginalia_id, current_user, clients)
-    return await _essay_response(session, note)
-
-
-async def _essay_response(session: AsyncSession, note: Marginalia) -> EssayResponse:
-    """Wrap ``note`` with the owner's balances, computed as ``/user/usage`` does.
-
-    A read only: the monthly rollover is applied inside the session so a stale
-    counter is never reported, but it is not committed here -- the same
-    discipline as ``GET /user/usage`` (BUG-BM-015).
-    """
-    await reset_monthly_usage_if_due(session, note.user_id, datetime.now(UTC))
-    user = await require_user_fresh(session, note.user_id)
-    return EssayResponse(
-        **demo_visibility.served_note(note).model_dump(),
-        remaining_messages=max(get_monthly_cap() - user.monthly_messages_used, 0),
-        remaining_balance=user.offering_balance,
-        monthly_reset_date=user.monthly_reset_date,
-    )
+    # The note, or the escalation the vault's care guard answered instead: the
+    # response decides whether the reviewed care surface rides along (#3380).
+    answered = await _expand_essay(session, marginalia_id, current_user, clients)
+    return await essay_response(session, answered)
 
 
 # Where a cached letter was found (#623 PR3). ``pre_barrier`` is the ordinary
@@ -3427,7 +3417,7 @@ async def _expand_essay(
     marginalia_id: int,
     user_id: int,
     clients: _EssayClients,
-) -> Marginalia:
+) -> Marginalia | LetterEscalation:
     """Authorize, apply the privacy floor and the price gate, then generate."""
     note = await _load_user_marginalia(session, marginalia_id, user_id)
     if note is None:
@@ -3485,7 +3475,7 @@ async def _cache_and_mirror_essay(
     note: Marginalia,
     entry: JournalEntry,
     clients: _EssayClients,
-) -> Marginalia:
+) -> Marginalia | LetterEscalation:
     """Generate and cache the essay, then mirror it once if there is one.
 
     Split out of :func:`expand_marginalia_essay` so that route keeps only the
@@ -3556,11 +3546,13 @@ async def _cache_and_mirror_essay(
         # Shadow only (#3059). ``_cache_essay`` commits before it dials, so this
         # read is released with its own before anything leaves the process.
         await observe_entry_lineage(session, LineageOperation.ESSAY, entry)
-        cached, essay = await _write_first_letter(session, note=note, entry=entry, clients=clients)
-    if essay is None:
-        return cached
+        written = await _write_first_letter(session, note=note, entry=entry, clients=clients)
+    # A vault letter is kept by the vault itself and a care escalation stored
+    # nothing, so only an app-provider letter is ever owed a mirror (#3380).
+    if not isinstance(written, LetterToMirror):
+        return written
     return await _mirror_cached_essay(
-        session, entry=entry, cached=cached, essay=essay, clients=clients
+        session, entry=entry, cached=written.cached, essay=written.essay, clients=clients
     )
 
 
@@ -3570,7 +3562,7 @@ async def _write_first_letter(
     note: Marginalia,
     entry: JournalEntry,
     clients: _EssayClients,
-) -> tuple[Marginalia, str | None]:
+) -> Marginalia | LetterEscalation | LetterToMirror:
     """Have the one source this writer's boundary allows write the letter; name what to mirror.
 
     The vault for a vault-bound writer (#3156, #3203): it writes and keeps the
@@ -3579,10 +3571,12 @@ async def _write_first_letter(
     mirrored once -- unless it was not a letter at all, so the note comes back
     with ``essay`` unset and nothing reaches the vault the cache refused it
     from, or it is a stored demo letter a refused regeneration left in the row,
-    which must never reach the vault (#3096).
+    which must never reach the vault (#3096). Only a letter still owed its
+    mirror comes back as a :class:`LetterToMirror`; a vault care escalation is
+    the :class:`LetterEscalation` the route answers with care (#3380).
     """
     if clients.boundary is ReflectionBoundary.VAULT_BOUND:
-        return await _cache_vault_letter(session, note=note, entry=entry, clients=clients), None
+        return await _cache_vault_letter(session, note=note, entry=entry, clients=clients)
     cached = await _cache_essay(
         session,
         note,
@@ -3590,7 +3584,7 @@ async def _write_first_letter(
         api_key=clients.api_key,
         boundary=clients.boundary,
     )
-    return cached, demo_visibility.served_letter(cached)
+    return letter_to_mirror(cached)
 
 
 async def _mirror_cached_essay(
@@ -3645,7 +3639,7 @@ async def _cache_vault_letter(
     note: Marginalia,
     entry: JournalEntry,
     clients: _EssayClients,
-) -> Marginalia:
+) -> Marginalia | LetterEscalation:
     """Charge, have the vault write and keep the letter, then cache it (#3203).
 
     The vault-bound twin of :func:`_cache_essay`, under the same account hold

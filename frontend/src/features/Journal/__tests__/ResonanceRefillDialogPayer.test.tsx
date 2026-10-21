@@ -4,6 +4,7 @@ import { fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
 import ResonanceRefillDialog from '../ResonanceRefillDialog';
+import type { ResonanceRefillReason } from '../useResonanceExplainer';
 
 const PACK_URL = 'https://creekmasons.gumroad.com/l/botmason-credits';
 
@@ -112,4 +113,44 @@ describe('ResonanceRefillDialog — credits are offered only with a pack page (#
 it('never offers a key as an alternative payer for an exhausted vault reading', () => {
   const { queryByTestId } = renderDialog('wallet_exhausted');
   expect(queryByTestId('journal-resonance-refill-add-key')).toBeNull();
+});
+
+/**
+ * The cancel arm is the only other control on a wallet-only refill, so what it
+ * announces has to match what is on the card (#3388): a wallet the writer
+ * cannot refill with a key is not "declining to add a key".
+ */
+describe('ResonanceRefillDialog — the cancel arm announces the remedy it declines (#3388)', () => {
+  it.each<[ResonanceRefillReason, string, string]>([
+    ['wallet_exhausted', '', 'Not now — close this message'],
+    ['wallet_exhausted', PACK_URL, 'Not now — close without buying credits'],
+    ['key_required', '', 'Not now — do not add an API key'],
+    ['key_required', PACK_URL, 'Not now — do not add an API key'],
+  ])('%s with pack page %j is announced as %j', (reason, packUrl, label) => {
+    mockCreditPackUrl = packUrl;
+    const onCancel = jest.fn();
+    const { getByTestId, queryByTestId } = render(
+      <ResonanceRefillDialog
+        visible
+        monthlyResetDate={null}
+        monthlyCap={null}
+        reason={reason}
+        onAddKey={jest.fn()}
+        onCancel={onCancel}
+      />,
+    );
+    const cancel = getByTestId('journal-resonance-refill-cancel');
+
+    expect(cancel.props.accessibilityLabel).toBe(label);
+    // The spoken name starts with what is shown, and names only actions on the card.
+    expect(cancel).toHaveTextContent('Not now');
+    expect(queryByTestId('journal-resonance-refill-add-key') !== null).toBe(
+      label.includes('API key'),
+    );
+    expect(queryByTestId('journal-resonance-refill-credit-pack-link') !== null).toBe(
+      label.includes('credits'),
+    );
+    fireEvent.press(cancel);
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });

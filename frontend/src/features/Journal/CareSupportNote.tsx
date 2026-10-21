@@ -39,6 +39,12 @@ const REOPEN_A11Y = 'Show the support options again';
 export interface CareSupportNoteProps {
   /** The care surface from the latest resonance pass; ``null`` hides everything. */
   care: CareResponse | null;
+  /**
+   * Seat the card flush with its container instead of insetting it from the page
+   * edge: set where the note sits inside another card that already supplies the
+   * gutter, such as the letter card a vault's care escalation answers (#3380).
+   */
+  flush?: boolean;
 }
 
 /** Where focus goes after the next expand/collapse, set only by the user's own press. */
@@ -48,12 +54,14 @@ type FocusHandoff = 'reopen' | 'card' | null;
 function ReopenLine({
   onPress,
   reopenRef,
+  flush,
 }: {
   onPress: () => void;
   reopenRef: React.Ref<View>;
+  flush: boolean;
 }): React.JSX.Element {
   return (
-    <View style={styles.reopenLine}>
+    <View style={[styles.reopenLine, flush && styles.flush]}>
       <ReflectionDismiss
         ref={reopenRef}
         variant="reopen"
@@ -77,15 +85,22 @@ function CareCard({
   onClose,
   cardRef,
   headingRef,
+  flush,
 }: {
   care: CareResponse;
   onClose: () => void;
   cardRef: React.Ref<View>;
   headingRef: React.Ref<Text>;
+  flush: boolean;
 }): React.JSX.Element {
   return (
     // tabIndex -1: the web can focus the card on reopen without it becoming a tab stop.
-    <View ref={cardRef} style={reflectionCardStyles.root} testID="care-support-card" tabIndex={-1}>
+    <View
+      ref={cardRef}
+      style={[reflectionCardStyles.root, flush && styles.flush]}
+      testID="care-support-card"
+      tabIndex={-1}
+    >
       <Text ref={headingRef} style={reflectionCardStyles.heading} accessibilityRole="header">
         {care.title}
       </Text>
@@ -103,7 +118,7 @@ function CareCard({
   );
 }
 
-function CareSupportNote({ care }: CareSupportNoteProps): React.JSX.Element | null {
+function CareSupportNote({ care, flush = false }: CareSupportNoteProps): React.JSX.Element | null {
   // Reference-identity collapse: a fresh care object never matches the pinned one, so a new crisis signal always re-surfaces the card.
   const [collapsedFor, setCollapsedFor] = useState<CareResponse | null>(null);
   const expanded = care != null && collapsedFor !== care;
@@ -129,9 +144,15 @@ function CareSupportNote({ care }: CareSupportNoteProps): React.JSX.Element | nu
   return (
     <View testID="care-support">
       {expanded ? (
-        <CareCard care={care} onClose={close} cardRef={cardRef} headingRef={headingRef} />
+        <CareCard
+          care={care}
+          onClose={close}
+          cardRef={cardRef}
+          headingRef={headingRef}
+          flush={flush}
+        />
       ) : (
-        <ReopenLine onPress={reopen} reopenRef={reopenRef} />
+        <ReopenLine onPress={reopen} reopenRef={reopenRef} flush={flush} />
       )}
     </View>
   );
@@ -143,6 +164,10 @@ const styles = StyleSheet.create({
   },
   reopenText: {
     ...editorialType.action,
+  },
+  flush: {
+    margin: 0,
+    marginHorizontal: 0,
   },
 });
 

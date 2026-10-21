@@ -1054,20 +1054,6 @@ const marginaliaFieldsSchema = z.object({
 export const marginaliaSchema = z.preprocess(normalizeNoteReceipt, marginaliaFieldsSchema);
 
 /**
- * A margin note after an essay request (mirrors the backend ``EssayResponse``):
- * the note plus the wallet balances it left behind, the same three fields a
- * resonance pass reports, because both spend from the same wallet (#623).
- */
-export const essayResponseSchema = z.preprocess(
-  normalizeNoteReceipt,
-  marginaliaFieldsSchema.extend({
-    remaining_messages: z.number().int(),
-    remaining_balance: z.number().int(),
-    monthly_reset_date: z.string(),
-  }),
-);
-
-/**
  * One expanded letter on the Voice Drafts shelf (mirrors the backend
  * ``VoiceDraftResponse``).
  *
@@ -1192,6 +1178,23 @@ export const careResponseSchema = z.object({
   message: z.string(),
   resources: z.array(careResourceSchema),
 });
+
+/**
+ * A margin note after an essay request (mirrors the backend ``EssayResponse``):
+ * the note plus the wallet balances it left behind, the same three fields a
+ * resonance pass reports, because both spend from the same wallet (#623).
+ * ``care`` is the server's reviewed care surface, present only when a vault's
+ * care guard answered the letter ask instead of writing one (#3380).
+ */
+export const essayResponseSchema = z.preprocess(
+  normalizeNoteReceipt,
+  marginaliaFieldsSchema.extend({
+    remaining_messages: z.number().int(),
+    remaining_balance: z.number().int(),
+    monthly_reset_date: z.string(),
+    care: careResponseSchema.nullish(),
+  }),
+);
 
 /**
  * The two contraction routings (mirrors the backend contraction variants): a

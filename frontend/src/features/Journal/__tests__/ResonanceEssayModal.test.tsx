@@ -1090,3 +1090,97 @@ describe('letter price reads belong to the admitted credential', () => {
     expect(mockUsage).toHaveBeenCalledWith('test.eyJzdWIiOiIxIiwiZXhwIjo0MTAyNDQ0ODAwfQ.test');
   });
 });
+
+describe("a vault care escalation answers the ask with the server's reviewed care (#3380)", () => {
+  /** The care surface exactly as the server sends it; the modal must author none of it. */
+  const CARE = {
+    title: 'Server care title',
+    message: 'Server care message, reviewed and sent as-is.',
+    resources: [
+      {
+        kind: 'hotline' as const,
+        name: 'Server hotline name',
+        contact: 'Server hotline contact',
+        what_it_is: 'Server hotline description.',
+      },
+      {
+        kind: 'human' as const,
+        name: 'Server human name',
+        contact: 'Server human contact',
+        what_it_is: 'Server human description.',
+      },
+    ],
+  };
+  const BLANK_COPY = "This note's essay isn't ready yet.";
+
+  function escalated(): Promise<Marginalia> {
+    return Promise.resolve({ ...note({ id: 4 }), care: CARE } as Marginalia);
+  }
+
+  function modal(onEssayLoaded = jest.fn()) {
+    return (
+      <ResonanceEssayModal
+        note={note()}
+        onClose={jest.fn()}
+        onEssayLoaded={onEssayLoaded}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />
+    );
+  }
+
+  it('shows the care card with every server field instead of a blank-letter error', async () => {
+    mockEssay.mockImplementation(escalated);
+    const onEssayLoaded = jest.fn();
+    const { findByTestId, getByText, queryByTestId, queryByText } = render(modal(onEssayLoaded));
+
+    await askForTheLetter(findByTestId);
+
+    await findByTestId('care-support-card');
+    expect(getByText(CARE.title)).toBeTruthy();
+    expect(getByText(CARE.message)).toBeTruthy();
+    for (const resource of CARE.resources) {
+      expect(getByText(new RegExp(resource.name, 'u'))).toBeTruthy();
+    }
+    expect(queryByText(BLANK_COPY)).toBeNull();
+    expect(queryByTestId('essay-error')).toBeNull();
+    expect(queryByTestId('essay-retry')).toBeNull();
+    expect(queryByTestId('essay-text')).toBeNull();
+    expect(onEssayLoaded).not.toHaveBeenCalled();
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps showing the care on a reopen, without asking again', async () => {
+    mockEssay.mockImplementation(escalated);
+    const { findByTestId, getByTestId, rerender } = render(modal());
+    await askForTheLetter(findByTestId);
+    await findByTestId('care-support-card');
+
+    rerender(
+      <ResonanceEssayModal note={null} onClose={jest.fn()} hasOwnKey onOpenSettings={jest.fn()} />,
+    );
+    rerender(
+      <ResonanceEssayModal
+        note={note({ id: 4 })}
+        onClose={jest.fn()}
+        hasOwnKey
+        onOpenSettings={jest.fn()}
+      />,
+    );
+    await act(async () => {});
+
+    expect(getByTestId('care-support-card')).toBeTruthy();
+    expect(mockEssay).toHaveBeenCalledTimes(1);
+  });
+
+  it('still treats a blank answer with no care as the retryable blank-letter state', async () => {
+    mockEssay.mockResolvedValue({ ...note({ id: 4, essay: '' }), care: null } as Marginalia);
+    const { findByTestId, getByText, queryByTestId } = render(modal());
+
+    await askForTheLetter(findByTestId);
+
+    await findByTestId('essay-retry');
+    expect(getByText(BLANK_COPY)).toBeTruthy();
+    expect(queryByTestId('care-support-card')).toBeNull();
+  });
+});

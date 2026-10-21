@@ -322,6 +322,45 @@ describe('resonance.essay', () => {
     expect(result.monthly_reset_date).toBe('2026-10-01T00:00:00Z');
   });
 
+  test("carries a vault care escalation's reviewed care surface through validation (#3380)", async () => {
+    const care = {
+      title: "You're not alone in this",
+      message: 'Reaching out to a person is a sign of strength.',
+      resources: [
+        {
+          kind: 'hotline',
+          name: '988 Suicide & Crisis Lifeline',
+          contact: 'Call or text 988',
+          what_it_is: 'Free, confidential support, 24/7.',
+        },
+      ],
+    };
+    mockFetch.mockReturnValueOnce(jsonResponse({ ...marginalia(), ...ESSAY_BALANCES, care }));
+
+    const result = await resonance.essay(1, { priceAcknowledged: true });
+
+    expect(result.essay).toBeNull();
+    expect(result.care).toEqual(care);
+  });
+
+  test('reads an answer with no care field as no care surface', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ ...marginalia({ essay: 'A warm letter.' }), ...ESSAY_BALANCES }),
+    );
+
+    const result = await resonance.essay(1, { priceAcknowledged: true });
+
+    expect(result.care ?? null).toBeNull();
+  });
+
+  test('refuses a care surface that is not the published shape', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ ...marginalia(), ...ESSAY_BALANCES, care: { title: '', resources: [] } }),
+    );
+
+    await expect(resonance.essay(1, { priceAcknowledged: true })).rejects.toThrow();
+  });
+
   test('sends the price acknowledgement only when the caller gives it', async () => {
     mockFetch
       .mockReturnValueOnce(jsonResponse({ ...marginalia(), ...ESSAY_BALANCES }))

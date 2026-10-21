@@ -739,6 +739,10 @@ for (const width of WIDTHS) {
     }
     await doubleText(page);
     const cancel = page.getByTestId('journal-resonance-refill-cancel');
+    // No key arm is on this card, so the cancel arm must not announce one (#3388).
+    await expect(cancel).toHaveAccessibleName(
+      packUrl ? 'Not now — close without buying credits' : 'Not now — close this message',
+    );
     await capture(
       page,
       `vault-wallet-pack-${packUrl ? 'set' : 'unset'}-${width}-200-percent-initial`,
@@ -768,6 +772,101 @@ for (const width of WIDTHS) {
     expect(wallet()).toEqual(before);
     expect(await vaultReflections(page)).toEqual(vaultBefore);
   });
+}
+
+/** Every first-letter ask for ``noteId``: an exhausted preflight must send none. */
+function recordEssayAsks(page: Page, noteId: number): Request[] {
+  const asks: Request[] = [];
+  page.on('request', (request) => {
+    if (
+      request.method() === 'POST' &&
+      new URL(request.url()).pathname === `/journal/marginalia/${noteId}/essay`
+    )
+      asks.push(request);
+  });
+  return asks;
+}
+
+for (const width of WIDTHS) {
+  for (const hasKey of [false, true]) {
+    test(`controlled empty vault wallet puts the refill remedy on a first letter's offer, key=${hasKey} at ${width}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 844 });
+      const token = await loginVaultOwner(page);
+      if (hasKey) await storeOwnKey(page);
+      const id = await createPage(page, token);
+      const reading = await page.request.post(`${backendUrl()}/journal/${id}/resonance`, {
+        headers: bearer(token),
+      });
+      expect(reading.status()).toBe(200);
+      const note = ((await reading.json()) as { marginalia: { id: number }[] }).marginalia[0];
+      expect(note).toBeDefined();
+      const before = wallet();
+      const vaultBefore = await vaultReflections(page);
+      const asks = recordEssayAsks(page, note!.id);
+      await serveEmptyVaultWallet(page);
+      await openPage(page, id);
+      await page.getByTestId(`margin-note-open-${note!.id}`).click();
+
+      const tag = `vault-letter-empty-${hasKey ? 'own-key' : 'no-key'}-${width}`;
+      await expect(page.getByTestId('essay-ask-cost')).toHaveText(
+        'You have no BotMason monthly messages or offerings available for this letter.',
+      );
+      const remedy = page.getByTestId('essay-wallet-remedy');
+      await expect(remedy).toContainText(
+        'Letters your vault writes use BotMason credits, even when an API key is saved.',
+      );
+      await expect(remedy).toContainText(/reset/u);
+      await expect(page.getByTestId('essay-ask')).toHaveCount(0);
+      await expect(page.getByTestId('essay-open-settings')).toHaveCount(0);
+      const packUrl = process.env.EXPO_PUBLIC_CREDIT_PACK_URL ?? '';
+      const pack = page.getByTestId('essay-credit-pack-link');
+      const cancel = page.getByTestId('essay-not-now');
+      if (packUrl) {
+        await expect(pack).toHaveAccessibleName(
+          'Buy BotMason credits on the credit pack page, outside Adepthood',
+        );
+        await expect(remedy).toContainText('Use the same email address as your Adepthood account');
+        await expect(cancel).toHaveAccessibleName('Not now — close without buying credits');
+      } else {
+        await expect(pack).toHaveCount(0);
+        await expect(page.getByTestId('essay-offer')).not.toContainText(/buy|credit pack/iu);
+        await expect(cancel).toHaveAccessibleName('Not now — close this message');
+      }
+      const remedyText = page.getByTestId('essay-wallet-remedy-text');
+      await completeCopy(remedyText);
+      await capture(page, `${tag}-normal`);
+      await doubleText(page);
+      await completeCopy(remedyText);
+      await capture(page, `${tag}-200-percent-remedy`);
+      if (packUrl) await reachable(pack);
+      await reachable(cancel);
+      await capture(page, `${tag}-200-percent-actions`);
+      if (packUrl) {
+        await page
+          .context()
+          .route(packUrl, (route) =>
+            route.fulfill({ contentType: 'text/html', body: '<p>Controlled pack destination</p>' }),
+          );
+        const opened = page.waitForEvent('popup');
+        await pack.focus();
+        await expect(pack).toBeFocused();
+        await pack.press('Enter');
+        const destination = await opened;
+        await expect(destination).toHaveURL(packUrl);
+        await destination.close();
+      }
+      // Declining by keyboard closes the offer; nothing was asked or charged.
+      await cancel.focus();
+      await expect(cancel).toBeFocused();
+      await cancel.press('Enter');
+      await expect(page.getByTestId('essay-modal')).toHaveCount(0);
+      expect(asks).toHaveLength(0);
+      expect(wallet()).toEqual(before);
+      expect(await vaultReflections(page)).toEqual(vaultBefore);
+    });
+  }
 }
 
 const DISTRESS_BODY = 'I keep thinking I want to kill myself and end my life tonight.';
