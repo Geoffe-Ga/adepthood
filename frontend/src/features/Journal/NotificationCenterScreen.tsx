@@ -88,7 +88,7 @@ function Section({
   visible,
   children,
 }: {
-  slot: NotificationSlot;
+  slot: Exclude<NotificationSlot, 'earlyReview'>;
   visible: (_slot: NotificationSlot) => boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
@@ -123,7 +123,10 @@ function CurrentSections({
       <Section slot="today" visible={tally.isVisible}>
         <StatTileRow />
       </Section>
-      <Section slot="writing" visible={tally.isVisible}>
+      <Section
+        slot="writing"
+        visible={(slot) => tally.isVisible(slot) || tally.isVisible('earlyReview')}
+      >
         <JournalPrimaryInvitation onBeginPage={beginPage} />
       </Section>
       <Section slot="return" visible={tally.isVisible}>
