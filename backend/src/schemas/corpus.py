@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from models.corpus_fragment import CorpusSource
 
@@ -105,3 +105,37 @@ class CorpusInvitationResponse(BaseModel):
     offer: bool
     dismissed_at: datetime | None
     do_not_ask_again: bool
+
+
+class CorpusSweepEstimateResponse(BaseModel):
+    """What sorting the rest of this account's writing would reach, and cost.
+
+    Counts and a price. Nothing from any entry, for the reason
+    :class:`CorpusConsentResponse` gives about the audit log: an account is
+    entitled to know how much of its writing is waiting, and a surface that
+    could render the writing itself would be describing egress this read does
+    not perform.
+
+    ``estimated_price_units`` is the whole backlog's price, not one pass's: a
+    pass is bounded, so a client that showed only the next pass's cost would be
+    disclosing a fraction of what finishing actually costs. It is derived
+    server-side from ``entries_pending * price_units`` so the two cannot drift.
+
+    ``wallet_covers`` is the projection every client branches on, derived once
+    here for the reason
+    :class:`~schemas.voice_readiness.VoiceReadinessResponse` derives ``ready``:
+    three surfaces each re-deciding which balances count is how they come to
+    disagree. It answers the whole backlog, so it is ``false`` for an account
+    that could afford the next pass but not the finish -- which is the honest
+    answer to "can I get this done", and the one a disclosure owes.
+
+    ``monthly_remaining`` and ``offering_balance`` are reported alongside it so
+    a client can say *why* the wallet falls short without a second request.
+    """
+
+    entries_pending: int = Field(ge=0)
+    price_units: int = Field(ge=0)
+    estimated_price_units: int = Field(ge=0)
+    wallet_covers: bool
+    monthly_remaining: int = Field(ge=0)
+    offering_balance: int = Field(ge=0)

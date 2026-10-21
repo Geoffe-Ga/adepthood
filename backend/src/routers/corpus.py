@@ -98,10 +98,12 @@ from schemas.corpus import (
     CorpusConsentUpdate,
     CorpusInvitationResponse,
     CorpusInvitationUpdate,
+    CorpusSweepEstimateResponse,
 )
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
 from schemas.voice_readiness import VOICE_READINESS_MESSAGES, VoiceReadinessResponse
+from services import corpus_backfill
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentState, load_every_consent, set_consent
@@ -115,7 +117,9 @@ from services.corpus_invitation import InvitationOffer, dismiss_invitation, load
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_relay import forwarding_provider_key
 from services.creek_vault_upload import UploadedDocument
+from services.usage import get_monthly_cap
 from services.voice_readiness import VoiceReadiness, load_voice_readiness
+from services.wallet import require_user_fresh, reset_monthly_usage_if_due
 
 router = build_router(
     prefix="/corpus",
@@ -264,6 +268,58 @@ async def get_voice_readiness(
     """
     readiness = await load_voice_readiness(session, user_id=user_id)
     return _voice_readiness_response(readiness)
+
+
+@router.get("/sweep", response_model=CorpusSweepEstimateResponse)
+async def get_corpus_sweep_estimate(
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CorpusSweepEstimateResponse:
+    """Report how much of this account's writing is unsorted, and what sorting costs.
+
+    A sweep is bounded, so an account with a backlog finishes it by asking
+    again -- and asking again is only a decision somebody can make if they can
+    see what is left. This is the read that makes the remainder visible, and,
+    once :data:`services.corpus_backfill.CORPUS_SWEEP_PRICE_UNITS` is non-zero,
+    puts the price on the offer before it is taken.
+
+    Never a 404 for a corpus, the contract :func:`get_voice_readiness` keeps:
+    an account that has written nothing is told zero, which is the most common
+    answer rather than a missing resource. Consent is deliberately *not*
+    required -- granting it runs a sweep, so this number is exactly what a
+    prospective yes would reach, and withholding it until after the yes would
+    put the disclosure after the decision. The one refusal is ``400
+    user_not_found``, for an account deleted mid-request.
+
+    The account comes from the token, so no request can price anyone else's
+    backlog. No commit and no provider call: pricing the work is not doing it.
+    """
+    # The monthly counter is rolled over before it is read, for the same reason
+    # ``GET /user/usage`` does it: an account whose reset date has passed is
+    # still carrying last month's ``monthly_messages_used``, and quoting that
+    # would under-report the allowance and tell somebody they cannot afford a
+    # sweep they can. No ``session.commit()`` -- BUG-BM-015: a GET must not
+    # mutate persistent state, and the rollover UPDATE is idempotent, so it
+    # runs inside the request's own transaction purely to make this response
+    # reflect the post-reset values.
+    await reset_monthly_usage_if_due(session, user_id, datetime.now(UTC))
+    user = await require_user_fresh(session, user_id)
+    pending = await corpus_backfill.count_pending_entries(session, user_id)
+    price_units = corpus_backfill.CORPUS_SWEEP_PRICE_UNITS
+    estimate = pending * price_units
+    # The wallet's own draw order (monthly allowance first, purchased balance
+    # only once the month is spent), read rather than staged: this endpoint
+    # never charges, so it must not spend from either bucket.
+    monthly_remaining = max(get_monthly_cap() - user.monthly_messages_used, 0)
+    available = monthly_remaining + user.offering_balance
+    return CorpusSweepEstimateResponse(
+        entries_pending=pending,
+        price_units=price_units,
+        estimated_price_units=estimate,
+        wallet_covers=estimate <= available,
+        monthly_remaining=monthly_remaining,
+        offering_balance=user.offering_balance,
+    )
 
 
 def _invitation_response(offer: InvitationOffer) -> CorpusInvitationResponse:

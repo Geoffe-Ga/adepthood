@@ -189,6 +189,28 @@ BACKFILL_DEADLINE_SECONDS: Final[float] = 20.0
 #: way.
 BACKFILL_ENTRY_SECONDS: Final[float] = 8.0
 
+#: What sorting one entry costs the account, in wallet units.
+#:
+#: Zero, which is what sorting has always cost: every path that ontologizes an
+#: entry -- the live journal write and this sweep alike -- has been free since
+#: the corpus shipped, and the consent screen says so in as many words ("Each
+#: entry you save is sent once to the AI service that sorts it, as it is
+#: saved"). Changing that changes a disclosed consent term, so it is the
+#: owner's decision and not a default anybody can drift into.
+#:
+#: It is a flat count of entries rather than a measure of provider work.
+#: ``prompts/claude-comms/2026-09-05-resonance-economy-decision.md`` §2 settles
+#: that: "One offering is a product unit, not permission for unbounded
+#: compute." Compute is held down by the bounds above and by the wallet's own
+#: per-minute, concurrency and daily ceilings, not by a meter. A per-entry
+#: count is also the only price that can be *disclosed*, since it is the only
+#: one knowable before the work runs.
+#:
+#: Raising this to a non-zero value turns on charging with the disclosure path
+#: already built around it: the estimate below reports the price, and the sweep
+#: route refuses a request that has not acknowledged it.
+CORPUS_SWEEP_PRICE_UNITS: Final[int] = 0
+
 #: The ``sender`` value marking a row somebody wrote themselves, as the column
 #: stores it. ``'bot'`` marks a resonance reply, which is this app's writing
 #: rather than theirs.
@@ -729,3 +751,18 @@ async def backfill_after_consent(
             )
         )
     return outcome
+
+
+async def count_pending_entries(session: AsyncSession, user_id: int) -> int:
+    """How much of ``user_id``'s own writing is still without a fragment.
+
+    The public read behind ``GET /corpus/sweep``. It delegates to
+    :func:`_count_pending` rather than restating its predicate, so the number
+    an account is quoted is the number over the rows a sweep would actually
+    take -- the same reason :func:`_pending_conditions` is written once and
+    shared by the count and the batch.
+
+    No write, no commit and no provider call: an account may read this while
+    deciding whether to ask, as often as it likes.
+    """
+    return await _count_pending(session, user_id)

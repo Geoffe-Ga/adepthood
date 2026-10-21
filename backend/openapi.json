@@ -1147,6 +1147,50 @@
         "title": "CorpusSource",
         "type": "string"
       },
+      "CorpusSweepEstimateResponse": {
+        "description": "What sorting the rest of this account's writing would reach, and cost.\n\nCounts and a price. Nothing from any entry, for the reason\n:class:`CorpusConsentResponse` gives about the audit log: an account is\nentitled to know how much of its writing is waiting, and a surface that\ncould render the writing itself would be describing egress this read does\nnot perform.\n\n``estimated_price_units`` is the whole backlog's price, not one pass's: a\npass is bounded, so a client that showed only the next pass's cost would be\ndisclosing a fraction of what finishing actually costs. It is derived\nserver-side from ``entries_pending * price_units`` so the two cannot drift.\n\n``wallet_covers`` is the projection every client branches on, derived once\nhere for the reason\n:class:`~schemas.voice_readiness.VoiceReadinessResponse` derives ``ready``:\nthree surfaces each re-deciding which balances count is how they come to\ndisagree. It answers the whole backlog, so it is ``false`` for an account\nthat could afford the next pass but not the finish -- which is the honest\nanswer to \"can I get this done\", and the one a disclosure owes.\n\n``monthly_remaining`` and ``offering_balance`` are reported alongside it so\na client can say *why* the wallet falls short without a second request.",
+        "properties": {
+          "entries_pending": {
+            "minimum": 0.0,
+            "title": "Entries Pending",
+            "type": "integer"
+          },
+          "estimated_price_units": {
+            "minimum": 0.0,
+            "title": "Estimated Price Units",
+            "type": "integer"
+          },
+          "monthly_remaining": {
+            "minimum": 0.0,
+            "title": "Monthly Remaining",
+            "type": "integer"
+          },
+          "offering_balance": {
+            "minimum": 0.0,
+            "title": "Offering Balance",
+            "type": "integer"
+          },
+          "price_units": {
+            "minimum": 0.0,
+            "title": "Price Units",
+            "type": "integer"
+          },
+          "wallet_covers": {
+            "title": "Wallet Covers",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entries_pending",
+          "price_units",
+          "estimated_price_units",
+          "wallet_covers",
+          "monthly_remaining",
+          "offering_balance"
+        ],
+        "title": "CorpusSweepEstimateResponse",
+        "type": "object"
+      },
       "CountUpConfig": {
         "additionalProperties": false,
         "description": "Open-ended timer that counts up; user decides when to stop.",
@@ -13856,6 +13900,126 @@
           }
         },
         "summary": "Put Corpus Invitation",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/corpus/sweep": {
+      "get": {
+        "description": "Report how much of this account's writing is unsorted, and what sorting costs.\n\nA sweep is bounded, so an account with a backlog finishes it by asking\nagain -- and asking again is only a decision somebody can make if they can\nsee what is left. This is the read that makes the remainder visible, and,\nonce :data:`services.corpus_backfill.CORPUS_SWEEP_PRICE_UNITS` is non-zero,\nputs the price on the offer before it is taken.\n\nNever a 404 for a corpus, the contract :func:`get_voice_readiness` keeps:\nan account that has written nothing is told zero, which is the most common\nanswer rather than a missing resource. Consent is deliberately *not*\nrequired -- granting it runs a sweep, so this number is exactly what a\nprospective yes would reach, and withholding it until after the yes would\nput the disclosure after the decision. The one refusal is ``400\nuser_not_found``, for an account deleted mid-request.\n\nThe account comes from the token, so no request can price anyone else's\nbacklog. No commit and no provider call: pricing the work is not doing it.",
+        "operationId": "get_corpus_sweep_estimate_corpus_sweep_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusSweepEstimateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body is past a declared ceiling."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Get Corpus Sweep Estimate",
         "tags": [
           "corpus"
         ]
