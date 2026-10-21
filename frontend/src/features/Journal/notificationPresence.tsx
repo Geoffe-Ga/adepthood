@@ -14,7 +14,8 @@
 import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useState } from 'react';
 
 /** The sections that report themselves. Stage prompts are read by the screen directly. */
-export type NotificationSlot = 'today' | 'return' | 'invitations' | 'voice' | 'writing';
+export type NotificationSlot =
+  'today' | 'return' | 'invitations' | 'voice' | 'writing' | 'earlyReview';
 
 /** Whether a section is on screen, and how many waiting items it holds. */
 export interface SlotPresence {

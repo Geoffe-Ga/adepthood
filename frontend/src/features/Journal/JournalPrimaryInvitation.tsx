@@ -10,12 +10,13 @@
  * declined separately.
  *
  * Beneath either — and beneath neither, when both have been set aside — sits a
- * "Start a review early" card that explains reviews and opens the
+ * declinable "Start a review early" card that explains reviews and opens the
  * ``ReviewScopePicker`` for every layer still in progress. Nothing is gated:
  * any review can be begun on any day. Declining the tip — its corner X or its
  * "Don't show this again" link — hands focus to that card's action, so a
  * keyboard or screen-reader user is not dropped to the top of the page when
- * the card goes (#2860).
+ * the card goes (#2860). If early reviews are set aside, its restore control
+ * receives that focus instead.
  *
  * The shelf stays mounted across tab switches, so each focus bumps a count the
  * tip re-reads its stored state on: a tip set aside yesterday, or offered again
@@ -98,7 +99,7 @@ function JournalPrimaryInvitation({
   const navigation = useNavigation<InvitationNavigation>();
   const due = useDueReview();
   const { pickerOpen, togglePicker, chooseEarly } = useEarlyReview(navigation);
-  // Always mounted, so the tip's X can hand focus here synchronously as it goes.
+  // The card's action or restore control receives focus when the tip goes.
   const earlyLinkRef = useRef<View>(null);
   const focusEarlyLink = useCallback(() => {
     moveAccessibilityFocus(earlyLinkRef.current);

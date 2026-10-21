@@ -113,6 +113,10 @@ async function fireFocus(): Promise<void> {
 jest.mock('@/utils/accessibilityFocus', () => ({ moveAccessibilityFocus: jest.fn() }));
 const mockMoveFocus = jest.mocked(moveAccessibilityFocus);
 
+jest.mock('../useEarlyReviewDismissal', () => ({
+  useEarlyReviewDismissal: () => ({ dismissed: false, change: async () => true }),
+}));
+
 const JournalPrimaryInvitation = require('../JournalPrimaryInvitation').default;
 
 function due(overrides: Partial<ReflectionDue> = {}): ReflectionDue {
@@ -539,7 +543,11 @@ describe('every invitation control is named by the words it shows (WCAG 2.5.3)',
       expect(buttons.length).toBeGreaterThanOrEqual(4);
       for (const button of buttons) {
         const [label] = visibleText(button);
-        if (button.props.testID === 'journal-reflection-dismiss') {
+        if (
+          ['journal-reflection-dismiss', 'journal-review-early-dismiss'].includes(
+            button.props.testID,
+          )
+        ) {
           expect(button.props.accessibilityLabel).toBeTruthy();
         } else {
           expect(label).toBeDefined();

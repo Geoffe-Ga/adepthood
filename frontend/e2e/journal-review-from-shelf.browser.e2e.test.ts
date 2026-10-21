@@ -133,4 +133,46 @@ for (const width of [390, 1280]) {
       expect.objectContaining({ id: review?.id }),
     ]);
   });
+
+  test(`the review card can be set aside and restored by keyboard at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const email = await signUp(page, `review-decline-${width}`);
+    setProgramAnchorDaysAgo(email, DAY_NINE);
+    await page.reload();
+    await openPrompts(page);
+    const card = page.getByTestId('journal-review-early-card');
+    const close = card.getByRole('button', { name: 'Set the early review invitation aside' });
+    const restore = page.getByRole('button', { name: 'Bring reviews back', exact: true });
+    const action = page.getByTestId('journal-review-early');
+    await expect(close).toBeVisible();
+    const x = await close.boundingBox();
+    const title = await card.getByText('Review your Morning Pages', { exact: true }).boundingBox();
+    expect(x?.width).toBeGreaterThanOrEqual(44);
+    expect(x?.height).toBeGreaterThanOrEqual(44);
+    expect(title!.x + title!.width).toBeLessThanOrEqual(x!.x);
+
+    await close.focus();
+    await close.press('Enter');
+    await expect(card).toHaveCount(0);
+    await expect(restore).toBeFocused();
+    await page.reload();
+    await openPrompts(page);
+    await expect(restore).toBeVisible();
+    await expect(card).toHaveCount(0);
+    await restore.focus();
+    await restore.press('Enter');
+    await expect(action).toBeFocused();
+    await action.click();
+    await expect(card.getByTestId('journal-review-scope-week')).toBeVisible();
+    await close.click();
+    await expect(restore).toBeFocused();
+    // Other writing invitations still hand focus to the available review door.
+    await page.getByTestId('journal-morning-pages-dismiss').click();
+    await expect(restore).toBeFocused();
+    await restore.click();
+    await expect(action).toBeFocused();
+    await expect(card.getByTestId('journal-review-scope-week')).toHaveCount(0);
+  });
 }

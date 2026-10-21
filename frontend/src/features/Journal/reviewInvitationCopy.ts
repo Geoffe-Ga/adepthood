@@ -33,6 +33,9 @@ export const REVIEW_DISMISS_A11Y = 'Not now, set this reflection invitation asid
 export const REVIEW_EARLY_TITLE = 'Review your Morning Pages';
 export const REVIEW_EARLY_BODY =
   'Reviews keep the lessons, patterns, and emotional experiences in your Morning Pages alive by revisiting them at regular intervals, carrying quotes from daily entries into broader learnings. What has your writing revealed this week, this stage, this trimester, or across the whole course?';
+export const REVIEW_EARLY_DISMISS_A11Y = 'Set the early review invitation aside';
+export const REVIEW_EARLY_SET_ASIDE = 'Early reviews set aside';
+export const REVIEW_EARLY_RESTORE = 'Bring reviews back';
 
 /** The action that opens the early-review picker, present every day. */
 export const REVIEW_EARLY_LINK = 'Start a review early';
@@ -99,6 +102,9 @@ export const REVIEW_INVITATION_COPY_ENTRIES: readonly string[] = [
   REVIEW_DISMISS_A11Y,
   REVIEW_EARLY_TITLE,
   REVIEW_EARLY_BODY,
+  REVIEW_EARLY_DISMISS_A11Y,
+  REVIEW_EARLY_SET_ASIDE,
+  REVIEW_EARLY_RESTORE,
   REVIEW_EARLY_LINK,
   REVIEW_EARLY_A11Y,
   REVIEW_EARLY_CLOSE,
