@@ -239,6 +239,35 @@ _SEPARATORS = frozenset({_CAUSE_SEPARATOR, _CONTEXT_SEPARATOR})
 #: What a record that cannot be formatted is reduced to: level and logger only.
 _UNFORMATTABLE_RECORD = "<unformattable log record: {level} {logger}>"
 
+#: The ``extra`` fields printed after the message, by logger, in print order
+#: (#3502). The vault seam emits one static message per event and puts what an
+#: operator acts on -- capability, outcome, degrade reason, the vault's own code
+#: -- in ``extra``, each a member of a closed enum. Without this the line said
+#: "creek vault read degraded" and nothing else. It is a list per logger rather
+#: than "every extra" because 250 ``extra=`` sites exist and some carry
+#: identifiers; widening it is a deliberate edit to this table.
+_RENDERED_FIELDS: Mapping[str, tuple[str, ...]] = {
+    "services.creek_vault_telemetry": ("capability", "outcome", "code"),
+    "services.creek_vault_read": ("capability", "reason", "code"),
+    "services.creek_vault_write": ("capability", "action", "reason", "code"),
+}
+
+#: The shape a rendered value must have: a closed-vocabulary token such as
+#: ``creek.reflect`` or ``temporarily_unavailable``. A value that is not one --
+#: prose, a URL, an exception -- is dropped, so an allowlisted *name* can never
+#: become a route for content.
+_RENDERED_VALUE_RE = re.compile(r"[a-z0-9][a-z0-9_.:-]{0,63}")
+
+
+def _rendered_fields(record: logging.LogRecord) -> str:
+    """Return ``" key=value"`` for each allowlisted, token-shaped field on *record*."""
+    rendered = []
+    for name in _RENDERED_FIELDS.get(record.name, ()):
+        value = getattr(record, name, None)
+        if isinstance(value, str) and _RENDERED_VALUE_RE.fullmatch(value):
+            rendered.append(f" {name}={value}")
+    return "".join(rendered)
+
 
 def _neutralised(value: object) -> object:
     """Return an exception as its content-free label; anything else unchanged."""
@@ -360,6 +389,10 @@ class ContentFreeFormatter(logging.Formatter):
         safe = copy.copy(record)
         safe.msg = _neutralised(record.msg)
         safe.args = _neutralised_args(record.args)
+        fields = _rendered_fields(record)
+        if fields:
+            safe.msg = f"{safe.getMessage()}{fields}"
+            safe.args = None
         exc = record.exc_info[1] if record.exc_info else None
         safe.exc_info = None
         safe.exc_text = render_exception(exc).rstrip("\n") if exc is not None else None
