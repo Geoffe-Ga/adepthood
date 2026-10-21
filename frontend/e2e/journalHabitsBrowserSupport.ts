@@ -435,3 +435,12 @@ export async function reachReturnEligibility(
   expect(visit.status()).toBe(HTTP_OK);
   expect((await readReturnState(request, token)).eligible).toBe(true);
 }
+
+/** Open the primary Prompts destination from the Journal shelf. */
+export async function openPrompts(page: Page): Promise<void> {
+  const center = page.getByTestId('journal-notification-center').filter({ visible: true });
+  if (await center.isVisible()) return;
+  await page.getByRole('button', { name: 'Open Journal menu' }).click();
+  await page.getByTestId('drawer-nav-Prompts').click();
+  await expect(center).toBeVisible();
+}

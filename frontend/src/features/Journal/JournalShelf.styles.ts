@@ -1,6 +1,8 @@
 /** Styles for the journal shelf (the editorial library of entry "pages"). */
 import { StyleSheet } from 'react-native';
 
+import { closeCornerReserve } from './ReflectionDismiss';
+
 import {
   BORDER_RADIUS,
   SPACING,
@@ -207,6 +209,7 @@ const styles = StyleSheet.create({
     color: accent.primary,
     paddingTop: spacing(0.5),
   },
+  promptOpenArea: { marginRight: closeCornerReserve(SPACING.lg), minHeight: touchTarget.minimum },
   promptQuestion: {
     ...editorialType.heading,
     color: ink.primary,

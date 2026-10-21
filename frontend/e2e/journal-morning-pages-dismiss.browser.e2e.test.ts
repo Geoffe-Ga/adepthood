@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { dayKeyIn, nextDayKey, sessionFor, signUp } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * The morning-pages tip declines with an X in its top-right corner (#2860),
@@ -265,6 +266,7 @@ for (const viewport of VIEWPORTS) {
     expect(owner).toMatch(/^[1-9]\d*$/);
     const setAsideKey = `${TIP_SET_ASIDE_KEY}#u${owner}`;
 
+    await openPrompts(page);
     await assertCardGeometry(page, `${viewport.width}x${viewport.height}`);
     await assertHeldInk(page);
 

@@ -8,6 +8,7 @@ import {
   signUp,
   tokenFor,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 /**
  * Quote and margin anchors stay on the writer's own words through the live
@@ -170,6 +171,7 @@ test('a live-edited entry keeps its quote and margin anchors on the writer’s o
 
   // -- Fold two quotes into the due review. --
   await page.reload();
+  await openPrompts(page);
   await page.getByTestId('journal-reflection-band').click();
   const review = page.getByRole('textbox', { name: 'Entry body' });
   await review.fill('Looking back on the week.');

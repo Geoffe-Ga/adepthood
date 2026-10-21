@@ -39,6 +39,7 @@ import {
 } from './reviewInvitationCopy';
 import ReviewScopePicker from './ReviewScopePicker';
 import { reviewEntryParams, type ReviewEntryParams } from './reviewScopes';
+import SetAsideWritingPrompts from './SetAsideWritingPrompts';
 import { useDueReview } from './useDueReview';
 
 import { Button } from '@/components/Button';
@@ -74,8 +75,28 @@ function PrimaryCard({
     );
   }
   return (
-    <ReflectionInvitationBand review={due.review} onOpen={onOpenReview} onDismiss={due.dismiss} />
+    <ReflectionInvitationBand
+      review={due.review}
+      onOpen={onOpenReview}
+      onDismiss={() => {
+        due.dismiss();
+        onTipDismissed();
+      }}
+    />
   );
+}
+
+function useEarlyReview(navigation: InvitationNavigation) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const togglePicker = useCallback(() => setPickerOpen((open) => !open), []);
+  const chooseEarly = useCallback(
+    (params: ReviewEntryParams) => {
+      setPickerOpen(false);
+      navigation.navigate('JournalEntry', params);
+    },
+    [navigation],
+  );
+  return { pickerOpen, togglePicker, chooseEarly };
 }
 
 function JournalPrimaryInvitation({
@@ -83,11 +104,13 @@ function JournalPrimaryInvitation({
 }: JournalPrimaryInvitationProps): React.JSX.Element {
   const navigation = useNavigation<InvitationNavigation>();
   const due = useDueReview();
-  const { review } = due;
-  const [pickerOpen, setPickerOpen] = useState(false);
+  const { pickerOpen, togglePicker, chooseEarly } = useEarlyReview(navigation);
   // Always mounted, so the tip's X can hand focus here synchronously as it goes.
   const earlyLinkRef = useRef<View>(null);
-  const focusEarlyLink = useCallback(() => moveAccessibilityFocus(earlyLinkRef.current), []);
+  const focusEarlyLink = useCallback(() => {
+    moveAccessibilityFocus(earlyLinkRef.current);
+    setFocusCount((count) => count + 1);
+  }, []);
   // Bumped on every focus so an open picker re-reads /reflections/current (a
   // scope claimed while the writer was away must be offered to continue) and
   // the tip re-reads its stored decline (a new day, or a Settings restore).
@@ -98,20 +121,12 @@ function JournalPrimaryInvitation({
     }, []),
   );
 
+  const refreshTip = useCallback(() => setFocusCount((count) => count + 1), []);
+
   const openReview = useCallback(() => {
-    if (review == null) return;
-    navigation.navigate('JournalEntry', reviewEntryParams(review.scope, review.stageTitle));
-  }, [navigation, review]);
-
-  const togglePicker = useCallback(() => setPickerOpen((open) => !open), []);
-
-  const chooseEarly = useCallback(
-    (params: ReviewEntryParams) => {
-      setPickerOpen(false);
-      navigation.navigate('JournalEntry', params);
-    },
-    [navigation],
-  );
+    if (due.review == null) return;
+    navigation.navigate('JournalEntry', reviewEntryParams(due.review.scope, due.review.stageTitle));
+  }, [navigation, due.review]);
 
   return (
     <View>
@@ -132,6 +147,12 @@ function JournalPrimaryInvitation({
         style={styles.earlyLink}
       />
       <ReviewScopePicker enabled={pickerOpen} refreshKey={focusCount} onChoose={chooseEarly} />
+      <SetAsideWritingPrompts
+        review={due.setAsideReview}
+        onRestoreReview={due.restore}
+        refreshKey={focusCount}
+        onRestored={refreshTip}
+      />
     </View>
   );
 }

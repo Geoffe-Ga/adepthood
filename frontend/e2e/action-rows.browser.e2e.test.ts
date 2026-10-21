@@ -161,11 +161,10 @@ const EXTRA_ROUTES: readonly Route[] = [
   },
   {
     name: 'JournalNotifications',
-    label: 'Notification Center',
+    label: 'Prompts (legacy link)',
     anchor: 'journal-notification-center',
     open: async (page) => {
-      await page.goto(`${frontendUrl()}/journal`);
-      await page.getByTestId('journal-notifications-open').click();
+      await page.goto(`${frontendUrl()}/journal/notifications`);
     },
   },
 ];

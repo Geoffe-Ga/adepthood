@@ -6,6 +6,7 @@ import {
   signUp,
   tokenFor,
 } from './journalHabitsBrowserSupport';
+import { openPrompts } from './journalHabitsBrowserSupport';
 
 test('a saved promoted quote can be folded into a reopened reflection', async ({ page }) => {
   const email = await signUp(page, 'promote-fold-real-wire');
@@ -33,6 +34,7 @@ test('a saved promoted quote can be folded into a reopened reflection', async ({
   const quoteId = ((await promoted.json()) as { id: number }).id;
 
   await page.reload();
+  await openPrompts(page);
   await page.getByTestId('journal-reflection-band').click();
   await page.getByRole('textbox', { name: 'Entry body' }).fill('Looking back on the week.');
   await expect(page.getByTestId('journal-save-hint')).toHaveText('Saved');

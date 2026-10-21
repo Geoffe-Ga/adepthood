@@ -35,13 +35,7 @@ const HOME_STACK = [
   'JournalHero.styles.ts',
   'StatTile.styles.ts',
   'JournalShelf.styles.ts',
-  'JournalPrimaryInvitation.tsx',
-  'MorningPagesTip.tsx',
-  'ReflectionInvitationBand.tsx',
-  'ReviewScopePicker.tsx',
   'JournalShelfScreen.tsx',
-  // Moved out of the shelf screen (#3142); still stacked on the home.
-  'StagePromptSection.tsx',
 ];
 
 /**
@@ -94,8 +88,6 @@ describe('the Journal home screen reads as a library, not a stack of headings', 
       'JournalHero.styles.ts::greeting',
       // One emphatic line per band; the labels beneath them recede to caption.
       'JournalShelf.styles.ts::promptQuestion',
-      'MorningPagesTip.tsx::title',
-      'ReflectionInvitationBand.tsx::title',
       'StatTile.styles.ts::stat',
     ]);
   });

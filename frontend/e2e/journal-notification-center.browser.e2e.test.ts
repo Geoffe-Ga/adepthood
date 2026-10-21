@@ -21,7 +21,7 @@ const LAPTOP = { width: 1280, height: 720 } as const;
 const ZOOM_200 = 2;
 const DOOR = 'journal-notifications-open';
 const CENTER = 'journal-notification-center';
-const COUNTED_LABEL = /^Notifications \((\d+)\)$/u;
+const COUNTED_LABEL = /^Prompts \((\d+)\)$/u;
 
 /** The number of items the home's door says are waiting, once it has loaded. */
 async function waitingCount(page: Page): Promise<number> {
@@ -43,8 +43,9 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
 
   // A fresh account is in Beige, whose three prompts are all still offered, so
   // the door counts at least those three; it is a number in words, no badge.
+  await page.waitForLoadState('networkidle');
+  await expect.poll(() => waitingCount(page)).toBeGreaterThanOrEqual(3);
   const before = await waitingCount(page);
-  expect(before).toBeGreaterThanOrEqual(3);
   await capture(page, testInfo, 'home-door-390');
 
   await page.getByTestId(DOOR).click();
@@ -72,13 +73,14 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
   );
 
   // Back on the home, the door has re-read its sources: one fewer card waits.
-  await page.goBack();
-  await expect(page.getByTestId(DOOR)).toHaveText(`Notifications (${before - 1})`);
+  await page.getByRole('button', { name: 'Open Prompts menu' }).click();
+  await page.getByTestId('drawer-nav-Journal').click();
+  await expect(page.getByTestId(DOOR)).toHaveText(`Prompts (${before - 1})`);
 
   // The drawer's door carries no count and opens the same screen.
   await page.getByRole('button', { name: 'Open Journal menu' }).click();
-  const drawerDoor = page.getByRole('dialog').getByTestId('journal-drawer-notifications');
-  await expect(drawerDoor).toHaveText('Notifications');
+  const drawerDoor = page.getByRole('dialog').getByTestId('drawer-nav-Prompts');
+  await expect(drawerDoor).toHaveText('Prompts');
   await drawerDoor.click();
   const reopened = page.getByTestId(CENTER);
   await expect(reopened).toBeVisible();
@@ -92,6 +94,7 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
     await reopened.getByTestId(`journal-stage-prompt-set-aside-${ordinal}`).click();
     await expect(reopened.getByTestId(`journal-stage-prompt-card-${ordinal}`)).toHaveCount(0);
   }
+  await reopened.getByTestId('journal-morning-pages-dismiss').click();
   const voiceDecline = reopened.getByTestId('journal-voice-readiness-dismiss');
   if ((await voiceDecline.count()) > 0) await voiceDecline.click();
   await expect(reopened.getByTestId('journal-notification-center-empty')).toHaveText(
@@ -100,8 +103,9 @@ test('a writer opens the Notification Center, sets a prompt aside there, and the
   await capture(page, testInfo, 'center-empty-1280');
   await page.setViewportSize(PHONE);
   await capture(page, testInfo, 'center-empty-390');
-  await page.goBack();
-  await expect(page.getByTestId(DOOR)).toHaveText('Notifications');
+  await page.getByRole('button', { name: 'Open Prompts menu' }).click();
+  await page.getByTestId('drawer-nav-Journal').click();
+  await expect(page.getByTestId(DOOR)).toHaveText('Prompts');
 });
 
 test('the Notification Center and its door hold together at 200% text, phone and laptop', async ({
