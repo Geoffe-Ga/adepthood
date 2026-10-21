@@ -209,7 +209,9 @@ const styles = StyleSheet.create({
     color: accent.primary,
     paddingTop: spacing(0.5),
   },
-  promptOpenArea: { marginRight: closeCornerReserve(SPACING.lg), minHeight: touchTarget.minimum },
+  // Put the open target below the corner X so narrow cards retain their full
+  // text width, and the two touch targets never overlap.
+  promptOpenArea: { marginTop: closeCornerReserve(SPACING.lg), minHeight: touchTarget.minimum },
   promptQuestion: {
     ...editorialType.heading,
     color: ink.primary,
