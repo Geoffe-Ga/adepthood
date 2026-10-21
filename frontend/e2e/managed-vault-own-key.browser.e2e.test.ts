@@ -8,6 +8,13 @@ import { backendUrl, bearer, frontendUrl, signUp } from './journalHabitsBrowserS
 import { runBackendModule } from './laneDatabase';
 import { readLaneState } from './laneState';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 /**
  * A managed vault writes with the writer's own key (#3437, ADR 0009's
  * 2026-10-16 amendment; Creek-Vault ADR-0015).
@@ -173,6 +180,10 @@ for (const width of [390, 1280]) {
       (r) =>
         r.request().method() === 'POST' && new URL(r.url()).pathname === `/journal/${id}/resonance`,
     );
+    // A completed pass asks the server whether to raise the corpus invitation.
+    const invitationRead = page.waitForResponse(
+      (r) => r.request().method() === 'GET' && new URL(r.url()).pathname === '/corpus/invitation',
+    );
     await page.getByTestId('resonance-explainer-continue').click();
     const answered = await pass;
     expect(answered.status()).toBe(200);
@@ -185,8 +196,11 @@ for (const width of [390, 1280]) {
     const payer = page.getByTestId('resonance-pass-receipt').getByTestId('resonance-pass-payer');
     await expect(payer).toHaveText(LABEL);
     // The corpus invitation a first pass can raise is its own, separate offer.
-    const invitation = page.getByTestId('journal-corpus-invitation-dismiss');
-    if (await invitation.isVisible()) await invitation.click();
+    // Decide from the server's answer, not from whether the note is up yet (#3481).
+    const invitationReply = await invitationRead;
+    expect(invitationReply.status()).toBe(200);
+    if (((await invitationReply.json()) as { offer: boolean }).offer)
+      await page.getByTestId('journal-corpus-invitation-dismiss').click();
     await fits(payer);
     await frame(page, `receipt-${width}`, payer);
     await doubleText(page);

@@ -23,6 +23,13 @@ import {
   tokenFor,
 } from './journalHabitsBrowserSupport';
 
+// A routed read can still be awaiting `route.fetch()` when the test ends, and
+// that fetch then rejects with "Test ended" outside any test (#3481). Unroute
+// first so a straggler's late error is dropped rather than failing the run.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+});
+
 /**
  * #3374: the let-go prompt that follows beginning a Return stays open, with the
  * person's half-made choice, while the app renews the same account's token.

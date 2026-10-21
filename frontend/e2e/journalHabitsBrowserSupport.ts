@@ -134,6 +134,22 @@ export function setProgramAnchorSixDaysAgo(email: string): void {
  * @param origin - The frontend to sign up on; the lane's own by default. Only a
  *   spec that boots its own, differently configured frontend passes another.
  */
+/**
+ * Decline the welcome and wait until the server has recorded it (#3481).
+ *
+ * Skip closes the welcome at once and writes `has_seen_welcome` with a PATCH it
+ * does not wait for. A `goto` or reload sent before that PATCH lands cancels it,
+ * and the app then boots the welcome over whatever screen it was opening.
+ */
+export async function skipWelcome(page: Page): Promise<void> {
+  const saved = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PATCH' && new URL(response.url()).pathname === '/ui-flags',
+  );
+  await page.getByRole('button', { name: 'Skip the welcome' }).click();
+  expect((await saved).status()).toBe(HTTP_OK);
+}
+
 export async function signUp(
   page: Page,
   prefix: string,
@@ -147,7 +163,7 @@ export async function signUp(
   await page.getByRole('textbox', { name: 'Confirm password' }).fill(ACCOUNT_PHRASE);
   await page.getByRole('textbox', { name: 'Gumroad license key' }).fill(freshLicenseKey());
   await page.getByRole('button', { name: 'Create account' }).click();
-  await page.getByRole('button', { name: 'Skip the welcome' }).click();
+  await skipWelcome(page);
   await expect(page.getByRole('button', { name: JOURNAL_MENU })).toBeVisible();
   return email;
 }
@@ -170,12 +186,19 @@ export async function logIn(
 export async function logInInPlace(page: Page, email: string): Promise<void> {
   await page.getByRole('textbox', { name: 'Email' }).fill(email);
   await page.getByRole('textbox', { name: 'Password', exact: true }).fill(ACCOUNT_PHRASE);
+  // The journal renders before the server says whether the welcome is still
+  // owed, and the welcome then replaces it, so ask the server's answer rather
+  // than whichever of the two happens to be on screen first (#3481).
+  const flagsRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'GET' && new URL(response.url()).pathname === '/ui-flags',
+  );
   await page.getByRole('button', { name: 'Log in' }).click();
-  const skipWelcome = page.getByRole('button', { name: 'Skip the welcome' });
-  const journalMenu = page.getByRole('button', { name: JOURNAL_MENU });
-  await expect(skipWelcome.or(journalMenu)).toBeVisible();
-  if (await skipWelcome.isVisible()) await skipWelcome.click();
-  await expect(journalMenu).toBeVisible();
+  const flags = await flagsRead;
+  expect(flags.status()).toBe(HTTP_OK);
+  if (!((await flags.json()) as { has_seen_welcome: boolean }).has_seen_welcome)
+    await skipWelcome(page);
+  await expect(page.getByRole('button', { name: JOURNAL_MENU })).toBeVisible();
 }
 
 /**
