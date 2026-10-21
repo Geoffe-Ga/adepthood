@@ -55,7 +55,8 @@
         "The vendor is named, with its operator and jurisdiction, so Creek-Vault ADR-0016 Decision 3.3 condition (h) is a choice on the record rather than a default.",
         "Condition (f) is waived on vendor-asserted evidence, and every artifact depending on it says vendor-asserted wherever it would otherwise imply verification.",
         "Conditions (c) and (e) are waived with the substitutes the owner named, each cited wherever its waiver is.",
-        "Creek-Vault ADR-0016's Q2 answer, option (i), is admitted for grounding embeddings only while the embedding model is inside the attested measurement set; otherwise the managed vault stays ungrounded, that record's option (iii)."
+        "Creek-Vault ADR-0016's Q2 answer, option (i), is admitted for grounding embeddings only while the embedding model is inside the attested measurement set; otherwise the managed vault stays ungrounded, that record's option (iii).",
+        "The 2026-10-07 D05 paragraph is restored verbatim and the amendment is appended to it, so the reopen condition it states is the one Q1's Yes meets."
       ],
       "d05_reopened_for": "inference leg only",
       "d05_waivers": [
@@ -87,7 +88,16 @@
         "Stored content, key custody and recovery are untouched (Decision items 1, 2 and 11).",
         "unlocks_public_claims stays false; B24 (issue:#3076) still certifies every claim.",
         "Creek-Vault ADR-0016 Decision 5 is untouched: INTIMATE content never reaches the pool, by any route, including the `default` rescue path.",
-        "No spend is authorized by this record, and no vendor resource is provisioned by it."
+        "No spend is authorized by this record, and no vendor resource is provisioned by it.",
+        "The decided D05 paragraph of 2026-10-07 is kept as written; the storage leg stays unpursued with its five conditions in full."
+      ],
+      "binding": {
+        "vendor_only": "The Decision item 3 exception and all three D05 waivers apply to Privatemode, operated by Edgeless Systems GmbH, and to no other vendor.",
+        "another_vendor": "Another vendor, or any other jurisdiction under Creek-Vault ADR-0016 Decision 3.3 condition (h), is a new owner decision and inherits none of these waivers.",
+        "who_dials": "The managed vault dials the vendor from inside the vault process; this exception admits no call from adepthood's server to the vendor."
+      },
+      "to_be_confirmed": [
+        "Whether Privatemode offers the per-activation caps of Creek-Vault ADR-0016 Decision 3 item 4, which that record documents on another vendor's admin API. The Creek build issue (creek-vault:#1896) confirms it; if it does not exist, the choice returns to the owner rather than proceeding without the brake."
       ]
     }
   ],
