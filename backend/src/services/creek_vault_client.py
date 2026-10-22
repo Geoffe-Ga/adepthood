@@ -1109,8 +1109,8 @@ _UNVERSIONED_CALL = _CallDepartures(contract_versioned=False)
 
 # The departures one reflection runs under: keyed, like the letter route beside
 # it, and one of the two calls that ask for the standing deadline *explicitly*.
-# Its
-# deadline is :data:`_VAULT_TOTAL_DEADLINE_SECONDS` rather than a longer one, so
+# Its deadline is :data:`_VAULT_TOTAL_DEADLINE_SECONDS` rather than a longer
+# one, so
 # nothing about how long a reflection may take changes here -- what changes is
 # that the deadline becomes *reachable*. Naming it is the only way to say so,
 # because the standing path leaves the pooled client's per-phase budgets in

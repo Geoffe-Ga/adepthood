@@ -3222,6 +3222,24 @@ async def _drive_ingest_unavailable(
         await client.ingest(_ingest_request())
 
 
+async def _drive_ingest_rate_limited(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a cap, which is a wait rather than a call that will never land.
+
+    On ``ingest`` rather than on a model-backed route, and deliberately so: the
+    classification narrows *any* ``429`` on any ``/v1`` call, so a cap shed by
+    an intermediary in front of a route that wakes no model is a real path to
+    this counter and the cheapest one to drive. The vault's own model-call cap
+    reaching a reflection or a letter is the same exception by the same
+    chokepoint -- ``test_creek_vault_rate_limited.py`` drives those two.
+    """
+    reply = _IngestReply(status=HTTPStatus.TOO_MANY_REQUESTS, payload={"detail": "capped"})
+    client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
+    with pytest.raises(CreekVaultRateLimitedError):
+        await client.ingest(_ingest_request())
+
+
 async def _drive_ingest_auth_failed(
     http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3336,6 +3354,11 @@ _OUTCOME_DRIVERS: tuple[tuple[VaultTelemetryOutcome, CreekCapability, OutcomeDri
         _drive_ingest_contract_failure,
     ),
     (VaultTelemetryOutcome.TIMEOUT, CreekCapability.JOURNAL, _drive_ingest_timeout),
+    (
+        VaultTelemetryOutcome.RATE_LIMITED,
+        CreekCapability.JOURNAL,
+        _drive_ingest_rate_limited,
+    ),
     (VaultTelemetryOutcome.REFUSED, CreekCapability.REFLECT, _drive_reflect_refused),
     (VaultTelemetryOutcome.ESCALATED, CreekCapability.REFLECT, _drive_reflect_escalated),
     (

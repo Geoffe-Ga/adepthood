@@ -1,12 +1,13 @@
-"""One per-account cap, one story — on the reflection route and on the letter route.
+"""One cap, one story — on the reflection route and on the letter route.
 
-The consumer half of Creek-Vault#1903 step 6. Creek's admission cap is not a
-per-route counter and never was: both model-backed routes resolve the one
-``generation`` stage through the same provider chokepoint, so a writer held at
-the cap is held at it on both. Creek now *reports* it the same way on both
-(contract 0.21, ``429 rate_limited``), and this suite is adepthood's side of
-that promise — a 429 from either route is a **wait**, not an outage, and it is
-the same exception type carrying the same meaning.
+The consumer half of Creek-Vault#1903 step 6. The cap is relayed by the vault,
+never minted by it, and it is not a per-route counter and never was: both
+model-backed routes resolve the one ``generation`` stage through the same
+provider chokepoint, so a writer held at the cap is held at it on both. Creek
+now *reports* it the same way on both (contract 0.21, ``429 rate_limited``),
+and this suite is adepthood's side of that promise — a 429 from either route
+is a **wait**, not an outage, and it is the same exception type carrying the
+same meaning.
 
 Why the classification keys on the **status** rather than on the vault's
 ``code``: adepthood's vendored bundle is contract 0.18, whose ``ErrorCode``
@@ -131,7 +132,11 @@ def _letter_request() -> VaultLetterRequest:
 
 @pytest.mark.asyncio
 async def test_a_capped_reflection_is_a_wait() -> None:
-    """The route that has served the cap since Creek 0.19."""
+    """The route Creek has served the cap on since 0.19 -- though not yet to us.
+
+    adepthood declares 0.18 on every call, so Creek downgrades this cap to a
+    503 for now; the scripted vault here is the 0.21 answer the pin will reach.
+    """
     client = await _client(_CappedVault())
 
     with pytest.raises(CreekVaultRateLimitedError):
@@ -170,7 +175,13 @@ async def test_both_routes_raise_one_type_for_one_cap() -> None:
         await client.write_letter(_letter_request())
 
     assert type(writing.value) is type(reflecting.value)
-    assert writing.value.code == reflecting.value.code
+    # Not ``writing.value.code == reflecting.value.code``: ``rate_limited`` is not
+    # a 0.18 ``VaultErrorCode`` member, so ``_coerce_error_code`` drops it and both
+    # sides are ``None`` -- an equality that would hold against any classifier
+    # whatever. Pinned as the absolute it is, so it goes red the day the bundle is
+    # re-vendored and the coded path should start agreeing with the status.
+    assert writing.value.code is None
+    assert reflecting.value.code is None
 
 
 @pytest.mark.asyncio
