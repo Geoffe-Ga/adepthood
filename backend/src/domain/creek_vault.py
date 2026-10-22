@@ -47,6 +47,24 @@ from uuid import UUID
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
+#
+# It sits deliberately behind Creek, which serves 0.21 on `main`, and the gap is
+# not neglect -- read this before "fixing" it:
+#
+# 1. `supported_contract_minors` is a property of the **deployed** vault, not of
+#    Creek's `main`. The pilot vault runs an older image, so declaring a minor
+#    it does not list fails *every* handshake with `incompatible_version`. The
+#    bump therefore belongs to the same gated step as the vault re-image, not to
+#    whichever PR notices the gap. 0.18 is still inside Creek's served window,
+#    so the current pin negotiates fine -- a stale pin, not a wrong one.
+# 2. Each intervening minor publishes a field this consumer does not yet read:
+#    `inference_source` at 0.19 (its labelling is Creek-Vault#1903 step 4) and
+#    `keyless_inference` at 0.20. Bumping adopts them unconsumed.
+#
+# What the gap costs, so it is priced rather than hidden: the vault downgrades
+# anything gated above our pin, so a capped letter reaches us as
+# `503 temporarily_unavailable` instead of `429 rate_limited`
+# (Creek-Vault#1903 step 6). `CreekVaultRateLimitedError` documents that.
 CONTRACT_VERSION = "0.18.0"
 
 
