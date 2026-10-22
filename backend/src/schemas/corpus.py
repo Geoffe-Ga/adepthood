@@ -108,34 +108,18 @@ class CorpusInvitationResponse(BaseModel):
 
 
 class CorpusSweepEstimateResponse(BaseModel):
-    """What sorting the rest of this account's writing would reach, and cost.
+    """How much of this account's own writing is still without a fragment.
 
-    Counts and a price. Nothing from any entry, for the reason
-    :class:`CorpusConsentResponse` gives about the audit log: an account is
-    entitled to know how much of its writing is waiting, and a surface that
+    A count, and deliberately nothing else. Nothing from any entry, for the
+    reason :class:`CorpusConsentResponse` gives about the audit log: an account
+    is entitled to know how much of its writing is waiting, and a surface that
     could render the writing itself would be describing egress this read does
     not perform.
 
-    ``estimated_price_units`` is the whole backlog's price, not one pass's: a
-    pass is bounded, so a client that showed only the next pass's cost would be
-    disclosing a fraction of what finishing actually costs. It is derived
-    server-side from ``entries_pending * price_units`` so the two cannot drift.
-
-    ``wallet_covers`` is the projection every client branches on, derived once
-    here for the reason
-    :class:`~schemas.voice_readiness.VoiceReadinessResponse` derives ``ready``:
-    three surfaces each re-deciding which balances count is how they come to
-    disagree. It answers the whole backlog, so it is ``false`` for an account
-    that could afford the next pass but not the finish -- which is the honest
-    answer to "can I get this done", and the one a disclosure owes.
-
-    ``monthly_remaining`` and ``offering_balance`` are reported alongside it so
-    a client can say *why* the wallet falls short without a second request.
+    No price either, because sorting has none: every path that ontologizes an
+    entry is free, and the consent screen says so. What bounds the provider
+    bill is a per-account ceiling on server-paid classifications, not a charge
+    somebody is quoted here.
     """
 
     entries_pending: int = Field(ge=0)
-    price_units: int = Field(ge=0)
-    estimated_price_units: int = Field(ge=0)
-    wallet_covers: bool
-    monthly_remaining: int = Field(ge=0)
-    offering_balance: int = Field(ge=0)

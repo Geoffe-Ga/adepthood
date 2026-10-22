@@ -1148,45 +1148,16 @@
         "type": "string"
       },
       "CorpusSweepEstimateResponse": {
-        "description": "What sorting the rest of this account's writing would reach, and cost.\n\nCounts and a price. Nothing from any entry, for the reason\n:class:`CorpusConsentResponse` gives about the audit log: an account is\nentitled to know how much of its writing is waiting, and a surface that\ncould render the writing itself would be describing egress this read does\nnot perform.\n\n``estimated_price_units`` is the whole backlog's price, not one pass's: a\npass is bounded, so a client that showed only the next pass's cost would be\ndisclosing a fraction of what finishing actually costs. It is derived\nserver-side from ``entries_pending * price_units`` so the two cannot drift.\n\n``wallet_covers`` is the projection every client branches on, derived once\nhere for the reason\n:class:`~schemas.voice_readiness.VoiceReadinessResponse` derives ``ready``:\nthree surfaces each re-deciding which balances count is how they come to\ndisagree. It answers the whole backlog, so it is ``false`` for an account\nthat could afford the next pass but not the finish -- which is the honest\nanswer to \"can I get this done\", and the one a disclosure owes.\n\n``monthly_remaining`` and ``offering_balance`` are reported alongside it so\na client can say *why* the wallet falls short without a second request.",
+        "description": "How much of this account's own writing is still without a fragment.\n\nA count, and deliberately nothing else. Nothing from any entry, for the\nreason :class:`CorpusConsentResponse` gives about the audit log: an account\nis entitled to know how much of its writing is waiting, and a surface that\ncould render the writing itself would be describing egress this read does\nnot perform.\n\nNo price either, because sorting has none: every path that ontologizes an\nentry is free, and the consent screen says so. What bounds the provider\nbill is a per-account ceiling on server-paid classifications, not a charge\nsomebody is quoted here.",
         "properties": {
           "entries_pending": {
             "minimum": 0.0,
             "title": "Entries Pending",
             "type": "integer"
-          },
-          "estimated_price_units": {
-            "minimum": 0.0,
-            "title": "Estimated Price Units",
-            "type": "integer"
-          },
-          "monthly_remaining": {
-            "minimum": 0.0,
-            "title": "Monthly Remaining",
-            "type": "integer"
-          },
-          "offering_balance": {
-            "minimum": 0.0,
-            "title": "Offering Balance",
-            "type": "integer"
-          },
-          "price_units": {
-            "minimum": 0.0,
-            "title": "Price Units",
-            "type": "integer"
-          },
-          "wallet_covers": {
-            "title": "Wallet Covers",
-            "type": "boolean"
           }
         },
         "required": [
-          "entries_pending",
-          "price_units",
-          "estimated_price_units",
-          "wallet_covers",
-          "monthly_remaining",
-          "offering_balance"
+          "entries_pending"
         ],
         "title": "CorpusSweepEstimateResponse",
         "type": "object"
@@ -13907,7 +13878,7 @@
     },
     "/corpus/sweep": {
       "get": {
-        "description": "Report how much of this account's writing is unsorted, and what sorting costs.\n\nA sweep is bounded, so an account with a backlog finishes it by asking\nagain -- and asking again is only a decision somebody can make if they can\nsee what is left. This is the read that makes the remainder visible, and,\nonce :data:`services.corpus_backfill.CORPUS_SWEEP_PRICE_UNITS` is non-zero,\nputs the price on the offer before it is taken.\n\nNever a 404 for a corpus, the contract :func:`get_voice_readiness` keeps:\nan account that has written nothing is told zero, which is the most common\nanswer rather than a missing resource. Consent is deliberately *not*\nrequired -- granting it runs a sweep, so this number is exactly what a\nprospective yes would reach, and withholding it until after the yes would\nput the disclosure after the decision. The one refusal is ``400\nuser_not_found``, for an account deleted mid-request.\n\nThe account comes from the token, so no request can price anyone else's\nbacklog. No commit and no provider call: pricing the work is not doing it.",
+        "description": "Report how much of this account's writing is still unsorted.\n\nA sweep is bounded, so an account with a backlog finishes it by asking\nagain -- and asking again is only a decision somebody can make if they can\nsee what is left. This is the read that makes the remainder visible.\n\nNever a 404 and never an error state, the contract\n:func:`get_voice_readiness` keeps: an account that has written nothing is\ntold zero, which is the most common answer rather than a missing resource.\nConsent is deliberately *not* required -- granting it runs a sweep, so this\nnumber is exactly what a prospective yes would reach, and withholding it\nuntil after the yes would put the disclosure after the decision.\n\nThe account comes from the token, so no request can read anyone else's\nbacklog. One indexed count, no commit, and no provider call.",
         "operationId": "get_corpus_sweep_estimate_corpus_sweep_get",
         "parameters": [
           {
