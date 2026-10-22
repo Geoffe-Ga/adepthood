@@ -4,7 +4,7 @@ The consumer half of Creek-Vault#1903 step 6. Creek's admission cap is not a
 per-route counter and never was: both model-backed routes resolve the one
 ``generation`` stage through the same provider chokepoint, so a writer held at
 the cap is held at it on both. Creek now *reports* it the same way on both
-(contract 0.20, ``429 rate_limited``), and this suite is adepthood's side of
+(contract 0.21, ``429 rate_limited``), and this suite is adepthood's side of
 that promise — a 429 from either route is a **wait**, not an outage, and it is
 the same exception type carrying the same meaning.
 
@@ -56,7 +56,7 @@ _CAPABILITIES_PATH = "/v1/capabilities"
 
 #: The refusal Creek serves at its admission cap. Spelled here rather than read
 #: from the vendored bundle because the bundle is contract 0.18 and publishes no
-#: such cell: this is the shape contract 0.20 answers with, and pinning it by
+#: such cell: this is the shape contract 0.21 answers with, and pinning it by
 #: hand is what lets this suite be written before the bundle is re-vendored.
 _CAPPED_BODY = {
     "code": "rate_limited",
@@ -140,7 +140,7 @@ async def test_a_capped_reflection_is_a_wait() -> None:
 
 @pytest.mark.asyncio
 async def test_a_capped_letter_is_a_wait_rather_than_an_outage() -> None:
-    """The route Creek 0.20 added, and the asymmetry this closes.
+    """The route Creek 0.21 added, and the asymmetry this closes.
 
     A letter and a reflection spend the *same* budget, so a writer told "the
     vault is unavailable" on one and "wait a minute" on the other is being

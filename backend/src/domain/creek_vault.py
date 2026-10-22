@@ -297,9 +297,19 @@ class CreekVaultRateLimitedError(CreekVaultUnavailableError):
     chokepoint, so the refusal is the shared inference pool's admission
     decision or a 429 from the vendor the writer's own key is spending on, and
     a writer held at it is held at it on both. Creek reports it identically on
-    both from contract 0.20 (``429 rate_limited``, Creek-Vault#1903 step 6),
-    and this is adepthood's side of that: one type, raised from one place, so
-    the two routes cannot tell a writer two different stories about one limit.
+    both from contract 0.21 (``429 rate_limited`` with ``Retry-After: 60``,
+    Creek-Vault#1903 step 6), and this is adepthood's side of that: one type,
+    raised from one place, so the two routes cannot tell a writer two different
+    stories about one limit.
+
+    **Two things this type does not cover**, both worth knowing before reading
+    a :class:`CreekVaultUnavailableError` as an outage. While
+    :data:`CONTRACT_VERSION` declares a minor below ``0.21`` the vault
+    downgrades a capped *letter* to ``503 temporarily_unavailable`` for us, so
+    one of those may be a cap that nothing on the wire distinguishes. And
+    Creek's two concurrency limits shed as ``503`` on every route whatever the
+    minor: they are about how many requests that process is carrying, not about
+    an allowance, so a cap does not always arrive as a ``429``.
 
     It subclasses :class:`CreekVaultUnavailableError` rather than sitting
     beside it, which is the whole of the design. A cap *is* a reason the call
