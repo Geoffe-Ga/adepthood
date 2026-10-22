@@ -61,6 +61,7 @@ from domain.creek_vault import (
     CreekVaultCareEscalationError,
     CreekVaultContractError,
     CreekVaultPayloadError,
+    CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
     VaultErrorCode,
 )
@@ -114,6 +115,7 @@ class VaultTelemetryOutcome(enum.StrEnum):
     FALLBACK_NOT_OWNER = "vault_fallback_not_owner"
     UNAVAILABLE = "vault_unavailable"
     TIMEOUT = "vault_timeout"
+    RATE_LIMITED = "vault_rate_limited"
     AUTH_FAILED = "vault_auth_failed"
     INCOMPATIBLE_VERSION = "vault_incompatible_version"
     SCHEMA_FAILURE = "vault_schema_failure"
@@ -159,8 +161,21 @@ _OUTCOME_BY_CONTRACT_CODE: Mapping[VaultErrorCode, VaultTelemetryOutcome] = {
 # collapse a slow vault back into an absent one -- which is the exact
 # distinction the subclass exists to preserve. A tuple rather than a chain of
 # ``isinstance`` branches so adding a type costs a line rather than a branch.
+#
+# :class:`~domain.creek_vault.CreekVaultRateLimitedError` is the second such
+# subclass, and it is a *sibling* of the timeout rather than a parent or child of
+# it, so no ordering between those two rows is wrong -- only a row written as the
+# wide type would be. It earns its own outcome for the same reason the timeout
+# does: "the vault is shedding at a cap" clears by waiting, "the vault is not
+# there" needs somebody to restore it, and an operator paged for the second while
+# the first is true goes looking for an outage that does not exist. This module
+# is the only observer that keeps the distinction -- ``creek_vault_letters``
+# records one ``vault_error`` reason for any vault error, and
+# ``creek_vault_read`` collapses every availability fault into one degrade
+# reason -- so a missing row here is the distinction disappearing, not degrading.
 _OUTCOME_BY_ERROR_TYPE: tuple[tuple[type[BaseException], VaultTelemetryOutcome], ...] = (
     (VaultCallTimedOutError, VaultTelemetryOutcome.TIMEOUT),
+    (CreekVaultRateLimitedError, VaultTelemetryOutcome.RATE_LIMITED),
     (CreekVaultCareEscalationError, VaultTelemetryOutcome.ESCALATED),
     (CreekVaultAuthError, VaultTelemetryOutcome.AUTH_FAILED),
     (CreekVaultPayloadError, VaultTelemetryOutcome.SCHEMA_FAILURE),
