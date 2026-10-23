@@ -47,6 +47,29 @@ from uuid import UUID
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
+#
+# It sits deliberately behind Creek, which serves 0.21 on `main`, and the gap is
+# not neglect -- read this before "fixing" it:
+#
+# 1. `supported_contract_minors` is a property of the **deployed** vault, not of
+#    Creek's `main`. The pilot vault runs an older image, so declaring a minor
+#    it does not list fails *every* handshake with `incompatible_version`. The
+#    bump therefore belongs to the same gated step as the vault re-image, not to
+#    whichever PR notices the gap. 0.18 is still inside Creek's served window,
+#    so the current pin negotiates fine -- a stale pin, not a wrong one.
+# 2. Each intervening minor publishes something this consumer does not yet
+#    read: `inference_source` at 0.19 (its labelling is Creek-Vault#1903
+#    step 4), the `rate_limited` code *itself* at 0.19, and `keyless_inference`
+#    at 0.20. Bumping adopts them unconsumed.
+#
+# What the gap costs, so it is priced rather than hidden: the vault downgrades
+# anything gated above our pin, and `rate_limited` is gated twice over -- at
+# `PROVENANCE_SINCE_MINOR` (0.19) for the code itself, and again at
+# `LETTER_RATE_LIMITED_SINCE_MINOR` (0.21) for the letter route reaching it.
+# `CONTRACT_MINOR` is a constant sent on every call, so at 0.18 we are below
+# both gates and a cap reaches us as `503 temporarily_unavailable` on *either*
+# model-backed route -- not on letters alone (Creek-Vault#1903 step 6).
+# `CreekVaultRateLimitedError` documents what that costs a reader of a 503.
 CONTRACT_VERSION = "0.18.0"
 
 
@@ -286,6 +309,67 @@ class CreekVaultUnavailableError(CreekVaultError):
         """Store the static message and, when the vault named one we know, its code."""
         super().__init__(message)
         self.code = code
+
+
+class CreekVaultRateLimitedError(CreekVaultUnavailableError):
+    """The destination this call would have reached refused to admit it: a wait, not an outage.
+
+    **Relayed, never minted.** The vault keeps no hourly or in-flight counter
+    of its own, so the refusal is the shared inference pool's ``429`` or one
+    from whichever vendor the call reached -- the writer's own request key, or
+    an operator's cloud key on a self-hosted vault. Whether that budget is
+    scoped per vault or per account is a pool-side fact Creek's contract does
+    not publish, so this type does not claim it either.
+
+    What *is* provable, and is the load-bearing part: the cap is **one budget
+    across both model-backed routes**, not one per route.
+    ``POST /v1/reflections`` and ``POST /v1/letters/{external_id}`` resolve the
+    one ``generation`` stage through the same provider chokepoint, and the
+    request
+    Creek sends the pool carries no route, verb or capability -- so a per-route
+    budget cannot exist even in principle, and a writer held at the cap is held
+    at it on both in the same second. Creek reports it identically on both from
+    contract 0.21 (``429 rate_limited`` with ``Retry-After: 60``,
+    Creek-Vault#1903 step 6), and this is adepthood's side of that: one type,
+    raised from one place, so the two routes cannot tell a writer two different
+    stories about one limit.
+
+    **Raised for any ``429`` on any ``/v1`` call**, not only on those two
+    routes. Creek's model-call cap is its principal cause rather than its only
+    one: a ``429`` shed by an intermediary that never reached the vault's error
+    vocabulary arrives here too, and is still a wait. What it is *not* is
+    Creek's two concurrency limits, which shed as ``temporarily_unavailable``
+    with a ``503`` on every route whatever the minor -- they are about how many
+    requests that process is carrying, not about an allowance.
+
+    **What the pin costs a reader of a 503.** While :data:`CONTRACT_VERSION`
+    declares a minor below ``0.19`` the vault downgrades a capped *reflection*
+    to ``503 temporarily_unavailable`` for us, and below ``0.21`` it downgrades
+    a capped *letter* the same way. At the current ``0.18`` pin we are below
+    both, so **no vault can hand us a ``429`` on either route yet** -- an
+    intermediary in front of one still can, which is why the paragraph above is
+    not idle -- and a ``503`` on either may be a cap that nothing on the wire
+    distinguishes from an outage. That is the version window working as designed; the code below
+    is ready for the pin that ends it.
+
+    It subclasses :class:`CreekVaultUnavailableError` rather than sitting
+    beside it, which is the whole of the design. A cap *is* a reason the call
+    did not land, so every caller that already degrades on an absent vault
+    keeps degrading untouched -- the narrowing costs no call site anything --
+    and only a caller that wants to show a wait rather than an outage has to
+    know the difference. :class:`~services.creek_vault_telemetry.VaultCallTimedOutError`
+    is the same shape for the same reason, and the same observer redeems both:
+    :attr:`~services.creek_vault_telemetry.VaultTelemetryOutcome.RATE_LIMITED`
+    is what keeps a shedding vault from reading like an absent one on a
+    dashboard. Without that row the narrowing would buy nothing today, since
+    the letters service records one ``vault_error`` reason for any vault error
+    and the read path collapses every availability fault into one degrade
+    reason.
+
+    It is never a :class:`CreekVaultContractError`: a cap says nothing about
+    the request adepthood sent, and classifying it as a contract defect would
+    send an operator hunting a payload bug that is not there.
+    """
 
 
 class VaultSendSuspendedError(CreekVaultUnavailableError):

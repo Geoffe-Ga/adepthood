@@ -4,6 +4,103 @@
   "decider": "Geoff",
   "decided_on": "2026-10-07",
   "decision_source": "owner:2026-10-07#B12-premise",
+  "amendments": [
+    {
+      "date": "2026-10-20",
+      "source": "owner:2026-10-20#attested-inference-pool",
+      "authority": "creek-vault:#1849",
+      "unblocks": "creek-vault:creek-tools/docs/architecture/ADR/0016-shared-confidential-warm-inference-pool.md",
+      "changes": [
+        "Decision item 3 keeps its cloud-model definition and gains an explicit exception: a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 may be reached with the app's own credential.",
+        "Decision item 4's non-cloud payees become the vault-local model, a managed no-retention runtime we run, or a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3.",
+        "Decision item 4's honest-limit paragraph and per-use label example cover the vendor-attested runtime.",
+        "The Threat-actors and Per-platform rows covering managed-runtime inference are updated, and an inference-vendor actor row is added.",
+        "D05 is reopened for the inference leg only, under Creek-Vault ADR-0016 Decision 3.3's substitute conditions."
+      ],
+      "d05_reopened_for": "inference leg only",
+      "d05_waivers": [
+        {
+          "condition": "c",
+          "name": "nonce freshness",
+          "status": "waived",
+          "substitute": "the vendor's binding of the attested measurement to the live session's key, verified on the vendor's design and exercised by Creek-Vault ADR-0016 T18"
+        },
+        {
+          "condition": "e",
+          "name": "a hostile-host lab",
+          "status": "waived",
+          "substitute": "vendor negative tests (Creek-Vault ADR-0016 T18)"
+        }
+      ],
+      "unchanged": [
+        "selected_option stays BD; status stays accepted on 2026-10-07.",
+        "Stored content, key custody and recovery are untouched (Decision items 1, 2 and 11).",
+        "unlocks_public_claims stays false; B24 still certifies every claim.",
+        "INTIMATE stays off the pool (Creek-Vault ADR-0016 Decision 5)."
+      ]
+    },
+    {
+      "date": "2026-10-21",
+      "source": "owner:2026-10-21#attested-vendor-and-waivers",
+      "authority": "creek-vault:#1896",
+      "extends": "owner:2026-10-20#attested-inference-pool",
+      "vendor": {
+        "name": "Privatemode",
+        "operator": "Edgeless Systems GmbH",
+        "jurisdiction": "Bochum, Germany",
+        "not_chosen": "Tinfoil, Inc., San Francisco, California",
+        "deployment_shape": "A loopback sidecar in each vault image with one pinned egress destination; the attestation is verified inside the vendor's client code rather than ours."
+      },
+      "changes": [
+        "The vendor is named, with its operator and jurisdiction, so Creek-Vault ADR-0016 Decision 3.3 condition (h) is a choice on the record rather than a default.",
+        "Condition (f) is waived on vendor-asserted evidence, and every artifact depending on it says vendor-asserted wherever it would otherwise imply verification.",
+        "Conditions (c) and (e) are waived with the substitutes the owner named, each cited wherever its waiver is.",
+        "Creek-Vault ADR-0016's Q2 answer, option (i), is admitted for grounding embeddings only while the embedding model is inside the attested measurement set; otherwise the managed vault stays ungrounded, that record's option (iii).",
+        "The 2026-10-07 D05 paragraph is restored verbatim and the amendment is appended to it, so the reopen condition it states is the one Q1's Yes meets."
+      ],
+      "d05_reopened_for": "inference leg only",
+      "d05_waivers": [
+        {
+          "condition": "c",
+          "name": "nonce freshness",
+          "status": "waived",
+          "unmeetable_under_o5": true,
+          "substitute": "the vendor's binding of the attested measurement to the live session key, verified against the vendor's design by the Creek build issue and exercised by Creek-Vault ADR-0016 T18"
+        },
+        {
+          "condition": "e",
+          "name": "a hostile-host lab",
+          "status": "waived",
+          "unmeetable_under_o5": true,
+          "substitute": "T18's negative tests: the vendor negative tests of Creek-Vault ADR-0016 T18, each of which must refuse with nothing sent"
+        },
+        {
+          "condition": "f",
+          "name": "reproducible builds",
+          "status": "waived",
+          "unmeetable_under_o5": false,
+          "evidence": "vendor-asserted",
+          "substitute": "vendor-asserted evidence in place of independent verification; a waiver of independent verification is not a claim that verification happened"
+        }
+      ],
+      "unchanged": [
+        "selected_option stays BD; status stays accepted on 2026-10-07.",
+        "Stored content, key custody and recovery are untouched (Decision items 1, 2 and 11).",
+        "unlocks_public_claims stays false; B24 (issue:#3076) still certifies every claim.",
+        "Creek-Vault ADR-0016 Decision 5 is untouched: INTIMATE content never reaches the pool, by any route, including the `default` rescue path.",
+        "No spend is authorized by this record, and no vendor resource is provisioned by it.",
+        "The decided D05 paragraph of 2026-10-07 is kept as written; the storage leg stays unpursued with its five conditions in full."
+      ],
+      "binding": {
+        "vendor_only": "The Decision item 3 exception and all three D05 waivers apply to Privatemode, operated by Edgeless Systems GmbH, and to no other vendor.",
+        "another_vendor": "Another vendor, or any other jurisdiction under Creek-Vault ADR-0016 Decision 3.3 condition (h), is a new owner decision and inherits none of these waivers.",
+        "who_dials": "The managed vault dials the vendor from inside the vault process; this exception admits no call from adepthood's server to the vendor."
+      },
+      "to_be_confirmed": [
+        "Whether Privatemode offers the per-activation caps of Creek-Vault ADR-0016 Decision 3 item 4, which that record documents on another vendor's admin API. The Creek build issue (creek-vault:#1896) confirms it; if it does not exist, the choice returns to the owner rather than proceeding without the brake."
+      ]
+    }
+  ],
   "selected_option": "BD",
   "unlocks_public_claims": false,
   "release_gate": "issue:#3076",
@@ -429,7 +526,7 @@
     },
     "BD": {
       "boundary": {
-        "value": "Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. Amended 2026-10-16 (#3437): with a managed vault, the writer's key and writing are relayed through our server to their vault per request, and the vault sends them to the writer's vendor, labelled on each use.",
+        "value": "Under the target, stored journal content and its prose derivatives will be ciphertext the operator cannot decrypt. Under the target, plaintext will exist only on the person's devices, in a vault they choose for inference, in the managed no-retention runtime while a labelled request runs there (not operator-blind while it runs), inside the enclave of a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 while a labelled request runs there, and at a cloud vendor under their own key sent from the device; until phase (a), BYOK is relayed through our server. Amended 2026-10-16 (#3437): with a managed vault, the writer's key and writing are relayed through our server to their vault per request, and the vault sends them to the writer's vendor, labelled on each use.",
         "source": "owner:2026-10-07#B12-premise"
       },
       "key_custody": {
@@ -445,7 +542,7 @@
         "source": "repo:backend/tests/test_column_classification.py::_PLAINTEXT_COLUMNS"
       },
       "inference_location": {
-        "value": "Device first; then the person's vault-local model or a managed no-retention runtime we run (paid by credits, labelled on each use, not operator-blind while it runs); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a).",
+        "value": "Device first; then the person's vault-local model, a managed no-retention runtime we run, or a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 (all paid by credits and labelled on each use; the first two are not operator-blind while they run, and the third is held to the operator-blind target, which is not met until B24 certifies it); cloud only with the person's own key, called from the device straight to the vendor. Today BYOK is server-proxied, a known gap until phase (a).",
         "source": "owner:2026-10-07#B12-cloud-byok"
       },
       "supported_platforms": {
@@ -461,7 +558,7 @@
         "source": "repo:backend/src/services/encryption_inventory.py::encrypted_columns"
       },
       "threat_actors": {
-        "value": "Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; managed-runtime inference is not operator-blind while it runs (labelled on each use); until phase (a) our server relays BYOK calls and sees their plaintext; with a managed vault it relays the key and the writing to the vault per request (amendment 2026-10-16, #3437), and neither is operator-blind while that request runs.",
+        "value": "Defeats DB thief, backup holder, host-storage access and stored-data subpoena. Defeats the privileged operator only on native while the signed build is honest; on web the operator can capture the key through a served bundle and read all stored history until signed builds ship. A compromised device remains; inference in a managed runtime we run is not operator-blind while it runs (labelled on each use); a vendor-attested runtime verified under Creek-Vault ADR-0016 Decision 3 excludes the host and the operator from its enclave by hardware, on the vendor's attestation chain, but only while Decision 3.3 condition (f) holds, which the owner waived on 2026-10-21 and which is therefore vendor-asserted rather than verified, and the vendor keeps request metadata under condition (g); until phase (a) our server relays BYOK calls and sees their plaintext; with a managed vault it relays the key and the writing to the vault per request (amendment 2026-10-16, #3437), and neither is operator-blind while that request runs.",
         "source": "repo:backend/src/services/botmason.py::resolve_chat_api_key"
       },
       "budget_usd_per_active_account_month": {
