@@ -497,14 +497,18 @@ export const getGoalTier = (habit: Habit, tz: string = DEFAULT_TIMEZONE): GoalTi
     : resolveAdditiveTier(periodProgress, lowGoal, clearGoal, stretchGoal);
 };
 
-/** Progress on the unified 0-100 scale shared with :func:`getMarkerPositions`. */
-export const getProgressPercentage = (
+/**
+ * Where a hypothetical period total would sit on the unified 0-100 bar, on
+ * the same scale {@link getMarkerPositions} draws the stars with. The habit's
+ * own stretch and low tiers set the scale; `fallbackGoal` stands in for a
+ * missing tier. {@link getProgressPercentage} is this for the current period.
+ */
+export const percentForPeriodProgress = (
   habit: Habit,
-  currentGoal: Goal,
-  tz: string = DEFAULT_TIMEZONE,
+  periodProgress: number,
+  fallbackGoal: Goal,
 ): number => {
-  const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
-  const periodProgress = unitsInCurrentPeriod(habit, stretchGoal, tz);
+  const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? fallbackGoal;
   const stretchTarget = getGoalTarget(stretchGoal);
 
   if (!isSubtractiveHabit(habit)) {
@@ -512,10 +516,20 @@ export const getProgressPercentage = (
     return clampPercentage((periodProgress / stretchTarget) * 100);
   }
 
-  const lowGoal = habit.goals.find((g) => g.tier === 'low') ?? currentGoal;
+  const lowGoal = habit.goals.find((g) => g.tier === 'low') ?? fallbackGoal;
   const range = getGoalTarget(lowGoal) - stretchTarget;
   if (range <= 0) return periodProgress <= stretchTarget ? 100 : 0;
   return clampPercentage(100 - ((periodProgress - stretchTarget) / range) * 100);
+};
+
+/** Progress on the unified 0-100 scale shared with :func:`getMarkerPositions`. */
+export const getProgressPercentage = (
+  habit: Habit,
+  currentGoal: Goal,
+  tz: string = DEFAULT_TIMEZONE,
+): number => {
+  const stretchGoal = habit.goals.find((g) => g.tier === 'stretch') ?? currentGoal;
+  return percentForPeriodProgress(habit, unitsInCurrentPeriod(habit, stretchGoal, tz), currentGoal);
 };
 
 /**

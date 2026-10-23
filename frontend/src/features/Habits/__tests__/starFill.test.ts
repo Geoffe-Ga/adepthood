@@ -90,45 +90,137 @@ describe('computeStarFillPlan — additive habits', () => {
     expect(computeStarFillPlan(withTodayUnits(2), 'clear', TZ)).toBeNull();
   });
 
-  it('fills toward the full weekly-period target', () => {
+  describe('weekly cadence: one hold logs one occurrence, never the whole week', () => {
+    const weeklyGoals = (): Goal[] => [
+      makeGoal('low', { target: 1, frequency: 3, frequency_unit: 'per_week' }),
+      makeGoal('clear', { target: 2, frequency: 3, frequency_unit: 'per_week' }),
+      makeGoal('stretch', { target: 3, frequency: 3, frequency_unit: 'per_week' }),
+    ];
+
+    it('logs the tier target once from an empty week, not target × frequency', () => {
+      const habit = makeHabit({ goals: weeklyGoals() });
+      const plan = computeStarFillPlan(habit, 'low', TZ);
+      expect(plan?.deltaUnits).toBe(1);
+      // Stretch period target is 9, so one logged unit lands at 1/9 of the bar
+      // — short of the low star at 3/9 — rather than jumping onto the star.
+      expect(plan?.fromPercent).toBe(0);
+      expect(plan?.toPercent).toBeCloseTo(11.11, 1);
+      // A one-ninth hop is shorter than the visibility floor, so it takes the floor.
+      expect(plan?.durationMs).toBe(MIN_SWEEP_MS);
+    });
+
+    it('logs the clear target once toward the clear star', () => {
+      const habit = makeHabit({ goals: weeklyGoals() });
+      const plan = computeStarFillPlan(habit, 'clear', TZ);
+      expect(plan?.deltaUnits).toBe(2);
+      expect(plan?.toPercent).toBeCloseTo(22.22, 1);
+    });
+
+    it('logs only the remaining gap when one occurrence would overshoot the star', () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-03-13T12:00:00Z')); // Friday
+      try {
+        const habit = makeHabit({
+          goals: weeklyGoals(),
+          completions: [
+            {
+              id: 'monday',
+              timestamp: new Date('2000-01-01T00:00:00Z'),
+              local_day: '2026-03-09',
+              completed_units: 1,
+            },
+            {
+              id: 'wednesday',
+              timestamp: new Date('2000-01-01T00:00:00Z'),
+              local_day: '2026-03-11',
+              completed_units: 1.5,
+            },
+          ],
+        });
+
+        const plan = computeStarFillPlan(habit, 'low', TZ);
+        expect(plan?.deltaUnits).toBe(0.5);
+        expect(plan?.fromPercent).toBeCloseTo(27.78, 1);
+        expect(plan?.toPercent).toBeCloseTo(33.33, 1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('still walks all the way back to the star when the week is past it', () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-03-13T12:00:00Z')); // Friday
+      try {
+        const habit = makeHabit({
+          goals: weeklyGoals(),
+          completions: [
+            {
+              id: 'monday',
+              timestamp: new Date('2000-01-01T00:00:00Z'),
+              local_day: '2026-03-09',
+              completed_units: 6,
+            },
+          ],
+        });
+
+        const plan = computeStarFillPlan(habit, 'low', TZ);
+        expect(plan?.deltaUnits).toBe(-3);
+        expect(plan?.toPercent).toBeCloseTo(33.33, 1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('ignores completions from an earlier week', () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-03-13T12:00:00Z')); // Friday
+      try {
+        const habit = makeHabit({
+          goals: weeklyGoals(),
+          completions: [
+            {
+              id: 'last-week',
+              timestamp: new Date('2000-01-01T00:00:00Z'),
+              local_day: '2026-03-06',
+              completed_units: 2,
+            },
+          ],
+        });
+        expect(computeStarFillPlan(habit, 'low', TZ)?.deltaUnits).toBe(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  it('a monthly subtractive hold consumes one occurrence of the allowance, not the month', () => {
     const habit = makeHabit({
       goals: [
-        makeGoal('low', { target: 1, frequency: 3, frequency_unit: 'per_week' }),
-        makeGoal('clear', { target: 2, frequency: 3, frequency_unit: 'per_week' }),
-        makeGoal('stretch', { target: 3, frequency: 3, frequency_unit: 'per_week' }),
+        makeGoal('low', {
+          target: 4,
+          frequency: 5,
+          frequency_unit: 'per_month',
+          is_additive: false,
+        }),
+        makeGoal('clear', {
+          target: 2,
+          frequency: 5,
+          frequency_unit: 'per_month',
+          is_additive: false,
+        }),
+        makeGoal('stretch', {
+          target: 0,
+          frequency: 5,
+          frequency_unit: 'per_month',
+          is_additive: false,
+        }),
       ],
     });
     const plan = computeStarFillPlan(habit, 'low', TZ);
-    expect(plan?.deltaUnits).toBe(3);
-  });
-
-  it('subtracts units logged earlier in the current week from the fill delta', () => {
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date('2026-03-13T12:00:00Z')); // Friday
-    try {
-      const habit = makeHabit({
-        goals: [
-          makeGoal('low', { target: 1, frequency: 3, frequency_unit: 'per_week' }),
-          makeGoal('clear', { target: 2, frequency: 3, frequency_unit: 'per_week' }),
-          makeGoal('stretch', { target: 3, frequency: 3, frequency_unit: 'per_week' }),
-        ],
-        completions: [
-          {
-            id: 'monday',
-            timestamp: new Date('2000-01-01T00:00:00Z'),
-            local_day: '2026-03-09',
-            completed_units: 1,
-          },
-        ],
-      });
-
-      const plan = computeStarFillPlan(habit, 'low', TZ);
-      expect(plan?.deltaUnits).toBe(2);
-      expect(plan?.fromPercent).toBeCloseTo(11.11, 1);
-      expect(plan?.toPercent).toBeCloseTo(33.33, 1);
-    } finally {
-      jest.useRealTimers();
-    }
+    expect(plan?.deltaUnits).toBe(4);
+    // Period allowance is 20; consuming 4 of it drains the bar to 80%.
+    expect(plan?.fromPercent).toBe(100);
+    expect(plan?.toPercent).toBeCloseTo(80, 1);
   });
 });
 
