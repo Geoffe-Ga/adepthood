@@ -670,8 +670,8 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
 
     expect(fake).toContain("const CONTRACT_HEADER = 'x-creek-contract-version'");
-    expect(fake).toContain("const CONTRACT_VERSION = '0.18.0'");
-    // Contract 0.18 (Creek-Vault ADR-0015): a self-connected vault lists no key vendor.
+    expect(fake).toContain("const CONTRACT_VERSION = '0.21.0'");
+    // Since contract 0.18 (Creek-Vault ADR-0015): a self-connected vault lists no key vendor.
     expect(fake).toContain(
       'request_key_providers: requestKeysAdvertised ? REQUEST_KEY_PROVIDERS : []',
     );

@@ -41,6 +41,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from http import HTTPStatus
 from typing import NoReturn, Protocol
 from uuid import UUID
 
@@ -48,29 +49,32 @@ from uuid import UUID
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
 #
-# It sits deliberately behind Creek, which serves 0.21 on `main`, and the gap is
-# not neglect -- read this before "fixing" it:
+# It matches Creek `main` (0.21), and it moves only in lockstep with the vault
+# it talks to -- read this before moving it again:
 #
 # 1. `supported_contract_minors` is a property of the **deployed** vault, not of
-#    Creek's `main`. The pilot vault runs an older image, so declaring a minor
-#    it does not list fails *every* handshake with `incompatible_version`. The
-#    bump therefore belongs to the same gated step as the vault re-image, not to
-#    whichever PR notices the gap. 0.18 is still inside Creek's served window,
-#    so the current pin negotiates fine -- a stale pin, not a wrong one.
-# 2. Each intervening minor publishes something this consumer does not yet
-#    read: `inference_source` at 0.19 (its labelling is Creek-Vault#1903
-#    step 4), the `rate_limited` code *itself* at 0.19, and `keyless_inference`
-#    at 0.20. Bumping adopts them unconsumed.
-#
-# What the gap costs, so it is priced rather than hidden: the vault downgrades
-# anything gated above our pin, and `rate_limited` is gated twice over -- at
-# `PROVENANCE_SINCE_MINOR` (0.19) for the code itself, and again at
-# `LETTER_RATE_LIMITED_SINCE_MINOR` (0.21) for the letter route reaching it.
-# `CONTRACT_MINOR` is a constant sent on every call, so at 0.18 we are below
-# both gates and a cap reaches us as `503 temporarily_unavailable` on *either*
-# model-backed route -- not on letters alone (Creek-Vault#1903 step 6).
-# `CreekVaultRateLimitedError` documents what that costs a reader of a 503.
-CONTRACT_VERSION = "0.18.0"
+#    Creek's `main`, and Creek refuses any minor that list does not name
+#    exactly. Declaring a minor the deployed image does not serve fails *every*
+#    handshake with `incompatible_version` (Creek-Vault#1888 was that outage, at
+#    0.18). This pin moved to 0.21 together with the managed vault's re-image to
+#    Creek `main` at e6d021b9, whose window runs from 0.2 up to 0.21; the next move
+#    belongs to the next re-image, not to whichever PR notices a gap.
+# 2. What 0.19-0.21 add, and what adepthood does with each:
+#    - `rate_limited` (0.19, `PROVENANCE_SINCE_MINOR`) on reflections, and on
+#      letters from 0.21 (`LETTER_RATE_LIMITED_SINCE_MINOR`). Consumed: we are
+#      at or above both gates, so a cap on either model-backed route now reaches
+#      us as `429 rate_limited` -- a coded wait, `CreekVaultRateLimitedError`
+#      carrying `VaultErrorCode.RATE_LIMITED` -- rather than being downgraded to
+#      `503 temporarily_unavailable` (Creek-Vault#1903 step 6).
+#    - `inference_source` (0.19) on reflection, letter and classification
+#      answers, `inference_pool` (0.19) and `keyless_inference` (0.20) on the
+#      handshake. Parsed and ignored: labelling each use from the route, refusing
+#      a mismatched route as the existing `409`, and asking for a writer's key
+#      when a vault reports `keyless_inference: false` are Creek-Vault#1903
+#      steps 3-4 and an owner ADR 0009 decision, not part of a pin move.
+#      `tests/test_creek_contract_0_21.py` pins that none of them changes what
+#      adepthood does with an answer.
+CONTRACT_VERSION = "0.21.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -248,7 +252,7 @@ def resolve_vault_owner(raw: str | None) -> int | None:
 class VaultErrorCode(enum.StrEnum):
     """The machine-readable failure vocabulary a vault may answer an error with.
 
-    Seven of the nine codes Creek publishes, and deliberately still closed: these
+    Eight of the eleven codes Creek publishes, and deliberately still closed: these
     are the *only* strings the adapter may ever parse out of a vault response.
     Anything else -- a newer code, a typo, or a hostile string smuggling control
     characters toward a log -- is dropped on the floor rather than stored or
@@ -257,11 +261,18 @@ class VaultErrorCode(enum.StrEnum):
     was when the vocabulary was smaller; widening the set widens what we can
     classify, never what a vault may put in front of an operator.
 
-    The two published codes deliberately absent are ``unauthenticated`` and
-    ``internal_error``. Neither adds anything a member would be read for: a
-    refused credential already classifies from its status class alone, and so
-    does a server fault, so parsing either code would only give two spellings of
-    a decision already made.
+    Two of the three published codes absent are deliberately so:
+    ``unauthenticated`` and ``internal_error``. Neither adds anything a member
+    would be read for: a refused credential already classifies from its status
+    class alone, and so does a server fault, so parsing either code would only
+    give two spellings of a decision already made. The third,
+    ``unsupported_source`` (0.8, ``POST /v1/uploads`` only), classifies from its
+    4xx status as a contract error and has never had a member.
+
+    ``RATE_LIMITED`` is the 0.19 addition, and the only member that is not
+    about the request or the vault itself: it is the relayed model-call cap, a
+    wait rather than an outage. It is last so the pinned order of the others
+    does not move.
 
     Values are the wire strings, so they are contract and must not be reworded
     casually, and the member order is pinned by a test.
@@ -274,6 +285,7 @@ class VaultErrorCode(enum.StrEnum):
     PRIVACY_REFUSED = "privacy_refused"
     NOT_FOUND = "not_found"
     UNAVAILABLE = "unavailable"
+    RATE_LIMITED = "rate_limited"
 
 
 #: The static message a suspended vault send carries: content-free by design.
@@ -342,15 +354,14 @@ class CreekVaultRateLimitedError(CreekVaultUnavailableError):
     with a ``503`` on every route whatever the minor -- they are about how many
     requests that process is carrying, not about an allowance.
 
-    **What the pin costs a reader of a 503.** While :data:`CONTRACT_VERSION`
-    declares a minor below ``0.19`` the vault downgrades a capped *reflection*
-    to ``503 temporarily_unavailable`` for us, and below ``0.21`` it downgrades
-    a capped *letter* the same way. At the current ``0.18`` pin we are below
-    both, so **no vault can hand us a ``429`` on either route yet** -- an
-    intermediary in front of one still can, which is why the paragraph above is
-    not idle -- and a ``503`` on either may be a cap that nothing on the wire
-    distinguishes from an outage. That is the version window working as designed; the code below
-    is ready for the pin that ends it.
+    **What the pin buys.** Creek downgrades a capped *reflection* to ``503
+    temporarily_unavailable`` for a caller declaring a minor below ``0.19``,
+    and a capped *letter* the same way below ``0.21``. :data:`CONTRACT_VERSION`
+    is at ``0.21``, above both gates, so a vault cap on either route reaches us
+    as ``429 rate_limited`` and is raised as this type with
+    :attr:`~VaultErrorCode.RATE_LIMITED` as its ``code``. A ``503`` from a
+    vault is therefore an outage again, not a cap nothing on the wire could
+    distinguish from one.
 
     It subclasses :class:`CreekVaultUnavailableError` rather than sitting
     beside it, which is the whole of the design. A cap *is* a reason the call
@@ -370,6 +381,23 @@ class CreekVaultRateLimitedError(CreekVaultUnavailableError):
     the request adepthood sent, and classifying it as a contract defect would
     send an operator hunting a payload bug that is not there.
     """
+
+
+#: The one HTTP status Creek publishes ``rate_limited`` at, and the status an
+#: intermediary sheds load with before the vault's vocabulary is ever reached.
+RATE_LIMITED_STATUS = HTTPStatus.TOO_MANY_REQUESTS
+
+
+def signals_rate_limit(status_code: int, code: VaultErrorCode | None) -> bool:
+    """Return whether a failed vault answer is the model-call cap: a wait, not an outage.
+
+    The vault's own ``rate_limited`` code decides it whatever status carried the
+    code -- the code-first rule every classifier in the adapter follows. Absent
+    that code, a ``429`` still decides it, because a shed from an intermediary
+    carries no code at all and ``429`` has no competing code to be misattributed
+    from. :class:`CreekVaultRateLimitedError` is what a ``True`` here raises.
+    """
+    return code is VaultErrorCode.RATE_LIMITED or status_code == RATE_LIMITED_STATUS
 
 
 class VaultSendSuspendedError(CreekVaultUnavailableError):

@@ -35,12 +35,13 @@ names, so "what a vault advertises" was a fact about the vault alone. Contract
 caller's declared minor, ``upload`` is published only at or above ``0.8``, and
 ``POST /v1/uploads`` refuses a caller below that threshold outright. The
 consequence for this suite is that ``examples/capabilities/success.json`` is the
-document a **0.17** caller receives, not a document every caller receives, and
+document a **0.21** caller receives, not a document every caller receives, and
 the counts in :mod:`tests.creek_bundle_facts` (ten capabilities, seventy cells,
-nine unreachable sentinels) are the 0.17 shape rather than a permanent one.
+nine unreachable sentinels) are the 0.21 shape rather than a permanent one.
 0.9.0 added ``drive-connector``, 0.10.0 added ``pipeline``, 0.15.0 added
 ``voice-drafts``, 0.16.0 added ``journal-withdraw``, and 0.17.0 added
-``letters``; treat every count here as a fact about one pinned commit.
+``letters``; 0.18 through 0.21 added fields and an error code but no
+capability. Treat every count here as a fact about one pinned commit.
 
 Naming a capability is not calling it
 -------------------------------------
