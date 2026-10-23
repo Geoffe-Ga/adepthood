@@ -95,6 +95,7 @@ from typing import Final
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domain.privacy_tier import admits_egress
 from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
 from security import sanitize_user_text
@@ -319,22 +320,37 @@ async def _refusal_before_classifying(
     *,
     user_id: int,
     source: CorpusSource,
+    tier: JournalClassification,
     boundary: ReflectionBoundary,
 ) -> IngestResult | None:
     """Every reason not to classify this writing, or ``None`` and a call reserved.
 
-    Three refusals in one place, because they are one question -- may this
+    Four refusals in one place, because they are one question -- may this
     deployment ask the app provider about this writing, on this account's
     behalf, right now? They are ordered cheapest and most categorical first: a
     permission not given, then a writer whose AI operations are somebody else's
-    to answer, then an allowance already spent. An account must not spend its
-    day's allowance on a call that one of the first two would have refused
-    anyway, which is why the ceiling is asked last.
+    to answer, then writing that never leaves this boundary at all, then an
+    allowance already spent. An account must not spend its day's allowance on a
+    call that any of the first three would have refused anyway, which is why
+    the ceiling is asked last.
 
     Consent is read against *this request's own source*, so agreeing to
     ontologize journal entries is not agreement to ontologize imported
     documents -- ADR 0005 rejects reading one permission off another in as many
     words.
+
+    **The tier is asked here as well as below, and that is not redundant.**
+    :func:`services.frequency_classification.classify_frequencies` refuses an
+    intimate tier before it constructs a provider call, and the store refuses
+    one again before it writes; both still stand, and the ``except`` in
+    :func:`ingest_content` still reports them. What this adds is only
+    *ordering*: without it the ceiling is charged before either refusal is
+    reached, so an account journalling privately would spend its day's
+    allowance on calls that were never going to be made and find its later
+    personal entries refused for it. Asking :func:`admits_egress` is not this
+    module stating a tier rule of its own -- it is the one predicate that owns
+    the rule, the same one the classifier and the store consult, and the same
+    one :func:`_withheld_from_classifier`'s ``RETRIEVABLE_TIERS`` is read off.
 
     **It reserves as well as refuses.** Returning ``None`` has staged one
     attempt against the account, because the only honest moment to record a
@@ -351,6 +367,8 @@ async def _refusal_before_classifying(
         return _NO_CONSENT_RESULT
     if boundary is ReflectionBoundary.VAULT_BOUND:
         return _BOUNDARY_REFUSED_RESULT
+    if not admits_egress(tier.value):
+        return _TIER_REFUSED_RESULT
     if not await _afford_one_classification(session, user_id):
         return _CEILING_REACHED_RESULT
     return None
@@ -411,7 +429,11 @@ async def ingest_content(
     and retry budget in charge, which is what every interactive write wants.
     """
     refusal = await _refusal_before_classifying(
-        session, user_id=user_id, source=request.source, boundary=boundary
+        session,
+        user_id=user_id,
+        source=request.source,
+        tier=request.tier,
+        boundary=boundary,
     )
     if refusal is not None:
         return refusal

@@ -289,6 +289,44 @@ async def test_a_vault_bound_writer_spends_none_of_the_allowance(
 
 
 @pytest.mark.asyncio
+async def test_an_intimate_entry_spends_none_of_the_allowance(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An intimate entry is refused before any provider call, so it costs nothing.
+
+    The tier refusal answers the same question the other two refusals answer --
+    may this deployment ask the app provider about this writing? -- with "no",
+    and :func:`services.frequency_classification.classify_frequencies` raises
+    it *before the provider call is constructed*. So an account that writes a
+    run of intimate entries must not find its day's allowance spent on calls
+    that were never going to be made, and its later personal entries refused
+    for it.
+
+    This is the most realistic of the three non-spend cases: somebody
+    journalling privately writes intimate entries by the handful, where a
+    vault-bound or unconsented account writes none of them by definition.
+    """
+    _set_ceiling(monkeypatch, _CEILING)
+    _forbid_provider(monkeypatch)
+    await _consent(db_session)
+
+    result = await ingest_content(
+        db_session,
+        user_id=_OWNER,
+        request=IngestRequest(
+            content=_BODY,
+            tier=JournalClassification.INTIMATE,
+            source=INGEST_SOURCE,
+            source_entry_id=None,
+        ),
+        boundary=ReflectionBoundary.APP_PROVIDER,
+    )
+
+    assert result.outcome is IngestOutcome.TIER_REFUSED
+    assert await classifications_today(db_session, _OWNER, datetime.now(UTC)) == 0
+
+
+@pytest.mark.asyncio
 async def test_an_unconsented_account_spends_none_of_the_allowance(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
