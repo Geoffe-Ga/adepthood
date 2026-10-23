@@ -31,12 +31,12 @@ PINNED_PATH = "docs/contracts/adepthood-v1"
 #: The upstream commit the vendored copy was fetched at. A sha rather than a
 #: branch: a branch name would let the "pinned" copy move underneath the digests
 #: that are the only thing making it a pin.
-PINNED_COMMIT = "a134bf4440eea0b7bc40b545d32a814cfebd443f"  # pragma: allowlist secret
+PINNED_COMMIT = "e6d021b9f38fef6a1795da2f1239d64284316acc"  # pragma: allowlist secret
 
 #: The contract version the vendored bundle publishes. Restated rather than read
 #: from ``domain.creek_vault``, so the suites compare two independent claims
 #: instead of agreeing with whatever the pin happens to say.
-PINNED_CONTRACT_VERSION = "0.18.0"
+PINNED_CONTRACT_VERSION = "0.21.0"
 
 #: The ontology the wire vocabulary is drawn from. Unchanged across 0.8 to 0.15.
 ONTOLOGY_VERSION = "aptitude-wavelength/2026-05-23"
@@ -54,7 +54,7 @@ VENDORED_FILES = 114
 #: ``CONTRACT_MODELS``. It grew with the capability axis: 0.7 published 16.
 SCHEMA_FILES = 41
 
-#: Capabilities on the example matrix's first axis, at contract 0.17.0:
+#: Capabilities on the example matrix's first axis, unchanged from 0.17.0 to 0.21.0:
 #: ``capabilities``, ``journal-upsert``, ``reflections``, ``wheel``, ``upload``,
 #: ``drive-connector``, ``pipeline``, ``voice-drafts``, ``journal-withdraw`` and
 #: ``letters``.

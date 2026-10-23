@@ -137,6 +137,7 @@ from domain.creek_vault import (
     VaultVoiceDraftResult,
     VaultWheelBalance,
     WireTierCeiling,
+    signals_rate_limit,
     wire_ceiling_for,
 )
 from services.creek_vault_payload import (
@@ -1327,11 +1328,10 @@ def _availability_failure(
     and uncoded path alike -- which is what keeps the two model-backed routes
     from telling a writer two stories about one cap (Creek-Vault#1903 step 6).
 
-    Keyed on the **status**, which does not overturn the code-first rule its
-    callers document: that rule exists so a *coded* answer is never
-    misattributed by its status class, and ``429`` carries no competing code
-    to be misattributed from. The full argument, including why a code-keyed
-    branch is unavailable until the vendored bundle passes 0.18, is in
+    A wait on the vault's own ``rate_limited`` code, whatever status carried
+    it (code first, as its callers document), or on a bare ``429`` -- an
+    intermediary's shed carries no code to misattribute. Since the 0.21 pin
+    both routes send the code. The full argument is in
     :mod:`tests.test_creek_vault_rate_limited`.
 
     Args:
@@ -1340,11 +1340,11 @@ def _availability_failure(
         code: The vault's own reason, when it named one we recognize.
 
     Returns:
-        :class:`CreekVaultRateLimitedError` for a 429, else
+        :class:`CreekVaultRateLimitedError` for a 429 or a ``rate_limited`` code, else
         :class:`CreekVaultUnavailableError` -- the same degrade for every
         existing caller, since the first is a subclass of the second.
     """
-    if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+    if signals_rate_limit(response.status_code, code):
         return CreekVaultRateLimitedError(message, code=code)
     return CreekVaultUnavailableError(message, code=code)
 

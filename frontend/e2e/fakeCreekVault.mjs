@@ -65,8 +65,8 @@ const HTTP_SERVICE_UNAVAILABLE = 503;
 const ADEPTHOOD_DELETE_ATTEMPTS = 3;
 
 /** The contract this vault serves, and the minor a caller must declare to use it. */
-const CONTRACT_VERSION = '0.18.0';
-const CONTRACT_MINOR = '0.18';
+const CONTRACT_VERSION = '0.21.0';
+const CONTRACT_MINOR = '0.21';
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
 
@@ -142,8 +142,8 @@ let letterEscalationArmed = false;
 /**
  * A journey can model a managed vault (Creek-Vault ADR-0015, #3437): one that lists
  * the vendors whose writer key it will spend in `request_key_providers`. Off by
- * default, so every other journey sees a self-connected vault, which at contract
- * 0.18 lists none and is never sent a key.
+ * default, so every other journey sees a self-connected vault, which (since contract
+ * 0.18) lists none and is never sent a key.
  */
 let requestKeysAdvertised = false;
 /** The vendors a managed Creek vault spends a writer's own key for. */

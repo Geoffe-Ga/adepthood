@@ -4,7 +4,7 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.18.0 (tracks Creek's published
+- **Pinned contract version:** 0.21.0 (tracks Creek's published
   constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
   of this document, moved to 0.8.0 with the 2026-08-19 note, which
   records why that move became a prerequisite rather than housekeeping,
@@ -14,7 +14,8 @@
   with the 2026-09-12 note, which adopts journal withdrawal, moved to
   0.17.0 with the 2026-10-15 note, which adopts vault-written letters, and
   moved to 0.18.0 with the 2026-10-20 note, which adopts request-scoped keys
-  on a managed vault)
+  on a managed vault, and moved to 0.21.0 with the 2026-10-22 note, which
+  adopts the coded model-call cap on both model-backed routes)
 
 ## Context
 
@@ -1581,3 +1582,41 @@ custody and payment decision; this note records only the contract move.
 INTIMATE content never reaches a key-spending path. The vault routes any
 INTIMATE work it is asked for onto its local model or refuses it, and
 adepthood's own egress gate is unchanged.
+
+## Note, 2026-10-22 — the pin moves to 0.21.0; a capped model call is a coded wait on both routes
+
+The pin moves in lockstep with the deployed vault, not ahead of it. Creek
+refuses any minor its `supported_contract_minors` does not list exactly, so a
+pin ahead of the image fails every handshake with `incompatible_version`
+(Creek-Vault#1888 was that outage, at 0.18). This move ships together with the
+managed vault's re-image to Creek `main`, whose window runs from 0.2 up to
+0.21.
+
+The vendored bundle is re-cut byte-for-byte from upstream `e6d021b9`. Thirteen
+files move: six schemas (`CapabilitiesResponse`, `ErrorEnvelope`,
+`ReflectionResponse`, `LetterResponse`, `ClassificationResponse`, and
+`JobStatusResponse`, which embeds the last), five examples
+(`capabilities/success`, `capabilities/empty`, `reflections/success`,
+`reflections/empty`, `letters/success`), `retry-policy.json` and the manifest.
+No file is added or removed: 112 manifest entries, 114 vendored files, 41
+schemas, a 10 × 7 example matrix, and an unchanged ontology version.
+
+What 0.19 through 0.21 publish, and what adepthood does with each:
+
+- **`rate_limited` (0.19)** joins the error vocabulary at `429`, with a
+  `retry_with_backoff` disposition. Creek serves it on `POST /v1/reflections`
+  to callers at or above 0.19 and on `POST /v1/letters/{external_id}` to
+  callers at or above 0.21; below either gate the cap is downgraded to `503
+  temporarily_unavailable`, indistinguishable from an outage. At 0.21 both
+  routes now reach adepthood as a coded `429`. `VaultErrorCode` gains
+  `RATE_LIMITED`, and the one availability classifier raises
+  `CreekVaultRateLimitedError` for that code or for a `429` status, so the two
+  routes tell a writer one story about one budget (Creek-Vault#1903 step 6).
+- **`inference_source` (0.19)** on reflection, letter and classification
+  answers, **`inference_pool` (0.19)** and **`keyless_inference` (0.20)** on
+  the handshake. Parsed and ignored. Labelling each use from the route,
+  refusing a route that differs from the disclosed one as the existing `409`,
+  and asking for a writer's key when a vault reports `keyless_inference: false`
+  are Creek-Vault#1903 steps 3 and 4, and they rest on an owner ADR 0009
+  decision that is still open. `tests/test_creek_contract_0_21.py` pins that
+  none of the three fields changes what adepthood does with an answer.

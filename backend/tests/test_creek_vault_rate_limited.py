@@ -9,19 +9,18 @@ and this suite is adepthood's side of that promise — a 429 from either route
 is a **wait**, not an outage, and it is the same exception type carrying the
 same meaning.
 
-Why the classification keys on the **status** rather than on the vault's
-``code``: adepthood's vendored bundle is contract 0.18, whose ``ErrorCode``
-enum has no ``rate_limited`` member, so :func:`_coerce_error_code` drops the
-string and there is no code to read. The status is unambiguous — ``429`` is
-Creek's status for exactly one code, and ``ERROR_STATUS`` gives no other code
-that status — and it also classifies a 429 from an intermediary that never
-reached the vault's error vocabulary at all. This does **not** overturn the
-code-first rule those classifiers document: that rule exists so a *coded*
-answer is never misattributed by its status class, and ``429`` carries no
-competing code to be misattributed from. When the vendored bundle advances and
-``rate_limited`` joins ``VaultErrorCode``, the coded branch will agree with
-this one rather than replace it, because both run through
-:func:`~services.creek_vault_client._availability_failure`.
+Why the classification keys on the **status** as well as on the vault's
+``code``. Through contract 0.18 the vendored ``ErrorCode`` enum had no
+``rate_limited`` member, so :func:`_coerce_error_code` dropped the string and
+only the status could classify the wait. At 0.21 ``rate_limited`` is a
+``VaultErrorCode`` member and the coded branch agrees with the status branch
+rather than replacing it -- both run through
+:func:`~services.creek_vault_client._availability_failure`. The status branch
+stays because it alone classifies a 429 from an intermediary that never reached
+the vault's error vocabulary. It does **not** overturn the code-first rule
+those classifiers document: that rule exists so a *coded* answer is never
+misattributed by its status class, and ``429`` carries no competing code to be
+misattributed from. ``tests/test_creek_contract_0_21.py`` pins the coded half.
 """
 
 from __future__ import annotations
@@ -38,6 +37,7 @@ from domain.creek_vault import (
     CreekVaultContractError,
     CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
+    VaultErrorCode,
     VaultLetterRequest,
     VaultTierCeiling,
 )
@@ -56,9 +56,9 @@ _LETTERS_PATH = f"/v1/letters/{_EXTERNAL_ID}"
 _CAPABILITIES_PATH = "/v1/capabilities"
 
 #: The refusal Creek serves at its admission cap. Spelled here rather than read
-#: from the vendored bundle because the bundle is contract 0.18 and publishes no
-#: such cell: this is the shape contract 0.21 answers with, and pinning it by
-#: hand is what lets this suite be written before the bundle is re-vendored.
+#: from the vendored bundle because the bundle publishes no ``rate_limited``
+#: example cell, only the code (``ErrorEnvelope``) and its retry disposition:
+#: this is the shape contract 0.21 answers with.
 _CAPPED_BODY = {
     "code": "rate_limited",
     "message": "this vault is over its model-call allowance",
@@ -132,10 +132,10 @@ def _letter_request() -> VaultLetterRequest:
 
 @pytest.mark.asyncio
 async def test_a_capped_reflection_is_a_wait() -> None:
-    """The route Creek has served the cap on since 0.19 -- though not yet to us.
+    """The route Creek has served the cap on since 0.19, to a caller at or above it.
 
-    adepthood declares 0.18 on every call, so Creek downgrades this cap to a
-    503 for now; the scripted vault here is the 0.21 answer the pin will reach.
+    adepthood declares 0.21 on every call, so the scripted vault here is the
+    answer a capped reflection now reaches us with.
     """
     client = await _client(_CappedVault())
 
@@ -175,13 +175,12 @@ async def test_both_routes_raise_one_type_for_one_cap() -> None:
         await client.write_letter(_letter_request())
 
     assert type(writing.value) is type(reflecting.value)
-    # Not ``writing.value.code == reflecting.value.code``: ``rate_limited`` is not
-    # a 0.18 ``VaultErrorCode`` member, so ``_coerce_error_code`` drops it and both
-    # sides are ``None`` -- an equality that would hold against any classifier
-    # whatever. Pinned as the absolute it is, so it goes red the day the bundle is
-    # re-vendored and the coded path should start agreeing with the status.
-    assert writing.value.code is None
-    assert reflecting.value.code is None
+    # Pinned as absolutes rather than as ``writing.value.code ==
+    # reflecting.value.code``: under the 0.18 vocabulary both sides were
+    # ``None``, an equality that holds against any classifier whatever. Since
+    # 0.21 the coded path reads the vault's own reason on both routes.
+    assert writing.value.code is VaultErrorCode.RATE_LIMITED
+    assert reflecting.value.code is VaultErrorCode.RATE_LIMITED
 
 
 @pytest.mark.asyncio
