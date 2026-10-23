@@ -5,6 +5,7 @@ from .admin_balance_adjustment import AdminBalanceAdjustment
 from .auth_identity import AuthIdentity
 from .completion_suggestion import CompletionSuggestion
 from .content_completion import ContentCompletion
+from .corpus_classification_attempt import CorpusClassificationAttempt
 from .corpus_consent import CorpusConsentEvent
 from .corpus_fragment import CorpusFragment
 from .corpus_invitation_state import CorpusInvitationState
@@ -69,6 +70,7 @@ __all__ = [
     "AuthIdentity",
     "CompletionSuggestion",
     "ContentCompletion",
+    "CorpusClassificationAttempt",
     "CorpusConsentEvent",
     "CorpusFragment",
     "CorpusInvitationState",

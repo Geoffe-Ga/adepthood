@@ -89,6 +89,7 @@ import enum
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Final
 
@@ -98,6 +99,10 @@ from models.corpus_fragment import CorpusFragment, CorpusSource
 from models.journal_entry import JournalClassification, JournalEntry
 from security import sanitize_user_text
 from services.botmason import LLMCreditExhaustedError
+from services.classification_ceiling import (
+    classifications_today,
+    record_classification_attempt,
+)
 from services.corpus_consent import load_consent
 from services.corpus_store import FragmentDraft, delete_fragments_for_entry, record_fragment
 from services.frequency_classification import (
@@ -106,8 +111,16 @@ from services.frequency_classification import (
 )
 from services.privacy_lineage import LineageOperation, observe_entry_lineage
 from services.reflection_boundary import ReflectionBoundary
+from services.usage import get_daily_classification_ceiling
 
 logger = logging.getLogger(__name__)
+
+#: The log line written when an account's day's allowance of server-paid
+#: classifications is spent: the account and this word only, no writing. It is
+#: a WARNING rather than INFO because it is the condition an operator wants to
+#: see before a bill arrives, and the only signal that says so -- a refused
+#: classification writes no usage row, so nothing downstream would report it.
+CLASSIFICATION_CEILING_EVENT: Final[str] = "corpus_classification_ceiling_reached"
 
 #: The source every fragment this module writes carries, and the source whose
 #: consent it reads. Journal writing is what an account composes here, as
@@ -124,7 +137,7 @@ CLASSIFICATION_CALLS_PER_INGEST: Final[int] = 1
 class IngestOutcome(enum.StrEnum):
     """What became of one attempt to put writing into a corpus.
 
-    Five outcomes and exactly one of them stores anything. They are named
+    Six outcomes and exactly one of them stores anything. They are named
     rather than collapsed into ``fragment is None`` because a *caller with a
     user in front of it* has to say which of them happened: "you have not
     agreed to this yet", "that tier never enters the corpus" and "nothing in
@@ -140,6 +153,13 @@ class IngestOutcome(enum.StrEnum):
     #: classifier this spine can call is the app provider's (#3156). Not
     #: :attr:`UNCLASSIFIED`: nothing was asked, so nothing was found wanting.
     BOUNDARY_REFUSED = "boundary_refused"
+    #: This account has already used its day's allowance of server-paid
+    #: classifications (:func:`services.usage.get_daily_classification_ceiling`).
+    #: Not :attr:`UNCLASSIFIED`, for the reason :attr:`BOUNDARY_REFUSED` is not:
+    #: no provider was asked, so nothing was found wanting. The writing keeps no
+    #: fragment and stays pending, so the next edit or sweep offers it again --
+    #: tomorrow, against a fresh day's allowance.
+    CEILING_REACHED = "ceiling_reached"
 
 
 @dataclass(frozen=True)
@@ -180,6 +200,7 @@ _NO_CONSENT_RESULT = IngestResult(IngestOutcome.NO_CONSENT)
 _TIER_REFUSED_RESULT = IngestResult(IngestOutcome.TIER_REFUSED)
 _UNCLASSIFIED_RESULT = IngestResult(IngestOutcome.UNCLASSIFIED)
 _BOUNDARY_REFUSED_RESULT = IngestResult(IngestOutcome.BOUNDARY_REFUSED)
+_CEILING_REACHED_RESULT = IngestResult(IngestOutcome.CEILING_REACHED)
 
 # What the journal path's log line calls each non-storing outcome. A mapping
 # rather than a chain of branches so it is total by construction: an outcome
@@ -191,6 +212,7 @@ _JOURNAL_LOG_OUTCOMES: Final[Mapping[IngestOutcome, str]] = MappingProxyType(
         IngestOutcome.TIER_REFUSED: "withdrawn",
         IngestOutcome.UNCLASSIFIED: "unclassified",
         IngestOutcome.BOUNDARY_REFUSED: "boundary_refused",
+        IngestOutcome.CEILING_REACHED: "ceiling_reached",
     }
 )
 
@@ -261,6 +283,79 @@ async def _classify_and_record(
     return IngestResult(IngestOutcome.STORED, fragment)
 
 
+async def _afford_one_classification(session: AsyncSession, user_id: int) -> bool:
+    """Spend one of ``user_id``'s day's server-paid classifications, or refuse.
+
+    Called after both of the spine's refusals and before the dial, so an
+    account is charged for a call only once every reason not to make one has
+    been ruled out, and is never charged for one that did not happen.
+
+    **The attempt is recorded, not the outcome.** The provider call is what the
+    deployment pays for, so a classification that fails or recognises nothing
+    has still spent one. Recording successes only would leave a degraded
+    provider free to retry against, which is the condition under which a bill
+    runs away fastest.
+
+    The row is staged rather than committed: it lands in the commit
+    :func:`_classify_and_record` makes immediately before the provider call, so
+    it is durable by the time the dial happens and survives the caller rolling
+    back whatever came after.
+
+    Returns:
+        ``True`` when a classification may be made, with the attempt already
+        staged against the account. ``False`` when the day's allowance is
+        spent, having staged nothing.
+    """
+    now = datetime.now(UTC)
+    if await classifications_today(session, user_id, now) >= get_daily_classification_ceiling():
+        logger.warning(CLASSIFICATION_CEILING_EVENT, extra={"user_id": user_id})
+        return False
+    await record_classification_attempt(session, user_id, now)
+    return True
+
+
+async def _refusal_before_classifying(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    source: CorpusSource,
+    boundary: ReflectionBoundary,
+) -> IngestResult | None:
+    """Every reason not to classify this writing, or ``None`` and a call reserved.
+
+    Three refusals in one place, because they are one question -- may this
+    deployment ask the app provider about this writing, on this account's
+    behalf, right now? They are ordered cheapest and most categorical first: a
+    permission not given, then a writer whose AI operations are somebody else's
+    to answer, then an allowance already spent. An account must not spend its
+    day's allowance on a call that one of the first two would have refused
+    anyway, which is why the ceiling is asked last.
+
+    Consent is read against *this request's own source*, so agreeing to
+    ontologize journal entries is not agreement to ontologize imported
+    documents -- ADR 0005 rejects reading one permission off another in as many
+    words.
+
+    **It reserves as well as refuses.** Returning ``None`` has staged one
+    attempt against the account, because the only honest moment to record a
+    call is the one after which it is going to be made. There is no separate
+    "now actually spend it" step a caller could forget, and no path from here
+    to the provider that skips the meter.
+
+    Returns:
+        The refusal to report, or ``None`` when the classifier may be called
+        and the attempt has been staged.
+    """
+    consent = await load_consent(session, user_id=user_id, source=source)
+    if not consent.granted:
+        return _NO_CONSENT_RESULT
+    if boundary is ReflectionBoundary.VAULT_BOUND:
+        return _BOUNDARY_REFUSED_RESULT
+    if not await _afford_one_classification(session, user_id):
+        return _CEILING_REACHED_RESULT
+    return None
+
+
 async def ingest_content(
     session: AsyncSession,
     *,
@@ -315,11 +410,11 @@ async def ingest_content(
     budgets. ``None`` -- the default -- leaves the provider layer's own timeout
     and retry budget in charge, which is what every interactive write wants.
     """
-    consent = await load_consent(session, user_id=user_id, source=request.source)
-    if not consent.granted:
-        return _NO_CONSENT_RESULT
-    if boundary is ReflectionBoundary.VAULT_BOUND:
-        return _BOUNDARY_REFUSED_RESULT
+    refusal = await _refusal_before_classifying(
+        session, user_id=user_id, source=request.source, boundary=boundary
+    )
+    if refusal is not None:
+        return refusal
     try:
         return await _classify_and_record(
             session,

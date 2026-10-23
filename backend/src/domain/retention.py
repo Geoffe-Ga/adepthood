@@ -367,6 +367,14 @@ RETENTION: Mapping[str, RetentionRule] = {
         "Suggestions derived from the account's own entries." + _DERIVED_FROM_ENTRY,
     ),
     "contentcompletion": until_account_deletion("Which chapters the account marked read."),
+    "corpusclassificationattempt": until_account_deletion(
+        "Content-free counts of the classifications the app paid for on this account's "
+        "behalf — an account and an instant, nothing from the writing. Kept for the "
+        "account's life rather than swept on a clock: the daily bound only ever reads "
+        "today's rows, but an operator asking what a deployment spent on somebody's "
+        "behalf is asking across months, and a sweep would answer that question with a "
+        "window instead of a number.",
+    ),
     "corpusconsentevent": until_account_deletion("The account's ontology consent decisions."),
     "corpusfragment": until_account_deletion(
         "The account's ontologized corpus. A fragment is also withdrawn the moment its "
