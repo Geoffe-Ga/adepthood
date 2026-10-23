@@ -52,7 +52,7 @@ from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
-from models.journal_entry import JournalEntry
+from models.journal_entry import JournalClassification, JournalEntry
 from models.journal_withdrawal_obligation import JournalWithdrawalObligation
 from models.marginalia import Marginalia, MarginaliaKind
 from models.metta_return_arc import MettaReturnArc
@@ -82,6 +82,10 @@ from tests.helpers.feedback_triage import (
 _DEFINITELY_MISSING_ID = 999_999
 
 _JOURNAL_PROBE_MESSAGE = "A perfectly ordinary entry."
+
+# A backlog larger than one, so a stranger's zero cannot coincide with a
+# miscount of a single row.
+_SWEEP_BACKLOG = 2
 
 _HABIT_PAYLOAD: dict[str, object] = {
     "name": "Drink Water",
@@ -1560,6 +1564,41 @@ async def test_idor_voice_drafts_listing_is_scoped_to_the_caller(
     assert alice_body["total"] == 1
     assert bob_body["items"] == []
     assert bob_body["total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_idor_corpus_sweep_estimate_is_scoped_to_the_caller(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Alice's backlog is not Bob's, and Bob cannot be told how much she has waiting.
+
+    The route takes no resource id -- it is keyed entirely on the bearer token
+    -- so there is no cross-user branch to spell 403 or 404, and the invariant
+    to pin is the one :func:`test_idor_corpus_invitation_is_scoped_to_the_caller`
+    pins for the invitation: the number is the caller's own. A backlog is a
+    disclosure about how much somebody has written, which is why a stranger
+    reading it as zero matters even though no row is named.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_sweep")
+    bob_headers, _ = await _signup(async_client, "bob_sweep")
+
+    for index in range(_SWEEP_BACKLOG):
+        db_session.add(
+            JournalEntry(
+                message=f"alice writes {index}",
+                sender="user",
+                user_id=alice_id,
+                classification=JournalClassification.PERSONAL.value,
+                timestamp=datetime.now(UTC),
+            )
+        )
+    await db_session.commit()
+
+    alice_body = (await async_client.get("/corpus/sweep", headers=alice_headers)).json()
+    bob_body = (await async_client.get("/corpus/sweep", headers=bob_headers)).json()
+
+    assert alice_body["entries_pending"] == _SWEEP_BACKLOG
+    assert bob_body["entries_pending"] == 0
 
 
 @pytest.mark.asyncio

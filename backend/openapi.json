@@ -1147,6 +1147,21 @@
         "title": "CorpusSource",
         "type": "string"
       },
+      "CorpusSweepEstimateResponse": {
+        "description": "How much of this account's own writing is still without a fragment.\n\nA count, and deliberately nothing else. Nothing from any entry, for the\nreason :class:`CorpusConsentResponse` gives about the audit log: an account\nis entitled to know how much of its writing is waiting, and a surface that\ncould render the writing itself would be describing egress this read does\nnot perform.\n\nNo price either, because sorting has none: every path that ontologizes an\nentry is free, and the consent screen says so. What bounds the provider\nbill is a per-account ceiling on server-paid classifications, not a charge\nsomebody is quoted here.",
+        "properties": {
+          "entries_pending": {
+            "minimum": 0.0,
+            "title": "Entries Pending",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entries_pending"
+        ],
+        "title": "CorpusSweepEstimateResponse",
+        "type": "object"
+      },
       "CountUpConfig": {
         "additionalProperties": false,
         "description": "Open-ended timer that counts up; user decides when to stop.",
@@ -13856,6 +13871,126 @@
           }
         },
         "summary": "Put Corpus Invitation",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/corpus/sweep": {
+      "get": {
+        "description": "Report how much of this account's writing is still unsorted.\n\nA sweep is bounded, so an account with a backlog finishes it by asking\nagain -- and asking again is only a decision somebody can make if they can\nsee what is left. This is the read that makes the remainder visible.\n\nNever a 404 and never an error state, the contract\n:func:`get_voice_readiness` keeps: an account that has written nothing is\ntold zero, which is the most common answer rather than a missing resource.\nConsent is deliberately *not* required -- granting it runs a sweep, so this\nnumber is exactly what a prospective yes would reach, and withholding it\nuntil after the yes would put the disclosure after the decision.\n\nThe account comes from the token, so no request can read anyone else's\nbacklog. One indexed count, no commit, and no provider call.",
+        "operationId": "get_corpus_sweep_estimate_corpus_sweep_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusSweepEstimateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body is past a declared ceiling."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Get Corpus Sweep Estimate",
         "tags": [
           "corpus"
         ]

@@ -130,6 +130,15 @@ POLICY: Mapping[str, TablePolicy] = {
         "Whether and when the account set the corpus invitation aside, and how "
         "many reflections it had asked for. Nothing of the writing.",
     ),
+    "corpusclassificationattempt": _erase(
+        "user_id",
+        "The count of classifications the app paid for on this account's behalf. "
+        "It holds none of the writing, but it names the account directly and "
+        "says how much it wrote — a shape of somebody's journalling survives a "
+        "deletion that was asked to remove the journalling itself. The cost it "
+        "evidences is already aggregated elsewhere, so nothing an operator "
+        "needs goes with it.",
+    ),
     "corpusfragment": _erase(
         "user_id",
         "The account's ontologized corpus — its own writing, classified into "

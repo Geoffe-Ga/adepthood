@@ -208,6 +208,12 @@ MANIFEST: Mapping[str, ExportRule] = {
         "the journal in another shape.",
         drop_columns=("embedding",),
     ),
+    "corpusclassificationattempt": Omitted(
+        "A tally of how many times your writing was sorted, and when. Bookkeeping "
+        "about usage, not anything you wrote \u2014 it holds a date and nothing else "
+        "from the entry it was spent on. What your archive does carry is the "
+        "result: every sorted fragment travels with your corpus.",
+    ),
     "corpusinvitationstate": _include(
         "corpus_invitation",
         CorpusInvitationState,

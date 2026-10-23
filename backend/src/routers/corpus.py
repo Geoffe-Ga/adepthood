@@ -98,10 +98,12 @@ from schemas.corpus import (
     CorpusConsentUpdate,
     CorpusInvitationResponse,
     CorpusInvitationUpdate,
+    CorpusSweepEstimateResponse,
 )
 from schemas.corpus_import import CORPUS_IMPORT_MESSAGES, DocumentImportResponse
 from schemas.journal_upload import UPLOAD_MESSAGES, UPLOAD_RATE_LIMIT, UploadDocumentRequest
 from schemas.voice_readiness import VOICE_READINESS_MESSAGES, VoiceReadinessResponse
+from services import corpus_backfill
 from services.account_egress_barrier import ensure_account_live, hold_account
 from services.corpus_backfill import backfill_after_consent
 from services.corpus_consent import ConsentState, load_every_consent, set_consent
@@ -264,6 +266,32 @@ async def get_voice_readiness(
     """
     readiness = await load_voice_readiness(session, user_id=user_id)
     return _voice_readiness_response(readiness)
+
+
+@router.get("/sweep", response_model=CorpusSweepEstimateResponse)
+async def get_corpus_sweep_estimate(
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CorpusSweepEstimateResponse:
+    """Report how much of this account's writing is still unsorted.
+
+    A sweep is bounded, so an account with a backlog finishes it by asking
+    again -- and asking again is only a decision somebody can make if they can
+    see what is left. This is the read that makes the remainder visible.
+
+    Never a 404 and never an error state, the contract
+    :func:`get_voice_readiness` keeps: an account that has written nothing is
+    told zero, which is the most common answer rather than a missing resource.
+    Consent is deliberately *not* required -- granting it runs a sweep, so this
+    number is exactly what a prospective yes would reach, and withholding it
+    until after the yes would put the disclosure after the decision.
+
+    The account comes from the token, so no request can read anyone else's
+    backlog. One indexed count, no commit, and no provider call.
+    """
+    return CorpusSweepEstimateResponse(
+        entries_pending=await corpus_backfill.count_pending_entries(session, user_id)
+    )
 
 
 def _invitation_response(offer: InvitationOffer) -> CorpusInvitationResponse:

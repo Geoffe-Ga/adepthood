@@ -17,10 +17,13 @@ import os
 from domain.dates import compute_next_reset
 
 __all__ = [
+    "DAILY_CLASSIFICATION_CEILING_ENV",
     "DAILY_GENERATION_CEILING_ENV",
+    "DEFAULT_DAILY_CLASSIFICATION_CEILING",
     "DEFAULT_DAILY_GENERATION_CEILING",
     "DEFAULT_MONTHLY_CAP",
     "compute_next_reset",
+    "get_daily_classification_ceiling",
     "get_daily_generation_ceiling",
     "get_monthly_cap",
 ]
@@ -42,6 +45,31 @@ DEFAULT_MONTHLY_CAP = 20
 # they are never counted against it.
 DEFAULT_DAILY_GENERATION_CEILING = 100
 DAILY_GENERATION_CEILING_ENV = "BOTMASON_DAILY_GENERATION_CEILING"
+
+# Default daily ceiling on server-paid corpus classifications per user when
+# ``BOTMASON_DAILY_CLASSIFICATION_CEILING`` is not set.
+#
+# Classification is free to the account and is not a charged generation, so the
+# wallet does not bound it and none of the three limits above counted it. This
+# is the bound that does. It is a *cost* ceiling, not a product allowance:
+# nobody is sold these, and the number exists to stop a scripted client
+# spending the deployment's money, not to shape what a person may write.
+#
+# 200 is chosen against real use rather than against the bill. A heavy
+# journaller writes tens of entries a day, and an edit that changes wording or
+# privacy re-classifies, so a day of genuinely intense journalling lands an
+# order of magnitude below this. The exposure it closes is the other end: at
+# the ambient 60/minute rate limit an unbounded account sustains ~86,400 calls
+# a day, and classification input is truncated at
+# ``services.frequency_classification.MAX_FRAGMENT_CHARS`` so each is cheap but
+# not free. 200 holds the worst case near a dollar a day per account instead.
+#
+# ``0`` is a deliberate emergency brake that refuses every server-paid
+# classification, exactly as it does for charged generations. A BYOK or
+# vault-bound writer's classification is not the app's bill, so neither is ever
+# counted against this.
+DEFAULT_DAILY_CLASSIFICATION_CEILING = 200
+DAILY_CLASSIFICATION_CEILING_ENV = "BOTMASON_DAILY_CLASSIFICATION_CEILING"
 
 # Minimum allowed configured cap.  A cap of ``0`` is a legitimate
 # "pay-as-you-go only" configuration (no free tier, every request draws
@@ -77,6 +105,20 @@ def get_monthly_cap() -> int:
     malformed, or negative.
     """
     return _non_negative_env_int("BOTMASON_MONTHLY_CAP", DEFAULT_MONTHLY_CAP)
+
+
+def get_daily_classification_ceiling() -> int:
+    """Return the configured daily ceiling on server-paid corpus classifications.
+
+    Read from the environment on every call, like the sibling ceilings, so an
+    operator can tighten the brake without a restart. Unset, empty, malformed
+    and negative values fall back to
+    :data:`DEFAULT_DAILY_CLASSIFICATION_CEILING`; ``0`` is a legitimate
+    setting and refuses every server-paid classification.
+    """
+    return _non_negative_env_int(
+        DAILY_CLASSIFICATION_CEILING_ENV, DEFAULT_DAILY_CLASSIFICATION_CEILING
+    )
 
 
 def get_daily_generation_ceiling() -> int:
