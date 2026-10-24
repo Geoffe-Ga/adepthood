@@ -264,3 +264,10 @@ path     = "/user-practices/"
 category = "shared_catalog"
 field    = "practice_id"
 reason   = "practice_id names the shared preset catalog: require_visible_practice returns any approved preset to every authenticated user by design, so adopting one that another user also adopted is the feature, and probing it would report a false LEAK"
+
+[[route]]
+method   = "GET"
+path     = "/oauth/authorize"
+category = "shared_catalog"
+field    = "client_id"
+reason   = "client_id names the anonymous registry of public OAuth clients (#3532): an agent registers before anybody signs in, no client row belongs to any account, and naming another person's agent grants nothing -- the account-scoped part of the request is the resource, refused with invalid_target unless it is the caller's own vault (tests/security/test_idor.py)"

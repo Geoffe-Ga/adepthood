@@ -3,9 +3,10 @@
 The consent page's forms post this encoding (#3532), and so does every client
 calling the token endpoint (#3533) -- Claude sends nothing else, and answering
 it with a JSON-only parser's ``415`` breaks the connector. Starlette's form
-parser needs ``python-multipart`` even for the urlencoded case, which this app
-does not otherwise depend on, so the body is parsed here with the standard
-library instead, under three rules OAuth and this API both want:
+parser needs an optional parsing package even for the urlencoded case, and this
+app deliberately installs none (it accepts no file uploads), so the body is
+parsed here with the standard library instead, under three rules OAuth and this
+API both want:
 
 * **The right encoding or nothing.** A body of any other media type is refused
   rather than guessed at.
