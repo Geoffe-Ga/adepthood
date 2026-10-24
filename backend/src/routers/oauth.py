@@ -60,7 +60,12 @@ from client_ip import resolve_client_ip
 from database import get_session
 from dependencies.oauth_form import FORM_MEDIA_TYPE, read_form, single_valued
 from domain.dates import ensure_aware
-from error_responses import ResponseDeclarations, build_router
+from error_responses import (
+    RefusalResponse,
+    ResponseDeclarations,
+    build_router,
+    refusal_responses,
+)
 from errors import service_unavailable
 from models.oauth_client import OAuthClient
 from rate_limit import limiter
@@ -135,14 +140,71 @@ _DECLINE: Final = "decline"
 _NO_STORE: Final = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 _RESOURCE_REFUSED_EVENT: Final = "oauth_resource_refused"
 
-_HTML_RESPONSES: Final[ResponseDeclarations] = {
-    status.HTTP_200_OK: {"content": {"text/html": {}}},
-    status.HTTP_303_SEE_OTHER: {"description": "Back to the agent with a code or an error."},
-}
+_HTML_MEDIA_TYPE: Final = "text/html"
 _FORM_BODY: Final[dict[str, object]] = {
     "requestBody": {
         "required": True,
         "content": {FORM_MEDIA_TYPE: {"schema": {"type": "object"}}},
+    }
+}
+
+
+def _html_page() -> dict[str, object]:
+    """A fresh ``content`` entry for a rendered page.
+
+    Fresh on every call because FastAPI adds a status's JSON model to the very
+    ``content`` mapping it is handed: one shared constant would leak each
+    route's JSON declaration into every other route's page.
+    """
+    return {_HTML_MEDIA_TYPE: {"schema": {"type": "string"}}}
+
+
+def _page_responses(*page_statuses: int) -> ResponseDeclarations:
+    """Declare HTML for the statuses a consent-page operation renders a page for.
+
+    Only those. Every other status the operation publishes -- the limiter's 429,
+    the framework's 422, the shared refusal contract -- is the JSON the rest of
+    the API sends, and a page status can be that JSON too (a throttle or a lost
+    database answers before any page is drawn). That is why the operations are
+    declared with ``response_class=Response``: an ``HTMLResponse`` class would
+    publish every inherited JSON refusal as ``text/html``, which is the mismatch
+    the contract fuzz caught on a throttled sign-in.
+    """
+    refusals = refusal_responses(page_statuses)
+    return {
+        status.HTTP_200_OK: {"description": "The page.", "content": _html_page()},
+        status.HTTP_303_SEE_OTHER: {"description": "Back to the agent with a code or an error."},
+        **{
+            code: {**declaration, "content": _html_page()} for code, declaration in refusals.items()
+        },
+    }
+
+
+#: ``GET /oauth/authorize``: a refusal page (400) or the unconfigured-issuer
+#: page (503). Each operation gets its own declarations rather than sharing one
+#: mapping, for the same reason :func:`_html_page` is fresh.
+_AUTHORIZE_RESPONSES: Final = _page_responses(
+    status.HTTP_400_BAD_REQUEST, status.HTTP_503_SERVICE_UNAVAILABLE
+)
+
+#: The decision form: the same two pages as the authorization request.
+_DECISION_RESPONSES: Final = _page_responses(
+    status.HTTP_400_BAD_REQUEST, status.HTTP_503_SERVICE_UNAVAILABLE
+)
+
+#: The sign-in form adds the "did not match" page (401).
+_SIGN_IN_PAGE_RESPONSES: Final = _page_responses(
+    status.HTTP_400_BAD_REQUEST,
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_503_SERVICE_UNAVAILABLE,
+)
+
+#: RFC 7591's error for refused client metadata, or -- for a body that is not
+#: JSON at all -- the framework's own parse refusal, sent before this router runs.
+_REGISTRATION_400: Final[ResponseDeclarations] = {
+    status.HTTP_400_BAD_REQUEST: {
+        "model": OAuthErrorResponse | RefusalResponse,
+        "description": "Client metadata RFC 7591 refuses, or a body that is not JSON.",
     }
 }
 
@@ -279,7 +341,7 @@ async def authorization_server_metadata_document() -> JSONResponse:
     "/oauth/register",
     status_code=status.HTTP_201_CREATED,
     response_model=ClientRegistrationResponse,
-    responses={status.HTTP_400_BAD_REQUEST: {"model": OAuthErrorResponse}},
+    responses=_REGISTRATION_400,
 )
 @limiter.limit(REGISTRATION_RATE_LIMIT)
 async def register_oauth_client(
@@ -313,7 +375,7 @@ async def register_oauth_client(
     )
 
 
-@router.get("/oauth/authorize", response_class=HTMLResponse, responses=_HTML_RESPONSES)
+@router.get("/oauth/authorize", response_class=Response, responses=_AUTHORIZE_RESPONSES)
 async def authorize(
     request: Request,
     query: Annotated[AuthorizationQuery, Query()],
@@ -364,8 +426,8 @@ async def _signed_in_with_password(
 
 @router.post(
     "/oauth/authorize/sign-in",
-    response_class=HTMLResponse,
-    responses=_HTML_RESPONSES,
+    response_class=Response,
+    responses=_SIGN_IN_PAGE_RESPONSES,
     openapi_extra=_FORM_BODY,
 )
 @limiter.limit(SIGN_IN_RATE_LIMIT)
@@ -447,8 +509,8 @@ async def _act_on(
 
 @router.post(
     "/oauth/authorize/decision",
-    response_class=HTMLResponse,
-    responses=_HTML_RESPONSES,
+    response_class=Response,
+    responses=_DECISION_RESPONSES,
     openapi_extra=_FORM_BODY,
 )
 async def authorize_decision(

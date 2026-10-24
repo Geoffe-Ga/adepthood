@@ -22606,16 +22606,21 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "The page."
           },
           "303": {
             "description": "Back to the agent with a code or an error."
           },
           "400": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -22623,7 +22628,7 @@
           },
           "401": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22633,7 +22638,7 @@
           },
           "403": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22643,7 +22648,7 @@
           },
           "404": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22653,7 +22658,7 @@
           },
           "422": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ValidationErrorResponse"
                 }
@@ -22663,7 +22668,7 @@
           },
           "429": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22673,9 +22678,14 @@
           },
           "503": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -22711,16 +22721,21 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "The page."
           },
           "303": {
             "description": "Back to the agent with a code or an error."
           },
           "400": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -22728,7 +22743,7 @@
           },
           "401": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22738,7 +22753,7 @@
           },
           "403": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22748,7 +22763,7 @@
           },
           "404": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22758,7 +22773,7 @@
           },
           "422": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ValidationErrorResponse"
                 }
@@ -22768,7 +22783,7 @@
           },
           "429": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22778,9 +22793,14 @@
           },
           "503": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -22816,16 +22836,21 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "The page."
           },
           "303": {
             "description": "Back to the agent with a code or an error."
           },
           "400": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -22833,9 +22858,14 @@
           },
           "401": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -22843,7 +22873,7 @@
           },
           "403": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22853,7 +22883,7 @@
           },
           "404": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22863,7 +22893,7 @@
           },
           "422": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ValidationErrorResponse"
                 }
@@ -22873,7 +22903,7 @@
           },
           "429": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
                 }
@@ -22883,9 +22913,14 @@
           },
           "503": {
             "content": {
-              "text/html": {
+              "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
                 }
               }
             },
@@ -23012,11 +23047,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OAuthErrorResponse"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuthErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RefusalResponse"
+                    }
+                  ],
+                  "title": "Response 400 Register Oauth Client Oauth Register Post"
                 }
               }
             },
-            "description": "Bad Request"
+            "description": "Client metadata RFC 7591 refuses, or a body that is not JSON."
           },
           "401": {
             "content": {
