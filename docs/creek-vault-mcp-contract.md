@@ -626,3 +626,51 @@ process-local key is generated so the flow works end to end.
 (RFC 7009) or the grant (`agent_grant.revoked_at`, from Settings) fails the
 agent's next refresh; an access token already issued runs out its ten minutes,
 because the vault verifies tokens offline and never calls back.
+
+## Agent grants in plain words, and the Settings list (adepthood-owned)
+
+A person reads what an agent may do twice: on the consent page before they
+approve it (adepthood #3532), and under Settings, "Where your writing lives",
+"Agents that may read your vault", beside the control that stops it (#3534).
+Both surfaces use one mapping, word for word, and neither ever shows a scope
+name:
+
+| Grant (`scope` name) | What a person reads |
+| --- | --- |
+| `vault:read` | Read and search your Open and Personal writing |
+| `vault:desk` | Draft and reflect from your Open and Personal writing |
+| `vault:journal` | Add journal entries |
+| `vault:pipeline` | Re-sort your vault |
+| `offline_access` | Stay connected without asking you again |
+
+The mapping is owned by `backend/src/services/oauth_consent_copy.py`
+(`GRANT_DESCRIPTIONS`) and mirrored by
+`frontend/src/features/Settings/agentsCopy.ts` (`AGENT_GRANT_PHRASES`);
+`frontend/src/features/Settings/__tests__/agentGrantDrift.test.ts` reads the
+Python and fails when the two disagree. A grant the screen has no phrase for is
+not rendered at all. The vault's own tool-profile documentation
+(Creek-Vault#1964, #1969) should quote this table rather than restate it.
+
+**The routes**, keyed on the caller's token alone -- no account id is accepted
+from a path or a body:
+
+- `GET /vault/agents` -- every `agent_grant` the account holds with
+  `revoked_at IS NULL`, newest `created_at` first:
+  `[{id, name, grants[], created_at, last_used_at, redirect_host}]`. `name` is
+  the agent's own `client_name`, `null` when it gave none; `grants` are scope
+  names in server order; `last_used_at` is stamped on every code exchange and
+  refresh (roughly every ten minutes while an agent works), not per vault call;
+  `redirect_host` is the host of the agent's first registered redirect.
+- `DELETE /vault/agents/{agent_id}` -- sets `agent_grant.revoked_at` and revokes
+  every refresh token under the grant, in one commit; `204`, again `204` for a
+  grant already revoked (its first `revoked_at` is kept). Another account's id
+  is the same `404 {"detail": "agent_not_found"}` as a missing one, audited as
+  `resource_access_denied`.
+- `GET /vault/connection` carries `mcp_address`: the vault MCP URL in the one
+  spelling the authorization server compares a `resource` in (so it is exactly
+  the `aud` the agent's tokens will name), or `null` exactly when `vault_url` is
+  -- nothing connected, or a managed vault whose address stays private.
+
+Re-approving a revoked agent clears `revoked_at` and restarts `created_at`, so
+it reappears on the list; refresh tokens minted under the earlier consent stay
+dead.
