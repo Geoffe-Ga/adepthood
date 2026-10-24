@@ -36,6 +36,7 @@ from .metta_return_habit_release import MettaReturnHabitRelease
 from .metta_return_offer_dismissal import MettaReturnOfferDismissal
 from .oauth_authorization_code import OAuthAuthorizationCode
 from .oauth_client import OAuthClient
+from .oauth_refresh_token import OAuthRefreshToken
 from .password_reset_token import PasswordResetToken
 from .practice import Practice
 from .practice_recipe import PracticeRecipe, PracticeRecipeStep
@@ -105,6 +106,7 @@ __all__ = [
     "MettaReturnOfferDismissal",
     "OAuthAuthorizationCode",
     "OAuthClient",
+    "OAuthRefreshToken",
     "PasswordResetToken",
     "Practice",
     "PracticeRecipe",

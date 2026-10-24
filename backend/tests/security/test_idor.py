@@ -34,6 +34,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 
+import jwt
 import pytest
 from httpx import AsyncClient, Response
 from sqlalchemy import ColumnElement, func
@@ -59,6 +60,7 @@ from models.marginalia import Marginalia, MarginaliaKind
 from models.metta_return_arc import MettaReturnArc
 from models.metta_return_habit_release import MettaReturnHabitRelease
 from models.oauth_authorization_code import OAuthAuthorizationCode
+from models.oauth_refresh_token import OAuthRefreshToken
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.promoted_quote import PromotedQuote
@@ -2721,3 +2723,112 @@ async def test_idor_oauth_authorize_serves_each_account_only_its_own_vault(
 
     row = (await db_session.execute(select(OAuthAuthorizationCode))).scalars().one()
     assert (row.user_id, row.resource) == (bob_id, bob_resource)
+
+
+async def _agent_tokens(db_session: AsyncSession) -> list[OAuthRefreshToken]:
+    """Every refresh token stored, read fresh from storage."""
+    result = await db_session.execute(
+        select(OAuthRefreshToken).execution_options(populate_existing=True)
+    )
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_token_refuses_a_code_presented_by_another_agent(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's agent cannot spend the code Alice's agent was sent (#3533).
+
+    ``POST /oauth/token`` carries ``client_id`` in its form body. The code is
+    bound to the client it was issued to, so another client presenting it --
+    even with the right PKCE verifier -- is ``invalid_grant``: no refresh token
+    is written, the code stays unspent for its rightful agent, and Alice's
+    grant is not stamped as used.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    code, alice_client, _resource, alice_id = await oauth_flow.approved_code(
+        async_client, db_session, "alice_tokens"
+    )
+    bob_client = await oauth_flow.register_agent(async_client, name="Bob's agent")
+
+    attack = await oauth_flow.exchange(
+        async_client, oauth_flow.code_exchange_form(code, bob_client)
+    )
+
+    assert attack.status_code == HTTPStatus.BAD_REQUEST
+    assert attack.json() == {"error": "invalid_grant"}
+    assert await _agent_tokens(db_session) == []
+    stored = (
+        (
+            await db_session.execute(
+                select(OAuthAuthorizationCode).execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert stored.consumed_at is None
+    grant = (
+        (
+            await db_session.execute(
+                select(AgentGrant)
+                .where(AgentGrant.user_id == alice_id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert grant.last_used_at is None
+
+    own = await oauth_flow.exchange(async_client, oauth_flow.code_exchange_form(code, alice_client))
+    assert own.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_refresh_and_revoke_refuse_another_agents_token(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh token presented under another agent's ``client_id`` changes nothing.
+
+    Refreshing is ``invalid_grant`` and rotates nothing; revoking is the RFC
+    7009 200 that says nothing, and revokes nothing. The control: Alice's own
+    agent refreshes, and the audience it gets is Alice's vault.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    code, alice_client, alice_resource, _alice_id = await oauth_flow.approved_code(
+        async_client, db_session, "alice_refresh"
+    )
+    issued = await oauth_flow.exchange(
+        async_client, oauth_flow.code_exchange_form(code, alice_client)
+    )
+    refresh_token = issued.json()["refresh_token"]
+    bob_client = await oauth_flow.register_agent(async_client, name="Bob's agent")
+
+    refresh = await oauth_flow.exchange(
+        async_client,
+        {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": bob_client},
+    )
+    revoke = await async_client.post(
+        "/oauth/revoke", data={"token": refresh_token, "client_id": bob_client}
+    )
+
+    assert refresh.status_code == HTTPStatus.BAD_REQUEST
+    assert refresh.json() == {"error": "invalid_grant"}
+    assert revoke.status_code == HTTPStatus.OK
+    (row,) = await _agent_tokens(db_session)
+    assert (row.rotated_at, row.revoked_at) == (None, None)
+
+    own = await oauth_flow.exchange(
+        async_client,
+        {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": alice_client},
+    )
+    assert own.status_code == HTTPStatus.OK
+    claims = jwt.decode(own.json()["access_token"], options={"verify_signature": False})
+    assert claims["aud"] == alice_resource

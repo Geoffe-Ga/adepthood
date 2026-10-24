@@ -86,6 +86,9 @@ _MODULES_IMPORTING_A_TRANSPORT = frozenset(
         # pinning transport. Its one caller, services.oauth_clients, commits the
         # request's transaction before calling it (#3532).
         "services.oauth_metadata_fetch",
+        # Signs agent access tokens with PyJWT, locally, under the configured
+        # ES256 key; never fetches (#3533).
+        "services.oauth_tokens",
     }
 )
 

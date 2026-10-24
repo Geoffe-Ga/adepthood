@@ -2,8 +2,8 @@
 
 The router tests and the cross-tenant regression in ``tests/security/test_idor.py``
 walk the same flow -- sign up, connect a vault, register an agent, ask to
-authorize -- so the steps live once, here, and a change to the flow changes one
-place.
+authorize, and (#3533) exchange the code -- so the steps live once, here, and a
+change to the flow changes one place.
 """
 
 from __future__ import annotations
@@ -15,9 +15,14 @@ from http import HTTPStatus
 from typing import Final
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.oauth_signing_keys import SIGNING_KEYS_ENV_VAR
+from services.oauth_signing_keys import reset_cache as reset_signing_key_cache
 from services.user_vault_config import store_vault_config
 
 PASSWORD: Final = "securepassword123"  # pragma: allowlist secret
@@ -115,3 +120,84 @@ async def decide(client: AsyncClient, ticket: str, decision: str) -> Response:
         "/oauth/authorize/decision",
         data={"ticket": ticket, "decision": decision},
     )
+
+
+# --- the token endpoint (#3533) -------------------------------------------------
+
+
+def generate_signing_key() -> ec.EllipticCurvePrivateKey:
+    """A fresh P-256 private key, made per test so no key material is committed."""
+    return ec.generate_private_key(ec.SECP256R1())
+
+
+def pem_of(key: ec.EllipticCurvePrivateKey) -> str:
+    """``key`` as the unencrypted PKCS#8 PEM ``OAUTH_SIGNING_KEYS`` carries."""
+    return key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+
+
+def install_signing_keys(
+    monkeypatch: pytest.MonkeyPatch, *keys: ec.EllipticCurvePrivateKey
+) -> tuple[ec.EllipticCurvePrivateKey, ...]:
+    """Configure ``keys`` (newest first) as the deployment's signing keys."""
+    chosen = keys or (generate_signing_key(),)
+    monkeypatch.setenv(SIGNING_KEYS_ENV_VAR, ",".join(pem_of(key) for key in chosen))
+    reset_signing_key_cache()
+    return chosen
+
+
+async def approved_code(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    name: str,
+    *,
+    scope: str = "vault:read vault:desk",
+) -> tuple[str, str, str, int]:
+    """Walk the whole consent flow for a fresh account; return code, client, resource, account."""
+    headers, user_id = await signup(client, name)
+    resource = await connect_vault(db_session, user_id, name)
+    client_id = await register_agent(client)
+    code = await approve(client, headers, client_id, resource, scope=scope)
+    return code, client_id, resource, user_id
+
+
+async def approve(
+    client: AsyncClient,
+    headers: dict[str, str],
+    client_id: str,
+    resource: str,
+    *,
+    scope: str = "vault:read vault:desk",
+) -> str:
+    """Land on the consent page as the signed-in account, press Approve, return the code."""
+    page = await client.get(
+        "/oauth/authorize",
+        params=authorize_params(client_id, resource, scope=scope),
+        headers=headers,
+    )
+    assert page.status_code == HTTPStatus.OK, page.text
+    approved = await decide(client, ticket_from(page), "approve")
+    assert approved.status_code == HTTPStatus.SEE_OTHER, approved.text
+    _address, query = redirect_query(approved)
+    return query["code"]
+
+
+def code_exchange_form(code: str, client_id: str, /, **overrides: str) -> dict[str, str]:
+    """A complete ``authorization_code`` token request, with any field replaced."""
+    form = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "code_verifier": VERIFIER,
+        "client_id": client_id,
+        "redirect_uri": PRESENTED_REDIRECT,
+    }
+    form.update(overrides)
+    return form
+
+
+async def exchange(client: AsyncClient, form: dict[str, str]) -> Response:
+    """POST ``form`` to the token endpoint, form-encoded as every OAuth client sends it."""
+    return await client.post("/oauth/token", data=form)
