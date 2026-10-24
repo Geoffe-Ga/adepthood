@@ -93,6 +93,7 @@ EXPECTED_SITES = frozenset(
         DialSite("services.email", "SmtpEmailSender._connect", "smtplib.SMTP"),
         DialSite("services.email", "ResendEmailSender.send", "httpx.AsyncClient"),
         DialSite("integrations.gumroad", "verify_license", "httpx.AsyncClient"),
+        DialSite("services.oauth_metadata_fetch", "_fetch_body", "httpx.AsyncClient"),
         DialSite("sentry", "init_error_monitoring", "sentry_sdk.init"),
         DialSite("sentry", "capture_exception", "sentry_sdk.capture_exception"),
         DialSite("services.oidc", "build_bounded_jwk_client", "jwt.PyJWKClient"),

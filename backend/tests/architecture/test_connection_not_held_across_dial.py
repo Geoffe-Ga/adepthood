@@ -79,6 +79,13 @@ _MODULES_IMPORTING_A_TRANSPORT = frozenset(
         "services.oidc",
         # Encodes and decodes tokens with the same library; never fetches.
         "routers.auth",
+        # Signs and reads the OAuth consent ticket with PyJWT, locally, under a
+        # derived HMAC key; never fetches (#3532).
+        "services.oauth_authorization",
+        # Fetches an agent's client metadata document over httpx, through the
+        # pinning transport. Its one caller, services.oauth_clients, commits the
+        # request's transaction before calling it (#3532).
+        "services.oauth_metadata_fetch",
     }
 )
 

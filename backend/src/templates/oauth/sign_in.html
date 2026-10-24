@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ copy.SIGN_IN_HEADING }}</h1>
+<p>{{ copy.SIGN_IN_INTRO }}</p>
+{% if refused %}<p class="notice" role="alert">{{ copy.SIGN_IN_REFUSED }}</p>{% endif %}
+<form method="post" action="{{ action }}">
+{% for name, value in carried %}<input type="hidden" name="{{ name }}" value="{{ value }}">
+{% endfor %}<label for="email">{{ copy.SIGN_IN_EMAIL_LABEL }}</label>
+<input id="email" name="email" type="email" autocomplete="username" required>
+<label for="password">{{ copy.SIGN_IN_CREDENTIAL_LABEL }}</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required>
+<button type="submit" class="primary">{{ copy.SIGN_IN_BUTTON }}</button>
+</form>
+{% endblock %}

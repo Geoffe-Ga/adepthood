@@ -2969,5 +2969,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/prompts-recovery.browser.e2e.test.ts"
+  },
+  {
+    "id": "vault.agent-consent-page",
+    "description": "A person connects an agent they already run (Claude Code, a ChatGPT connector, OpenClaw) to their vault without pasting a secret (#3532). The agent registers (POST /oauth/register, or a client metadata document at its https client_id) and sends the person's browser to GET /oauth/authorize; a person with no app session signs in on the server-rendered page (POST /oauth/authorize/sign-in, login's lockout and rate limit), then sees the agent's own name labelled as such, each requested grant in plain words, 'Intimate entries are never included.', the host Approve returns them to and, for a program on this computer, the local-program warning. Approve (POST /oauth/authorize/decision) writes a 60-second oauth_authorization_code and the account's agent_grant row and returns the browser to the agent; Decline returns access_denied. A resource naming any vault but the account's own connected one is refused with invalid_target and writes nothing. Uncovered because the flow is entered from an agent's browser hand-off, not from any screen or client wrapper in the app, so the ledger has no seam to name for it yet: #3534 adds the in-app surface under Where your writing lives (the agent list, its grants and Revoke, and the vault's address to paste into a client) and the per-client vault.agent-approve-draft-revoke journeys. Pinned meanwhile by backend/tests/routers/test_oauth_authorization_server.py end to end through HTTP, the cross-tenant case in backend/tests/security/test_idor.py, and the copy guard in backend/tests/services/test_oauth_consent_copy.py.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["vault"],
+      "routes": ["GET /vault/connection"],
+      "tables": ["uservaultconfig", "oauth_client", "oauth_authorization_code", "agent_grant"]
+    },
+    "status": "uncovered",
+    "issue": 3534
   }
 ]

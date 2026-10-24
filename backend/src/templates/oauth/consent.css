@@ -1,0 +1,79 @@
+/* The agent consent page, in Candle & Ink (frontend/src/design/DESIGN.md).
+   Rendered from services.email_templates.PALETTE so the backend keeps one copy
+   of the tokens. Served from this origin because the API's CSP allows
+   same-origin stylesheets only. */
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 32px 16px;
+  background: {{ palette.canvas }};
+  color: {{ palette.ink_primary }};
+  font-family: {{ serif }};
+  font-size: 17px;
+  line-height: 1.55;
+}
+.sheet {
+  max-width: {{ content_width }}px;
+  margin: 0 auto;
+  background: {{ palette.raised }};
+  border: 1px solid {{ palette.hairline }};
+  border-radius: 10px;
+  padding: 32px 28px;
+}
+.wordmark {
+  margin: 0 0 20px;
+  color: {{ palette.ink_soft }};
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+h1 { font-size: 24px; line-height: 1.3; margin: 0 0 8px; }
+h2 { font-size: 17px; margin: 24px 0 8px; }
+.agent { overflow-wrap: anywhere; }
+.muted, .code { color: {{ palette.ink_muted }}; font-family: {{ sans }}; font-size: 14px; }
+.grants { margin: 0; padding-left: 1.2em; }
+.grants li { margin: 4px 0; }
+.floor { margin-top: 16px; color: {{ palette.ink_soft }}; }
+.return-host { overflow-wrap: anywhere; }
+.notice {
+  background: {{ palette.canvas }};
+  border-left: 3px solid {{ palette.accent_primary }};
+  padding: 10px 14px;
+  font-family: {{ sans }};
+  font-size: 15px;
+}
+form { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+form.decision { flex-direction: row; flex-wrap: wrap; }
+label { font-family: {{ sans }}; font-size: 14px; color: {{ palette.ink_soft }}; }
+input[type="email"], input[type="password"] {
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid {{ palette.hairline }};
+  border-radius: 6px;
+  background: {{ palette.raised }};
+  color: {{ palette.ink_primary }};
+}
+button {
+  font-family: {{ sans }};
+  font-size: 16px;
+  font-weight: 600;
+  padding: 12px 24px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+button.primary {
+  background: {{ palette.accent_primary }};
+  color: {{ palette.accent_on_primary }};
+  border: 1px solid {{ palette.accent_primary }};
+}
+button.primary:hover { background: {{ palette.accent_strong }}; }
+button.secondary {
+  background: {{ palette.raised }};
+  color: {{ palette.ink_primary }};
+  border: 1px solid {{ palette.hairline }};
+}
+button:focus-visible, input:focus-visible {
+  outline: 2px solid {{ palette.accent_strong }};
+  outline-offset: 2px;
+}

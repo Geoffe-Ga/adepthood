@@ -66,6 +66,14 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "llmusagelog.provider",
             "marginalia.source_model",
             "mettareturnofferdismissal.episode_key",
+            # OAuth identifiers: a client id (minted, or the URL of the agent's own
+            # metadata document), the SHA-256 of a one-time code, and a PKCE
+            # challenge, which is itself a digest (#3532).
+            "agent_grant.client_id",
+            "oauth_authorization_code.client_id",
+            "oauth_authorization_code.code_challenge",
+            "oauth_authorization_code.code_hash",
+            "oauth_client.client_id",
             "passwordresettoken.lookup_key",
             "passwordresettoken.token_hash",
             "practicesessionspend.idem_key",
@@ -92,6 +100,11 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
     "CLOSED_VOCABULARY": frozenset(
         {
             "accountdeletionaudit.vault_disposition",
+            # OAuth scope names and fixed protocol values (#3532).
+            "agent_grant.grants",
+            "oauth_authorization_code.code_challenge_method",
+            "oauth_authorization_code.scope",
+            "oauth_client.source",
             "completionsuggestion.status",
             "completionsuggestion.target_type",
             "corpusconsentevent.decision",
@@ -203,6 +216,21 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "passwordresettoken.requested_user_agent",
             "user.email",
             "uservaultconfig.vault_url",
+            # The account's own vault MCP URL, the audience of an agent's token:
+            # the same address ``uservaultconfig.vault_url`` derives it from.
+            "agent_grant.resource",
+            "oauth_authorization_code.resource",
+        }
+    ),
+    # What an OAuth client says about itself when it registers or publishes a
+    # metadata document: a name, a logo and where it may be sent back to. The
+    # agent's words, not the person's, and shown to the person as such (#3532).
+    "AGENT_SELF_DESCRIPTION": frozenset(
+        {
+            "oauth_authorization_code.redirect_uri",
+            "oauth_client.client_name",
+            "oauth_client.logo_uri",
+            "oauth_client.redirect_uris",
         }
     ),
     # Operational records about the system's own behaviour.

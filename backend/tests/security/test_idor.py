@@ -40,6 +40,7 @@ from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
+from models.agent_grant import AgentGrant
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
@@ -57,6 +58,7 @@ from models.journal_withdrawal_obligation import JournalWithdrawalObligation
 from models.marginalia import Marginalia, MarginaliaKind
 from models.metta_return_arc import MettaReturnArc
 from models.metta_return_habit_release import MettaReturnHabitRelease
+from models.oauth_authorization_code import OAuthAuthorizationCode
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.promoted_quote import PromotedQuote
@@ -69,6 +71,8 @@ from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
 from security.idempotency import hash_idem_key
 from services.journal_retention import PURGE_MIN_RETENTION_DAYS
+from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR
+from tests.helpers import oauth as oauth_flow
 from tests.helpers.feedback_triage import (
     DRAFT_BODY,
     make_account,
@@ -2632,3 +2636,88 @@ async def test_admin_purge_rejects_non_admin_and_spares_rows(
         .execution_options(populate_existing=True)
     )
     assert remaining.scalar_one() == 1
+
+
+async def _authorization_rows(db_session: AsyncSession) -> tuple[int, int]:
+    """How many authorization codes and agent grants exist, read from storage."""
+    codes = await db_session.execute(select(func.count()).select_from(OAuthAuthorizationCode))
+    grants = await db_session.execute(select(func.count()).select_from(AgentGrant))
+    return codes.scalar_one(), grants.scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_authorize_refuses_another_accounts_vault_and_writes_no_code(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob cannot approve an agent for Alice's vault (#3532).
+
+    ``GET /oauth/authorize`` carries the vault in its RFC 8707 ``resource``, so
+    nothing keyed on a path sees it. A signed-in Bob naming Alice's vault MCP
+    URL -- on the bearer path and through the consent page's own sign-in form --
+    is refused with ``invalid_target`` before any consent page is drawn, with no
+    redirect, no code and no grant written, and the refusal names neither
+    vault: not on the page, not in the audit line.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_oauth")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_oauth")
+    alice_resource = await oauth_flow.connect_vault(db_session, alice_id, "alice-oauth")
+    await oauth_flow.connect_vault(db_session, bob_id, "bob-oauth")
+    client_id = await oauth_flow.register_agent(async_client)
+    params = oauth_flow.authorize_params(client_id, alice_resource)
+
+    with caplog.at_level(logging.WARNING):
+        on_bearer = await async_client.get("/oauth/authorize", params=params, headers=bob_headers)
+        on_form = await async_client.post(
+            "/oauth/authorize/sign-in",
+            data={**params, "email": "bob_oauth@example.com", "password": oauth_flow.PASSWORD},
+        )
+
+    for attack in (on_bearer, on_form):
+        assert attack.status_code == HTTPStatus.BAD_REQUEST
+        assert "invalid_target" in attack.text
+        assert "location" not in attack.headers
+        assert 'name="ticket"' not in attack.text
+        assert "alice-oauth" not in attack.text
+        assert "bob-oauth" not in attack.text
+    assert await _authorization_rows(db_session) == (0, 0)
+
+    refusals = [record for record in caplog.records if record.message == "oauth_resource_refused"]
+    assert [getattr(record, "user_id", None) for record in refusals] == [bob_id, bob_id]
+    for record in caplog.records:
+        assert "alice-oauth" not in record.getMessage()
+        assert "alice-oauth" not in str(vars(record))
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_authorize_serves_each_account_only_its_own_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: Bob naming his own vault gets his consent page and, on Approve, his code.
+
+    Without it the refusal above could pass because the endpoint refuses
+    everybody. The code row that results names Bob and Bob's vault, never Alice's.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_oauth_ok")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_oauth_ok")
+    await oauth_flow.connect_vault(db_session, alice_id, "alice-oauth-ok")
+    bob_resource = await oauth_flow.connect_vault(db_session, bob_id, "bob-oauth-ok")
+    client_id = await oauth_flow.register_agent(async_client)
+
+    page = await async_client.get(
+        "/oauth/authorize",
+        params=oauth_flow.authorize_params(client_id, bob_resource),
+        headers=bob_headers,
+    )
+    assert page.status_code == HTTPStatus.OK
+    approved = await oauth_flow.decide(async_client, oauth_flow.ticket_from(page), "approve")
+    assert approved.status_code == HTTPStatus.SEE_OTHER
+
+    row = (await db_session.execute(select(OAuthAuthorizationCode))).scalars().one()
+    assert (row.user_id, row.resource) == (bob_id, bob_resource)

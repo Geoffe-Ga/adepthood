@@ -71,6 +71,7 @@ from routers.habits import router as habits_router
 from routers.invitations import router as invitations_router
 from routers.journal import router as journal_router
 from routers.metta_return import router as metta_return_router
+from routers.oauth import router as oauth_router
 from routers.practice_recipes import router as practice_recipes_router
 from routers.practice_sessions import router as practice_sessions_router
 from routers.practice_share import router as practice_share_router
@@ -1329,6 +1330,7 @@ app.include_router(vault_activation_router)
 app.include_router(vault_provisioning_internal_router)
 app.include_router(corpus_router)
 app.include_router(feedback_router)
+app.include_router(oauth_router)
 
 
 # BUG-APP-004: separate liveness from readiness so the orchestrator can

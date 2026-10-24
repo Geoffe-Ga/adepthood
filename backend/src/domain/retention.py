@@ -362,6 +362,10 @@ RETENTION: Mapping[str, RetentionRule] = {
         "the operator leaves first, their identity and source address are "
         "cleared while the target's content-free financial trail survives.",
     ),
+    "agent_grant": until_account_deletion(
+        "Which vault agents the account approved, with their grants and the moment each "
+        "was last used or revoked: the account's own standing decisions (#3532)."
+    ),
     "authidentity": until_account_deletion("Social sign-in links of a live account."),
     "completionsuggestion": until_account_deletion(
         "Suggestions derived from the account's own entries." + _DERIVED_FROM_ENTRY,
@@ -528,6 +532,16 @@ RETENTION: Mapping[str, RetentionRule] = {
     "mettareturnarc": until_account_deletion("The account's return arcs."),
     "mettareturnhabitrelease": until_account_deletion("Habits released during an arc."),
     "mettareturnofferdismissal": until_account_deletion("Return offers waved away."),
+    "oauth_authorization_code": until_account_deletion(
+        "Digests of one-time codes, each spendable once and for sixty seconds, so a row "
+        "outlives its use as a spent or expired receipt and nothing more (#3532). A "
+        "sweep of spent and expired codes belongs with the token endpoint that spends "
+        "them (#3533)."
+    ),
+    "oauth_client": shared_catalogue(
+        "The anonymous registry of vault agents: what each said about itself when it "
+        "registered or last published its metadata. No row names an account (#3532)."
+    ),
     "passwordresettoken": until_account_deletion(
         "Recovery tokens; expired ones stop working but are not swept.",
     ),

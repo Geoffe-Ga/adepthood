@@ -107,6 +107,12 @@ POLICY: Mapping[str, TablePolicy] = {
         "intact without retaining the departed operator's identity.",
         clear_columns=("actor_admin_id",),
     ),
+    "agent_grant": _erase(
+        "user_id",
+        "Which vault agents the account approved and what each may do. An "
+        "approval that outlived its account would be a standing permission "
+        "nobody can see or withdraw.",
+    ),
     "authidentity": _erase(
         "user_id",
         "The links to Google / Apple sign-in. Removed, so the same social "
@@ -291,6 +297,15 @@ POLICY: Mapping[str, TablePolicy] = {
     "mettareturnarc": _erase("user_id", "The account's return arcs."),
     "mettareturnhabitrelease": _erase("user_id", "Habits the account released during an arc."),
     "mettareturnofferdismissal": _erase("user_id", "Return offers the account waved away."),
+    "oauth_authorization_code": _erase(
+        "user_id",
+        "Unspent one-time codes an agent was sent back with. Each names the "
+        "account's vault as its audience, so none may survive to be exchanged.",
+    ),
+    "oauth_client": _retain(
+        "The registry of vault agents. Registration is anonymous -- an agent "
+        "registers before anybody signs in -- so no row names an account.",
+    ),
     "passwordresettoken": _erase(
         "user_id",
         "Outstanding recovery tokens. Erased with the account so none can be "

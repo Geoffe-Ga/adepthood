@@ -46,6 +46,11 @@ aiosqlite==0.22.1
 bcrypt==5.0.0
 cryptography==50.0.1
 PyJWT==2.15.1
+# Renders the one browser-facing page this API serves: the consent screen an
+# agent's OAuth authorization request lands on (adepthood#3532). Autoescaping is
+# the reason for a template engine over string building -- the agent's name on
+# that page is whatever the agent registered, so it is untrusted text.
+jinja2==3.1.6
 # Moving-window counters for the invalid-license signup throttle
 # (rate_limit.py). Already a transitive slowapi dependency; pinned here
 # because the app now imports it directly.
