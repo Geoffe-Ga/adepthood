@@ -24,6 +24,7 @@ from models.agent_grant import AgentGrant
 from models.login_attempt import LoginAttempt
 from models.oauth_authorization_code import OAuthAuthorizationCode
 from models.oauth_client import OAuthClient
+from models.user import User
 from routers.auth import session_signing_secret
 from services import oauth_metadata_fetch
 from services.email_templates import PALETTE
@@ -547,6 +548,23 @@ async def test_a_vault_changed_after_the_page_rendered_approves_nothing(
     response = await decide(async_client, ticket_from(page), "approve")
     assert response.status_code == HTTPStatus.BAD_REQUEST
     assert "invalid_target" in response.text
+    assert await _count(db_session, OAuthAuthorizationCode) == 0
+
+
+@pytest.mark.asyncio
+async def test_an_account_disabled_after_the_page_rendered_approves_nothing(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A ticket outlives its page by minutes; a disabled account cannot finish with it."""
+    page, _client_id, user_id = await _consent_page(async_client, db_session, "disabled")
+    user = await db_session.get(User, user_id)
+    assert user is not None
+    user.is_active = False
+    db_session.add(user)
+    await db_session.commit()
+    response = await decide(async_client, ticket_from(page), "approve")
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert "location" not in response.headers
     assert await _count(db_session, OAuthAuthorizationCode) == 0
 
 

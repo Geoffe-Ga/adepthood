@@ -502,3 +502,22 @@ async def test_re_approving_a_revoked_agent_is_a_new_consent(db_session: AsyncSe
     )
     assert grant.revoked_at is None
     assert grant.created_at.replace(tzinfo=UTC) == later
+
+
+@pytest.mark.asyncio
+async def test_only_an_active_undeleted_account_may_authorize(db_session: AsyncSession) -> None:
+    """Disabled, deleted or missing: none may finish an approval."""
+    user_id = await _user(db_session, "active@example.com")
+    assert await rules.account_may_authorize(db_session, user_id)
+    assert not await rules.account_may_authorize(db_session, user_id + 1000)
+    user = await db_session.get(User, user_id)
+    assert user is not None
+    user.deleted_at = _NOW
+    db_session.add(user)
+    await db_session.commit()
+    assert not await rules.account_may_authorize(db_session, user_id)
+    user.deleted_at = None
+    user.is_active = False
+    db_session.add(user)
+    await db_session.commit()
+    assert not await rules.account_may_authorize(db_session, user_id)

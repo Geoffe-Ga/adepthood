@@ -54,6 +54,7 @@ from sqlmodel import select
 from models.agent_grant import AgentGrant
 from models.oauth_authorization_code import OAuthAuthorizationCode
 from models.oauth_client import OAUTH_URI_MAX_LENGTH
+from models.user import User
 from models.vault_activation import VaultActivation, VaultActivationState
 from services.creek_vault_url import vault_base_url
 from services.user_vault_config import load_vault_config
@@ -410,6 +411,20 @@ async def account_vault_resource(session: AsyncSession, user_id: int) -> str | N
     if config.provisioned and not await _activation_is_ready(session, user_id):
         return None
     return normalize_resource(vault_mcp_url(config.vault_url))
+
+
+async def account_may_authorize(session: AsyncSession, user_id: int) -> bool:
+    """Whether ``user_id`` names an account that may still approve an agent.
+
+    The consent ticket outlives the moment it was signed by up to
+    :data:`CONSENT_TICKET_TTL`; an account disabled or deleted inside that
+    window must not be able to finish an approval it started before.
+    """
+    result = await session.execute(
+        select(User.is_active, User.deleted_at).where(User.id == user_id)
+    )
+    row = result.first()
+    return row is not None and bool(row.is_active) and row.deleted_at is None
 
 
 # --- the whole request -----------------------------------------------------------

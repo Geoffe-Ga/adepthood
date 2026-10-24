@@ -81,6 +81,7 @@ from services.oauth_authorization import (
     RESPONSE_TYPE_CODE,
     AuthorizationError,
     AuthorizationRequest,
+    account_may_authorize,
     account_vault_resource,
     authorization_server_metadata,
     configured_issuer,
@@ -392,7 +393,9 @@ async def authorize_sign_in(
 async def _approve(
     session: AsyncSession, request: AuthorizationRequest, user_id: int, issuer: str
 ) -> Response:
-    """Issue the code -- after checking, once more, that the vault is still this account's."""
+    """Issue the code -- after checking, once more, that the account and its vault still stand."""
+    if not await account_may_authorize(session, user_id):
+        return _refusal(RefusalKind.EXPIRED, AuthorizationError.ACCESS_DENIED)
     if await account_vault_resource(session, user_id) != request.resource:
         logger.warning(_RESOURCE_REFUSED_EVENT, extra={"user_id": user_id})
         return _refusal(RefusalKind.OTHER_VAULT, AuthorizationError.INVALID_TARGET)
