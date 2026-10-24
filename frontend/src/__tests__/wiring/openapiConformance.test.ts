@@ -301,6 +301,12 @@ function leafTypes(node: JsonSchemaNode): string[] {
   if (typeof node.type === 'string') {
     return [node.type];
   }
+  // JSON Schema 2020-12 also allows a type list. Zod >= 4.6 emits a nullable
+  // field as ``type: ["string", "null"]`` rather than an ``anyOf`` of two
+  // leaves, so the list is the same set of leaf types the union would give.
+  if (Array.isArray(node.type)) {
+    return node.type as string[];
+  }
   if (Array.isArray(node.enum)) {
     return (node.enum as unknown[]).map(literalType);
   }
