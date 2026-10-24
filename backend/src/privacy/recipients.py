@@ -58,6 +58,7 @@ class RecipientId(enum.StrEnum):
     APPLE_IDENTITY = "apple_identity"
     HOSTING_PLATFORM = "hosting_platform"
     FLY = "fly"
+    CONNECTED_AGENT = "connected_agent"
 
 
 class Role(enum.StrEnum):
@@ -582,6 +583,24 @@ _ROWS: Final[tuple[Recipient, ...]] = (
                 _CONTENT,
                 "hosts a provider-managed vault Adepthood activated",
                 conditional_on="CREEK_PROVISIONING_URL",
+            ),
+        ),
+    ),
+    Recipient(
+        id=RecipientId.CONNECTED_AGENT,
+        legal_name="An agent the user connects to their vault",
+        short_name="agent",
+        role=Role.INDEPENDENT_CONTROLLER,
+        dial_sites=frozenset(
+            {DialSite("services.oauth_metadata_fetch", "_fetch_body", "httpx.AsyncClient")}
+        ),
+        policy_lead_in="An agent you connect to your vault",
+        scopes=(
+            Scope(
+                ScopeKind.USER_OWNED_ACCOUNT,
+                _NOTHING,
+                "an anonymous fetch of the client metadata document an agent the user is "
+                "connecting names as its client_id (#3532)",
             ),
         ),
     ),

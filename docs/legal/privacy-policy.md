@@ -352,6 +352,14 @@ between you and that company, under its own terms, and Adepthood receives the
 signed token it issues. To check that token, the server fetches the
 company's published keys; that request carries nothing about you.
 
+**An agent you connect to your vault**, if you approve one. An agent such as
+Claude Code or a ChatGPT connector asks through Adepthood, and you decide on
+Adepthood's own page what it may do. When an agent identifies itself by a web
+address instead of registering, the server fetches the short description the
+agent publishes there — its name and where it may send you back to; that
+request carries nothing about you. What an approved agent can read comes from
+your vault, under what you approved, and never includes Intimate entries.
+
 One more, on the device rather than the server: turning on habit reminders
 asks the operating system's push service for a token, which is kept on your
 device. The reminders themselves are scheduled locally — their text never
