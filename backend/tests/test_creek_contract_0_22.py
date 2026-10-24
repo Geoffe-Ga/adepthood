@@ -51,6 +51,9 @@ _PRE_022_WINDOW: Final = ("0.21", "0.20", "0.19")
 #: The one capability 0.22 adds, under its published wire name.
 _AGENT_ACTIVITY_WIRE_NAME: Final = "agent-activity"
 
+#: Rows asked of the new read: the most the Settings list renders.
+_LIMIT: Final = 20
+
 
 def _example(capability: str, state: str) -> dict[str, object]:
     """Return one published example cell from the vendored bundle."""
@@ -159,3 +162,19 @@ async def test_a_vault_that_does_not_advertise_agent_activity_supports_nothing_n
     await client.handshake()
 
     assert client.supports(CreekCapability.AGENT_ACTIVITY) is False
+
+
+@pytest.mark.asyncio
+async def test_the_new_capability_is_called_at_0_22() -> None:
+    """``agent-activity`` is gated at 0.22, so the read itself must declare it."""
+    vault = _ScriptedVault(body=_example("agent-activity", "success.json"))
+    client = _client(vault)
+    await client.handshake()
+
+    activity = await client.agent_activity(_LIMIT)
+
+    (sent,) = vault.calls_to("/v1/agent-activity")
+    assert sent.headers[_CONTRACT_HEADER] == _DECLARED_MINOR
+    assert len(activity.rows) == len(
+        cast("list[object]", _example("agent-activity", "success.json")["rows"])
+    )

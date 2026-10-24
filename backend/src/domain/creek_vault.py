@@ -1281,6 +1281,58 @@ class VaultWheelBalance:
     aspects: tuple[VaultWheelAspect, ...]
 
 
+#: The most rows one ``GET /v1/agent-activity`` answers with. Creek clamps a
+#: larger ``limit`` to it (``AGENT_ACTIVITY_MAX_LIMIT``, contract 0.22) and its
+#: response schema publishes the same bound as ``maxItems``.
+AGENT_ACTIVITY_MAX_LIMIT = 200
+
+
+class VaultAgentActivityOutcome(enum.StrEnum):
+    """Whether one call against the vault got past its pre-dispatch gates.
+
+    Creek's closed two-member enum, mirrored. ``ADMITTED`` means "dispatched to
+    the tool" and nothing more: the audit chain logs the attempt before a tool
+    resolves its target and never the result, so it cannot say whether content
+    came back, and neither can anything built on it. ``REFUSED`` is a refusal
+    before any tool ran -- a tool outside the agent's profile, or a ceiling
+    above ``personal``.
+    """
+
+    ADMITTED = "admitted"
+    REFUSED = "refused"
+
+
+@dataclass(frozen=True)
+class VaultAgentActivityRow:
+    """One call against the vault, reduced to who, what, when and whether.
+
+    ``consumer`` is the vault's audit stamp, verbatim: the static bearer's
+    consumer name, or a JWT agent's ``sub`` -- which names the *person*, not the
+    agent, until Creek-Vault#1976 stamps the agent's ``client_id`` instead.
+    ``tool`` is the tool name the entry was written under. Neither is copy:
+    both are identifiers a caller maps onto its own words before anyone reads
+    them. ``at`` is timezone-aware UTC.
+    """
+
+    consumer: str
+    tool: str
+    at: datetime
+    outcome: VaultAgentActivityOutcome
+
+
+@dataclass(frozen=True)
+class VaultAgentActivity:
+    """The vault's most recent calls, newest first, as :meth:`agent_activity` reads them.
+
+    Only the rows cross the seam. Creek's ``skipped`` count (log lines it could
+    not project) and its echoed ``tier_ceiling`` are validated at the parse
+    boundary and dropped: neither is anything a person reading their activity
+    could act on.
+    """
+
+    rows: tuple[VaultAgentActivityRow, ...]
+
+
 class CreekVaultClient(Protocol):
     """The seam adepthood calls into for all vault interaction.
 
@@ -1407,6 +1459,27 @@ class CreekVaultClient(Protocol):
         """
 
 
+class CreekVaultAgentActivityClient(CreekVaultClient, Protocol):
+    """The client surface the Settings activity list needs: ``agent-activity`` (0.22).
+
+    Separate from :class:`CreekVaultClient` for the reason
+    :class:`CreekVaultVoiceDraftClient` is: consumers and doubles that only
+    ingest or read a vault should not acquire a method they never call.
+    """
+
+    async def agent_activity(self, limit: int, /) -> VaultAgentActivity:
+        """Read the vault's most recent calls, newest first, at most ``limit`` of them.
+
+        Content-free by construction: Creek publishes four fields per call and
+        the adapter refuses an answer carrying a fifth. Fails as
+        :meth:`CreekVaultClient.wheel` does -- an unreadable or off-schema
+        answer as :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError`, and an unadvertised capability as
+        :class:`CreekCapabilityUnsupportedError` before any request is built.
+        """
+
+
 class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
     """The narrow client surface required by optional Voice Draft mirroring.
 
@@ -1445,12 +1518,15 @@ class CreekVaultLetterClient(CreekVaultVoiceDraftClient, Protocol):
         """
 
 
-class CreekVaultPipelineClient(CreekVaultLetterClient, Protocol):
-    """The narrower extension required only by durable pipeline orchestration.
+class CreekVaultPipelineClient(CreekVaultLetterClient, CreekVaultAgentActivityClient, Protocol):
+    """The whole per-request surface: every narrower client, plus pipeline polling.
 
     Status polling is absent from :class:`CreekVaultClient` deliberately. Most
     consumers use ingest, upload, reflection, or wheel reads and should not have
     to implement a pipeline-only operation in their adapters or test doubles.
+    This is the type the per-request dependency resolves, so it also carries
+    :class:`CreekVaultAgentActivityClient`: the Settings activity route (#3535)
+    reads through the same resolved client every other route does.
     """
 
     async def pipeline_job(
