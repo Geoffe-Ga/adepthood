@@ -42,6 +42,7 @@ from services.creek_vault_activity_wire import (
     agent_activity_from,
 )
 from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
+from services.creek_vault_telemetry import VaultCallTimedOutError
 
 _BUNDLE: Final = Path(__file__).parent / "fixtures" / "creek_v1"
 _VAULT_URL: Final = "https://vault.example.test"
@@ -269,6 +270,28 @@ async def test_a_transport_failure_is_an_absent_vault() -> None:
     await client.handshake()
 
     with pytest.raises(CreekVaultUnavailableError) as raised:
+        await client.agent_activity(_LIMIT)
+
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_a_call_that_runs_out_of_time_is_a_timed_out_vault() -> None:
+    """A slow vault is told apart from an absent one, with nothing chained."""
+
+    def _slow(request: httpx.Request) -> httpx.Response:
+        if request.url.path == _CAPABILITIES_PATH:
+            return httpx.Response(HTTPStatus.OK, json=_read("examples/capabilities/success.json"))
+        raise httpx.ReadTimeout("slow", request=request)
+
+    client = HttpCreekVaultClient(
+        _VAULT_URL,
+        _API_KEY,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(_slow)),
+    )
+    await client.handshake()
+
+    with pytest.raises(VaultCallTimedOutError) as raised:
         await client.agent_activity(_LIMIT)
 
     assert raised.value.__cause__ is None

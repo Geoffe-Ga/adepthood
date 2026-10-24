@@ -30,17 +30,31 @@ drift.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC
-from typing import Annotated, Final, Literal
+from typing import Annotated, Final, Literal, Protocol
+from urllib.parse import urlencode
 
+import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 
 from domain.creek_vault import (
     AGENT_ACTIVITY_MAX_LIMIT,
     CreekCapability,
+    CreekCapabilityUnsupportedError,
+    CreekVaultError,
+    CreekVaultPayloadError,
+    CreekVaultUnavailableError,
     VaultAgentActivity,
     VaultAgentActivityOutcome,
     VaultAgentActivityRow,
+    WireTierCeiling,
+)
+from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS, HTTP_CALL_TIMED_OUT_ERRORS
+from services.creek_vault_telemetry import (
+    VaultCallTimedOutError,
+    VaultTelemetryOutcome,
+    record_vault_outcome,
 )
 
 #: Where the read is asked for, relative to the configured base URL.
@@ -57,6 +71,9 @@ AGENT_ACTIVITY_LIMIT_PARAM: Final = "limit"
 # prefix and the capability's own telemetry name, never anything a vault sent.
 AGENT_ACTIVITY_FAILED_MESSAGE: Final = (
     f"creek vault call failed: {CreekCapability.AGENT_ACTIVITY.value}"
+)
+AGENT_ACTIVITY_UNSUPPORTED_MESSAGE: Final = (
+    f"creek vault capability unsupported: {CreekCapability.AGENT_ACTIVITY.value}"
 )
 AGENT_ACTIVITY_UNREADABLE_MESSAGE: Final = (
     f"creek vault returned an unreadable response: {CreekCapability.AGENT_ACTIVITY.value}"
@@ -130,3 +147,108 @@ def agent_activity_from(body: bytes) -> VaultAgentActivity | None:
             for row in response.rows
         )
     )
+
+
+# Static, and naming the bound rather than the value: a limit is a caller's
+# integer, but nothing about a refusal should echo what was passed.
+_LIMIT_MESSAGE: Final = (
+    f"agent activity limit must be between {AGENT_ACTIVITY_MIN_LIMIT} "
+    f"and {AGENT_ACTIVITY_MAX_LIMIT}"
+)
+
+
+def agent_activity_path(limit: int) -> str:
+    """The request path and query for ``limit`` rows, refusing a limit Creek would.
+
+    Checked before anything else, so a caller's bug is a ``ValueError`` here
+    rather than an ``invalid_request`` the vault would have to answer.
+
+    Raises:
+        ValueError: When ``limit`` is outside the published ``1..200``.
+    """
+    if not AGENT_ACTIVITY_MIN_LIMIT <= limit <= AGENT_ACTIVITY_MAX_LIMIT:
+        raise ValueError(_LIMIT_MESSAGE)
+    return f"{AGENT_ACTIVITY_PATH}?{urlencode({AGENT_ACTIVITY_LIMIT_PARAM: limit})}"
+
+
+def agent_activity_answer(
+    response: httpx.Response,
+    read_failure: Callable[[CreekCapability, httpx.Response], CreekVaultError],
+) -> VaultAgentActivity:
+    """Read one answer, or raise the failure it is.
+
+    A non-2xx is classified by ``read_failure`` -- the adapter's one read
+    classifier, code first and status second -- and a 2xx that is not exactly
+    the published shape is a :class:`CreekVaultPayloadError` with a static
+    message and nothing chained, so no part of an off-schema answer rides it.
+
+    Raises:
+        CreekVaultError: The classified failure for any answer that is not a
+            readable success.
+    """
+    if not response.is_success:
+        raise read_failure(CreekCapability.AGENT_ACTIVITY, response) from None
+    activity = agent_activity_from(response.content)
+    if activity is None:
+        raise CreekVaultPayloadError(AGENT_ACTIVITY_UNREADABLE_MESSAGE)
+    return activity
+
+
+class ReadTransport(Protocol):
+    """The adapter's one authorized, deadlined way onto the wire."""
+
+    def __call__(
+        self, method: str, url: str, /, *, ceiling: WireTierCeiling
+    ) -> Awaitable[httpx.Response]:
+        """Send one request at ``ceiling`` and return the vault's answer."""
+
+
+#: The adapter's read classifier for a non-2xx answer.
+ReadFailure = Callable[[CreekCapability, httpx.Response], CreekVaultError]
+
+
+async def _get(send: ReadTransport, url: str) -> httpx.Response:
+    """``GET`` ``url`` at the content-free ceiling, normalizing any transport failure.
+
+    Declared at ``open`` because the route reads no content and Creek echoes
+    the ceiling without filtering on it. A call that ran out of time is
+    :class:`VaultCallTimedOutError`, any other that did not land
+    :class:`CreekVaultUnavailableError`; both carry only the static message
+    and are raised ``from None``, so the original exception's text neither
+    rides along nor is chained. The timeout set is named first because it sits
+    inside the wider one.
+    """
+    try:
+        return await send("GET", url, ceiling=WireTierCeiling.OPEN)
+    except HTTP_CALL_TIMED_OUT_ERRORS:
+        raise VaultCallTimedOutError(AGENT_ACTIVITY_FAILED_MESSAGE) from None
+    except HTTP_CALL_FAILED_ERRORS:
+        raise CreekVaultUnavailableError(AGENT_ACTIVITY_FAILED_MESSAGE) from None
+
+
+async def read_agent_activity(
+    send: ReadTransport,
+    base_url: str,
+    limit: int,
+    *,
+    supported: bool,
+    read_failure: ReadFailure,
+) -> VaultAgentActivity:
+    """Read ``GET /v1/agent-activity`` and report how the exchange ended.
+
+    ``limit`` is checked first, then the capability: a vault that never
+    advertised the read gets no request at all. A success is counted here;
+    every failure is raised, for the caller's counting wrapper.
+
+    Raises:
+        ValueError: When ``limit`` is outside the published bounds.
+        CreekCapabilityUnsupportedError: When the vault did not advertise it.
+        CreekVaultError: The classified failure of any other unreadable answer.
+    """
+    path = agent_activity_path(limit)
+    if not supported:
+        raise CreekCapabilityUnsupportedError(AGENT_ACTIVITY_UNSUPPORTED_MESSAGE)
+    response = await _get(send, f"{base_url}{path}")
+    activity = agent_activity_answer(response, read_failure)
+    record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.AGENT_ACTIVITY)
+    return activity

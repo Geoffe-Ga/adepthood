@@ -97,12 +97,11 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from types import MappingProxyType, TracebackType
 from typing import Final, NoReturn, cast
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
 import httpx
 
 from domain.creek_vault import (
-    AGENT_ACTIVITY_MAX_LIMIT,
     CONTRACT_VERSION,
     CreekCapability,
     CreekCapabilityUnsupportedError,
@@ -142,13 +141,10 @@ from domain.creek_vault import (
     signals_rate_limit,
     wire_ceiling_for,
 )
-from services.creek_vault_activity_wire import (
-    AGENT_ACTIVITY_FAILED_MESSAGE,
-    AGENT_ACTIVITY_LIMIT_PARAM,
-    AGENT_ACTIVITY_MIN_LIMIT,
-    AGENT_ACTIVITY_PATH,
-    AGENT_ACTIVITY_UNREADABLE_MESSAGE,
-    agent_activity_from,
+from services.creek_vault_activity_wire import read_agent_activity
+from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
+from services.creek_vault_call_errors import (
+    HTTP_CALL_TIMED_OUT_ERRORS as _HTTP_CALL_TIMED_OUT_ERRORS,
 )
 from services.creek_vault_payload import (
     _CALL_FAILED,
@@ -279,37 +275,6 @@ _CONTENT_FREE_CEILING = WireTierCeiling.OPEN
 # which shares the value but not the meaning.
 _CONTRACT_MINOR_COMPONENTS = 2
 CONTRACT_MINOR = ".".join(CONTRACT_VERSION.split(".")[:_CONTRACT_MINOR_COMPONENTS])
-
-# Every way an httpx call can fail to land, whether it left this process or
-# not. ``OSError`` covers connection and timeout errors (the whole-request
-# deadline raises ``TimeoutError``, an ``OSError`` subclass), and
-# ``httpx.HTTPError`` covers every transport and status failure.
-# ``httpx.InvalidURL`` has to be named separately because it is *not* an
-# ``HTTPError`` -- httpx raises it, from outside its own hierarchy, while
-# building the request, so an unparseable vault URL would otherwise escape every
-# degrade set and turn an optional replication into an exception on the caller's
-# request path. A URL httpx cannot build a request for is unreachable in exactly
-# the sense a refused connection is (the construction-time validator already
-# refused the *unsafe* URLs, which is a different question), so it degrades the
-# same way rather than raising.
-_HTTP_CALL_FAILED_ERRORS: tuple[type[Exception], ...] = (
-    OSError,
-    httpx.HTTPError,
-    httpx.InvalidURL,
-)
-
-# The two ways a call can end because it ran out of time rather than because it
-# failed to land. Both are already inside :data:`_HTTP_CALL_FAILED_ERRORS` --
-# ``TimeoutError`` is an ``OSError`` and ``httpx.TimeoutException`` is an
-# ``httpx.HTTPError`` -- so every ``except`` that wants to tell a slow vault from
-# an absent one has to name this set *first* or the wider one silently swallows
-# it. The distinction is worth the ordering: an operator reading "unreachable"
-# goes looking for a network that is up, while a timeout says the vault answered
-# and could not finish, whose remedy is capacity rather than connectivity.
-_HTTP_CALL_TIMED_OUT_ERRORS: tuple[type[Exception], ...] = (
-    TimeoutError,
-    httpx.TimeoutException,
-)
 
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
@@ -1026,12 +991,6 @@ _LETTER_CREDENTIAL_MESSAGE = _capability_message(_CREDENTIAL_REJECTED, CreekCapa
 _WHEEL_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.WHEEL)
 _REFLECT_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.REFLECT)
 _PIPELINE_FAILED_MESSAGE = _capability_message(_CALL_FAILED, CreekCapability.PIPELINE)
-# Static, and naming the bound rather than the value: a limit is a caller's
-# integer, but nothing about a refusal should echo what was passed.
-_AGENT_ACTIVITY_LIMIT_MESSAGE = (
-    f"agent activity limit must be between {AGENT_ACTIVITY_MIN_LIMIT} "
-    f"and {AGENT_ACTIVITY_MAX_LIMIT}"
-)
 _PIPELINE_UNREADABLE_MESSAGE = _capability_message(_RESPONSE_UNREADABLE, CreekCapability.PIPELINE)
 
 # The privacy ceiling adepthood presents when it drives the batch pipeline, and
@@ -2716,69 +2675,26 @@ class HttpCreekVaultClient:
         record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.WHEEL)
         return balance
 
-    async def _get_agent_activity(self, limit: int) -> httpx.Response:
-        """Read the vault's recent calls, normalizing any transport failure.
-
-        A bare ``GET`` with ``limit`` as its only parameter: the published query
-        admits ``limit`` and ``since`` and refuses anything else, and the list
-        Settings renders wants the newest calls rather than a window. Declared
-        at the content-free ceiling, because the route reads no content and
-        Creek echoes the ceiling without filtering on it.
-
-        Transport failures become :class:`CreekVaultUnavailableError` with
-        ``from None``, timeouts the :class:`VaultCallTimedOutError` subclass,
-        for the reason :meth:`_get_wheel` gives.
-        """
-        query = urlencode({AGENT_ACTIVITY_LIMIT_PARAM: limit})
-        try:
-            return await self._authorized_request(
-                "GET",
-                f"{self._url}{AGENT_ACTIVITY_PATH}?{query}",
-                ceiling=_CONTENT_FREE_CEILING,
-            )
-        except _HTTP_CALL_TIMED_OUT_ERRORS:
-            raise VaultCallTimedOutError(AGENT_ACTIVITY_FAILED_MESSAGE) from None
-        except _HTTP_CALL_FAILED_ERRORS:
-            raise CreekVaultUnavailableError(AGENT_ACTIVITY_FAILED_MESSAGE) from None
-
     async def agent_activity(self, limit: int, /) -> VaultAgentActivity:
         """Read the vault's most recent calls, requiring the AGENT_ACTIVITY capability.
 
-        A thin wrapper over :meth:`_agent_activity`, counted exactly once the
-        way :meth:`wheel` is.
+        Counted exactly once, as :meth:`wheel` is. Everything particular to the
+        read -- the bounds on ``limit``, the gate on the cached handshake, the
+        one ``GET`` with ``limit`` its sole parameter at the content-free
+        ceiling, and the strict parse of the answer -- is
+        :func:`~services.creek_vault_activity_wire.read_agent_activity`. This
+        adapter lends it the two things only it has: the authorized, deadlined
+        transport (:meth:`_authorized_request`) and the one read classifier,
+        code first and status second (:func:`_read_failure`).
         """
         with _CountingOutcome(CreekCapability.AGENT_ACTIVITY):
-            return await self._agent_activity(limit)
-
-    async def _agent_activity(self, limit: int) -> VaultAgentActivity:
-        """Read ``GET /v1/agent-activity`` and report how the exchange ended.
-
-        ``limit`` is checked against the published bounds before anything else,
-        so a caller's bug is a ``ValueError`` here rather than an
-        ``invalid_request`` the vault would have to answer. Then gated on the
-        cached handshake, as :meth:`_wheel` is: a vault that never advertised
-        the read gets no request.
-
-        The answer splits as the wheel's does -- transport failure, a non-2xx
-        classified by :func:`_read_failure`, or a 2xx that is not exactly the
-        published shape, which :func:`agent_activity_from` refuses whole as a
-        :class:`CreekVaultPayloadError`. Its message is static and nothing is
-        chained, so no part of an off-schema answer rides the refusal.
-        """
-        if not AGENT_ACTIVITY_MIN_LIMIT <= limit <= AGENT_ACTIVITY_MAX_LIMIT:
-            raise ValueError(_AGENT_ACTIVITY_LIMIT_MESSAGE)
-        if not self.supports(CreekCapability.AGENT_ACTIVITY):
-            raise CreekCapabilityUnsupportedError(
-                _unsupported_message(CreekCapability.AGENT_ACTIVITY)
+            return await read_agent_activity(
+                self._authorized_request,
+                self._url,
+                limit,
+                supported=self.supports(CreekCapability.AGENT_ACTIVITY),
+                read_failure=_read_failure,
             )
-        response = await self._get_agent_activity(limit)
-        if not response.is_success:
-            raise _read_failure(CreekCapability.AGENT_ACTIVITY, response) from None
-        activity = agent_activity_from(response.content)
-        if activity is None:
-            raise CreekVaultPayloadError(AGENT_ACTIVITY_UNREADABLE_MESSAGE)
-        record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.AGENT_ACTIVITY)
-        return activity
 
 
 class LocalFallbackCreekVaultClient:
