@@ -2972,12 +2972,36 @@
   },
   {
     "id": "vault.agent-consent-page",
-    "description": "A person connects an agent they already run (Claude Code, a ChatGPT connector, OpenClaw) to their vault without pasting a secret (#3532). The agent registers (POST /oauth/register, or a client metadata document at its https client_id) and sends the person's browser to GET /oauth/authorize; a person with no app session signs in on the server-rendered page (POST /oauth/authorize/sign-in, login's lockout and rate limit), then sees the agent's own name labelled as such, each requested grant in plain words, 'Intimate entries are never included.', the host Approve returns them to and, for a program on this computer, the local-program warning. Approve (POST /oauth/authorize/decision) writes a 60-second oauth_authorization_code and the account's agent_grant row and returns the browser to the agent; Decline returns access_denied. The agent then trades the code and its PKCE verifier at POST /oauth/token (#3533) for a ten-minute ES256 access token whose aud is the account's own vault MCP URL and a rotating 30-day refresh token (oauth_refresh_token, digest only), the vault verifies it against GET /.well-known/jwks.json, and a revoked grant or POST /oauth/revoke fails the next refresh. A resource naming any vault but the account's own connected one is refused with invalid_target and writes nothing. Uncovered because the flow is entered from an agent's browser hand-off, not from any screen or client wrapper in the app, so the ledger has no seam to name for it yet: #3534 adds the in-app surface under Where your writing lives (the agent list, its grants and Revoke, and the vault's address to paste into a client) and the per-client vault.agent-approve-draft-revoke journeys. Pinned meanwhile by backend/tests/routers/test_oauth_authorization_server.py and backend/tests/routers/test_oauth_token_endpoint.py end to end through HTTP, the cross-tenant case in backend/tests/security/test_idor.py, and the copy guard in backend/tests/services/test_oauth_consent_copy.py.",
+    "description": "A person connects an agent they already run (Claude Code, a ChatGPT connector, OpenClaw) to their vault without pasting a secret (#3532). The agent registers (POST /oauth/register, or a client metadata document at its https client_id) and sends the person's browser to GET /oauth/authorize; a person with no app session signs in on the server-rendered page (POST /oauth/authorize/sign-in, login's lockout and rate limit), then sees the agent's own name labelled as such, each requested grant in plain words, 'Intimate entries are never included.', the host Approve returns them to and, for a program on this computer, the local-program warning. Approve (POST /oauth/authorize/decision) writes a 60-second oauth_authorization_code and the account's agent_grant row and returns the browser to the agent; Decline returns access_denied. A resource naming any vault but the account's own connected one is refused with invalid_target and writes nothing. The spec drives the parts the per-client vault.agent-approve-draft-revoke journeys do not (#3534): the agent's half over plain fetch, as an agent speaks it -- the page asking a browser with no session to sign in, signing in on it, the floor and the agent's name on the page, Decline sending access_denied with the agent's state and no code, and invalid_target for the neighbour's vault -- and the person's half through the production client, where GET /vault/agents lists nothing afterwards for either account. Approve, the token exchange and revocation are driven per client by those three journeys. Still pinned in-process by backend/tests/routers/test_oauth_authorization_server.py and backend/tests/routers/test_oauth_token_endpoint.py, the cross-tenant cases in backend/tests/security/test_idor.py, and the copy guard in backend/tests/services/test_oauth_consent_copy.py.",
     "crosses": {
       "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
-      "client": ["vault"],
-      "routes": ["GET /vault/connection"],
+      "client": ["auth", "setTokenGetter", "vault"],
+      "routes": ["PUT /vault/connection", "GET /vault/agents"],
       "tables": [
+        "user",
+        "uservaultconfig",
+        "oauth_client",
+        "oauth_authorization_code",
+        "agent_grant"
+      ]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-agent-consent.e2e.test.ts"
+  },
+  {
+    "id": "vault.agent-approve-draft-revoke.openclaw",
+    "description": "A person who runs OpenClaw lets it draft from their vault, sees it in Settings and stops it (#3534, epic Creek-Vault#1961). OpenClaw (2026.3.31 and later, streamable HTTP with auth: \"oauth\") registers with a loopback redirect and listens on a port it picks per sign-in, so the person's approval returns to a program on their own computer and Settings says it runs there. The person connects a vault of their own (PUT /vault/connection), and the address Settings shows under Agents that may read your vault -- GET /vault/connection's mcp_address -- is the RFC 8707 resource the agent asks for. Before approval GET /vault/agents lists nobody. The agent registers (POST /oauth/register) and sends the person to the consent page, which names each requested grant in the very words the Settings list renders (AGENT_GRANT_PHRASES, held to the Python by agentGrantDrift.test.ts); Approve returns the agent its code and state on its own redirect, and the code and PKCE verifier buy an access token whose aud is that vault address and whose client_id is this agent, plus a refresh token. GET /vault/agents then lists the agent with its grants, the host it signs in through and a last_used_at, and Stop (DELETE /vault/agents/{agent_id}) revokes the grant and its refresh tokens: the agent's next refresh is invalid_grant and the list is empty again. The agent's half rides plain fetch, because no app wrapper exists for what an agent sends; the person's half rides the production client. Not driven here: the draft itself (creek.mine then creek.draft over the vault's /mcp endpoint) and the activity row it leaves, because the lane's vault is a contract fake of /v1 with no MCP surface -- the token's audience and agent, which the vault's verifier checks before any tool runs (Creek-Vault#1963), are asserted instead, and #3535 extends this journey with the activity row.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "vault"],
+      "routes": [
+        "PUT /vault/connection",
+        "GET /vault/connection",
+        "GET /vault/agents",
+        "DELETE /vault/agents/{agent_id}"
+      ],
+      "tables": [
+        "user",
         "uservaultconfig",
         "oauth_client",
         "oauth_authorization_code",
@@ -2985,7 +3009,55 @@
         "oauth_refresh_token"
       ]
     },
-    "status": "uncovered",
-    "issue": 3534
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-agent-openclaw.e2e.test.ts"
+  },
+  {
+    "id": "vault.agent-approve-draft-revoke.claude-code",
+    "description": "A person who runs Claude Code lets it draft from their vault, sees it in Settings and stops it (#3534, epic Creek-Vault#1961). Claude Code (claude mcp add --transport http) registers dynamically with a localhost redirect on an ephemeral port and sends a PKCE S256 challenge and an RFC 8707 resource, so Settings says it runs on the person's own computer. The person connects a vault of their own (PUT /vault/connection), and the address Settings shows under Agents that may read your vault -- GET /vault/connection's mcp_address -- is the RFC 8707 resource the agent asks for. Before approval GET /vault/agents lists nobody. The agent registers (POST /oauth/register) and sends the person to the consent page, which names each requested grant in the very words the Settings list renders (AGENT_GRANT_PHRASES, held to the Python by agentGrantDrift.test.ts); Approve returns the agent its code and state on its own redirect, and the code and PKCE verifier buy an access token whose aud is that vault address and whose client_id is this agent, plus a refresh token. GET /vault/agents then lists the agent with its grants, the host it signs in through and a last_used_at, and Stop (DELETE /vault/agents/{agent_id}) revokes the grant and its refresh tokens: the agent's next refresh is invalid_grant and the list is empty again. The agent's half rides plain fetch, because no app wrapper exists for what an agent sends; the person's half rides the production client. Not driven here: the draft itself (creek.mine then creek.draft over the vault's /mcp endpoint) and the activity row it leaves, because the lane's vault is a contract fake of /v1 with no MCP surface -- the token's audience and agent, which the vault's verifier checks before any tool runs (Creek-Vault#1963), are asserted instead, and #3535 extends this journey with the activity row.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "vault"],
+      "routes": [
+        "PUT /vault/connection",
+        "GET /vault/connection",
+        "GET /vault/agents",
+        "DELETE /vault/agents/{agent_id}"
+      ],
+      "tables": [
+        "user",
+        "uservaultconfig",
+        "oauth_client",
+        "oauth_authorization_code",
+        "agent_grant",
+        "oauth_refresh_token"
+      ]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-agent-claude-code.e2e.test.ts"
+  },
+  {
+    "id": "vault.agent-approve-draft-revoke.chatgpt-connector",
+    "description": "A person who runs a ChatGPT developer-mode connector lets it draft from their vault, sees it in Settings and stops it (#3534, epic Creek-Vault#1961). A ChatGPT developer-mode connector is hosted: it registers dynamically with an https callback on chatgpt.com, so approving returns the person to that site and Settings says the agent signs in through chatgpt.com. The person connects a vault of their own (PUT /vault/connection), and the address Settings shows under Agents that may read your vault -- GET /vault/connection's mcp_address -- is the RFC 8707 resource the agent asks for. Before approval GET /vault/agents lists nobody. The agent registers (POST /oauth/register) and sends the person to the consent page, which names each requested grant in the very words the Settings list renders (AGENT_GRANT_PHRASES, held to the Python by agentGrantDrift.test.ts); Approve returns the agent its code and state on its own redirect, and the code and PKCE verifier buy an access token whose aud is that vault address and whose client_id is this agent, plus a refresh token. GET /vault/agents then lists the agent with its grants, the host it signs in through and a last_used_at, and Stop (DELETE /vault/agents/{agent_id}) revokes the grant and its refresh tokens: the agent's next refresh is invalid_grant and the list is empty again. The agent's half rides plain fetch, because no app wrapper exists for what an agent sends; the person's half rides the production client. Not driven here: the draft itself (creek.mine then creek.draft over the vault's /mcp endpoint) and the activity row it leaves, because the lane's vault is a contract fake of /v1 with no MCP surface -- the token's audience and agent, which the vault's verifier checks before any tool runs (Creek-Vault#1963), are asserted instead, and #3535 extends this journey with the activity row.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "vault"],
+      "routes": [
+        "PUT /vault/connection",
+        "GET /vault/connection",
+        "GET /vault/agents",
+        "DELETE /vault/agents/{agent_id}"
+      ],
+      "tables": [
+        "user",
+        "uservaultconfig",
+        "oauth_client",
+        "oauth_authorization_code",
+        "agent_grant",
+        "oauth_refresh_token"
+      ]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-agent-chatgpt.e2e.test.ts"
   }
 ]
