@@ -56,6 +56,7 @@ import {
   transcribePageSchema,
   uiFlagsSchema,
   vaultConnectionResponseSchema,
+  connectedAgentSchema,
   vaultActivationResponseSchema,
   documentImportSchema,
   voiceDraftListSchema,
@@ -118,6 +119,7 @@ import {
   type TimezoneReadT,
   type TranscribePageT,
   type VaultConnectionT,
+  type ConnectedAgentT,
   type VaultActivationT,
   type DocumentImportT,
   type WheelBalanceT,
@@ -4275,6 +4277,10 @@ export interface VaultConnectionPayload {
 const vaultConnectionSchema =
   vaultConnectionResponseSchema as unknown as z.ZodType<VaultConnection>;
 
+const connectedAgentsSchema = z.array(connectedAgentSchema) as unknown as z.ZodType<
+  ConnectedAgentT[]
+>;
+
 /**
  * The vault resource all three verbs address, named once instead of spelled
  * three times.
@@ -4320,7 +4326,25 @@ export const vault = {
   disconnect(token?: string): Promise<void> {
     return request<void>(`/vault/${VAULT_RESOURCE}`, { method: 'DELETE', token });
   },
+  /**
+   * Every agent this account approved for its vault and has not stopped,
+   * newest approval first (#3534). An empty list for nobody yet, never a 404.
+   */
+  agents(token?: string): Promise<ConnectedAgent[]> {
+    return request<ConnectedAgent[]>('/vault/agents', { token, schema: connectedAgentsSchema });
+  },
+  /**
+   * Stop one agent: its next sign-in is refused, so it loses the vault within
+   * one access-token lifetime. Idempotent -- a 204 again for one already
+   * stopped -- and a 404 for an id that is not this account's.
+   */
+  revokeAgent(agentId: number, token?: string): Promise<void> {
+    return request<void>(`/vault/agents/${agentId}`, { method: 'DELETE', token });
+  },
 };
+
+/** One agent that may read this account's vault, as Settings lists it. */
+export type ConnectedAgent = ConnectedAgentT;
 
 /** Secret-free state returned by Adepthood's Creek activation proxy. */
 export type VaultActivation = VaultActivationT;

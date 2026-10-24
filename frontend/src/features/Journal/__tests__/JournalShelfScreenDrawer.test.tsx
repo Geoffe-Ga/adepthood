@@ -18,7 +18,9 @@ const mockList = jest.fn() as jest.MockedFunction<
 const mockPromptCurrent = jest.fn() as jest.MockedFunction<() => Promise<PromptDetail>>;
 const mockVoiceReadiness = jest.fn<() => Promise<VoiceReadinessT>>();
 const mockVaultConnection =
-  jest.fn<() => Promise<{ connected: boolean; vault_url: string | null }>>();
+  jest.fn<
+    () => Promise<{ connected: boolean; vault_url: string | null; mcp_address: string | null }>
+  >();
 const mockNavigate = jest.fn();
 
 jest.mock('@/api', () => ({
@@ -155,7 +157,11 @@ beforeEach(() => {
   headerLeftStore.listeners.clear();
   mockList.mockResolvedValue(page([entry(1)]));
   mockPromptCurrent.mockResolvedValue(prompt());
-  mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://v.example' });
+  mockVaultConnection.mockResolvedValue({
+    connected: true,
+    vault_url: 'https://v.example',
+    mcp_address: null,
+  });
   mockVoiceReadiness.mockResolvedValue({
     ready: false,
     state: 'not_consented',
@@ -326,7 +332,7 @@ describe('Journal header drawer from JournalShelfScreen', () => {
   });
 
   it('routes a consented account with no vault from the shelf to where its corpus would live', async () => {
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     mockVoiceReadiness.mockResolvedValue({
       ready: false,
       state: 'gathering',

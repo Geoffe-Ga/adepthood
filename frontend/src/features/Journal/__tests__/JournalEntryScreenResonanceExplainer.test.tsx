@@ -108,7 +108,7 @@ jest.mock('@/config', () => {
   });
 });
 const mockVaultConnection = jest.fn() as jest.MockedFunction<
-  () => Promise<{ connected: boolean; vault_url: string | null }>
+  () => Promise<{ connected: boolean; vault_url: string | null; mcp_address: string | null }>
 >;
 
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
@@ -248,7 +248,7 @@ beforeEach(() => {
   mockUsage.mockResolvedValue(usageSnapshot());
   mockKeylessReachesServer = true;
   mockVaultConnection.mockReset();
-  mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+  mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
 });
 
 describe('JournalEntryScreen — nothing is charged before the cost is disclosed', () => {
@@ -1209,7 +1209,11 @@ describe('JournalEntryScreen — with no key, only a vault-answered reading has 
   });
 
   it('keeps the shipped price for a reading a connected vault answers', async () => {
-    mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://vault.example' });
+    mockVaultConnection.mockResolvedValue({
+      connected: true,
+      vault_url: 'https://vault.example',
+      mcp_address: null,
+    });
     mockUsage.mockResolvedValue(usageSnapshot({ resonance_route: 'vault_bound' }));
     const view = await openEntryAndAsk();
 
@@ -1233,7 +1237,11 @@ describe('JournalEntryScreen — with no key, only a vault-answered reading has 
   });
 
   it('leads a letter with the key, even with a vault, and sends the writer to Settings', async () => {
-    mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://vault.example' });
+    mockVaultConnection.mockResolvedValue({
+      connected: true,
+      vault_url: 'https://vault.example',
+      mcp_address: null,
+    });
     mockList.mockResolvedValue({ items: [ESSAY_NOTE] });
     const view = renderScreen();
     fireEvent.press(await view.findByTestId(`margin-note-${ESSAY_NOTE.id}`));

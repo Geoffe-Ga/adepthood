@@ -191,7 +191,7 @@ export async function seedCensusAccount(
  * with no address an account may see. The app reads it as unknown, which keeps
  * the seeding picker (#3017).
  */
-const MANAGED_VAULT_CONNECTION = { connected: true, vault_url: null } as const;
+const MANAGED_VAULT_CONNECTION = { connected: true, vault_url: null, mcp_address: null } as const;
 
 const goTo = async (page: Page, path: string): Promise<void> => {
   await page.goto(`${frontendUrl()}${path}`);

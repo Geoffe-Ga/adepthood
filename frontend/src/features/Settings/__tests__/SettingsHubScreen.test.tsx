@@ -54,9 +54,10 @@ const mockUiFlagsGet = jest.fn(() =>
 // The corpus group gates "Bring in your writing" on the account's vault
 // (#3017); each test that cares says what the server answers. The default is a
 // vault at an address, so every other suite here renders the hub as before.
-const mockVaultConnection = jest.fn<Promise<{ connected: boolean; vault_url: string | null }>, []>(
-  () => Promise.resolve({ connected: true, vault_url: 'https://v.example' }),
-);
+const mockVaultConnection = jest.fn<
+  Promise<{ connected: boolean; vault_url: string | null; mcp_address: string | null }>,
+  []
+>(() => Promise.resolve({ connected: true, vault_url: 'https://v.example', mcp_address: null }));
 
 // The corpus group's sorting switches read every source's decision; the
 // default is a server with nothing to say, so the other suites see no switch.
@@ -597,7 +598,7 @@ describe('SettingsHubScreen — the corpus-seeding destination', () => {
 
   test('with nothing attached, invites the account to give its corpus a place first', async () => {
     mockVaultConnection.mockImplementationOnce(() =>
-      Promise.resolve({ connected: false, vault_url: null }),
+      Promise.resolve({ connected: false, vault_url: null, mcp_address: null }),
     );
     const { getByTestId } = render(<SettingsHubScreen />);
     const row = getByTestId('settings-row-seed-corpus');
