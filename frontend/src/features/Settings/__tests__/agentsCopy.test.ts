@@ -2,6 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 
 import * as agentsCopy from '../agentsCopy';
 
+import { BANNED_PRESSURE, BANNED_TECHNICAL } from '@/testing/agentsCopyBans';
+
 /**
  * Copy guards for "Agents that may read your vault" (#3534).
  *
@@ -27,15 +29,6 @@ const ALL_COPY = ALL_SENTENCES.join(' ');
 
 /** The lines that title the section: no product name, no technical word. */
 const HEADINGS = [agentsCopy.AGENTS_EYEBROW, agentsCopy.AGENTS_HEADING];
-
-// Hosts, transports, credentials and routing (the vault deck's ban), plus the
-// authorization vocabulary an agent arrives through.
-const BANNED_TECHNICAL =
-  /\b(host|hostname|url|uri|endpoint|api key|apikey|bearer|token|credential|mcp|https?|port|protocol|routing|route|server|sync|tenant|node|instance|oauth|scope|client|grant|revoke|refresh|redirect|jwt)\b/iu;
-
-// Loss and obligation framing.
-const BANNED_PRESSURE =
-  /\b(backup|back up|safeguard|protect|secure your|lose|lost|losing|at risk|danger|failure|required|must|need to|should)\b/iu;
 
 describe('agentsCopy — export surface', () => {
   it('exports only strings, beside the one grant mapping', () => {

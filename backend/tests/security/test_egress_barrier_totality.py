@@ -130,6 +130,11 @@ EXCLUSIONS: Mapping[_Route, str] = {
         "writer keys it would spend (#3437) and transmits no stored adepthood "
         "content and no key, so a late call after erasure exposes nothing"
     ),
+    ("GET", "/vault/agents/activity"): (
+        "read-only dial: read_agent_activity asks the vault for its content-free "
+        "audit projection (#3535) with no body and transmits no stored adepthood "
+        "content, so a late call after erasure exposes nothing"
+    ),
     ("GET", "/invitations"): (
         "read-only dial: generate_invitation_signals reads signals and transmits "
         "no stored adepthood content, and it is a parallel app-load fetch that a "

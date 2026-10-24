@@ -6,7 +6,10 @@ Two verbs under "Where your writing lives" in Settings:
   (#3532) and has not revoked, with its grants and when it last signed in;
 * ``DELETE /vault/agents/{agent_id}`` -- Revoke: the grant is marked revoked and
   its refresh tokens with it, so the agent's next refresh at the token endpoint
-  (#3533) is ``invalid_grant`` and it stops within one access-token lifetime.
+  (#3533) is ``invalid_grant`` and it stops within one access-token lifetime;
+* ``GET /vault/agents/activity`` -- what agents asked the vault for, read through
+  to Creek's content-free ``GET /v1/agent-activity`` (#3535) and re-projected
+  onto plain words by :mod:`services.vault_agent_activity`.
 
 The account is the caller's own, from their bearer token; no account id is read
 from a path or a body. The one id a request carries is the grant's, and
@@ -21,15 +24,20 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Response, status
+from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
+from dependencies.creek_vault import get_creek_vault_client
 from dependencies.ownership import require_owned_agent_grant
+from domain.creek_vault import AGENT_ACTIVITY_MAX_LIMIT, CreekVaultPipelineClient
 from error_responses import build_router
 from models.agent_grant import AgentGrant
-from routers.auth import get_current_user
+from routers.auth import get_current_user, session_signing_secret
+from schemas.vault_agent_activity import AgentActivityResponse
 from schemas.vault_agents import ConnectedAgentResponse
+from services.creek_vault_activity_wire import AGENT_ACTIVITY_MIN_LIMIT
+from services.vault_agent_activity import DEFAULT_ACTIVITY_LIMIT, read_agent_activity
 from services.vault_agents import list_connected_agents, revoke_agent
 
 router = build_router(prefix="/vault", tags=["vault"])
@@ -47,6 +55,28 @@ async def list_vault_agents(
     straight from the reply.
     """
     return await list_connected_agents(session, user_id)
+
+
+@router.get("/agents/activity", response_model=AgentActivityResponse)
+async def read_vault_agent_activity(
+    user_id: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    vault: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    limit: Annotated[
+        int, Query(ge=AGENT_ACTIVITY_MIN_LIMIT, le=AGENT_ACTIVITY_MAX_LIMIT)
+    ] = DEFAULT_ACTIVITY_LIMIT,
+) -> AgentActivityResponse:
+    """What agents asked this account's vault for, newest first, in plain words.
+
+    Always a ``200``: a vault that is absent, unreachable, refuses, or does not
+    offer the read answers ``status: "unavailable"`` with no rows, so Settings
+    says it could not check rather than rendering an error. The vault is the
+    caller's own, resolved from their token like every other vault read; no
+    account or agent id is read from the request.
+    """
+    return await read_agent_activity(
+        session, user_id, vault, limit=limit, secret=session_signing_secret()
+    )
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)

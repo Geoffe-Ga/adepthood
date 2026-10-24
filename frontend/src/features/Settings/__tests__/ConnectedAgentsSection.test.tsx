@@ -45,7 +45,14 @@ jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
 jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api');
-  return { ...actual, vault: { agents: jest.fn(), revokeAgent: jest.fn() } };
+  return {
+    ...actual,
+    vault: {
+      agents: jest.fn(),
+      revokeAgent: jest.fn(),
+      agentActivity: jest.fn(() => Promise.resolve({ status: 'ok', rows: [] })),
+    },
+  };
 });
 
 jest.mock('@/utils/clipboard', () => ({ copyToClipboard: jest.fn() }));
@@ -344,5 +351,25 @@ describe('ConnectedAgentsSection — the address to give an agent', () => {
     const { queryByTestId } = await renderSection({ ...CONNECTED, agentAddress: null });
 
     expect(queryByTestId('vault-agents-address')).toBeNull();
+  });
+});
+
+describe('ConnectedAgentsSection — recent activity', () => {
+  test('renders what agents asked for beneath the agent rows, inside the section', async () => {
+    const { getByTestId, findByTestId } = await renderSection(CONNECTED);
+
+    const section = getByTestId('vault-agents-section');
+    await findByTestId('vault-activity-empty');
+    expect(within(section).getByTestId('vault-activity')).toBeTruthy();
+    expect(vault.agentActivity).toHaveBeenCalledTimes(1);
+  });
+
+  test('is not read for an account whose section stays out of the way', async () => {
+    mockAgents.mockResolvedValue([]);
+    const { queryByTestId } = render(<ConnectedAgentsSection vault={NONE} />);
+    await waitFor(() => expect(mockAgents).toHaveBeenCalled());
+
+    expect(queryByTestId('vault-activity')).toBeNull();
+    expect(vault.agentActivity).not.toHaveBeenCalled();
   });
 });

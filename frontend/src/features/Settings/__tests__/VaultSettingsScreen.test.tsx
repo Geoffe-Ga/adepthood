@@ -108,6 +108,7 @@ jest.mock('@/api', () => {
       connect: jest.fn(),
       disconnect: jest.fn(),
       agents: jest.fn(() => Promise.resolve([])),
+      agentActivity: jest.fn(() => Promise.resolve({ status: 'ok', rows: [] })),
       revokeAgent: jest.fn(),
     },
     vaultActivation: { status: jest.fn() },

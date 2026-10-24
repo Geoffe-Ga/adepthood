@@ -73,8 +73,8 @@ UPSTREAM_REF = "main"
 _RAW_CONTENT_HOST = "https://raw.githubusercontent.com"
 
 # Bounds on untrusted upstream input. Both keep a wide margin over the published
-# bundle -- 114 files, largest ~27 KiB (``manifest.json``) at the pinned commit,
-# re-counted at contract 0.21.0 -- which is wide enough that a clean fetch never
+# bundle -- 124 files, largest ~30 KiB (``manifest.json``) at the pinned commit,
+# re-counted at contract 0.22.0 -- which is wide enough that a clean fetch never
 # trips them and narrow enough that a hostile or broken upstream cannot decide
 # how much memory this gate spends. The bundle keeps growing, so treat those two
 # figures as a reading rather than a ceiling, and re-check them against a fresh

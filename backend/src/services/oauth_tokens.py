@@ -211,7 +211,7 @@ def derived_subject(user_id: int, secret: str) -> str:
     return f"{AGENT_SUBJECT_PREFIX}{digest[:AGENT_SUBJECT_HEX_DIGITS]}"
 
 
-async def _managed_consumer_identity(session: AsyncSession, user_id: int) -> str | None:
+async def managed_consumer_identity(session: AsyncSession, user_id: int) -> str | None:
     """The consumer identity provisioning gave the account's ready managed vault, if any."""
     result = await session.execute(
         select(VaultActivation.consumer_identity)
@@ -231,7 +231,7 @@ async def agent_subject(session: AsyncSession, user_id: int, *, secret: str) -> 
     The managed vault's provisioned consumer identity when there is one -- the
     value that vault pins ``sub`` to -- and otherwise :func:`derived_subject`.
     """
-    managed = await _managed_consumer_identity(session, user_id)
+    managed = await managed_consumer_identity(session, user_id)
     return managed if managed is not None else derived_subject(user_id, secret)
 
 

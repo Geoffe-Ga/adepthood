@@ -198,6 +198,67 @@
         "title": "AdminUserSummary",
         "type": "object"
       },
+      "AgentActivityResponse": {
+        "additionalProperties": false,
+        "description": "The most recent calls, newest first, or why there is nothing to show.",
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/AgentActivityRowResponse"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentActivityStatus"
+          }
+        },
+        "required": [
+          "status",
+          "rows"
+        ],
+        "title": "AgentActivityResponse",
+        "type": "object"
+      },
+      "AgentActivityRowResponse": {
+        "additionalProperties": false,
+        "description": "One call against the vault: who, what, when and whether.",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/VaultAgentActivityOutcome"
+          },
+          "tool_label": {
+            "title": "Tool Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent",
+          "tool_label",
+          "at",
+          "outcome"
+        ],
+        "title": "AgentActivityRowResponse",
+        "type": "object"
+      },
+      "AgentActivityStatus": {
+        "description": "Whether the vault's activity could be read at all.",
+        "enum": [
+          "ok",
+          "unavailable"
+        ],
+        "title": "AgentActivityStatus",
+        "type": "string"
+      },
       "AppleOAuthRequest": {
         "description": "Apple sign-in payload -- the shared shape plus the one-shot ``full_name``.\n\nApple never puts the name in the token.  It is handed to the client once,\nduring the very first authorization, and never sent again -- so the client\nforwards it here or it is lost.  That also makes it the one field on this\nroute the provider has *not* vouched for, which is why the ladder consults\nit only when creating a brand-new row: a later request carrying a different\nname can never relabel an account that already exists.\n\nBlank (or whitespace-only) means \"no name\", not an empty name, so the\ncolumn stays ``NULL`` and every reader's fallback keeps working.  The\nlength bound matches the column's, so an over-long name is a 422 here\nrather than a truncating write or a 500 from mid-transaction.",
         "properties": {
@@ -9722,6 +9783,15 @@
         ],
         "title": "VaultActivationResponse",
         "type": "object"
+      },
+      "VaultAgentActivityOutcome": {
+        "description": "Whether one call against the vault got past its pre-dispatch gates.\n\nCreek's closed two-member enum, mirrored. ``ADMITTED`` means \"dispatched to\nthe tool\" and nothing more: the audit chain logs the attempt before a tool\nresolves its target and never the result, so it cannot say whether content\ncame back, and neither can anything built on it. ``REFUSED`` is a refusal\nbefore any tool ran -- a tool outside the agent's profile, or a ceiling\nabove ``personal``.",
+        "enum": [
+          "admitted",
+          "refused"
+        ],
+        "title": "VaultAgentActivityOutcome",
+        "type": "string"
       },
       "VaultConnectionRequest": {
         "description": "Where a user's own vault lives and the credential that opens it.\n\n``api_key`` is write-only by construction: it exists on this request and on\nno response, so there is no code path that could return it and no reviewer\nwho has to check that none does.",
@@ -31800,6 +31870,118 @@
           }
         },
         "summary": "List Vault Agents",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/agents/activity": {
+      "get": {
+        "description": "What agents asked this account's vault for, newest first, in plain words.\n\nAlways a ``200``: a vault that is absent, unreachable, refuses, or does not\noffer the read answers ``status: \"unavailable\"`` with no rows, so Settings\nsays it could not check rather than rendering an error. The vault is the\ncaller's own, resolved from their token like every other vault read; no\naccount or agent id is read from the request.",
+        "operationId": "read_vault_agent_activity_vault_agents_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentActivityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Read Vault Agent Activity",
         "tags": [
           "vault"
         ]

@@ -120,6 +120,8 @@ import {
   type TranscribePageT,
   type VaultConnectionT,
   type ConnectedAgentT,
+  agentActivityResponseSchema,
+  type AgentActivityT,
   type VaultActivationT,
   type DocumentImportT,
   type WheelBalanceT,
@@ -4281,6 +4283,8 @@ const connectedAgentsSchema = z.array(connectedAgentSchema) as unknown as z.ZodT
   ConnectedAgentT[]
 >;
 
+const agentActivitySchema = agentActivityResponseSchema as unknown as z.ZodType<AgentActivityT>;
+
 /**
  * The vault resource all three verbs address, named once instead of spelled
  * three times.
@@ -4341,10 +4345,27 @@ export const vault = {
   revokeAgent(agentId: number, token?: string): Promise<void> {
     return request<void>(`/vault/agents/${agentId}`, { method: 'DELETE', token });
   },
+  /**
+   * What agents asked this account's vault for, newest first, at most
+   * ``limit`` calls (#3535). Always a 200: a vault that could not be read is
+   * ``status: 'unavailable'`` with no rows, never an error to recognise.
+   */
+  agentActivity(limit: number, token?: string): Promise<AgentActivity> {
+    return request<AgentActivity>(`/vault/agents/activity?limit=${limit}`, {
+      token,
+      schema: agentActivitySchema,
+    });
+  },
 };
 
 /** One agent that may read this account's vault, as Settings lists it. */
 export type ConnectedAgent = ConnectedAgentT;
+
+/** What agents asked this account's vault for, as Settings lists it. */
+export type AgentActivity = AgentActivityT;
+
+/** One call in that list. */
+export type AgentActivityRow = AgentActivity['rows'][number];
 
 /** Secret-free state returned by Adepthood's Creek activation proxy. */
 export type VaultActivation = VaultActivationT;

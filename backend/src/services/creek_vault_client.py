@@ -114,6 +114,7 @@ from domain.creek_vault import (
     CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
     HandshakeResult,
+    VaultAgentActivity,
     VaultClassification,
     VaultClassificationMethod,
     VaultClassificationPass,
@@ -139,6 +140,11 @@ from domain.creek_vault import (
     WireTierCeiling,
     signals_rate_limit,
     wire_ceiling_for,
+)
+from services.creek_vault_activity_wire import read_agent_activity
+from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
+from services.creek_vault_call_errors import (
+    HTTP_CALL_TIMED_OUT_ERRORS as _HTTP_CALL_TIMED_OUT_ERRORS,
 )
 from services.creek_vault_payload import (
     _CALL_FAILED,
@@ -269,37 +275,6 @@ _CONTENT_FREE_CEILING = WireTierCeiling.OPEN
 # which shares the value but not the meaning.
 _CONTRACT_MINOR_COMPONENTS = 2
 CONTRACT_MINOR = ".".join(CONTRACT_VERSION.split(".")[:_CONTRACT_MINOR_COMPONENTS])
-
-# Every way an httpx call can fail to land, whether it left this process or
-# not. ``OSError`` covers connection and timeout errors (the whole-request
-# deadline raises ``TimeoutError``, an ``OSError`` subclass), and
-# ``httpx.HTTPError`` covers every transport and status failure.
-# ``httpx.InvalidURL`` has to be named separately because it is *not* an
-# ``HTTPError`` -- httpx raises it, from outside its own hierarchy, while
-# building the request, so an unparseable vault URL would otherwise escape every
-# degrade set and turn an optional replication into an exception on the caller's
-# request path. A URL httpx cannot build a request for is unreachable in exactly
-# the sense a refused connection is (the construction-time validator already
-# refused the *unsafe* URLs, which is a different question), so it degrades the
-# same way rather than raising.
-_HTTP_CALL_FAILED_ERRORS: tuple[type[Exception], ...] = (
-    OSError,
-    httpx.HTTPError,
-    httpx.InvalidURL,
-)
-
-# The two ways a call can end because it ran out of time rather than because it
-# failed to land. Both are already inside :data:`_HTTP_CALL_FAILED_ERRORS` --
-# ``TimeoutError`` is an ``OSError`` and ``httpx.TimeoutException`` is an
-# ``httpx.HTTPError`` -- so every ``except`` that wants to tell a slow vault from
-# an absent one has to name this set *first* or the wider one silently swallows
-# it. The distinction is worth the ordering: an operator reading "unreachable"
-# goes looking for a network that is up, while a timeout says the vault answered
-# and could not finish, whose remedy is capacity rather than connectivity.
-_HTTP_CALL_TIMED_OUT_ERRORS: tuple[type[Exception], ...] = (
-    TimeoutError,
-    httpx.TimeoutException,
-)
 
 # Payload-parsing failures. A malformed or wrong-typed handshake response should
 # degrade to unavailable exactly like a transport error, never propagate.
@@ -626,6 +601,7 @@ _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
         "pipeline": CreekCapability.PIPELINE,
         "voice-drafts": CreekCapability.VOICE_DRAFTS,
         "letters": CreekCapability.LETTERS,
+        "agent-activity": CreekCapability.AGENT_ACTIVITY,
     }
 )
 
@@ -2699,6 +2675,27 @@ class HttpCreekVaultClient:
         record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.WHEEL)
         return balance
 
+    async def agent_activity(self, limit: int, /) -> VaultAgentActivity:
+        """Read the vault's most recent calls, requiring the AGENT_ACTIVITY capability.
+
+        Counted exactly once, as :meth:`wheel` is. Everything particular to the
+        read -- the bounds on ``limit``, the gate on the cached handshake, the
+        one ``GET`` with ``limit`` its sole parameter at the content-free
+        ceiling, and the strict parse of the answer -- is
+        :func:`~services.creek_vault_activity_wire.read_agent_activity`. This
+        adapter lends it the two things only it has: the authorized, deadlined
+        transport (:meth:`_authorized_request`) and the one read classifier,
+        code first and status second (:func:`_read_failure`).
+        """
+        with _CountingOutcome(CreekCapability.AGENT_ACTIVITY):
+            return await read_agent_activity(
+                self._authorized_request,
+                self._url,
+                limit,
+                supported=self.supports(CreekCapability.AGENT_ACTIVITY),
+                read_failure=_read_failure,
+            )
+
 
 class LocalFallbackCreekVaultClient:
     """The no-vault :class:`CreekVaultClient`: local pipeline stays authoritative.
@@ -2806,6 +2803,11 @@ class LocalFallbackCreekVaultClient:
         """Raise: a vault wheel read has no local vault to serve it."""
         record_vault_outcome(self._outcome, CreekCapability.WHEEL)
         raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.WHEEL))
+
+    async def agent_activity(self, _limit: int, /) -> VaultAgentActivity:
+        """Raise: there is no vault whose audit chain could be read."""
+        record_vault_outcome(self._outcome, CreekCapability.AGENT_ACTIVITY)
+        raise CreekCapabilityUnsupportedError(_unsupported_message(CreekCapability.AGENT_ACTIVITY))
 
     async def classify_corpus(self) -> VaultClassificationPass | VaultPipelineJob:
         """Raise: there is no vault whose corpus could be classified.

@@ -49,17 +49,18 @@ from uuid import UUID
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
 #
-# It matches Creek `main` (0.21), and it moves only in lockstep with the vault
+# It matches Creek `main` (0.22), and it moves only in lockstep with the vault
 # it talks to -- read this before moving it again:
 #
 # 1. `supported_contract_minors` is a property of the **deployed** vault, not of
 #    Creek's `main`, and Creek refuses any minor that list does not name
 #    exactly. Declaring a minor the deployed image does not serve fails *every*
 #    handshake with `incompatible_version` (Creek-Vault#1888 was that outage, at
-#    0.18). This pin moved to 0.21 together with the managed vault's re-image to
-#    Creek `main` at e6d021b9, whose window runs from 0.2 up to 0.21; the next move
+#    0.18). This pin moved to 0.22 together with the managed vault's re-image to
+#    Creek `main` at c72f4362 -- the image that serves `/mcp` for epic
+#    Creek-Vault#1961, whose window runs from 0.2 up to 0.22; the next move
 #    belongs to the next re-image, not to whichever PR notices a gap.
-# 2. What 0.19-0.21 add, and what adepthood does with each:
+# 2. What 0.19-0.22 add, and what adepthood does with each:
 #    - `rate_limited` (0.19, `PROVENANCE_SINCE_MINOR`) on reflections, and on
 #      letters from 0.21 (`LETTER_RATE_LIMITED_SINCE_MINOR`). Consumed: we are
 #      at or above both gates, so a cap on either model-backed route now reaches
@@ -74,7 +75,12 @@ from uuid import UUID
 #      steps 3-4 and an owner ADR 0009 decision, not part of a pin move.
 #      `tests/test_creek_contract_0_21.py` pins that none of them changes what
 #      adepthood does with an answer.
-CONTRACT_VERSION = "0.21.0"
+#    - `agent-activity` (0.22, Creek-Vault#1968): `GET /v1/agent-activity`, the
+#      content-free projection of the vault's MCP audit chain. Consumed by the
+#      Settings "Recent activity" list (#3535) through
+#      `CreekVaultClient.agent_activity`; `tests/test_creek_contract_0_22.py`
+#      pins the move.
+CONTRACT_VERSION = "0.22.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -106,7 +112,10 @@ class CreekCapability(enum.StrEnum):
     ``LETTERS`` (contract 0.17) is the vault writing a margin note's letter
     itself and storing it as one of those Voice Drafts, so a vault-bound
     writer's first letter is answered by their vault and never by the app's
-    provider (#3203).
+    provider (#3203). ``AGENT_ACTIVITY`` (contract 0.22) is the content-free
+    list of what agents asked the vault for, which Settings renders under the
+    agents a person approved (#3535): who, which tool, when and whether it was
+    admitted -- never an argument and never a result.
     """
 
     HANDSHAKE = "creek.handshake"
@@ -121,6 +130,7 @@ class CreekCapability(enum.StrEnum):
     PIPELINE = "creek.pipeline"
     VOICE_DRAFTS = "creek.voice_drafts"
     LETTERS = "creek.letters"
+    AGENT_ACTIVITY = "creek.agent_activity"
 
 
 class VaultTierCeiling(enum.StrEnum):
@@ -1271,6 +1281,58 @@ class VaultWheelBalance:
     aspects: tuple[VaultWheelAspect, ...]
 
 
+#: The most rows one ``GET /v1/agent-activity`` answers with. Creek clamps a
+#: larger ``limit`` to it (``AGENT_ACTIVITY_MAX_LIMIT``, contract 0.22) and its
+#: response schema publishes the same bound as ``maxItems``.
+AGENT_ACTIVITY_MAX_LIMIT = 200
+
+
+class VaultAgentActivityOutcome(enum.StrEnum):
+    """Whether one call against the vault got past its pre-dispatch gates.
+
+    Creek's closed two-member enum, mirrored. ``ADMITTED`` means "dispatched to
+    the tool" and nothing more: the audit chain logs the attempt before a tool
+    resolves its target and never the result, so it cannot say whether content
+    came back, and neither can anything built on it. ``REFUSED`` is a refusal
+    before any tool ran -- a tool outside the agent's profile, or a ceiling
+    above ``personal``.
+    """
+
+    ADMITTED = "admitted"
+    REFUSED = "refused"
+
+
+@dataclass(frozen=True)
+class VaultAgentActivityRow:
+    """One call against the vault, reduced to who, what, when and whether.
+
+    ``consumer`` is the vault's audit stamp, verbatim: the static bearer's
+    consumer name, or a JWT agent's ``sub`` -- which names the *person*, not the
+    agent, until Creek-Vault#1976 stamps the agent's ``client_id`` instead.
+    ``tool`` is the tool name the entry was written under. Neither is copy:
+    both are identifiers a caller maps onto its own words before anyone reads
+    them. ``at`` is timezone-aware UTC.
+    """
+
+    consumer: str
+    tool: str
+    at: datetime
+    outcome: VaultAgentActivityOutcome
+
+
+@dataclass(frozen=True)
+class VaultAgentActivity:
+    """The vault's most recent calls, newest first, as :meth:`agent_activity` reads them.
+
+    Only the rows cross the seam. Creek's ``skipped`` count (log lines it could
+    not project) and its echoed ``tier_ceiling`` are validated at the parse
+    boundary and dropped: neither is anything a person reading their activity
+    could act on.
+    """
+
+    rows: tuple[VaultAgentActivityRow, ...]
+
+
 class CreekVaultClient(Protocol):
     """The seam adepthood calls into for all vault interaction.
 
@@ -1397,6 +1459,27 @@ class CreekVaultClient(Protocol):
         """
 
 
+class CreekVaultAgentActivityClient(CreekVaultClient, Protocol):
+    """The client surface the Settings activity list needs: ``agent-activity`` (0.22).
+
+    Separate from :class:`CreekVaultClient` for the reason
+    :class:`CreekVaultVoiceDraftClient` is: consumers and doubles that only
+    ingest or read a vault should not acquire a method they never call.
+    """
+
+    async def agent_activity(self, limit: int, /) -> VaultAgentActivity:
+        """Read the vault's most recent calls, newest first, at most ``limit`` of them.
+
+        Content-free by construction: Creek publishes four fields per call and
+        the adapter refuses an answer carrying a fifth. Fails as
+        :meth:`CreekVaultClient.wheel` does -- an unreadable or off-schema
+        answer as :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError`, and an unadvertised capability as
+        :class:`CreekCapabilityUnsupportedError` before any request is built.
+        """
+
+
 class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
     """The narrow client surface required by optional Voice Draft mirroring.
 
@@ -1435,12 +1518,15 @@ class CreekVaultLetterClient(CreekVaultVoiceDraftClient, Protocol):
         """
 
 
-class CreekVaultPipelineClient(CreekVaultLetterClient, Protocol):
-    """The narrower extension required only by durable pipeline orchestration.
+class CreekVaultPipelineClient(CreekVaultLetterClient, CreekVaultAgentActivityClient, Protocol):
+    """The whole per-request surface: every narrower client, plus pipeline polling.
 
     Status polling is absent from :class:`CreekVaultClient` deliberately. Most
     consumers use ingest, upload, reflection, or wheel reads and should not have
     to implement a pipeline-only operation in their adapters or test doubles.
+    This is the type the per-request dependency resolves, so it also carries
+    :class:`CreekVaultAgentActivityClient`: the Settings activity route (#3535)
+    reads through the same resolved client every other route does.
     """
 
     async def pipeline_job(

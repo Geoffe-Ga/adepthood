@@ -6,7 +6,13 @@ import {
   AGENTS_ON_THIS_COMPUTER,
   AGENTS_UNNAMED,
 } from '../agentsCopy';
-import { agentDisplayName, grantPhrases, lastUsedPhrase, whereItSignsIn } from '../connectedAgents';
+import {
+  agentDisplayName,
+  grantPhrases,
+  lastUsedPhrase,
+  whenPhrase,
+  whereItSignsIn,
+} from '../connectedAgents';
 
 /**
  * The rules that turn one ``GET /vault/agents`` row into words (#3534).
@@ -109,5 +115,26 @@ describe('lastUsedPhrase', () => {
 
   it('invents no time for a moment it cannot read', () => {
     expect(lastUsedPhrase('not a time', NOW)).toBe(AGENTS_LAST_USED);
+  });
+});
+
+describe('whenPhrase', () => {
+  it('says how long ago, without a prefix, in the largest whole unit', () => {
+    expect(whenPhrase(before(10 * 1000), NOW)).toBe('just now');
+    expect(whenPhrase(before(MINUTE), NOW)).toBe('1 minute ago');
+    expect(whenPhrase(before(3 * HOUR), NOW)).toBe('3 hours ago');
+    expect(whenPhrase(before(2 * DAY), NOW)).toBe('2 days ago');
+  });
+
+  it('gives a date once a count stops meaning much', () => {
+    expect(whenPhrase(before(45 * DAY), NOW)).toMatch(/^on /u);
+  });
+
+  it('reads a moment in the future as just now', () => {
+    expect(whenPhrase(new Date(NOW + HOUR).toISOString(), NOW)).toBe('just now');
+  });
+
+  it('says nothing about a moment it cannot read', () => {
+    expect(whenPhrase('not a time', NOW)).toBeNull();
   });
 });
