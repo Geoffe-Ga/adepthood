@@ -15,11 +15,20 @@ that stores one-line values may write the PEM's newlines as ``\n``.
 public key rather than configured beside it, so an id can never name the wrong
 key and two deployments holding one key agree on its id.
 
-**Fail closed, say nothing.** No key configured is an honest "not configured":
-nothing is signed and nothing is published. A configured value that is not a
-list of distinct P-256 private keys raises :class:`OAuthSigningKeyError`, never
-falls back, and its message names the variable and never a byte of what it
-holds. The parser's own exception is suppressed for the same reason.
+**Fail closed, say nothing.** In production, and on any hosted platform
+(staging included), no key configured is an honest "not configured": nothing is
+signed and nothing is published. A configured value that is not a list of
+distinct P-256 private keys raises :class:`OAuthSigningKeyError` everywhere,
+never falls back, and its message names the variable and never a byte of what
+it holds. The parser's own exception is suppressed for the same reason.
+
+**A laptop or a CI job gets an ephemeral key.** Off-platform and outside
+production -- the same "outside production" ``OAUTH_ISSUER_URL`` falls back to
+the local dev server in -- an unset variable is answered with one P-256 key
+generated for this process alone, and a warning says so. Tokens it signs verify
+only against this process's key set and die with it, which is exactly right for
+``uvicorn --reload`` and the contract fuzz, and is why a hosted environment,
+where several workers would each invent a different key, never takes this path.
 
 The keys are read once per process (rotation is a deploy); tests call
 :func:`reset_cache`.
@@ -30,6 +39,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -40,8 +50,18 @@ from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from services.journal_encryption import (
+    PLATFORM_ENVIRONMENT_NAME_ENV_VARS,
+    PLATFORM_MARKER_ENV_VARS,
+    production_in_force,
+)
+
 #: Named once so the startup log, the 503 and the docs all say the same name.
 SIGNING_KEYS_ENV_VAR: Final = "OAUTH_SIGNING_KEYS"
+
+logger = logging.getLogger(__name__)
+
+_EPHEMERAL_KEY_EVENT: Final = "oauth_signing_key_ephemeral"
 
 #: The one signing algorithm: ECDSA over P-256 with SHA-256 (RFC 7518 section 3.4).
 SIGNING_ALGORITHM: Final = "ES256"
@@ -133,17 +153,48 @@ def _load(block: str) -> SigningKey:
     return SigningKey(kid=jwk_thumbprint(key.public_key()), private_key=key)
 
 
+def _configured_keys() -> tuple[SigningKey, ...]:
+    """The keys the variable lists, each distinct; ``()`` when it lists none."""
+    keys = tuple(_load(block) for block in _configured_blocks())
+    if len({key.kid for key in keys}) != len(keys):
+        raise _refusal("lists the same key twice")
+    return keys
+
+
+def ephemeral_key_allowed() -> bool:
+    """Whether an unset ``OAUTH_SIGNING_KEYS`` may be answered with a process-local key.
+
+    Only off-platform and outside production: a hosted environment runs more
+    than one worker, and workers that each invented a key would publish key
+    sets that disagree with each other's tokens.
+    """
+    if production_in_force():
+        return False
+    platform = (*PLATFORM_ENVIRONMENT_NAME_ENV_VARS, *PLATFORM_MARKER_ENV_VARS)
+    return not any(os.getenv(name, "").strip() for name in platform)
+
+
+def _ephemeral_key() -> SigningKey:
+    """A P-256 key for this process alone, announced so nobody mistakes it for configuration."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    logger.warning(_EPHEMERAL_KEY_EVENT, extra={"env_var": SIGNING_KEYS_ENV_VAR})
+    return SigningKey(kid=jwk_thumbprint(key.public_key()), private_key=key)
+
+
 @lru_cache(maxsize=1)
 def signing_keys() -> tuple[SigningKey, ...]:
-    """Every configured key, newest first; ``()`` when none is configured.
+    """Every configured key, newest first.
+
+    ``()`` when none is configured where a key is required; one ephemeral key
+    when none is configured on a laptop or in CI (:func:`ephemeral_key_allowed`).
 
     Raises:
         OAuthSigningKeyError: a value is configured but is not a list of
             distinct P-256 private keys.
     """
-    keys = tuple(_load(block) for block in _configured_blocks())
-    if len({key.kid for key in keys}) != len(keys):
-        raise _refusal("lists the same key twice")
+    keys = _configured_keys()
+    if not keys and ephemeral_key_allowed():
+        return (_ephemeral_key(),)
     return keys
 
 

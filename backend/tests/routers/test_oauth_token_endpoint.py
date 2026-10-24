@@ -28,6 +28,7 @@ from models.user import User
 from models.vault_activation import VaultActivation, VaultActivationState
 from routers.oauth_tokens import EXCHANGE_RATE_LIMIT, REVOKE_RATE_LIMIT
 from services import oauth_signing_keys
+from services.journal_encryption import PRODUCTION_SIGNAL_ENV_VARS
 from services.oauth_authorization import (
     EXCHANGE_PATH,
     JWKS_PATH,
@@ -652,9 +653,10 @@ async def test_the_key_set_serves_both_keys_during_rotation(
 async def test_without_signing_keys_nothing_is_issued_or_published(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No key is a 503, never an invented one; a broken key is the same, naming nothing."""
+    """Where a key is required, none is a 503; a broken key is the same, naming nothing."""
     code, client_id, _resource, _user_id = await approved_code(async_client, db_session, "nokeys")
     monkeypatch.delenv(SIGNING_KEYS_ENV_VAR)
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
     oauth_signing_keys.reset_cache()
     token = await exchange(async_client, code_exchange_form(code, client_id))
     assert token.status_code == HTTPStatus.SERVICE_UNAVAILABLE
@@ -670,6 +672,20 @@ async def test_without_signing_keys_nothing_is_issued_or_published(
     assert (await async_client.get(_JWKS)).json() == {"detail": "oauth_signing_unavailable"}
     stored = (await db_session.execute(select(OAuthAuthorizationCode))).scalars().one()
     assert stored.consumed_at is None
+
+
+@pytest.mark.asyncio
+async def test_an_unconfigured_laptop_still_issues_tokens_the_key_set_verifies(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Off-platform with no key configured, the flow works end to end on a process-local key."""
+    for name in PRODUCTION_SIGNAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv(SIGNING_KEYS_ENV_VAR)
+    oauth_signing_keys.reset_cache()
+    body, _client_id, resource, _user_id = await _tokens(async_client, db_session, "laptop")
+    claims = await _verify_as_the_vault(async_client, str(body["access_token"]), resource)
+    assert claims["aud"] == resource
 
 
 @pytest.mark.asyncio

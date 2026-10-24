@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 from collections.abc import Iterator
 
 import pytest
@@ -19,11 +20,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 from services import oauth_signing_keys
+from services.journal_encryption import PRODUCTION_SIGNAL_ENV_VARS
 from services.oauth_signing_keys import (
     SIGNING_ALGORITHM,
     SIGNING_KEYS_ENV_VAR,
     OAuthSigningKeyError,
     current_signing_key,
+    ephemeral_key_allowed,
     jwk_thumbprint,
     published_key_set,
     signing_keys,
@@ -64,12 +67,64 @@ def _expected_thumbprint(key: ec.EllipticCurvePrivateKey) -> str:
     return _b64url(hashlib.sha256(canonical).digest())
 
 
-def test_no_configured_key_means_nothing_to_sign_with(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Unset is an honest "not configured", never an invented key."""
+def _clear_environment_signals(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No inherited shell value decides where this process thinks it runs."""
+    for name in PRODUCTION_SIGNAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv(SIGNING_KEYS_ENV_VAR, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        pytest.param("ENV", "production", id="production"),
+        pytest.param("RAILWAY_ENVIRONMENT_NAME", "staging", id="hosted-staging"),
+        pytest.param("RAILWAY_PROJECT_ID", "p-1", id="hosted-unnamed"),
+    ],
+)
+def test_where_a_key_is_required_unset_means_nothing_to_sign_with(
+    monkeypatch: pytest.MonkeyPatch, variable: str, value: str
+) -> None:
+    """Production and every hosted environment: an honest "not configured", never a key."""
+    _clear_environment_signals(monkeypatch)
+    monkeypatch.setenv(variable, value)
+    assert not ephemeral_key_allowed()
     assert signing_keys() == ()
     assert current_signing_key() is None
     assert published_key_set() == {"keys": []}
+
+
+def test_a_laptop_or_ci_job_gets_one_ephemeral_key_and_is_told(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Off-platform and outside production, an unset variable is one process-local key."""
+    _clear_environment_signals(monkeypatch)
+    assert ephemeral_key_allowed()
+    with caplog.at_level(logging.WARNING, logger=oauth_signing_keys.__name__):
+        first = current_signing_key()
+        again = current_signing_key()
+    assert first is not None
+    assert again == first
+    assert [entry["kid"] for entry in published_key_set()["keys"]] == [first.kid]
+    events = [
+        record for record in caplog.records if record.message == "oauth_signing_key_ephemeral"
+    ]
+    assert len(events) == 1
+    assert "BEGIN" not in str(vars(events[0]))
+    oauth_signing_keys.reset_cache()
+    assert current_signing_key() != first
+
+
+def test_a_configured_key_is_used_even_where_an_ephemeral_one_would_be_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fallback answers only an unset variable; configuration always wins."""
+    _clear_environment_signals(monkeypatch)
+    key = generate_signing_key()
+    monkeypatch.setenv(SIGNING_KEYS_ENV_VAR, pem_of(key))
+    current = current_signing_key()
+    assert current is not None
+    assert current.kid == _expected_thumbprint(key)
 
 
 def test_the_first_key_signs_and_every_key_is_published(monkeypatch: pytest.MonkeyPatch) -> None:

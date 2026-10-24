@@ -1,4 +1,4 @@
-"""What the OAuth endpoints send, judged by the document they publish (#3532).
+"""What the OAuth endpoints send, judged by the document they publish (#3532, #3533).
 
 The direct regression for two findings the live contract fuzz raised against
 this router at seed 1337:
@@ -17,13 +17,17 @@ requests here are real and the schema is resolved out of each operation's own
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from http import HTTPStatus
 from typing import Any, Final
 
 import pytest
 from httpx import AsyncClient
 
+from services import oauth_signing_keys
+from services.journal_encryption import PRODUCTION_SIGNAL_ENV_VARS
 from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR
+from services.oauth_signing_keys import SIGNING_KEYS_ENV_VAR
 from tests.helpers.oauth import ISSUER, authorize_params, register_agent
 from tests.helpers.openapi_errors import (
     JSON_MEDIA_TYPE,
@@ -144,3 +148,77 @@ def test_a_consent_page_operation_declares_html_only_where_it_renders_a_page(
         assert (_HTML_MEDIA_TYPE in media_types) == (code in page_statuses), code
         if code != str(HTTPStatus.OK):
             assert JSON_MEDIA_TYPE in media_types, code
+
+
+# --- the token endpoint and key set (#3533) -----------------------------------
+#
+# The contract fuzz (seed 1337) first met these operations on an instance with
+# no OAUTH_SIGNING_KEYS and answered both with a 503 -- a server error, which
+# the fuzz fails whatever the document declares. Off-platform and outside
+# production an unset variable is now one process-local key, so the instance
+# the fuzz starts serves the key set and judges the request on its merits.
+
+_TOKEN: Final = "/oauth/token"
+_JWKS: Final = "/.well-known/jwks.json"
+_FORM: Final = {"Content-Type": "application/x-www-form-urlencoded"}
+
+
+@pytest.fixture
+def _unconfigured_laptop(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """No signing key and no sign of a hosted environment: what the fuzz job runs."""
+    for name in PRODUCTION_SIGNAL_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv(SIGNING_KEYS_ENV_VAR, raising=False)
+    oauth_signing_keys.reset_cache()
+    yield
+    oauth_signing_keys.reset_cache()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_unconfigured_laptop")
+async def test_an_unconfigured_instance_serves_its_key_set_as_published(
+    async_client: AsyncClient,
+) -> None:
+    """The fuzz's ``GET /.well-known/jwks.json``: a 200 key set, never a 503."""
+    response = await async_client.get(_JWKS)
+    assert response.status_code == HTTPStatus.OK
+    assert len(response.json()["keys"]) == 1
+    _validate("get", _JWKS, HTTPStatus.OK, response.json())
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_unconfigured_laptop")
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(b"", id="empty-form"),
+        pytest.param(b"grant_type=authorization_code&code=ac_x", id="partial-code-request"),
+        pytest.param(b"grant_type=refresh_token&refresh_token=rt_x", id="unknown-refresh-token"),
+        pytest.param(b"grant_type=%00", id="nul-grant-type"),
+    ],
+)
+async def test_an_unconfigured_instance_judges_a_token_request_as_published(
+    async_client: AsyncClient, body: bytes
+) -> None:
+    """The fuzz's ``POST /oauth/token``: the RFC 6749 400 its document declares."""
+    response = await async_client.post(_TOKEN, content=body, headers=_FORM)
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    _validate("post", _TOKEN, HTTPStatus.BAD_REQUEST, response.json())
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_instance_without_keys_refuses_as_published(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where a key is required, its absence is the declared 503, naming nothing."""
+    monkeypatch.delenv(SIGNING_KEYS_ENV_VAR, raising=False)
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_NAME", "staging")
+    oauth_signing_keys.reset_cache()
+    try:
+        for method, path in (("get", _JWKS), ("post", _TOKEN)):
+            response = await async_client.request(method.upper(), path, headers=_FORM)
+            assert response.status_code == HTTPStatus.SERVICE_UNAVAILABLE
+            assert response.json() == {"detail": "oauth_signing_unconfigured"}
+            _validate(method, path, HTTPStatus.SERVICE_UNAVAILABLE, response.json())
+    finally:
+        oauth_signing_keys.reset_cache()

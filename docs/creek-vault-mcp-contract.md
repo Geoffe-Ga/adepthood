@@ -618,7 +618,9 @@ RFC 6749 codes (`invalid_request`, `invalid_grant`, `unsupported_grant_type`,
 **The key set.** `OAUTH_SIGNING_KEYS` lists PEM P-256 private keys newest
 first, the shape of `JOURNAL_ENCRYPTION_KEYS`: the first signs, all are
 published, so rotation is add-new, redeploy, drop-old. The JWKS response is
-cacheable for 300 seconds, the vault's own key-set TTL.
+cacheable for 300 seconds, the vault's own key-set TTL. Unset in production or on a
+hosted platform, nothing is signed (503); unset on a laptop or in CI, one
+process-local key is generated so the flow works end to end.
 
 **Revocation lands within one access-token lifetime.** Revoking a refresh token
 (RFC 7009) or the grant (`agent_grant.revoked_at`, from Settings) fails the
