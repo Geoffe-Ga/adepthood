@@ -61,6 +61,7 @@ from services.creek_vault_url_resolution import (
     classify_resolved_user_vault_url_off_the_pool,
 )
 from services.creek_vault_url_user import classify_user_vault_url_host, vault_url_host
+from services.oauth_authorization import normalize_resource, vault_mcp_url
 from services.user_vault_config import (
     clear_vault_config,
     load_vault_config,
@@ -139,16 +140,24 @@ async def _require_unmanaged_connection(session: AsyncSession, user_id: int) -> 
 def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
     """Project a stored row, or its absence, onto the response DTO.
 
+    The agent address is written in the one spelling the authorization server
+    compares a ``resource`` in, so what a person pastes into an agent is
+    exactly the audience its tokens will name.
+
     A fresh instance every time, including for the "nothing connected" answer.
     A module-level singleton would read as the cheaper spelling of the same
     thing and is not: pydantic models are mutable, so one shared instance is a
     value every request holds a reference to.
     """
     if config is None:
-        return VaultConnectionResponse(connected=False, vault_url=None)
+        return VaultConnectionResponse(connected=False, vault_url=None, mcp_address=None)
     if config.provisioned:
-        return VaultConnectionResponse(connected=True, vault_url=None)
-    return VaultConnectionResponse(connected=True, vault_url=config.vault_url)
+        return VaultConnectionResponse(connected=True, vault_url=None, mcp_address=None)
+    return VaultConnectionResponse(
+        connected=True,
+        vault_url=config.vault_url,
+        mcp_address=normalize_resource(vault_mcp_url(config.vault_url)),
+    )
 
 
 @router.get("/connection", response_model=VaultConnectionResponse)

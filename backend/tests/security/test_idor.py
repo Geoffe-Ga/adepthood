@@ -2832,3 +2832,74 @@ async def test_idor_oauth_refresh_and_revoke_refuse_another_agents_token(
     assert own.status_code == HTTPStatus.OK
     claims = jwt.decode(own.json()["access_token"], options={"verify_signature": False})
     assert claims["aud"] == alice_resource
+
+
+@pytest.mark.asyncio
+async def test_idor_revoking_another_accounts_agent_is_refused_and_changes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob cannot stop the agent Alice approved (#3534).
+
+    ``DELETE /vault/agents/{agent_id}`` names a grant by id in its path, and the
+    account comes from the bearer alone. Bob naming Alice's grant is the same
+    404 -- status and body, byte for byte -- as naming one nobody holds, so the
+    route is no oracle for which ids exist; the probe is audited with
+    ``resource_access_denied``; and Alice's grant, its refresh token and her
+    agent's next refresh are all exactly as they were. Bob's list never shows
+    her agent either. The control: Alice's agent still refreshes afterwards.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    code, alice_client, _resource, alice_id = await oauth_flow.approved_code(
+        async_client, db_session, "alice_agents"
+    )
+    issued = await oauth_flow.exchange(
+        async_client, oauth_flow.code_exchange_form(code, alice_client)
+    )
+    refresh_token = issued.json()["refresh_token"]
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_agents")
+    await oauth_flow.connect_vault(db_session, bob_id, "bob-agents")
+    grant = (
+        (await db_session.execute(select(AgentGrant).where(AgentGrant.user_id == alice_id)))
+        .scalars()
+        .one()
+    )
+    assert grant.id is not None
+    alice_grant_id = grant.id
+    before = (grant.revoked_at, grant.last_used_at, grant.created_at, list(grant.grants))
+    absent_id = alice_grant_id + 10_000
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.delete(f"/vault/agents/{alice_grant_id}", headers=bob_headers)
+    missing = await async_client.delete(f"/vault/agents/{absent_id}", headers=bob_headers)
+
+    assert attack.status_code == HTTPStatus.NOT_FOUND
+    assert (attack.status_code, attack.content) == (missing.status_code, missing.content)
+    denials = [r for r in caplog.records if r.message == "resource_access_denied"]
+    assert [(getattr(r, "resource", None), getattr(r, "user_id", None)) for r in denials] == [
+        ("agent_grant", bob_id)
+    ]
+    stored = (
+        (
+            await db_session.execute(
+                select(AgentGrant)
+                .where(AgentGrant.id == alice_grant_id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert (stored.revoked_at, stored.last_used_at, stored.created_at, stored.grants) == before
+    (token,) = await _agent_tokens(db_session)
+    assert token.revoked_at is None
+    assert (await async_client.get("/vault/agents", headers=bob_headers)).json() == []
+
+    refresh = await oauth_flow.exchange(
+        async_client,
+        {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": alice_client},
+    )
+    assert refresh.status_code == HTTPStatus.OK

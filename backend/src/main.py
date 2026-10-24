@@ -87,6 +87,7 @@ from routers.ui_flags import router as ui_flags_router
 from routers.user_practices import router as user_practices_router
 from routers.users import router as users_router
 from routers.vault_activation import router as vault_activation_router
+from routers.vault_agents import router as vault_agents_router
 from routers.vault_config import router as vault_config_router
 from routers.vault_provisioning_internal import router as vault_provisioning_internal_router
 from seed_content import seed_content
@@ -1327,6 +1328,7 @@ app.include_router(ui_flags_router)
 app.include_router(invitations_router)
 app.include_router(metta_return_router)
 app.include_router(vault_config_router)
+app.include_router(vault_agents_router)
 app.include_router(vault_activation_router)
 app.include_router(vault_provisioning_internal_router)
 app.include_router(corpus_router)

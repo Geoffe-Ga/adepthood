@@ -107,7 +107,15 @@ class VaultConnectionResponse(OwnedResourcePublic):
     ``connected`` is carried explicitly rather than left to be inferred from a
     null URL, so a client renders "you have not connected a vault" from a field
     that says so instead of from an absence it has to interpret.
+
+    ``mcp_address`` is the address a person gives an agent they run elsewhere
+    (#3534): the vault's MCP URL, which is also the audience every agent token
+    for this vault names. It follows ``vault_url``'s rule exactly -- ``None``
+    when nothing is connected and ``None`` for a managed vault, whose address
+    stays private; the agent's own sign-in flow, or a connector's listing,
+    supplies it there.
     """
 
     connected: bool
     vault_url: str | None
+    mcp_address: str | None
