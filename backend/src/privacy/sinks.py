@@ -110,6 +110,7 @@ class SinkId(enum.StrEnum):
     APPLE_IDENTITY = "net.apple_identity"
     HOSTING_PLATFORM = "net.hosting_platform"
     FLY = "net.fly"
+    CONNECTED_AGENT = "net.connected_agent"
     # Backups
     RAILWAY_PLATFORM_BACKUP = "backup.railway_platform"
     # Vault-side stores
@@ -276,6 +277,8 @@ _ROWS: Final[tuple[Sink, ...]] = (
     # The host of the server and its database *is* the primary boundary.
     _inside(SinkId.HOSTING_PLATFORM, _NET, ALL_TIERS, _recipient(RecipientId.HOSTING_PLATFORM)),
     _outside(SinkId.FLY, _NET, EGRESS_TIERS, _recipient(RecipientId.FLY)),
+    # An agent the person is connecting: an anonymous fetch of its own metadata.
+    _outside(SinkId.CONNECTED_AGENT, _NET, NO_TIERS, _recipient(RecipientId.CONNECTED_AGENT)),
     # Backups are whole copies of the primary database, intimate rows included.
     # Their expiry and restore suppression are C21's, not C07's.
     _inside(

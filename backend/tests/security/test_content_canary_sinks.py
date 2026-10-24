@@ -54,7 +54,7 @@ from domain.entitlements import PRODUCT_IDS_ENV_VAR
 from main import app
 from privacy.recipients import RECIPIENTS, DataClass, RecipientId
 from services import creek_provisioning_client as provisioning_client
-from services import journal_encryption
+from services import journal_encryption, oauth_metadata_fetch
 from services.creek_provisioning_client import (
     PROVISIONING_URL_ENV_VAR,
     HttpCreekProvisioningClient,
@@ -72,6 +72,7 @@ from services.managed_vault_rollout import (
     MANAGED_VAULT_PILOT_USER_IDS_ENV_VAR,
 )
 from services.oauth_apple import APPLE_JWKS_URL
+from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR
 from services.oauth_google import GOOGLE_JWKS_URL
 from services.oidc import build_bounded_jwk_client
 from tests.helpers.log_lines import assert_no_text
@@ -88,6 +89,10 @@ LICENSE_B: Final = "CANA-0002-LICENSE-B"  # pragma: allowlist secret
 GUMROAD_TOKEN: Final = "gumroad-canary-token"  # pragma: allowlist secret
 CONTROL_URL: Final = "https://creek-control.canary.test"
 CONTROL_HOST: Final = "creek-control.canary.test"
+# An agent that identifies itself by the URL of its own metadata document (#3532).
+AGENT_HOST: Final = "agent.canary.test"
+AGENT_DOCUMENT_URL: Final = f"https://{AGENT_HOST}/oauth/client.json"
+AGENT_CALLBACK: Final = f"https://{AGENT_HOST}/callback"
 GUMROAD_HOST: Final = "api.gumroad.com"
 RESEND_HOST: Final = "api.resend.com"
 CONTRACT_HEADER: Final = "Creek-Provisioning-Version"
@@ -106,6 +111,7 @@ CANARY_LEGS: Final[dict[RecipientId, str]] = {
     RecipientId.SENTRY: "an exception whose frame, request and extras hold the sentinel",
     RecipientId.GOOGLE_IDENTITY: "Google JWKS fetch",
     RecipientId.APPLE_IDENTITY: "Apple JWKS fetch",
+    RecipientId.CONNECTED_AGENT: "an agent's client metadata document, fetched at sign-in",
 }
 
 
@@ -144,6 +150,13 @@ class WireCapture:
             return httpx.Response(200, json=_gumroad_success(self.sale_counter), request=request)
         if host == RESEND_HOST:
             return httpx.Response(200, json={"id": "re_canary"}, request=request)
+        if host == AGENT_HOST:
+            document = {
+                "client_id": AGENT_DOCUMENT_URL,
+                "client_name": "Canary Agent",
+                "redirect_uris": [AGENT_CALLBACK],
+            }
+            return httpx.Response(200, json=document, request=request)
         if host == CONTROL_HOST:
             activation_id = str(json.loads(body)["activation_id"])
             return httpx.Response(
@@ -258,6 +271,10 @@ def wire(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[WireCaptur
     monkeypatch.setenv(PRODUCT_IDS_ENV_VAR, PRODUCT_ID)
     monkeypatch.setenv("GUMROAD_API_TOKEN", GUMROAD_TOKEN)
     monkeypatch.setenv("APP_BASE_URL", APP_BASE_URL)
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, "https://api.canary.invalid")
+    # The metadata fetch's pinning transport resolves names itself; the canary
+    # asks what bytes leave, so it dials through the plain transport captured above.
+    monkeypatch.setattr(oauth_metadata_fetch, "build_metadata_transport", httpx.AsyncHTTPTransport)
     for name, value in {**SMTP_ENV_VALUES, **RESEND_ENV_VALUES}.items():
         monkeypatch.setenv(name, value)
 
@@ -392,9 +409,17 @@ async def test_content_sentinel_never_reaches_commercial_or_monitoring_sinks(
         sentry_sdk.get_isolation_scope().clear()
     for url in (GOOGLE_JWKS_URL, APPLE_JWKS_URL):
         build_bounded_jwk_client(url).fetch_data()
+    agent = await async_client.get(
+        "/oauth/authorize",
+        params={"client_id": AGENT_DOCUMENT_URL, "redirect_uri": AGENT_CALLBACK},
+        headers=headers,
+    )
+    assert agent.status_code == HTTPStatus.SEE_OTHER, agent.text
 
     # Positive controls: each sink fired, and fired with what it is meant to carry.
-    assert wire.hosts() == {GUMROAD_HOST, RESEND_HOST, CONTROL_HOST}
+    assert wire.hosts() == {GUMROAD_HOST, RESEND_HOST, CONTROL_HOST, AGENT_HOST}
+    agent_requests = [(url, body) for host, url, body in wire.requests if host == AGENT_HOST]
+    assert agent_requests == [(AGENT_DOCUMENT_URL, b"")]
     gumroad_keys = [parse_qs(b)["license_key"][0] for b in wire.bodies_for(GUMROAD_HOST)]
     assert gumroad_keys == [LICENSE_A, LICENSE_B]
     assert any(writer in body for body in wire.bodies_for(RESEND_HOST))
