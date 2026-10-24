@@ -626,6 +626,7 @@ _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
         "pipeline": CreekCapability.PIPELINE,
         "voice-drafts": CreekCapability.VOICE_DRAFTS,
         "letters": CreekCapability.LETTERS,
+        "agent-activity": CreekCapability.AGENT_ACTIVITY,
     }
 )
 

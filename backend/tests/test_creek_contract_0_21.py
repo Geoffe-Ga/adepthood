@@ -54,8 +54,14 @@ _REFLECTIONS_PATH: Final = "/v1/reflections"
 _LETTERS_PATH: Final = f"/v1/letters/{_EXTERNAL_ID}"
 _CONTRACT_HEADER: Final = "X-Creek-Contract-Version"
 
-#: The minor adepthood must declare. A literal, never read from the pin.
-_DECLARED_MINOR: Final = "0.21"
+#: The lowest minor at which Creek serves ``rate_limited`` on both model-backed
+#: routes. A literal, never read from the pin: the pin has since moved to 0.22
+#: (``tests/test_creek_contract_0_22.py``), and what this suite owns is that it
+#: never falls back below the letters gate.
+_LETTER_GATE_MINOR: Final = (0, 21)
+
+#: The minor Creek ``main``'s published window must still carry for 0.21 callers.
+_PUBLISHED_0_21: Final = "0.21"
 
 #: The newest minors a vault still on a pre-0.21 image serves. Creek refuses
 #: any minor it does not list exactly, so this vault cannot serve a 0.21 caller
@@ -81,6 +87,12 @@ def _example(capability: str, state: str) -> dict[str, object]:
     document = json.loads((_EXAMPLES / capability / state).read_bytes())
     assert isinstance(document, dict)
     return document
+
+
+def _minor_of(declared: str) -> tuple[int, int]:
+    """Return a declared ``major.minor`` as a comparable pair of integers."""
+    major, minor = declared.split(".")
+    return int(major), int(minor)
 
 
 def _published_handshake() -> dict[str, object]:
@@ -155,8 +167,8 @@ def _letter_request() -> VaultLetterRequest:
 
 
 @pytest.mark.asyncio
-async def test_a_reflection_declares_contract_0_21() -> None:
-    """The header Creek keys every minor gate on carries 0.21, not 0.18."""
+async def test_a_reflection_declares_at_least_contract_0_21() -> None:
+    """The header Creek keys every minor gate on carries 0.21 or later, never 0.18."""
     vault = _ScriptedVault(body=_example("reflections", "success.json"))
     client = _client(vault)
     await client.handshake()
@@ -164,11 +176,11 @@ async def test_a_reflection_declares_contract_0_21() -> None:
     await client.reflect(_CONTENT, VaultTierCeiling.PERSONAL)
 
     (sent,) = vault.calls_to(_REFLECTIONS_PATH)
-    assert sent.headers[_CONTRACT_HEADER] == _DECLARED_MINOR
+    assert _minor_of(sent.headers[_CONTRACT_HEADER]) >= _LETTER_GATE_MINOR
 
 
 @pytest.mark.asyncio
-async def test_a_letter_declares_contract_0_21() -> None:
+async def test_a_letter_declares_at_least_contract_0_21() -> None:
     """The letter route is the one 0.21 itself changed, so it is pinned on its own."""
     vault = _ScriptedVault(body=_example("letters", "success.json"))
     client = _client(vault)
@@ -177,14 +189,14 @@ async def test_a_letter_declares_contract_0_21() -> None:
     await client.write_letter(_letter_request())
 
     (sent,) = vault.calls_to(_LETTERS_PATH)
-    assert sent.headers[_CONTRACT_HEADER] == _DECLARED_MINOR
+    assert _minor_of(sent.headers[_CONTRACT_HEADER]) >= _LETTER_GATE_MINOR
 
 
 @pytest.mark.asyncio
 async def test_the_re_imaged_vaults_window_negotiates() -> None:
-    """Creek ``main``'s own published handshake (0.2 through 0.21) serves us."""
+    """Creek ``main``'s own published handshake, which still serves 0.21, serves us."""
     published = _published_handshake()
-    assert _DECLARED_MINOR in cast("list[str]", published["supported_contract_minors"])
+    assert _PUBLISHED_0_21 in cast("list[str]", published["supported_contract_minors"])
     client = _client(_ScriptedVault(handshake=published))
 
     result = await client.handshake()

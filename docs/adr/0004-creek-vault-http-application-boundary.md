@@ -4,7 +4,7 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.21.0 (tracks Creek's published
+- **Pinned contract version:** 0.22.0 (tracks Creek's published
   constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
   of this document, moved to 0.8.0 with the 2026-08-19 note, which
   records why that move became a prerequisite rather than housekeeping,
@@ -14,8 +14,10 @@
   with the 2026-09-12 note, which adopts journal withdrawal, moved to
   0.17.0 with the 2026-10-15 note, which adopts vault-written letters, and
   moved to 0.18.0 with the 2026-10-20 note, which adopts request-scoped keys
-  on a managed vault, and moved to 0.21.0 with the 2026-10-22 note, which
-  adopts the coded model-call cap on both model-backed routes)
+  on a managed vault, moved to 0.21.0 with the 2026-10-22 note, which
+  adopts the coded model-call cap on both model-backed routes, and moved to
+  0.22.0 with the 2026-10-24 note, which adopts the content-free agent-activity
+  read)
 
 ## Context
 
@@ -1620,3 +1622,43 @@ What 0.19 through 0.21 publish, and what adepthood does with each:
   are Creek-Vault#1903 steps 3 and 4, and they rest on an owner ADR 0009
   decision that is still open. `tests/test_creek_contract_0_21.py` pins that
   none of the three fields changes what adepthood does with an answer.
+
+## Note, 2026-10-24 — the pin moves to 0.22.0; Settings reads what agents asked the vault for
+
+The pin moves in lockstep with the deployed vault, as the 2026-10-22 note
+requires: this move ships together with the managed vault's re-image to Creek
+`main` at `c72f4362`, the image that serves `/mcp` for epic Creek-Vault#1961,
+whose window runs from 0.2 up to 0.22. A vault still on the 0.21 image fails
+the handshake as `incompatible_version`, exactly as the #1888 rule says it
+must, so the re-image is a prerequisite of this pin rather than a follow-up.
+
+The vendored bundle is re-cut byte-for-byte from upstream `c72f4362`. Ten files
+are added -- the `agent-activity` example column (seven cells, two of them
+unreachable sentinels) and three schemas (`AgentActivityQuery`,
+`AgentActivityResponse`, `AgentActivityRow`) -- and four move:
+`CapabilitiesResponse`, `capabilities/success`, `capabilities/empty` and the
+manifest. 122 manifest entries, 124 vendored files, 44 schemas, an 11 × 7
+example matrix, and an unchanged ontology version.
+
+What 0.22 publishes, and what adepthood does with it:
+
+- **`agent-activity` (0.22, Creek-Vault#1968)**: `GET /v1/agent-activity`,
+  the vault's MCP audit chain projected onto four fields per call --
+  `consumer`, `tool`, `at`, `outcome` (`admitted | refused`). Consumed by
+  `GET /vault/agents/activity` (#3535), which Settings renders as "Recent
+  activity" under the agents a person approved. The adapter validates the
+  published response strictly -- a fifth field, an unknown outcome or a value
+  outside a published pattern refuses the whole answer as a payload fault --
+  and the route re-projects each row onto `{agent, tool_label, at, outcome}`
+  in adepthood's own words, so no argument, path, fragment id or prose can
+  cross it whatever a vault sends.
+- **Attribution is per person, not per agent, until Creek-Vault#1976.** Creek
+  stamps a JWT agent's calls with the token's `sub`, which names the person
+  (on a managed vault, the same consumer identity the app's own `/v1` calls
+  carry). The route therefore names an agent only when the stamp is one of
+  the person's own grant `client_id`s -- which is what #1976 will make it --
+  and otherwise says what the stamp can honestly support. See
+  `docs/creek-vault-mcp-contract.md`, "Recent agent activity".
+- `tests/test_creek_contract_0_22.py` pins the move: the declared minor, the
+  re-imaged window negotiating, a 0.21-only vault refused as version skew, and
+  the new capability advertised and called.

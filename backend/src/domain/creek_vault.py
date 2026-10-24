@@ -49,17 +49,18 @@ from uuid import UUID
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
 #
-# It matches Creek `main` (0.21), and it moves only in lockstep with the vault
+# It matches Creek `main` (0.22), and it moves only in lockstep with the vault
 # it talks to -- read this before moving it again:
 #
 # 1. `supported_contract_minors` is a property of the **deployed** vault, not of
 #    Creek's `main`, and Creek refuses any minor that list does not name
 #    exactly. Declaring a minor the deployed image does not serve fails *every*
 #    handshake with `incompatible_version` (Creek-Vault#1888 was that outage, at
-#    0.18). This pin moved to 0.21 together with the managed vault's re-image to
-#    Creek `main` at e6d021b9, whose window runs from 0.2 up to 0.21; the next move
+#    0.18). This pin moved to 0.22 together with the managed vault's re-image to
+#    Creek `main` at c72f4362 -- the image that serves `/mcp` for epic
+#    Creek-Vault#1961, whose window runs from 0.2 up to 0.22; the next move
 #    belongs to the next re-image, not to whichever PR notices a gap.
-# 2. What 0.19-0.21 add, and what adepthood does with each:
+# 2. What 0.19-0.22 add, and what adepthood does with each:
 #    - `rate_limited` (0.19, `PROVENANCE_SINCE_MINOR`) on reflections, and on
 #      letters from 0.21 (`LETTER_RATE_LIMITED_SINCE_MINOR`). Consumed: we are
 #      at or above both gates, so a cap on either model-backed route now reaches
@@ -74,7 +75,12 @@ from uuid import UUID
 #      steps 3-4 and an owner ADR 0009 decision, not part of a pin move.
 #      `tests/test_creek_contract_0_21.py` pins that none of them changes what
 #      adepthood does with an answer.
-CONTRACT_VERSION = "0.21.0"
+#    - `agent-activity` (0.22, Creek-Vault#1968): `GET /v1/agent-activity`, the
+#      content-free projection of the vault's MCP audit chain. Consumed by the
+#      Settings "Recent activity" list (#3535) through
+#      `CreekVaultClient.agent_activity`; `tests/test_creek_contract_0_22.py`
+#      pins the move.
+CONTRACT_VERSION = "0.22.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -106,7 +112,10 @@ class CreekCapability(enum.StrEnum):
     ``LETTERS`` (contract 0.17) is the vault writing a margin note's letter
     itself and storing it as one of those Voice Drafts, so a vault-bound
     writer's first letter is answered by their vault and never by the app's
-    provider (#3203).
+    provider (#3203). ``AGENT_ACTIVITY`` (contract 0.22) is the content-free
+    list of what agents asked the vault for, which Settings renders under the
+    agents a person approved (#3535): who, which tool, when and whether it was
+    admitted -- never an argument and never a result.
     """
 
     HANDSHAKE = "creek.handshake"
@@ -121,6 +130,7 @@ class CreekCapability(enum.StrEnum):
     PIPELINE = "creek.pipeline"
     VOICE_DRAFTS = "creek.voice_drafts"
     LETTERS = "creek.letters"
+    AGENT_ACTIVITY = "creek.agent_activity"
 
 
 class VaultTierCeiling(enum.StrEnum):

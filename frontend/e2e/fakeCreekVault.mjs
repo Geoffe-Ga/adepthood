@@ -65,8 +65,8 @@ const HTTP_SERVICE_UNAVAILABLE = 503;
 const ADEPTHOOD_DELETE_ATTEMPTS = 3;
 
 /** The contract this vault serves, and the minor a caller must declare to use it. */
-const CONTRACT_VERSION = '0.21.0';
-const CONTRACT_MINOR = '0.21';
+const CONTRACT_VERSION = '0.22.0';
+const CONTRACT_MINOR = '0.22';
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
 
