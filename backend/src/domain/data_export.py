@@ -39,6 +39,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from domain.ownership import OwnedBy
+from models.agent_grant import AgentGrant
 from models.completion_suggestion import CompletionSuggestion
 from models.content_completion import ContentCompletion
 from models.corpus_consent import CorpusConsentEvent
@@ -171,6 +172,15 @@ MANIFEST: Mapping[str, ExportRule] = {
         "Operator accounting for wallet corrections. The wallet owner can see "
         "their current balance; internal admin identity and source-address "
         "evidence are not part of a portable account archive.",
+    ),
+    "agent_grant": _include(
+        "vault_agents",
+        AgentGrant,
+        "Which vault agents the account approved, what each may do, and when "
+        "each was last used or revoked: the account's own decisions. The vault "
+        "address each grant is for is left out, because for a managed vault "
+        "that is an internal allocation the account is never shown.",
+        drop_columns=("resource",),
     ),
     "authidentity": Omitted(
         "Opaque Google / Apple subject identifiers. They are credentials for "
@@ -364,6 +374,16 @@ MANIFEST: Mapping[str, ExportRule] = {
         MettaReturnOfferDismissal,
         "Returns the account was offered and declined — a choice it made, "
         "not a measurement taken of it.",
+    ),
+    "oauth_authorization_code": Omitted(
+        "Unspent one-time codes waiting for an agent to exchange them, gone "
+        "within a minute. A code's digest is a credential's shadow, not "
+        "anything the account wrote or chose beyond the approval itself, "
+        "which the vault agents collection already carries.",
+    ),
+    "oauth_client": Omitted(
+        "The anonymous registry of vault agents: what each agent said about "
+        "itself when it registered. No row names an account.",
     ),
     "passwordresettoken": Omitted(
         "Live recovery credentials. Anything that can be redeemed for a "

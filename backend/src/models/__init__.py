@@ -2,6 +2,7 @@
 
 from .account_deletion_audit import AccountDeletionAudit
 from .admin_balance_adjustment import AdminBalanceAdjustment
+from .agent_grant import AgentGrant
 from .auth_identity import AuthIdentity
 from .completion_suggestion import CompletionSuggestion
 from .content_completion import ContentCompletion
@@ -33,6 +34,8 @@ from .marginalia import Marginalia
 from .metta_return_arc import MettaReturnArc
 from .metta_return_habit_release import MettaReturnHabitRelease
 from .metta_return_offer_dismissal import MettaReturnOfferDismissal
+from .oauth_authorization_code import OAuthAuthorizationCode
+from .oauth_client import OAuthClient
 from .password_reset_token import PasswordResetToken
 from .practice import Practice
 from .practice_recipe import PracticeRecipe, PracticeRecipeStep
@@ -67,6 +70,7 @@ from .wallet_audit import WalletAudit
 __all__ = [
     "AccountDeletionAudit",
     "AdminBalanceAdjustment",
+    "AgentGrant",
     "AuthIdentity",
     "CompletionSuggestion",
     "ContentCompletion",
@@ -99,6 +103,8 @@ __all__ = [
     "MettaReturnArc",
     "MettaReturnHabitRelease",
     "MettaReturnOfferDismissal",
+    "OAuthAuthorizationCode",
+    "OAuthClient",
     "PasswordResetToken",
     "Practice",
     "PracticeRecipe",
