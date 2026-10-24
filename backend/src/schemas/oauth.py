@@ -18,11 +18,32 @@ for a private key.
 
 The registration response has no secret field, because a public client has no
 secret. That is a property of the type rather than of a handler remembering.
+Its optional metadata is *omitted* when it has no value, never sent as ``null``
+(RFC 7591 section 3.2.1, #3543): the MCP TypeScript SDK types each such field as
+"a string, or absent" and refuses a registration that carries a ``null`` one.
+That too belongs to the type -- see :data:`OmittedWhenAbsent`.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.json_schema import SkipJsonSchema
+
+
+def _is_absent(value: object) -> bool:
+    """Whether a response field has no value, and so is left out of the body."""
+    return value is None
+
+
+#: An optional string a response *omits* when it has none, rather than sending
+#: ``null``. ``SkipJsonSchema`` keeps ``None`` out of the published schema, so
+#: the document says "a string, or absent" -- exactly what is sent -- and
+#: ``exclude_if`` drops the key at serialization, whichever route returns it.
+OmittedWhenAbsent = Annotated[
+    str | SkipJsonSchema[None], Field(default=None, exclude_if=_is_absent)
+]
 
 
 class ClientRegistrationRequest(BaseModel):
@@ -51,7 +72,7 @@ class ClientRegistrationResponse(BaseModel):
     client_id_issued_at: int
     client_name: str
     redirect_uris: list[str]
-    logo_uri: str | None
+    logo_uri: OmittedWhenAbsent
     grant_types: list[str]
     response_types: list[str]
     token_endpoint_auth_method: str

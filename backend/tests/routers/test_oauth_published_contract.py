@@ -222,3 +222,87 @@ async def test_a_hosted_instance_without_keys_refuses_as_published(
             _validate(method, path, HTTPStatus.SERVICE_UNAVAILABLE, response.json())
     finally:
         oauth_signing_keys.reset_cache()
+
+
+# --- the registration response (#3543) ----------------------------------------
+#
+# OpenClaw registers through the MCP TypeScript SDK, whose client-information
+# schema types every optional RFC 7591 field as "a string, or absent". A
+# ``"logo_uri": null`` is neither, so the SDK refused the registration this
+# server had just made and the sign-in stopped one step after it began. RFC
+# 7591 section 3.2.1 says the same thing the SDK enforces: a field with no
+# value is omitted. Both halves are checked -- the body that is sent, and the
+# document that describes it -- because a body that omits the field while the
+# document still requires it is a contract the fuzz would fail instead.
+
+_REGISTRATION_MODEL: Final = "ClientRegistrationResponse"
+_NULL_TYPE: Final = "null"
+_OPTIONAL_METADATA: Final = frozenset({"logo_uri"})
+_LOGO: Final = "https://openclaw.example/logo.png"
+
+
+def _registration_body(**metadata: str) -> dict[str, object]:
+    """A registration request OpenClaw would make, with any optional metadata added."""
+    return {"client_name": "OpenClaw", "redirect_uris": ["http://localhost/callback"], **metadata}
+
+
+def _null_paths(value: object, path: str = "$") -> list[str]:
+    """Every location in a decoded JSON value that holds ``null``."""
+    if value is None:
+        return [path]
+    if isinstance(value, dict):
+        children = [(f"{path}.{key}", item) for key, item in value.items()]
+    elif isinstance(value, list):
+        children = [(f"{path}[{index}]", item) for index, item in enumerate(value)]
+    else:
+        return []
+    return [found for child_path, item in children for found in _null_paths(item, child_path)]
+
+
+def _admits_null(schema: object) -> bool:
+    """Whether a JSON schema fragment, at any depth, names the ``null`` type."""
+    if isinstance(schema, dict):
+        declared = schema.get("type")
+        if declared == _NULL_TYPE or (isinstance(declared, list) and _NULL_TYPE in declared):
+            return True
+        return any(_admits_null(item) for item in schema.values())
+    if isinstance(schema, list):
+        return any(_admits_null(item) for item in schema)
+    return False
+
+
+@pytest.mark.asyncio
+async def test_a_registration_without_a_logo_omits_it_and_matches_its_declared_201(
+    async_client: AsyncClient,
+) -> None:
+    """No optional field travels as ``null``; the body still satisfies the published 201."""
+    response = await async_client.post(_REGISTER, json=_registration_body())
+    assert response.status_code == HTTPStatus.CREATED, response.text
+    body = response.json()
+    assert _null_paths(body) == []
+    assert not _OPTIONAL_METADATA & set(body)
+    assert body["token_endpoint_auth_method"] == "none"
+    _validate("post", _REGISTER, HTTPStatus.CREATED, body)
+
+
+@pytest.mark.asyncio
+async def test_a_registration_with_a_logo_returns_it_and_matches_its_declared_201(
+    async_client: AsyncClient,
+) -> None:
+    """A field that has a value is still returned, as the string it was registered with."""
+    response = await async_client.post(_REGISTER, json=_registration_body(logo_uri=_LOGO))
+    assert response.status_code == HTTPStatus.CREATED, response.text
+    body = response.json()
+    assert body["logo_uri"] == _LOGO
+    assert _null_paths(body) == []
+    _validate("post", _REGISTER, HTTPStatus.CREATED, body)
+
+
+def test_the_published_registration_response_is_optional_but_never_null() -> None:
+    """The document says what is sent: optional metadata is a plain string, not required."""
+    schema = live_document()["components"]["schemas"][_REGISTRATION_MODEL]
+    assert not _admits_null(schema)
+    assert not _OPTIONAL_METADATA & set(schema["required"])
+    for name in _OPTIONAL_METADATA:
+        assert schema["properties"][name]["type"] == "string", name
+    assert "client_secret" not in schema["properties"]
