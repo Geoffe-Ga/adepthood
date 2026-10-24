@@ -1528,9 +1528,35 @@ export type VoiceReadinessT = z.infer<typeof voiceReadinessSchema>;
 export const vaultConnectionResponseSchema = z.object({
   connected: z.boolean(),
   vault_url: z.string().nullable(),
+  /**
+   * The address a person gives an agent they run elsewhere (#3534). Null on
+   * exactly the answers ``vault_url`` is null on: nothing connected, or a
+   * managed vault whose address stays private.
+   */
+  mcp_address: z.string().nullable(),
 });
 
 export type VaultConnectionT = z.infer<typeof vaultConnectionResponseSchema>;
+
+/**
+ * One agent this account approved for its vault and has not stopped (mirrors
+ * the backend ``ConnectedAgentResponse``, #3534).
+ *
+ * ``grants`` are scope names, never prose: the Settings screen maps each to the
+ * phrase the consent page used and renders nothing for a name it does not
+ * know, so ``vault:desk`` never reaches a person. ``name`` is the agent's own
+ * word for itself, null when it gave none.
+ */
+export const connectedAgentSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string().nullable(),
+  grants: z.array(z.string()),
+  created_at: isoDateTime,
+  last_used_at: isoDateTime.nullable(),
+  redirect_host: z.string().nullable(),
+});
+
+export type ConnectedAgentT = z.infer<typeof connectedAgentSchema>;
 
 /** Durable, secret-free progress for an explicitly requested Creek allocation. */
 export const vaultActivationResponseSchema = z

@@ -62,7 +62,9 @@ beforeEach(() => {
 
 describe('vault.connection', () => {
   test('GETs /vault/connection with no body and reports where the vault points', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ connected: true, vault_url: VAULT_URL }));
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ connected: true, vault_url: VAULT_URL, mcp_address: null }),
+    );
 
     const state = await vault.connection('tok');
 
@@ -70,11 +72,13 @@ describe('vault.connection', () => {
     expect(url).toBe(CONNECTION_URL);
     expect(init?.method ?? 'GET').toBe('GET');
     expect(init?.body).toBeUndefined();
-    expect(state).toEqual({ connected: true, vault_url: VAULT_URL });
+    expect(state).toEqual({ connected: true, vault_url: VAULT_URL, mcp_address: null });
   });
 
   test('accepts a null address as the state it is, not a malformed response', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ connected: false, vault_url: null }));
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ connected: false, vault_url: null, mcp_address: null }),
+    );
 
     const state = await vault.connection('tok');
 
@@ -83,7 +87,9 @@ describe('vault.connection', () => {
   });
 
   test('raises ApiValidationError when connected arrives as something other than a boolean', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ connected: 'yes', vault_url: null }));
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ connected: 'yes', vault_url: null, mcp_address: null }),
+    );
 
     const err = await vault.connection('tok').catch((error: unknown) => error);
 
@@ -93,7 +99,9 @@ describe('vault.connection', () => {
 
 describe('vault.connect', () => {
   test('PUTs exactly the address and the key, and nothing else', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ connected: true, vault_url: VAULT_URL }));
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ connected: true, vault_url: VAULT_URL, mcp_address: null }),
+    );
 
     const state = await vault.connect({ vault_url: VAULT_URL, api_key: API_KEY }, 'tok');
 
@@ -107,11 +115,13 @@ describe('vault.connect', () => {
       vault_url: VAULT_URL,
       api_key: API_KEY,
     });
-    expect(state).toEqual({ connected: true, vault_url: VAULT_URL });
+    expect(state).toEqual({ connected: true, vault_url: VAULT_URL, mcp_address: null });
   });
 
   test('keeps the credential out of the URL entirely', async () => {
-    mockFetch.mockReturnValueOnce(jsonResponse({ connected: true, vault_url: VAULT_URL }));
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ connected: true, vault_url: VAULT_URL, mcp_address: null }),
+    );
 
     await vault.connect({ vault_url: VAULT_URL, api_key: API_KEY }, 'tok');
 
@@ -156,6 +166,67 @@ describe('vault.disconnect', () => {
 
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(401);
+  });
+});
+
+const AGENTS_URL = 'http://test/vault/agents';
+
+const AGENT_ROW = {
+  id: 3,
+  name: 'OpenClaw on my Mac mini',
+  grants: ['vault:read', 'vault:desk'],
+  created_at: '2026-10-24T16:00:00Z',
+  last_used_at: '2026-10-24T18:02:11Z',
+  redirect_host: '127.0.0.1',
+};
+
+describe('vault.agents', () => {
+  test('GETs /vault/agents with no body and hands back every row as sent', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([AGENT_ROW]));
+
+    const agents = await vault.agents('tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(AGENTS_URL);
+    expect(init?.method ?? 'GET').toBe('GET');
+    expect(init?.body).toBeUndefined();
+    expect(agents).toEqual([AGENT_ROW]);
+  });
+
+  test('reads an agent that gave no name and has not signed in yet', async () => {
+    const unnamed = { ...AGENT_ROW, name: null, last_used_at: null, redirect_host: null };
+    mockFetch.mockReturnValueOnce(jsonResponse([unnamed]));
+
+    await expect(vault.agents('tok')).resolves.toEqual([unnamed]);
+  });
+
+  test('refuses a row whose timestamp is not a dated instant', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse([{ ...AGENT_ROW, created_at: 'yesterday' }]));
+
+    await expect(vault.agents('tok')).rejects.toBeInstanceOf(ApiValidationError);
+  });
+});
+
+describe('vault.revokeAgent', () => {
+  test('DELETEs the one agent by id, with no body, and resolves on the 204', async () => {
+    mockFetch.mockReturnValueOnce(noContentResponse());
+
+    await expect(vault.revokeAgent(AGENT_ROW.id, 'tok')).resolves.toBeUndefined();
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(`${AGENTS_URL}/${AGENT_ROW.id}`);
+    expect(init.method).toBe('DELETE');
+    expect(init.body).toBeUndefined();
+  });
+
+  test("surfaces a 404 for an agent that is not this account's", async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ detail: 'agent_not_found' }, 404));
+
+    const err = await vault.revokeAgent(AGENT_ROW.id, 'tok').catch((error: unknown) => error);
+
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(404);
+    expect((err as ApiError).detail).toBe('agent_not_found');
   });
 });
 

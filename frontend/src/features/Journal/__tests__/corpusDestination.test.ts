@@ -19,8 +19,12 @@ import {
  * `vault_required` as the backstop.
  */
 
-const CONNECTED = readConnectionState({ connected: true, vault_url: 'https://v.example' });
-const MANAGED = readConnectionState({ connected: true, vault_url: null });
+const CONNECTED = readConnectionState({
+  connected: true,
+  vault_url: 'https://v.example',
+  mcp_address: null,
+});
+const MANAGED = readConnectionState({ connected: true, vault_url: null, mcp_address: null });
 
 const EVERY_VAULT: readonly [string, VaultConnectionState][] = [
   ['unknown', CONNECTION_UNKNOWN],

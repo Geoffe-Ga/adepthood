@@ -19,22 +19,45 @@ import type { VaultConnection } from '@/api';
  */
 
 const VAULT_URL = 'https://vault.example';
+const AGENT_ADDRESS = 'https://vault.example/mcp';
 
 describe('readConnectionState', () => {
   it('reads an unconnected account as nothing attached', () => {
-    const connection: VaultConnection = { connected: false, vault_url: null };
+    const connection: VaultConnection = { connected: false, vault_url: null, mcp_address: null };
 
     expect(readConnectionState(connection)).toEqual({ kind: 'none' });
   });
 
-  it('reads a connected account as its address', () => {
-    const connection: VaultConnection = { connected: true, vault_url: VAULT_URL };
+  it('reads a connected account as its address, and the address it gives agents', () => {
+    const connection: VaultConnection = {
+      connected: true,
+      vault_url: VAULT_URL,
+      mcp_address: AGENT_ADDRESS,
+    };
 
-    expect(readConnectionState(connection)).toEqual({ kind: 'connected', address: VAULT_URL });
+    expect(readConnectionState(connection)).toEqual({
+      kind: 'connected',
+      address: VAULT_URL,
+      agentAddress: AGENT_ADDRESS,
+    });
+  });
+
+  it('keeps a connected vault connected when the server names no agent address', () => {
+    const connection: VaultConnection = {
+      connected: true,
+      vault_url: VAULT_URL,
+      mcp_address: null,
+    };
+
+    expect(readConnectionState(connection)).toEqual({
+      kind: 'connected',
+      address: VAULT_URL,
+      agentAddress: null,
+    });
   });
 
   it('recognizes a managed connection without disclosing an address', () => {
-    const connection: VaultConnection = { connected: true, vault_url: null };
+    const connection: VaultConnection = { connected: true, vault_url: null, mcp_address: null };
 
     expect(readConnectionState(connection)).toEqual({ kind: 'managed' });
   });
@@ -43,7 +66,11 @@ describe('readConnectionState', () => {
     // ``connected: false`` is answered before the address is looked at, so a
     // stale address on a disconnected answer reads as none rather than
     // reviving the vault it names.
-    const connection: VaultConnection = { connected: false, vault_url: VAULT_URL };
+    const connection: VaultConnection = {
+      connected: false,
+      vault_url: VAULT_URL,
+      mcp_address: null,
+    };
 
     expect(readConnectionState(connection)).toEqual({ kind: 'none' });
   });
@@ -61,13 +88,17 @@ describe('vaultComesFirst', () => {
   });
 
   it('does not hold for a vault at an address', () => {
-    const connected = readConnectionState({ connected: true, vault_url: VAULT_URL });
+    const connected = readConnectionState({
+      connected: true,
+      vault_url: VAULT_URL,
+      mcp_address: null,
+    });
 
     expect(vaultComesFirst(connected)).toBe(false);
   });
 
   it('does not hold for a managed vault, which is answered with no address', () => {
-    const managed = readConnectionState({ connected: true, vault_url: null });
+    const managed = readConnectionState({ connected: true, vault_url: null, mcp_address: null });
 
     expect(vaultComesFirst(managed)).toBe(false);
   });

@@ -25,7 +25,7 @@ const mockLoadDismissed = jest.fn() as jest.MockedFunction<() => Promise<boolean
 const mockSaveDismissed = jest.fn() as jest.MockedFunction<(_v: boolean) => Promise<void>>;
 const mockNavigate = jest.fn();
 const mockVaultConnection = jest.fn() as jest.MockedFunction<
-  () => Promise<{ connected: boolean; vault_url: string | null }>
+  () => Promise<{ connected: boolean; vault_url: string | null; mcp_address: string | null }>
 >;
 
 jest.mock('@/api', () => ({
@@ -116,7 +116,11 @@ beforeEach(() => {
   mockNavigate.mockReset();
   mockVaultConnection.mockReset();
   mockReadiness.mockResolvedValue(readiness());
-  mockVaultConnection.mockResolvedValue({ connected: true, vault_url: 'https://v.example' });
+  mockVaultConnection.mockResolvedValue({
+    connected: true,
+    vault_url: 'https://v.example',
+    mcp_address: null,
+  });
   mockLoadDismissed.mockResolvedValue(false);
   mockSaveDismissed.mockResolvedValue(undefined);
 });
@@ -244,7 +248,7 @@ describe('VoiceReadinessBand — where it goes', () => {
     mockReadiness.mockResolvedValue(
       readiness({ state: 'gathering', message: GATHERING_COPY, grounding_source: 'corpus' }),
     );
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     const { findByTestId, getByText } = render(<VoiceReadinessBand />);
     const band = await findByTestId(BAND);
 
@@ -269,7 +273,7 @@ describe('VoiceReadinessBand — where it goes', () => {
   });
 
   it('asks an undecided account the decision first, vault or not', async () => {
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     const { findByTestId, getByText } = render(<VoiceReadinessBand />);
     const band = await findByTestId(BAND);
 
@@ -280,7 +284,7 @@ describe('VoiceReadinessBand — where it goes', () => {
 
   it('stays quiet when readiness fails, whatever the vault says', async () => {
     mockReadiness.mockRejectedValue(new Error('offline'));
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     const { queryByTestId } = render(<VoiceReadinessBand />);
     await act(async () => {
       await Promise.resolve();
@@ -293,7 +297,7 @@ describe('VoiceReadinessBand — where it goes', () => {
     mockReadiness.mockResolvedValue(
       readiness({ state: 'gathering', message: GATHERING_COPY, grounding_source: 'corpus' }),
     );
-    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null });
+    mockVaultConnection.mockResolvedValue({ connected: false, vault_url: null, mcp_address: null });
     const { findByTestId, queryByTestId } = render(<VoiceReadinessBand />);
     fireEvent.press(await findByTestId(DISMISS));
 

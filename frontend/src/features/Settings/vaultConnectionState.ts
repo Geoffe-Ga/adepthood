@@ -14,7 +14,12 @@ export type VaultConnectionState =
   | { readonly kind: 'unknown' }
   | { readonly kind: 'none' }
   | { readonly kind: 'managed' }
-  | { readonly kind: 'connected'; readonly address: string };
+  | {
+      readonly kind: 'connected';
+      readonly address: string;
+      /** What a person gives an agent they run elsewhere (#3534), when the server says. */
+      readonly agentAddress: string | null;
+    };
 
 /** Nobody has established what is attached — before the read, or after it failed. */
 export const CONNECTION_UNKNOWN: VaultConnectionState = { kind: 'unknown' };
@@ -23,14 +28,14 @@ export const CONNECTION_UNKNOWN: VaultConnectionState = { kind: 'unknown' };
 export const NOTHING_CONNECTED: VaultConnectionState = { kind: 'none' };
 
 /**
- * A vault is attached at ``address``.
+ * A vault is attached at ``address``, and agents are given ``agentAddress``.
  *
  * Not exported: the two certain-nothing states are values anyone can hold, but
  * a connected state is only ever learned from a server answer, so it is built
  * here and nowhere else.
  */
-function connectedTo(address: string): VaultConnectionState {
-  return { kind: 'connected', address };
+function connectedTo(address: string, agentAddress: string | null): VaultConnectionState {
+  return { kind: 'connected', address, agentAddress };
 }
 
 /**
@@ -40,7 +45,7 @@ function connectedTo(address: string): VaultConnectionState {
 export function readConnectionState(connection: VaultConnection): VaultConnectionState {
   if (!connection.connected) return NOTHING_CONNECTED;
   if (connection.vault_url === null) return { kind: 'managed' };
-  return connectedTo(connection.vault_url);
+  return connectedTo(connection.vault_url, connection.mcp_address);
 }
 
 /**

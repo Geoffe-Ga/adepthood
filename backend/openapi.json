@@ -1029,6 +1029,71 @@
         "title": "CompletionTargetType",
         "type": "string"
       },
+      "ConnectedAgentResponse": {
+        "description": "One agent this account has approved and not revoked.\n\n``name`` is the agent's own word for itself, unverified, and ``None`` when it\ngave none -- the screen says so in its own words rather than showing a\nblank. ``last_used_at`` is stamped by the token endpoint on every code\nexchange and refresh (#3533), so it moves roughly every ten minutes while an\nagent is working, not on every call it makes to the vault; ``None`` means it\nhas not signed in since it was approved. ``redirect_host`` is the host of the\nfirst redirect the agent registered -- ``127.0.0.1`` for a program on the\nperson's own computer, a site's name for a hosted connector -- or ``None`` if\nnone can be read.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "grants": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "redirect_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Host"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "grants",
+          "created_at",
+          "last_used_at",
+          "redirect_host"
+        ],
+        "title": "ConnectedAgentResponse",
+        "type": "object"
+      },
       "ContentBodyResponse": {
         "description": "Raw Markdown body + metadata for native in-app rendering.\n\nIssue #393 replaced the legacy CMS proxy fields: ``body_html`` and\nthe \"Open original\" ``url`` are gone; ``body_markdown`` is vendored\nMarkdown served verbatim from local content (no server-side\nrendering), and ``content_type`` lets the reader pick a layout.  The\nfrontend Markdown renderer lands in the follow-up issue (#394).\n``title`` comes from the manifest; the client should prefer it over\n``ContentItemResponse.title``, which is what the backend seeded.",
         "properties": {
@@ -9680,11 +9745,22 @@
         "type": "object"
       },
       "VaultConnectionResponse": {
-        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.",
+        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.\n\n``mcp_address`` is the address a person gives an agent they run elsewhere\n(#3534): the vault's MCP URL, which is also the audience every agent token\nfor this vault names. It follows ``vault_url``'s rule exactly -- ``None``\nwhen nothing is connected and ``None`` for a managed vault, whose address\nstays private; the agent's own sign-in flow, or a connector's listing,\nsupplies it there.",
         "properties": {
           "connected": {
             "title": "Connected",
             "type": "boolean"
+          },
+          "mcp_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mcp Address"
           },
           "vault_url": {
             "anyOf": [
@@ -9700,7 +9776,8 @@
         },
         "required": [
           "connected",
-          "vault_url"
+          "vault_url",
+          "mcp_address"
         ],
         "title": "VaultConnectionResponse",
         "type": "object"
@@ -31619,6 +31696,214 @@
           }
         },
         "summary": "Retry Managed Vault Activation",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/agents": {
+      "get": {
+        "description": "Every agent this account has approved and not revoked, newest approval first.\n\nAn empty list for an account that has approved nobody -- an answer about a\nset every account has, never a 404 -- so the screen renders its empty state\nstraight from the reply.",
+        "operationId": "list_vault_agents_vault_agents_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConnectedAgentResponse"
+                  },
+                  "title": "Response List Vault Agents Vault Agents Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "List Vault Agents",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/agents/{agent_id}": {
+      "delete": {
+        "description": "Stop one agent. ``204`` again for an agent already stopped; ``404`` for one not yours.",
+        "operationId": "revoke_vault_agent_vault_agents__agent_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Agent Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Revoke Vault Agent",
         "tags": [
           "vault"
         ]
