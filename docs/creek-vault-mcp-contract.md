@@ -571,3 +571,56 @@ rule governing how adepthood copes with that absence — binding a
 configured vault to exactly one adepthood user — is recorded in
 [ADR 0004](adr/0004-creek-vault-http-application-boundary.md),
 Decision 7, not in this document.
+
+## Vault-agent access tokens (adepthood-owned)
+
+Adepthood is the OAuth 2.1 authorization server for the agents a person
+connects to their vault (adepthood #3532, #3533); the vault's `/mcp` endpoint
+is the resource server and verifies what Adepthood issues
+(Creek-Vault#1963). Both sides keep this claim set in lock-step.
+
+**Discovery.** `GET /.well-known/oauth-authorization-server` (RFC 8414) names
+`token_endpoint` (`/oauth/token`), `jwks_uri` (`/.well-known/jwks.json`) and
+`revocation_endpoint` (`/oauth/revoke`) under the issuer `OAUTH_ISSUER_URL`.
+
+**The access token** is a JWT, `ES256` over P-256:
+
+| Part | Value |
+| --- | --- |
+| header `alg` | `ES256`, and nothing else |
+| header `kid` | the RFC 7638 thumbprint of the signing key; selects a key in the JWKS, whose own `alg` is `ES256` |
+| header `typ` | `at+jwt` (RFC 9068); no `crit` header |
+| `iss` | the issuer, exactly as the metadata publishes it |
+| `sub` | the account's stable, opaque consumer identity (below) |
+| `aud` | ONE string: the account's own vault MCP URL, the RFC 8707 `resource` the person approved |
+| `scope` | the approved grants, space-separated, in server order: `vault:read`, `vault:desk`, `vault:journal`, `vault:pipeline` (and `offline_access` when requested, which the vault ignores) |
+| `client_id` | the OAuth client id of the agent (RFC 9068), so the vault can audit per agent (Creek-Vault#1976) |
+| `iat`, `exp` | issue time and issue time plus 600 seconds |
+| `jti` | a random id |
+
+No claim carries an email, a name, or any vault address other than `aud`.
+
+**`sub`.** On a managed vault, the `consumer_identity` provisioning handed the
+vault (`vaultactivation.consumer_identity`, the same value in the provisioning
+handoff): a managed vault pins `sub` to exactly that. On a self-hosted vault,
+which was never provisioned, `adepthood-account-` followed by 32 hex digits of
+an HMAC of the account id under a key derived from the deployment secret --
+stable, and meaningless outside Adepthood. One person is one `sub`; the agent
+is `client_id`.
+
+**Refresh tokens** are opaque (`rt_` plus 256 random bits), stored only as a
+SHA-256, valid 30 days and rotated on every use. Presenting a rotated-away
+token revokes its whole rotation family and answers `invalid_grant`; a replayed
+authorization code revokes every refresh token under its grant. Errors are the
+RFC 6749 codes (`invalid_request`, `invalid_grant`, `unsupported_grant_type`,
+`invalid_scope`) plus RFC 8707's `invalid_target`.
+
+**The key set.** `OAUTH_SIGNING_KEYS` lists PEM P-256 private keys newest
+first, the shape of `JOURNAL_ENCRYPTION_KEYS`: the first signs, all are
+published, so rotation is add-new, redeploy, drop-old. The JWKS response is
+cacheable for 300 seconds, the vault's own key-set TTL.
+
+**Revocation lands within one access-token lifetime.** Revoking a refresh token
+(RFC 7009) or the grant (`agent_grant.revoked_at`, from Settings) fails the
+agent's next refresh; an access token already issued runs out its ten minutes,
+because the vault verifies tokens offline and never calls back.
