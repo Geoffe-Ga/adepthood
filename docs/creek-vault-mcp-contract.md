@@ -674,3 +674,67 @@ from a path or a body:
 Re-approving a revoked agent clears `revoked_at` and restarts `created_at`, so
 it reappears on the list; refresh tokens minted under the earlier consent stay
 dead.
+
+## Recent agent activity (adepthood-owned)
+
+Under the agent list, Settings shows "Recent activity": up to twenty of the
+vault's most recent calls, each as who asked, what for, how long ago, and a
+small "Refused" marker on a call the vault turned down before it ran -- under
+the one line "What each agent asked for, never what it read." (#3535). It is
+read when the screen opens and again each time it is returned to; it is never
+polled.
+
+**The route.** `GET /vault/agents/activity?limit=` (1-200, default 50; the
+screen asks for 20) reads Creek's `GET /v1/agent-activity` (contract 0.22,
+Creek-Vault#1968) through the caller's own resolved vault, declaring the
+content-free `open` ceiling and sending `limit` and nothing else. It answers,
+always with `200`:
+
+```json
+{"status": "ok", "rows": [{"agent": "Adepthood", "tool_label": "Saved a journal entry", "at": "2026-10-24T17:40:03Z", "outcome": "admitted"}]}
+```
+
+`status` is `unavailable` with no rows for every way the vault could not be
+read -- nothing connected, a vault not advertising `agent-activity`, a refusal,
+an unreadable or off-schema answer, a transport failure -- and the screen says
+it could not check, never "nothing yet". Each such degrade is logged through
+`services.creek_vault_read.log_read_degraded`, whose fields are a closed
+vocabulary.
+
+**Content-free, twice over.** The adapter
+(`backend/src/services/creek_vault_activity_wire.py`) validates Creek's answer
+strictly against the vendored `AgentActivityResponse`: a fifth field on a row,
+anything extra on the envelope, an outcome outside `admitted | refused`, a
+`tool` or `consumer` outside its published pattern, a naive instant or more
+than 200 rows refuse the whole answer. The route then re-projects each row onto
+four fields in adepthood's own words (`backend/src/services/
+vault_agent_activity_copy.py`), and both response models forbid extra fields,
+so no argument, fragment id, path or prose can cross it whatever a vault sends.
+Creek's `consumer` stamp and `tool` name are keys and are never echoed.
+
+**What a tool reads as.** One past-tense phrase per audited tool name --
+`creek.draft` "Drafted an essay", `creek.reflect` "Asked for a reflection",
+`creek.link` "Tried to re-sort the vault", `creek.mine` "Looked for seeds in
+your writing", `creek.journal` "Saved a journal entry", and so on -- and
+"Other" for a tool with no phrase. `outcome: admitted` means only that the
+call passed the vault's pre-dispatch gates; the audit chain never records what
+a tool returned, so neither can this list.
+
+**Who a row names, and the attribution limit.** Creek stamps each call with
+the static bearer's consumer name, or, for an agent's OAuth token, the token's
+`sub` -- which names the *person*, not the agent, until Creek-Vault#1976 stamps
+the agent's `client_id` instead. So the route names a row only from stamps the
+account owns, most specific first:
+
+| The stamp is | The row says |
+| --- | --- |
+| a `client_id` of one of the account's grants | the agent's own name ("An agent that did not give its name" if it gave none), or "An agent you stopped" once revoked |
+| `adepthood` (the app's own calls on a self-connected vault) | Adepthood |
+| the account's managed-vault consumer identity | "Adepthood or one of your agents" -- the app's own `/v1` calls and every agent's `sub` share it -- or "Adepthood" while no agent was ever approved |
+| the account's derived agent subject (a self-connected vault's `sub`) | One of your agents |
+| anything else | Something else with access to your vault |
+
+Today the first rule matches only a static consumer an operator named after an
+agent's client id; once #1976 lands it names every agent, with no change here.
+A cross-tenant test pins that a stamp naming another account's agent is
+"something else" for everyone but its owner.
