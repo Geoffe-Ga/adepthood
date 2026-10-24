@@ -58,3 +58,21 @@ class OAuthErrorResponse(BaseModel):
 
     error: str
     error_description: str | None = None
+
+
+class AuthorizationQuery(BaseModel):
+    """The RFC 6749 / RFC 7636 / RFC 8707 query of ``GET /oauth/authorize``.
+
+    Every field optional at the schema level: a missing one is a protocol fault
+    the endpoint answers with an RFC error -- on a page, or back at the agent --
+    never with a validation 422 the person's browser would show as raw JSON.
+    """
+
+    response_type: str | None = None
+    client_id: str | None = None
+    redirect_uri: str | None = None
+    code_challenge: str | None = None
+    code_challenge_method: str | None = None
+    state: str | None = None
+    scope: str | None = None
+    resource: str | None = None
