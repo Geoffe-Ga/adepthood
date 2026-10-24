@@ -12,6 +12,10 @@ shape at all. Unknown fields are ignored rather than refused, as RFC 7591
 section 2 asks: clients send fields this server has no use for (``scope``,
 ``contacts``, ``software_id``) and a registration must not fail over them.
 
+The token endpoint (#3533) answers with :class:`TokenResponse` and publishes its
+verification keys as :class:`JsonWebKeySet`, which by construction has no field
+for a private key.
+
 The registration response has no secret field, because a public client has no
 secret. That is a property of the type rather than of a handler remembering.
 """
@@ -76,3 +80,31 @@ class AuthorizationQuery(BaseModel):
     state: str | None = None
     scope: str | None = None
     resource: str | None = None
+
+
+class TokenResponse(BaseModel):
+    """A successful token response, RFC 6749 section 5.1, with the scope always stated."""
+
+    access_token: str
+    token_type: str
+    expires_in: int
+    refresh_token: str
+    scope: str
+
+
+class PublicJsonWebKey(BaseModel):
+    """One P-256 public key as RFC 7517 / RFC 7518 section 6.2.1 publish it. No private part."""
+
+    kty: str
+    crv: str
+    x: str
+    y: str
+    kid: str
+    alg: str
+    use: str
+
+
+class JsonWebKeySet(BaseModel):
+    """The key set the vault verifies agent tokens with, newest key first."""
+
+    keys: list[PublicJsonWebKey]
