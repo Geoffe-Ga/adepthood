@@ -200,6 +200,7 @@ const EXPECTED_JOURNEYS = [
   'session-lifetime.e2e.test.ts',
   'stage-copy.e2e.test.ts',
   'vault-activation.e2e.test.ts',
+  'vault-agent-activity.e2e.test.ts',
   'vault-agent-chatgpt.e2e.test.ts',
   'vault-agent-claude-code.e2e.test.ts',
   'vault-agent-consent.e2e.test.ts',
@@ -637,17 +638,19 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     expect(setup).not.toContain('dependency_overrides');
   });
 
-  it('advertises only the seven capabilities the two vault journeys exercise', () => {
+  it('advertises only the eight capabilities the vault journeys exercise', () => {
     // The sharpest constraint on this boundary: every added word is a new class
     // of production traffic. The deployment owner is reserved for the upload
     // and withdrawal specs, while all other accounts stay on local fallback.
     // `reflections` and `letters` are the deliberate additions (#3061, #3203):
     // the owner is vault-bound, so the withdrawal journey's margin note and its
     // letter can only come from this vault -- the app provider is never asked.
+    // `agent-activity` (#3535) is a content-free read of the audit log the
+    // recent-activity journey fills itself; it carries no writing either way.
     const fake = read(FAKE_VAULT, 'The seed journey needs a contract-shaped vault to reach.');
 
     expect(fake).toContain(
-      "  'capabilities',\n  'upload',\n  'journal-upsert',\n  'journal-withdraw',\n  'voice-drafts',\n  'reflections',\n  'letters',\n];",
+      "  'capabilities',\n  'upload',\n  'journal-upsert',\n  'journal-withdraw',\n  'voice-drafts',\n  'reflections',\n  'letters',\n  'agent-activity',\n];",
     );
     expect(fake).not.toContain("'wheel'");
     expect(fake).not.toContain("'pipeline'");
