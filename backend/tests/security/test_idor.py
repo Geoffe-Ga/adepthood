@@ -30,10 +30,13 @@ Also asserts that no owned-resource response DTO echoes ``user_id``.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
+from pathlib import Path
 
+import httpx
 import jwt
 import pytest
 from httpx import AsyncClient, Response
@@ -41,6 +44,7 @@ from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
+from dependencies import creek_vault as creek_vault_dependencies
 from models.agent_grant import AgentGrant
 from models.completion_suggestion import (
     CompletionSuggestion,
@@ -72,8 +76,10 @@ from models.user import User
 from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
 from security.idempotency import hash_idem_key
+from services.creek_vault_client import HttpCreekVaultClient
 from services.journal_retention import PURGE_MIN_RETENTION_DAYS
 from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR
+from services.vault_agent_activity_copy import ACTIVITY_SOMETHING_ELSE
 from tests.helpers import oauth as oauth_flow
 from tests.helpers.feedback_triage import (
     DRAFT_BODY,
@@ -2903,3 +2909,78 @@ async def test_idor_revoking_another_accounts_agent_is_refused_and_changes_nothi
         {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": alice_client},
     )
     assert refresh.status_code == HTTPStatus.OK
+
+
+#: The vendored Creek bundle, for the published handshake a scripted vault serves.
+_CREEK_BUNDLE = Path(__file__).parent.parent / "fixtures" / "creek_v1"
+
+
+async def _grant_count(db_session: AsyncSession) -> int:
+    """How many agent grants exist, read from storage."""
+    return int(
+        (await db_session.execute(select(func.count()).select_from(AgentGrant))).scalar_one()
+    )
+
+
+@pytest.mark.asyncio
+async def test_idor_agent_activity_reads_only_the_callers_own_vault_and_agents(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's activity is Bob's vault's, and never names Alice's agent (#3535).
+
+    ``GET /vault/agents/activity`` takes no account or agent id: the vault it
+    dials is resolved from the bearer alone, and a row's stamp is matched only
+    against the caller's own grants. So even a vault answering with a row
+    stamped by Alice's agent's client id -- the Creek-Vault#1976 shape -- shows
+    Bob "something else", not her agent's name, and the only vault dialled for
+    Bob's request is the one Bob connected. Nothing is written by the read.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_activity")
+    alice_resource = await oauth_flow.connect_vault(db_session, alice_id, "alice-activity")
+    alice_client = await oauth_flow.register_agent(async_client, name="Alice's agent")
+    await oauth_flow.approve(async_client, alice_headers, alice_client, alice_resource)
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_activity")
+    await oauth_flow.connect_vault(db_session, bob_id, "bob-activity")
+    dialled: list[str] = []
+    capabilities = json.loads(
+        (_CREEK_BUNDLE / "examples" / "capabilities" / "success.json").read_bytes()
+    )
+    row = {"consumer": alice_client, "tool": "creek.draft", "at": "2026-10-24T18:02:11Z"}
+    answer = {
+        "status": "ok",
+        "tier_ceiling": "open",
+        "skipped": 0,
+        "rows": [row | {"outcome": "admitted"}],
+    }
+
+    def _vault(request: httpx.Request) -> httpx.Response:
+        dialled.append(request.url.host)
+        if request.url.path == "/v1/capabilities":
+            return httpx.Response(HTTPStatus.OK, json=capabilities)
+        return httpx.Response(HTTPStatus.OK, json=answer)
+
+    def _build(url: str, api_key: str) -> HttpCreekVaultClient:
+        return HttpCreekVaultClient(
+            url, api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(_vault))
+        )
+
+    async def _dialable(_session: AsyncSession, _vault_url: str) -> bool:
+        return False
+
+    monkeypatch.setattr(creek_vault_dependencies, "build_connected_vault_client", _build)
+    monkeypatch.setattr(creek_vault_dependencies, "_stored_host_is_undialable", _dialable)
+    grants_before = await _grant_count(db_session)
+
+    response = await async_client.get("/vault/agents/activity", headers=bob_headers)
+
+    assert response.status_code == HTTPStatus.OK
+    (shown,) = response.json()["rows"]
+    assert shown["agent"] == ACTIVITY_SOMETHING_ELSE
+    assert "Alice" not in response.text
+    assert alice_client not in response.text
+    assert set(dialled) == {"v-bob-activity.vaults.example"}
+    assert await _grant_count(db_session) == grants_before
