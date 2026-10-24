@@ -32,6 +32,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from domain.dates import ensure_aware
 from models.oauth_client import OAuthClient, OAuthClientSource
 from services.oauth_client_metadata import ClientMetadata, is_metadata_document_client_id
 from services.oauth_metadata_fetch import fetch_client_metadata
@@ -84,9 +85,7 @@ def _is_fresh(client: OAuthClient | None, now: datetime) -> bool:
     fetched = None if client is None else client.metadata_fetched_at
     if fetched is None:
         return False
-    if fetched.tzinfo is None:
-        fetched = fetched.replace(tzinfo=UTC)
-    return now - fetched < METADATA_DOCUMENT_TTL
+    return now - ensure_aware(fetched) < METADATA_DOCUMENT_TTL
 
 
 def _apply_document(

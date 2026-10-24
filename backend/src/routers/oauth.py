@@ -59,6 +59,7 @@ from starlette.exceptions import HTTPException
 from client_ip import resolve_client_ip
 from database import get_session
 from dependencies.oauth_form import FORM_MEDIA_TYPE, read_form, single_valued
+from domain.dates import ensure_aware
 from error_responses import ResponseDeclarations, build_router
 from errors import service_unavailable
 from models.oauth_client import OAuthClient
@@ -302,7 +303,7 @@ async def register_oauth_client(
     )
     return ClientRegistrationResponse(
         client_id=client.client_id,
-        client_id_issued_at=int(client.created_at.timestamp()),
+        client_id_issued_at=int(ensure_aware(client.created_at).timestamp()),
         client_name=client.client_name,
         redirect_uris=client.redirect_uris,
         logo_uri=client.logo_uri,

@@ -136,6 +136,7 @@ async def test_registration_returns_a_public_client_and_no_secret(
     assert body["grant_types"] == ["authorization_code", "refresh_token"]
     assert body["response_types"] == ["code"]
     assert not {key for key in body if "secret" in key}
+    assert abs(body["client_id_issued_at"] - datetime.now(UTC).timestamp()) < 60
     assert await _count(db_session, OAuthClient) == 1
 
 
