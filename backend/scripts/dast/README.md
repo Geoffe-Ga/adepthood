@@ -230,6 +230,15 @@ each parameter independently. A spec may also earn its keep by being named as th
   parameter a `create_path` interpolates must also appear in `depends_on`.
 - `id_pointer` reads the new id out of the response, traversing lists as well as
   objects: `("goals", 0, "id")`.
+- An object only a browser flow can make is seeded as a chain of steps, each its
+  own spec reached through `depends_on` (a spec needed first by one that is
+  asked for earns its keep that way). A step may send its payload
+  `form_encoded`, and may read its value with `id_source=IdSource.BODY_TEXT` or
+  `IdSource.LOCATION` plus an `id_pattern` whose first group is the value -- a
+  `LOCATION` step succeeds on a 3xx, every other step on a 2xx. `agent_id` is
+  the worked example: connect a vault, register an agent, read the consent
+  ticket off the page, approve, then read the grant back from `GET
+  /vault/agents` (#3534).
 
 If the operation is a mutating verb that requires fields, add a matching entry to
 `REPLAY_BODIES` too. Without one the replay is answered 422 before the ownership

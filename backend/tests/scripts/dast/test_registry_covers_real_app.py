@@ -36,7 +36,7 @@ from scripts.dast.runner import (
     DEFAULT_MIN_REFERENCES,
     DEFAULT_MIN_ROUTES,
 )
-from scripts.dast.seeds import REPLAY_BODIES, SEED_REGISTRY
+from scripts.dast.seeds import REPLAY_BODIES, SEED_REGISTRY, seed_order
 from scripts.dast.verdict import require_allowlist_bounded, require_allowlist_is_live
 
 MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
@@ -123,9 +123,12 @@ def test_every_seed_spec_is_reachable_from_a_path_parameter_or_a_reference() -> 
     """A seed spec nothing can ask for is dead weight that still costs a request.
 
     It also hides a rename: the old parameter keeps its spec, the new one has
-    none, and the route silently becomes uncovered. A spec may now earn its keep
-    either way -- named by a path parameter, or named as the seed key of a body
-    or query reference the harness probes.
+    none, and the route silently becomes uncovered. A spec may earn its keep any
+    of three ways -- named by a path parameter, named as the seed key of a body
+    or query reference the harness probes, or needed first by a spec that is
+    (an agent grant is made in five steps, and only the last is a path
+    parameter, #3534). The third is followed transitively, from the first two
+    only, so a chain nothing at its head asks for is still an orphan.
     """
     live_params = {param for spec in discover_routes(app.openapi()) for param in spec.params}
     reference_keys = {
@@ -133,8 +136,9 @@ def test_every_seed_spec_is_reachable_from_a_path_parameter_or_a_reference() -> 
         for probe in REFERENCE_REGISTRY.values()
         for reference in probe.references
     }
+    asked_for = set(seed_order(sorted(live_params | reference_keys), SEED_REGISTRY))
 
-    orphans = sorted(set(SEED_REGISTRY) - live_params - reference_keys)
+    orphans = sorted(set(SEED_REGISTRY) - asked_for)
     assert orphans == [], f"seed specs nothing declares or references: {orphans}"
 
 

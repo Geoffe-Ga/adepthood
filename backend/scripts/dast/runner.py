@@ -80,11 +80,12 @@ from scripts.dast.seeds import (
     SEED_REGISTRY,
     UNIQUE_FIELD,
     SeedSpec,
-    create_body,
+    create_bodies,
+    read_seed_id,
     render_text,
     replay_body,
-    resolve_id,
     seed_order,
+    seed_succeeded,
     window_fields,
 )
 from scripts.dast.verdict import (
@@ -344,12 +345,14 @@ class _Request:
         path: The path, already resolved -- no braces left in it.
         body: The JSON body, or ``None`` for a verb that takes none.
         params: Query parameters, or ``None`` when the URL carries everything.
+        form: A form-encoded body instead of JSON, as an HTML form sends it.
     """
 
     method: str
     path: str
     body: Mapping[str, object] | None = None
     params: Mapping[str, str] | None = None
+    form: Mapping[str, object] | None = None
 
 
 async def _send(session: _Session, request: _Request, *, token: str | None) -> Response:
@@ -362,6 +365,7 @@ async def _send(session: _Session, request: _Request, *, token: str | None) -> R
         request.path,
         headers=headers,
         json=request.body,
+        data=request.form,
         params=request.params,
     )
     session.statuses.append(response.status_code)
@@ -397,18 +401,20 @@ async def _seed_one(
     caller.
     """
     fields = _render_fields(values)
+    body, form = create_bodies(spec, fields)
     response = await _send(
         session,
         _Request(
             method=spec.create_method,
             path=render_text(spec.create_path, fields),
-            body=create_body(spec, fields),
+            body=body,
+            form=form,
         ),
         token=identity.token,
     )
-    if not _is_success(response.status_code):
+    if not seed_succeeded(spec, response.status_code):
         return None
-    return resolve_id(response.json(), spec.id_pointer)
+    return read_seed_id(spec, text=response.text, location=response.headers.get("location"))
 
 
 async def _seed_keys(
