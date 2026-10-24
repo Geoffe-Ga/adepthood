@@ -207,6 +207,57 @@ describe('vault.agents', () => {
   });
 });
 
+describe('vault.agentActivity', () => {
+  const ROW = {
+    agent: 'OpenClaw on my Mac mini',
+    tool_label: 'Drafted an essay',
+    at: '2026-10-24T18:02:11Z',
+    outcome: 'admitted',
+  };
+  const ACTIVITY_LIMIT = 20;
+
+  test('GETs /vault/agents/activity with the limit and hands back the rows as sent', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ status: 'ok', rows: [ROW] }));
+
+    const activity = await vault.agentActivity(ACTIVITY_LIMIT, 'tok');
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(`${AGENTS_URL}/activity?limit=${ACTIVITY_LIMIT}`);
+    expect(init?.method ?? 'GET').toBe('GET');
+    expect(init?.body).toBeUndefined();
+    expect(activity).toEqual({ status: 'ok', rows: [ROW] });
+  });
+
+  test('reads an unavailable vault as an answer, not an error', async () => {
+    mockFetch.mockReturnValueOnce(jsonResponse({ status: 'unavailable', rows: [] }));
+
+    await expect(vault.agentActivity(ACTIVITY_LIMIT, 'tok')).resolves.toEqual({
+      status: 'unavailable',
+      rows: [],
+    });
+  });
+
+  test('refuses a row carrying anything beyond its four fields', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ status: 'ok', rows: [{ ...ROW, args: 'draft me an essay' }] }),
+    );
+
+    await expect(vault.agentActivity(ACTIVITY_LIMIT, 'tok')).rejects.toBeInstanceOf(
+      ApiValidationError,
+    );
+  });
+
+  test('refuses an outcome outside admitted and refused', async () => {
+    mockFetch.mockReturnValueOnce(
+      jsonResponse({ status: 'ok', rows: [{ ...ROW, outcome: true }] }),
+    );
+
+    await expect(vault.agentActivity(ACTIVITY_LIMIT, 'tok')).rejects.toBeInstanceOf(
+      ApiValidationError,
+    );
+  });
+});
+
 describe('vault.revokeAgent', () => {
   test('DELETEs the one agent by id, with no body, and resolves on the 204', async () => {
     mockFetch.mockReturnValueOnce(noContentResponse());

@@ -110,6 +110,27 @@ export const AGENTS_STOPPED =
 export const AGENTS_STOP_FAILED =
   'Adepthood could not stop that agent just now. It is still listed; try again in a moment.';
 
+/** Above the list of what agents asked the vault for (#3535). */
+export const ACTIVITY_HEADING = 'Recent activity';
+
+/**
+ * The one line under that heading. It is about what the list can show -- the
+ * request, not the result -- rather than a promise about what an agent "sees",
+ * which the custody guard reads as a custody claim.
+ */
+export const ACTIVITY_WHAT_IT_IS = 'What each agent asked for, never what it read.';
+
+/** Nothing asked yet. */
+export const ACTIVITY_EMPTY =
+  'Nothing yet. When an agent asks your vault for something, it shows here.';
+
+/** The vault could not be read. Never says "nothing yet" over a read that did not land. */
+export const ACTIVITY_UNAVAILABLE =
+  'Adepthood could not check your vault for recent activity just now.';
+
+/** The small marker beside a call the vault turned down before it ran. */
+export const ACTIVITY_REFUSED = 'Refused';
+
 /**
  * What each permission lets an agent do, keyed by the name the server sends.
  *

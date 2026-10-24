@@ -1558,6 +1558,41 @@ export const connectedAgentSchema = z.object({
 
 export type ConnectedAgentT = z.infer<typeof connectedAgentSchema>;
 
+/**
+ * One call an agent (or the app) made against this account's vault, in plain
+ * words (mirrors the backend ``AgentActivityRowResponse``, #3535).
+ *
+ * Four fields and no more: ``agent`` and ``tool_label`` are always the
+ * server's own words -- never a tool name or an audit stamp the vault chose --
+ * and nothing here can carry what was asked or what came back. ``.strict()``
+ * on purpose, unlike most schemas here: a fifth field on this surface is a
+ * broken promise to refuse, not an addition to tolerate.
+ */
+export const agentActivityRowResponseSchema = z
+  .object({
+    agent: z.string(),
+    tool_label: z.string(),
+    at: isoDateTime,
+    outcome: z.enum(['admitted', 'refused']),
+  })
+  .strict();
+
+export type AgentActivityRowT = z.infer<typeof agentActivityRowResponseSchema>;
+
+/**
+ * What ``GET /vault/agents/activity`` answers: the most recent calls, newest
+ * first, or ``unavailable`` when the vault could not be read -- which the
+ * screen says, rather than claiming nothing happened.
+ */
+export const agentActivityResponseSchema = z
+  .object({
+    status: z.enum(['ok', 'unavailable']),
+    rows: z.array(agentActivityRowResponseSchema),
+  })
+  .strict();
+
+export type AgentActivityT = z.infer<typeof agentActivityResponseSchema>;
+
 /** Durable, secret-free progress for an explicitly requested Creek allocation. */
 export const vaultActivationResponseSchema = z
   .object({

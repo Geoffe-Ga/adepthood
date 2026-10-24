@@ -5,7 +5,7 @@
  *
  * Pure functions over the row, kept out of the component so each rule is
  * tested on its own and so the activity list that renders beneath the agents
- * (#3535) can say "5 minutes ago" the same way. Every sentence comes from
+ * (#3535) says "5 minutes ago" the same way, through ``whenPhrase``. Every sentence comes from
  * ``agentsCopy``; nothing here writes copy of its own beyond joining it to a
  * number or a host.
  */
@@ -77,24 +77,35 @@ function agoPhrase(elapsedMs: number): string | null {
 }
 
 /**
- * ``Last used 2 hours ago``, ``Last used on October 1, 2026`` or ``Not used yet``.
+ * ``just now``, ``2 hours ago`` or ``on October 1, 2026``: when a moment was,
+ * relative to ``now``, or ``null`` for a moment that cannot be read.
  *
  * ``now`` is passed in, so a test pins the clock and a list renders every row
  * against the same instant. A moment in the future -- a device clock that runs
- * slow -- reads as "just now" rather than as a negative count. An unparseable
- * moment says nothing about when, rather than inventing one.
+ * slow -- reads as "just now" rather than as a negative count. Shared by the
+ * agent rows' "Last used" line and the recent-activity list (#3535).
  */
-export function lastUsedPhrase(lastUsedAt: string | null, now: number): string {
-  if (lastUsedAt === null) return AGENTS_NOT_USED_YET;
-  const moment = new Date(lastUsedAt);
+export function whenPhrase(iso: string, now: number): string | null {
+  const moment = new Date(iso);
   const at = moment.getTime();
-  if (Number.isNaN(at)) return AGENTS_LAST_USED;
+  if (Number.isNaN(at)) return null;
   const ago = agoPhrase(Math.max(0, now - at));
-  if (ago !== null) return `${AGENTS_LAST_USED} ${ago}`;
+  if (ago !== null) return ago;
   const date = moment.toLocaleDateString(undefined, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   });
-  return `${AGENTS_LAST_USED} on ${date}`;
+  return `on ${date}`;
+}
+
+/**
+ * ``Last used 2 hours ago``, ``Last used on October 1, 2026`` or ``Not used yet``.
+ *
+ * An unparseable moment says nothing about when, rather than inventing one.
+ */
+export function lastUsedPhrase(lastUsedAt: string | null, now: number): string {
+  if (lastUsedAt === null) return AGENTS_NOT_USED_YET;
+  const when = whenPhrase(lastUsedAt, now);
+  return when === null ? AGENTS_LAST_USED : `${AGENTS_LAST_USED} ${when}`;
 }

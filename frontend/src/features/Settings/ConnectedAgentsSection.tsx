@@ -26,8 +26,9 @@
  * ``GET /vault/connection``, shown with a copy control exactly when the server
  * names one; a managed vault's stays private, as its ``/v1`` address does.
  *
- * The recent-activity list (#3535) renders beneath the agent rows, inside this
- * section, and reuses ``connectedAgents.lastUsedPhrase`` for its times.
+ * The recent-activity list (#3535), ``AgentActivityList``, renders beneath the
+ * agent rows, inside this section, and says its times through the same
+ * ``connectedAgents`` helper the rows' "Last used" line does.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -39,6 +40,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
+import AgentActivityList from './AgentActivityList';
 import {
   AGENTS_ADDRESS_COPIED,
   AGENTS_ADDRESS_COPY,
@@ -388,6 +390,7 @@ const ConnectedAgentsSection = ({
       <Text style={[t.body, styles.body]}>{AGENTS_WHAT_THEY_ARE}</Text>
       {address === null ? null : <AgentAddress address={address} onCopy={controller.copyAddress} />}
       <AgentRows controller={controller} />
+      <AgentActivityList />
       <SettingsFeedbackBanner
         idPrefix="vault-agents"
         error={controller.feedback.error}
