@@ -385,6 +385,12 @@ MANIFEST: Mapping[str, ExportRule] = {
         "The anonymous registry of vault agents: what each agent said about "
         "itself when it registered. No row names an account.",
     ),
+    "oauth_refresh_token": Omitted(
+        "Digests of the refresh tokens the account's agents hold, and when each "
+        "was rotated or revoked. A credential's shadow, not a decision: the "
+        "decisions \u2014 which agents, which grants, when each was last used \u2014 are "
+        "in the vault agents collection (#3533).",
+    ),
     "passwordresettoken": Omitted(
         "Live recovery credentials. Anything that can be redeemed for a "
         "session has no business in a file that lands on a laptop.",

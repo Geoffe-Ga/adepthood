@@ -306,6 +306,12 @@ POLICY: Mapping[str, TablePolicy] = {
         "The registry of vault agents. Registration is anonymous -- an agent "
         "registers before anybody signs in -- so no row names an account.",
     ),
+    "oauth_refresh_token": _erase(
+        "user_id",
+        "Digests of the refresh tokens the account's agents hold. Each one could "
+        "be traded for an access token to the account's vault, so none may "
+        "outlive the account (#3533).",
+    ),
     "passwordresettoken": _erase(
         "user_id",
         "Outstanding recovery tokens. Erased with the account so none can be "

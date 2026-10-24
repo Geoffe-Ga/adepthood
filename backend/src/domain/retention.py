@@ -542,6 +542,12 @@ RETENTION: Mapping[str, RetentionRule] = {
         "The anonymous registry of vault agents: what each said about itself when it "
         "registered or last published its metadata. No row names an account (#3532)."
     ),
+    "oauth_refresh_token": until_account_deletion(
+        "Digests of agents' refresh tokens, each live thirty days and rotated on use; a "
+        "rotated or revoked row is kept so presenting it again is recognised as reuse "
+        "(#3533). A nightly sweep of rows past their own expiry, like revokedtoken's, "
+        "is an owner retention decision not yet taken."
+    ),
     "passwordresettoken": until_account_deletion(
         "Recovery tokens; expired ones stop working but are not swept.",
     ),

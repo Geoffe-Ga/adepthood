@@ -74,6 +74,9 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "oauth_authorization_code.code_challenge",
             "oauth_authorization_code.code_hash",
             "oauth_client.client_id",
+            # The SHA-256 of a refresh token and the UUID of its rotation family (#3533).
+            "oauth_refresh_token.family_id",
+            "oauth_refresh_token.token_hash",
             "passwordresettoken.lookup_key",
             "passwordresettoken.token_hash",
             "practicesessionspend.idem_key",
