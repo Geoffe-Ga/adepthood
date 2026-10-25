@@ -91,15 +91,11 @@ from routers.auth import get_current_user
 from services.creek_provisioning import load_vault_activation
 from services.creek_vault_client import (
     LocalFallbackCreekVaultClient,
-    build_connected_vault_client,
     build_creek_vault_client,
 )
+from services.creek_vault_stored_client import build_stored_vault_client
 from services.creek_vault_telemetry import VaultTelemetryOutcome
 from services.creek_vault_url import vault_base_url
-from services.creek_vault_url_resolution import (
-    classify_resolved_user_vault_url_off_the_pool,
-)
-from services.creek_vault_url_user import vault_url_host
 from services.journal_withdrawal_note import DetachedVault
 from services.reflection_boundary import ReflectionBoundary
 from services.user_vault_config import has_vault_config, load_vault_config
@@ -147,18 +143,6 @@ _UNREADABLE_OWNER_EVENT = (
 # and it is the most a record can safely say.
 _BINDING_UNSET = "unset"
 _BINDING_UNREADABLE = "unreadable"
-
-# What the dial-time destination refusal says, and where the value it is about
-# came from. The message names no host and no account: the host is a string a
-# stranger chose and the account did nothing wrong -- an ordinary user whose
-# vault started resolving somewhere else is not an incident, and filing them in a
-# warning stream by id would read as one. The remedy is theirs, not an
-# operator's, which is why it is phrased as one they can act on.
-_FORBIDDEN_DESTINATION_EVENT = (
-    "a connected creek vault host resolves to a destination this server must not dial; "
-    "that user gets the local fallback -- they can reconnect their vault to fix it"
-)
-_STORED_VAULT_SOURCE = "user_vault_connection"
 
 
 def _log_unowned_vault(raw_owner: str | None) -> None:
@@ -304,7 +288,8 @@ async def resolve_creek_vault_client(
     own.
 
     A connected row is re-judged before it is dialled, by
-    :func:`_stored_host_is_undialable`. Write-time refusal is not enough on its
+    :func:`~services.creek_vault_stored_client.stored_host_is_undialable`.
+    Write-time refusal is not enough on its
     own: rows predate rules, and a name that resolved publicly when it was stored
     can resolve privately by the time it is used. The re-judgement degrades to
     the local fallback rather than refusing the request, for the reason the
@@ -313,7 +298,8 @@ async def resolve_creek_vault_client(
 
     The row's two columns are read into locals before that re-judgement, and the
     order is deliberate. Re-judging ends the transaction this read opened -- see
-    :func:`_stored_host_is_undialable` for why -- and a mapped attribute read
+    :func:`~services.creek_vault_stored_client.stored_host_is_undialable` for why
+    -- and a mapped attribute read
     after a commit is a question the session may decide to answer by going back
     to the database. This factory's sessions are built with
     ``expire_on_commit=False`` and would not, so today the hoist changes nothing;
@@ -350,12 +336,7 @@ async def resolve_creek_vault_client(
         client = LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
     else:
         vault_url, api_key = connection.vault_url, connection.api_key
-        undialable = await _stored_host_is_undialable(session, vault_url)
-        client = (
-            LocalFallbackCreekVaultClient(VaultTelemetryOutcome.FALLBACK_UNCONFIGURED)
-            if undialable
-            else build_connected_vault_client(vault_url, api_key)
-        )
+        client = await build_stored_vault_client(session, vault_url, api_key)
     await session.commit()
     return client
 
@@ -367,57 +348,6 @@ async def _provisioned_connection_is_ready(
     """Keep a handed-off credential inert until Creek reports its allocation ready."""
     activation = await load_vault_activation(session, user_id)
     return activation is not None and activation.state == VaultActivationState.READY.value
-
-
-async def _stored_host_is_undialable(session: AsyncSession, vault_url: str) -> bool:
-    """Report whether this stored URL's host resolves somewhere this server must not dial.
-
-    The resolving half of the request-forgery guard, run here because this is the
-    first coroutine on the dial path and a name lookup cannot happen inside
-    :func:`~services.creek_vault_client.build_connected_vault_client`, which is
-    synchronous. That function still runs the pure half, so an address literal is
-    caught whether or not this check exists; what only this one can catch is the
-    name whose answer changed after the row was written, which is DNS rebinding
-    stated plainly.
-
-    A refusal degrades and never raises, like every other decision in this
-    module. This is a per-request dependency: a raise means the handler body
-    never executes, and the writer loses the entry they were saving to protect
-    them from a connection they never see. Their vault being misdirected must
-    cost them the optional capability and never their writing.
-
-    Counted under :attr:`~VaultTelemetryOutcome.FALLBACK_UNCONFIGURED` rather
-    than a member of its own, on the reasoning
-    :func:`~services.creek_vault_client.build_connected_vault_client` already
-    gives for its own degrade: it is true of the request -- there was no usable
-    vault behind it -- and a new member would be one the write path ordinarily
-    makes unreachable. What distinguishes this from a user who connected nothing
-    is the WARNING, which that path does not emit.
-
-    ``session`` is taken only to be given up before the lookup. This is the more
-    frequent of the two places that ask this question -- once per request for
-    every account with a stored vault, where the write path asks once per
-    reconnection -- and its caller read the connection row on the line above, so
-    the transaction is certainly open and one of fifteen pooled connections is
-    certainly checked out. Waiting on a resolver while holding it is what
-    :func:`~services.creek_vault_url_resolution.classify_resolved_user_vault_url_off_the_pool`
-    exists to prevent, and asking through that seam is the only way this module
-    can reach the verdict at all.
-    """
-    finding = await classify_resolved_user_vault_url_off_the_pool(
-        session, vault_url_host(vault_url)
-    )
-    if finding is None:
-        return False
-    logger.warning(
-        _FORBIDDEN_DESTINATION_EVENT,
-        extra={
-            "config_source": _STORED_VAULT_SOURCE,
-            "url_defect": finding.defect.value,
-            "url_detail": finding.detail,
-        },
-    )
-    return True
 
 
 def _degrade_outcome(*, vault_configured: bool) -> VaultTelemetryOutcome:

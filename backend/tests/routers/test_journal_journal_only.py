@@ -87,7 +87,9 @@ def egress(monkeypatch: pytest.MonkeyPatch) -> _EgressCounters:
         raise AssertionError(msg)
 
     monkeypatch.setattr(creek_vault_dependency, "build_creek_vault_client", _refuse_vault)
-    monkeypatch.setattr(creek_vault_dependency, "build_connected_vault_client", _refuse_vault)
+    monkeypatch.setattr(
+        "services.creek_vault_stored_client.build_connected_vault_client", _refuse_vault
+    )
     for module in _PROVIDER_MODULES:
         monkeypatch.setattr(module, "generate_response", _refuse_provider)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _refuse_http)

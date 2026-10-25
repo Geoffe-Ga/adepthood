@@ -385,6 +385,11 @@ def vault_mcp_url(vault_url: str) -> str:
     return f"{vault_base_url(vault_url).rstrip('/')}{MCP_PATH}"
 
 
+def vault_oauth_resource(vault_url: str) -> str | None:
+    """Derive the exact normalized audience accepted for one stored vault URL."""
+    return normalize_resource(vault_mcp_url(vault_url))
+
+
 async def _activation_is_ready(session: AsyncSession, user_id: int) -> bool:
     """Whether the account's managed allocation has reached ``ready``."""
     result = await session.execute(
@@ -413,7 +418,7 @@ async def account_vault_resource(session: AsyncSession, user_id: int) -> str | N
         return None
     if config.provisioned and not await _activation_is_ready(session, user_id):
         return None
-    return normalize_resource(vault_mcp_url(config.vault_url))
+    return vault_oauth_resource(config.vault_url)
 
 
 async def account_may_authorize(session: AsyncSession, user_id: int) -> bool:

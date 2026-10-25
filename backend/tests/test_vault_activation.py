@@ -1219,7 +1219,7 @@ async def test_handed_off_connection_stays_inert_until_provider_reports_ready(
         return None
 
     monkeypatch.setattr(
-        "dependencies.creek_vault.classify_resolved_user_vault_url_off_the_pool",
+        "services.creek_vault_stored_client.classify_resolved_user_vault_url_off_the_pool",
         publicly_resolved,
     )
     activation.state = "ready"

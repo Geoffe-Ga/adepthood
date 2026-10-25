@@ -24,6 +24,8 @@ _MINOR_MAX_LENGTH: Final = 16
 _MINOR: Final = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 _UNSAFE_URL_CHARACTERS: Final = re.compile(r'[\x00-\x20\x7f"\\]')
 _FIELDS: Final = frozenset({"resource", "authorization_server"})
+# Public discovery follows the producer's stricter inert-host contract; the
+# user-URL guard separately combines its smaller suffix set with live DNS admission.
 _LOCAL_SUFFIXES: Final = (
     ".localhost",
     ".local",

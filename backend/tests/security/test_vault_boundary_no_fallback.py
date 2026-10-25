@@ -44,7 +44,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from dependencies import creek_vault as creek_vault_dependencies
 from dependencies.creek_vault import (
     OWNER_ENV_VAR,
     get_creek_vault_client,
@@ -666,7 +665,7 @@ async def test_a_connection_changed_mid_reflection_is_never_dialed_or_substitute
         dialed.append(url)
         return vaults[url]
 
-    monkeypatch.setattr(creek_vault_dependencies, "build_connected_vault_client", _build)
+    monkeypatch.setattr("services.creek_vault_stored_client.build_connected_vault_client", _build)
     connect = await async_client.put(
         "/vault/connection",
         json={"vault_url": _VAULT_URL_BEFORE, "api_key": _VAULT_KEY},

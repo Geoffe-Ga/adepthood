@@ -729,9 +729,26 @@ runtime. An older allocation can already support OAuth while omitting that
 metadata; a missing address does not assert that its existing agent sign-ins
 are disabled.
 
-A fresh read observes an allocation rolled after its original handoff without
-requiring a database migration. DNS and discovery run after the owner-safe
-resolver has returned the database connection to the pool.
+Connection reads also gate Journal and import surfaces, so optional address
+discovery has its own **1-second total network budget**, covering DNS admission,
+client construction and the entire handshake. Ordinary content-call deadlines
+are unchanged. The route shares one owner-scoped config and one activation
+read; every scalar is copied before an unconditional commit, including paths
+that cannot probe or will use the cache. DNS and HTTP never hold that connection.
+
+A bounded process-local cache keeps up to **256** public address/null results,
+with **15-second positive** and **5-second negative** lifetimes. Its key is a
+framed digest of account, exact binding URL, credential, expected resource,
+issuer and activation/job identity. No raw credentials, clients or full
+handshakes remain in that cache. Current ownership, managed READY state and
+issuer are checked before every hit, so local revocation wins immediately and
+credential, binding, issuer or allocation changes require a new proof.
+
+Expired positives are never used when a new probe fails. A same-generation
+allocation rolled after its original handoff is observed once the brief cache
+expires (at most 5 seconds for an unconfirmed address), without a new handoff or
+migration. Ordinary status timestamps do not invalidate an otherwise unchanged
+binding. Caller cancellation propagates and does not become cached failure.
 
 This metadata extension is separate from content negotiation: all versioned
 content calls still declare `X-Creek-Contract-Version: 0.22`, and the discovery
