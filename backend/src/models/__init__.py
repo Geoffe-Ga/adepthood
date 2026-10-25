@@ -2,9 +2,11 @@
 
 from .account_deletion_audit import AccountDeletionAudit
 from .admin_balance_adjustment import AdminBalanceAdjustment
+from .agent_grant import AgentGrant
 from .auth_identity import AuthIdentity
 from .completion_suggestion import CompletionSuggestion
 from .content_completion import ContentCompletion
+from .corpus_classification_attempt import CorpusClassificationAttempt
 from .corpus_consent import CorpusConsentEvent
 from .corpus_fragment import CorpusFragment
 from .corpus_invitation_state import CorpusInvitationState
@@ -32,6 +34,9 @@ from .marginalia import Marginalia
 from .metta_return_arc import MettaReturnArc
 from .metta_return_habit_release import MettaReturnHabitRelease
 from .metta_return_offer_dismissal import MettaReturnOfferDismissal
+from .oauth_authorization_code import OAuthAuthorizationCode
+from .oauth_client import OAuthClient
+from .oauth_refresh_token import OAuthRefreshToken
 from .password_reset_token import PasswordResetToken
 from .practice import Practice
 from .practice_recipe import PracticeRecipe, PracticeRecipeStep
@@ -66,9 +71,11 @@ from .wallet_audit import WalletAudit
 __all__ = [
     "AccountDeletionAudit",
     "AdminBalanceAdjustment",
+    "AgentGrant",
     "AuthIdentity",
     "CompletionSuggestion",
     "ContentCompletion",
+    "CorpusClassificationAttempt",
     "CorpusConsentEvent",
     "CorpusFragment",
     "CorpusInvitationState",
@@ -97,6 +104,9 @@ __all__ = [
     "MettaReturnArc",
     "MettaReturnHabitRelease",
     "MettaReturnOfferDismissal",
+    "OAuthAuthorizationCode",
+    "OAuthClient",
+    "OAuthRefreshToken",
     "PasswordResetToken",
     "Practice",
     "PracticeRecipe",

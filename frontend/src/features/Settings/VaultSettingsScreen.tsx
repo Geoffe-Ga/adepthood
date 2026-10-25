@@ -34,6 +34,12 @@
  * **What the read found is a three-state answer.** A read that failed is not a
  * report that nothing is attached, so the screen says so and a connect made
  * from that state asks before it sends. See ``vaultConnectionState``.
+ *
+ * **Agents come last (#3534).** Below the connection, "Agents that may read
+ * your vault" lists every agent the person approved and lets them stop one;
+ * see ``ConnectedAgentsSection``. It reads its own list and is handed the
+ * connection this screen already read, so the address to give an agent comes
+ * from the same one answer.
  */
 import { ChevronDown, ChevronRight } from 'lucide-react-native';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -50,6 +56,7 @@ import {
 
 import ConfirmDialog from '../Habits/components/ConfirmDialog';
 
+import ConnectedAgentsSection from './ConnectedAgentsSection';
 import { SettingsFeedbackBanner } from './shared/SettingsFeedbackBanner';
 import {
   SETTINGS_BUTTON_PADDING,
@@ -953,11 +960,14 @@ const VaultSettingsScreen = ({
           <ActivityIndicator size="large" />
         </View>
       ) : (
-        <VaultConnectionSection
-          controller={controller}
-          navigation={navigation}
-          managedActivation={managedActivation}
-        />
+        <>
+          <VaultConnectionSection
+            controller={controller}
+            navigation={navigation}
+            managedActivation={managedActivation}
+          />
+          <ConnectedAgentsSection vault={controller.state} />
+        </>
       )}
       <VaultConfirmDialog controller={controller} />
     </ScreenScaffold>

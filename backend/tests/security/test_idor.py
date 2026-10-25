@@ -30,16 +30,22 @@ Also asserts that no owned-resource response DTO echoes ``user_id``.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
+from pathlib import Path
 
+import httpx
+import jwt
 import pytest
 from httpx import AsyncClient, Response
 from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
+from dependencies import creek_vault as creek_vault_dependencies
+from models.agent_grant import AgentGrant
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
@@ -52,11 +58,13 @@ from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.habit import Habit
-from models.journal_entry import JournalEntry
+from models.journal_entry import JournalClassification, JournalEntry
 from models.journal_withdrawal_obligation import JournalWithdrawalObligation
 from models.marginalia import Marginalia, MarginaliaKind
 from models.metta_return_arc import MettaReturnArc
 from models.metta_return_habit_release import MettaReturnHabitRelease
+from models.oauth_authorization_code import OAuthAuthorizationCode
+from models.oauth_refresh_token import OAuthRefreshToken
 from models.practice import Practice
 from models.practice_session import PracticeSession
 from models.promoted_quote import PromotedQuote
@@ -68,7 +76,11 @@ from models.user import User
 from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
 from security.idempotency import hash_idem_key
+from services.creek_vault_client import HttpCreekVaultClient
 from services.journal_retention import PURGE_MIN_RETENTION_DAYS
+from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR
+from services.vault_agent_activity_copy import ACTIVITY_SOMETHING_ELSE
+from tests.helpers import oauth as oauth_flow
 from tests.helpers.feedback_triage import (
     DRAFT_BODY,
     make_account,
@@ -82,6 +94,10 @@ from tests.helpers.feedback_triage import (
 _DEFINITELY_MISSING_ID = 999_999
 
 _JOURNAL_PROBE_MESSAGE = "A perfectly ordinary entry."
+
+# A backlog larger than one, so a stranger's zero cannot coincide with a
+# miscount of a single row.
+_SWEEP_BACKLOG = 2
 
 _HABIT_PAYLOAD: dict[str, object] = {
     "name": "Drink Water",
@@ -1563,6 +1579,41 @@ async def test_idor_voice_drafts_listing_is_scoped_to_the_caller(
 
 
 @pytest.mark.asyncio
+async def test_idor_corpus_sweep_estimate_is_scoped_to_the_caller(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Alice's backlog is not Bob's, and Bob cannot be told how much she has waiting.
+
+    The route takes no resource id -- it is keyed entirely on the bearer token
+    -- so there is no cross-user branch to spell 403 or 404, and the invariant
+    to pin is the one :func:`test_idor_corpus_invitation_is_scoped_to_the_caller`
+    pins for the invitation: the number is the caller's own. A backlog is a
+    disclosure about how much somebody has written, which is why a stranger
+    reading it as zero matters even though no row is named.
+    """
+    alice_headers, alice_id = await _signup(async_client, "alice_sweep")
+    bob_headers, _ = await _signup(async_client, "bob_sweep")
+
+    for index in range(_SWEEP_BACKLOG):
+        db_session.add(
+            JournalEntry(
+                message=f"alice writes {index}",
+                sender="user",
+                user_id=alice_id,
+                classification=JournalClassification.PERSONAL.value,
+                timestamp=datetime.now(UTC),
+            )
+        )
+    await db_session.commit()
+
+    alice_body = (await async_client.get("/corpus/sweep", headers=alice_headers)).json()
+    bob_body = (await async_client.get("/corpus/sweep", headers=bob_headers)).json()
+
+    assert alice_body["entries_pending"] == _SWEEP_BACKLOG
+    assert bob_body["entries_pending"] == 0
+
+
+@pytest.mark.asyncio
 async def test_idor_corpus_invitation_is_scoped_to_the_caller(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
@@ -2593,3 +2644,343 @@ async def test_admin_purge_rejects_non_admin_and_spares_rows(
         .execution_options(populate_existing=True)
     )
     assert remaining.scalar_one() == 1
+
+
+async def _authorization_rows(db_session: AsyncSession) -> tuple[int, int]:
+    """How many authorization codes and agent grants exist, read from storage."""
+    codes = await db_session.execute(select(func.count()).select_from(OAuthAuthorizationCode))
+    grants = await db_session.execute(select(func.count()).select_from(AgentGrant))
+    return codes.scalar_one(), grants.scalar_one()
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_authorize_refuses_another_accounts_vault_and_writes_no_code(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob cannot approve an agent for Alice's vault (#3532).
+
+    ``GET /oauth/authorize`` carries the vault in its RFC 8707 ``resource``, so
+    nothing keyed on a path sees it. A signed-in Bob naming Alice's vault MCP
+    URL -- on the bearer path and through the consent page's own sign-in form --
+    is refused with ``invalid_target`` before any consent page is drawn, with no
+    redirect, no code and no grant written, and the refusal names neither
+    vault: not on the page, not in the audit line.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_oauth")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_oauth")
+    alice_resource = await oauth_flow.connect_vault(db_session, alice_id, "alice-oauth")
+    await oauth_flow.connect_vault(db_session, bob_id, "bob-oauth")
+    client_id = await oauth_flow.register_agent(async_client)
+    params = oauth_flow.authorize_params(client_id, alice_resource)
+
+    with caplog.at_level(logging.WARNING):
+        on_bearer = await async_client.get("/oauth/authorize", params=params, headers=bob_headers)
+        on_form = await async_client.post(
+            "/oauth/authorize/sign-in",
+            data={**params, "email": "bob_oauth@example.com", "password": oauth_flow.PASSWORD},
+        )
+
+    for attack in (on_bearer, on_form):
+        assert attack.status_code == HTTPStatus.BAD_REQUEST
+        assert "invalid_target" in attack.text
+        assert "location" not in attack.headers
+        assert 'name="ticket"' not in attack.text
+        assert "alice-oauth" not in attack.text
+        assert "bob-oauth" not in attack.text
+    assert await _authorization_rows(db_session) == (0, 0)
+
+    refusals = [record for record in caplog.records if record.message == "oauth_resource_refused"]
+    assert [getattr(record, "user_id", None) for record in refusals] == [bob_id, bob_id]
+    for record in caplog.records:
+        assert "alice-oauth" not in record.getMessage()
+        assert "alice-oauth" not in str(vars(record))
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_authorize_serves_each_account_only_its_own_vault(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control: Bob naming his own vault gets his consent page and, on Approve, his code.
+
+    Without it the refusal above could pass because the endpoint refuses
+    everybody. The code row that results names Bob and Bob's vault, never Alice's.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    _alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_oauth_ok")
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_oauth_ok")
+    await oauth_flow.connect_vault(db_session, alice_id, "alice-oauth-ok")
+    bob_resource = await oauth_flow.connect_vault(db_session, bob_id, "bob-oauth-ok")
+    client_id = await oauth_flow.register_agent(async_client)
+
+    page = await async_client.get(
+        "/oauth/authorize",
+        params=oauth_flow.authorize_params(client_id, bob_resource),
+        headers=bob_headers,
+    )
+    assert page.status_code == HTTPStatus.OK
+    approved = await oauth_flow.decide(async_client, oauth_flow.ticket_from(page), "approve")
+    assert approved.status_code == HTTPStatus.SEE_OTHER
+
+    row = (await db_session.execute(select(OAuthAuthorizationCode))).scalars().one()
+    assert (row.user_id, row.resource) == (bob_id, bob_resource)
+
+
+async def _agent_tokens(db_session: AsyncSession) -> list[OAuthRefreshToken]:
+    """Every refresh token stored, read fresh from storage."""
+    result = await db_session.execute(
+        select(OAuthRefreshToken).execution_options(populate_existing=True)
+    )
+    return list(result.scalars().all())
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_token_refuses_a_code_presented_by_another_agent(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's agent cannot spend the code Alice's agent was sent (#3533).
+
+    ``POST /oauth/token`` carries ``client_id`` in its form body. The code is
+    bound to the client it was issued to, so another client presenting it --
+    even with the right PKCE verifier -- is ``invalid_grant``: no refresh token
+    is written, the code stays unspent for its rightful agent, and Alice's
+    grant is not stamped as used.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    code, alice_client, _resource, alice_id = await oauth_flow.approved_code(
+        async_client, db_session, "alice_tokens"
+    )
+    bob_client = await oauth_flow.register_agent(async_client, name="Bob's agent")
+
+    attack = await oauth_flow.exchange(
+        async_client, oauth_flow.code_exchange_form(code, bob_client)
+    )
+
+    assert attack.status_code == HTTPStatus.BAD_REQUEST
+    assert attack.json() == {"error": "invalid_grant"}
+    assert await _agent_tokens(db_session) == []
+    stored = (
+        (
+            await db_session.execute(
+                select(OAuthAuthorizationCode).execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert stored.consumed_at is None
+    grant = (
+        (
+            await db_session.execute(
+                select(AgentGrant)
+                .where(AgentGrant.user_id == alice_id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert grant.last_used_at is None
+
+    own = await oauth_flow.exchange(async_client, oauth_flow.code_exchange_form(code, alice_client))
+    assert own.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_idor_oauth_refresh_and_revoke_refuse_another_agents_token(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refresh token presented under another agent's ``client_id`` changes nothing.
+
+    Refreshing is ``invalid_grant`` and rotates nothing; revoking is the RFC
+    7009 200 that says nothing, and revokes nothing. The control: Alice's own
+    agent refreshes, and the audience it gets is Alice's vault.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    code, alice_client, alice_resource, _alice_id = await oauth_flow.approved_code(
+        async_client, db_session, "alice_refresh"
+    )
+    issued = await oauth_flow.exchange(
+        async_client, oauth_flow.code_exchange_form(code, alice_client)
+    )
+    refresh_token = issued.json()["refresh_token"]
+    bob_client = await oauth_flow.register_agent(async_client, name="Bob's agent")
+
+    refresh = await oauth_flow.exchange(
+        async_client,
+        {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": bob_client},
+    )
+    revoke = await async_client.post(
+        "/oauth/revoke", data={"token": refresh_token, "client_id": bob_client}
+    )
+
+    assert refresh.status_code == HTTPStatus.BAD_REQUEST
+    assert refresh.json() == {"error": "invalid_grant"}
+    assert revoke.status_code == HTTPStatus.OK
+    (row,) = await _agent_tokens(db_session)
+    assert (row.rotated_at, row.revoked_at) == (None, None)
+
+    own = await oauth_flow.exchange(
+        async_client,
+        {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": alice_client},
+    )
+    assert own.status_code == HTTPStatus.OK
+    claims = jwt.decode(own.json()["access_token"], options={"verify_signature": False})
+    assert claims["aud"] == alice_resource
+
+
+@pytest.mark.asyncio
+async def test_idor_revoking_another_accounts_agent_is_refused_and_changes_nothing(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob cannot stop the agent Alice approved (#3534).
+
+    ``DELETE /vault/agents/{agent_id}`` names a grant by id in its path, and the
+    account comes from the bearer alone. Bob naming Alice's grant is the same
+    404 -- status and body, byte for byte -- as naming one nobody holds, so the
+    route is no oracle for which ids exist; the probe is audited with
+    ``resource_access_denied``; and Alice's grant, its refresh token and her
+    agent's next refresh are all exactly as they were. Bob's list never shows
+    her agent either. The control: Alice's agent still refreshes afterwards.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    code, alice_client, _resource, alice_id = await oauth_flow.approved_code(
+        async_client, db_session, "alice_agents"
+    )
+    issued = await oauth_flow.exchange(
+        async_client, oauth_flow.code_exchange_form(code, alice_client)
+    )
+    refresh_token = issued.json()["refresh_token"]
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_agents")
+    await oauth_flow.connect_vault(db_session, bob_id, "bob-agents")
+    grant = (
+        (await db_session.execute(select(AgentGrant).where(AgentGrant.user_id == alice_id)))
+        .scalars()
+        .one()
+    )
+    assert grant.id is not None
+    alice_grant_id = grant.id
+    before = (grant.revoked_at, grant.last_used_at, grant.created_at, list(grant.grants))
+    absent_id = alice_grant_id + 10_000
+
+    with caplog.at_level(logging.WARNING):
+        attack = await async_client.delete(f"/vault/agents/{alice_grant_id}", headers=bob_headers)
+    missing = await async_client.delete(f"/vault/agents/{absent_id}", headers=bob_headers)
+
+    assert attack.status_code == HTTPStatus.NOT_FOUND
+    assert (attack.status_code, attack.content) == (missing.status_code, missing.content)
+    denials = [r for r in caplog.records if r.message == "resource_access_denied"]
+    assert [(getattr(r, "resource", None), getattr(r, "user_id", None)) for r in denials] == [
+        ("agent_grant", bob_id)
+    ]
+    stored = (
+        (
+            await db_session.execute(
+                select(AgentGrant)
+                .where(AgentGrant.id == alice_grant_id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .one()
+    )
+    assert (stored.revoked_at, stored.last_used_at, stored.created_at, stored.grants) == before
+    (token,) = await _agent_tokens(db_session)
+    assert token.revoked_at is None
+    assert (await async_client.get("/vault/agents", headers=bob_headers)).json() == []
+
+    refresh = await oauth_flow.exchange(
+        async_client,
+        {"grant_type": "refresh_token", "refresh_token": refresh_token, "client_id": alice_client},
+    )
+    assert refresh.status_code == HTTPStatus.OK
+
+
+#: The vendored Creek bundle, for the published handshake a scripted vault serves.
+_CREEK_BUNDLE = Path(__file__).parent.parent / "fixtures" / "creek_v1"
+
+
+async def _grant_count(db_session: AsyncSession) -> int:
+    """How many agent grants exist, read from storage."""
+    return int(
+        (await db_session.execute(select(func.count()).select_from(AgentGrant))).scalar_one()
+    )
+
+
+@pytest.mark.asyncio
+async def test_idor_agent_activity_reads_only_the_callers_own_vault_and_agents(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bob's activity is Bob's vault's, and never names Alice's agent (#3535).
+
+    ``GET /vault/agents/activity`` takes no account or agent id: the vault it
+    dials is resolved from the bearer alone, and a row's stamp is matched only
+    against the caller's own grants. So even a vault answering with a row
+    stamped by Alice's agent's client id -- the Creek-Vault#1976 shape -- shows
+    Bob "something else", not her agent's name, and the only vault dialled for
+    Bob's request is the one Bob connected. Nothing is written by the read.
+    """
+    monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
+    oauth_flow.install_signing_keys(monkeypatch)
+    alice_headers, alice_id = await oauth_flow.signup(async_client, "alice_activity")
+    alice_resource = await oauth_flow.connect_vault(db_session, alice_id, "alice-activity")
+    alice_client = await oauth_flow.register_agent(async_client, name="Alice's agent")
+    await oauth_flow.approve(async_client, alice_headers, alice_client, alice_resource)
+    bob_headers, bob_id = await oauth_flow.signup(async_client, "bob_activity")
+    await oauth_flow.connect_vault(db_session, bob_id, "bob-activity")
+    dialled: list[str] = []
+    capabilities = json.loads(
+        (_CREEK_BUNDLE / "examples" / "capabilities" / "success.json").read_bytes()
+    )
+    row = {"consumer": alice_client, "tool": "creek.draft", "at": "2026-10-24T18:02:11Z"}
+    answer = {
+        "status": "ok",
+        "tier_ceiling": "open",
+        "skipped": 0,
+        "rows": [row | {"outcome": "admitted"}],
+    }
+
+    def _vault(request: httpx.Request) -> httpx.Response:
+        dialled.append(request.url.host)
+        if request.url.path == "/v1/capabilities":
+            return httpx.Response(HTTPStatus.OK, json=capabilities)
+        return httpx.Response(HTTPStatus.OK, json=answer)
+
+    def _build(url: str, api_key: str) -> HttpCreekVaultClient:
+        return HttpCreekVaultClient(
+            url, api_key, http_client=httpx.AsyncClient(transport=httpx.MockTransport(_vault))
+        )
+
+    async def _dialable(_session: AsyncSession, _vault_url: str) -> bool:
+        return False
+
+    monkeypatch.setattr(creek_vault_dependencies, "build_connected_vault_client", _build)
+    monkeypatch.setattr(creek_vault_dependencies, "_stored_host_is_undialable", _dialable)
+    grants_before = await _grant_count(db_session)
+
+    response = await async_client.get("/vault/agents/activity", headers=bob_headers)
+
+    assert response.status_code == HTTPStatus.OK
+    (shown,) = response.json()["rows"]
+    assert shown["agent"] == ACTIVITY_SOMETHING_ELSE
+    assert "Alice" not in response.text
+    assert alice_client not in response.text
+    assert set(dialled) == {"v-bob-activity.vaults.example"}
+    assert await _grant_count(db_session) == grants_before

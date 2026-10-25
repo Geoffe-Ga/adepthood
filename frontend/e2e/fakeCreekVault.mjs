@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
  * would prove the routing and assume the protocol, and the protocol is the half
  * only a live server can exercise.
  *
- * **It advertises seven capabilities and no more.** The upload journey needs
+ * **It advertises eight capabilities and no more.** The upload journey needs
  * `capabilities` and `upload`; the withdrawal journey needs `journal-upsert`,
  * `journal-withdraw`, `voice-drafts`, `reflections` and `letters` -- the bound
  * owner is vault-bound (#3061), so its resonance pass and its first letter are
@@ -44,6 +44,16 @@ import { fileURLToPath } from 'node:url';
  * `GET /__lane/letter-care-escalation` hands a journey that same cell, so it can
  * prove none of Creek's prose reached the writer without reading backend files.
  *
+ * `GET /v1/agent-activity` (contract 0.22, #3535) answers Creek's published
+ * `AgentActivityResponse` from an audit log this process keeps. The lane has no
+ * `/mcp` surface, so no agent can call this vault; a journey stands in for the
+ * calls one would have made with `POST /__lane/record-agent-call` (a consumer
+ * stamp, a tool name and an outcome -- the four audited fields, `at` stamped
+ * here) and can arm one off-schema answer with `POST /__lane/leak-next-activity`,
+ * which adds an argument summary and prose to the next answer exactly as a
+ * vault breaking the content-free promise would. Neither is ever recorded in
+ * the ledger: they are reads of the audit, not traffic adepthood sent.
+ *
  * `GET /__lane/uploads` reports what actually arrived: every `/v1` request in
  * order, and the fragments the ledger holds. Requests are recorded by shape and
  * by a digest of the bytes, never by the bytes -- which is what lets a spec
@@ -65,15 +75,15 @@ const HTTP_SERVICE_UNAVAILABLE = 503;
 const ADEPTHOOD_DELETE_ATTEMPTS = 3;
 
 /** The contract this vault serves, and the minor a caller must declare to use it. */
-const CONTRACT_VERSION = '0.18.0';
-const CONTRACT_MINOR = '0.18';
+const CONTRACT_VERSION = '0.22.0';
+const CONTRACT_MINOR = '0.22';
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
 
 /**
  * Everything this vault says it can do.
  *
- * Seven names, and the shortness is the safety property rather than an economy:
+ * Eight names, and the shortness is the safety property rather than an economy:
  * adepthood consults this list before every capability call, so a name added
  * here is a new class of traffic aimed at this process from journeys that have
  * nothing to do with seeding.
@@ -86,6 +96,7 @@ const ADVERTISED_CAPABILITIES = [
   'voice-drafts',
   'reflections',
   'letters',
+  'agent-activity',
 ];
 
 /** The only two tiers `/v1` can express; anything else is not a tier, it is a leak. */
@@ -125,6 +136,23 @@ const VOICE_DRAFT_TITLE = 'Voice draft';
 
 const ONTOLOGY_VERSION = 'aptitude-wavelength/2026-05-23';
 
+/**
+ * The audit log `GET /v1/agent-activity` projects, oldest first, as Creek's
+ * chain is: each entry exactly `{consumer, tool, at, outcome}`.
+ */
+const auditLog = [];
+/** One answer a journey armed to carry more than the four published fields. */
+let activityLeakArmed = false;
+/** The published bounds on `limit` (`AgentActivityQuery`), and its default. */
+const ACTIVITY_MIN_LIMIT = 1;
+const ACTIVITY_MAX_LIMIT = 200;
+const ACTIVITY_DEFAULT_LIMIT = 50;
+/** The only outcomes the closed enum names. */
+const ACTIVITY_OUTCOMES = ['admitted', 'refused'];
+/** What an off-schema answer smuggles: the shape of an argument summary. */
+const LEAKED_PROSE = 'The lane vault leaked this sentence.';
+const HTTP_UNPROCESSABLE = 422;
+
 /** Every `/v1` request served, in arrival order, by shape and digest only. */
 const received = [];
 
@@ -142,8 +170,8 @@ let letterEscalationArmed = false;
 /**
  * A journey can model a managed vault (Creek-Vault ADR-0015, #3437): one that lists
  * the vendors whose writer key it will spend in `request_key_providers`. Off by
- * default, so every other journey sees a self-connected vault, which at contract
- * 0.18 lists none and is never sent a key.
+ * default, so every other journey sees a self-connected vault, which (since contract
+ * 0.18) lists none and is never sent a key.
  */
 let requestKeysAdvertised = false;
 /** The vendors a managed Creek vault spends a writer's own key for. */
@@ -520,11 +548,71 @@ async function reflect(request, response) {
   });
 }
 
+/** `limit` from a query admitting nothing else, or `null` when Creek would refuse it. */
+function activityLimit(url) {
+  const names = [...url.searchParams.keys()];
+  if (names.some((name) => name !== 'limit') || names.length > 1) return null;
+  const raw = url.searchParams.get('limit');
+  if (raw === null) return ACTIVITY_DEFAULT_LIMIT;
+  const limit = Number(raw);
+  if (!Number.isInteger(limit) || limit < ACTIVITY_MIN_LIMIT) return null;
+  return Math.min(limit, ACTIVITY_MAX_LIMIT);
+}
+
+/** Creek's content-free projection of this vault's audit log, newest first. */
+function agentActivity(request, response, url) {
+  if (!hasContract(request, response)) return;
+  request.resume();
+  const limit = activityLimit(url);
+  if (limit === null) {
+    refuse(response, HTTP_UNPROCESSABLE, 'invalid_request');
+    return;
+  }
+  const rows = auditLog.slice(-limit).reverse();
+  const answer = { status: 'ok', tier_ceiling: 'open', skipped: 0, rows };
+  if (activityLeakArmed) {
+    activityLeakArmed = false;
+    send(response, HTTP_OK, {
+      ...answer,
+      note: LEAKED_PROSE,
+      rows: rows.map((row) => ({ ...row, args_summary: { topic: LEAKED_PROSE } })),
+    });
+    return;
+  }
+  send(response, HTTP_OK, answer);
+}
+
+/** Append one call to the audit log, as the vault's MCP adapter would have. */
+async function recordAgentCall(request, response) {
+  const body = await readJson(request);
+  if (
+    typeof body?.consumer !== 'string' ||
+    typeof body.tool !== 'string' ||
+    !ACTIVITY_OUTCOMES.includes(body.outcome)
+  ) {
+    refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
+    return;
+  }
+  const at = new Date();
+  at.setMilliseconds(0);
+  auditLog.push({
+    consumer: body.consumer,
+    tool: body.tool,
+    at: at.toISOString().replace('.000Z', 'Z'),
+    outcome: body.outcome,
+  });
+  send(response, HTTP_OK, { status: 'ok' });
+}
+
 /** Serve one authorised `/v1` call, or say this vault has no such route. */
 async function capability(request, response, pathname) {
   if (request.method === 'GET' && pathname === '/v1/capabilities') {
     received.push({ method: 'GET', path: pathname, externalId: null, tier: null, digest: null });
     capabilities(response);
+    return;
+  }
+  if (request.method === 'GET' && pathname === '/v1/agent-activity') {
+    agentActivity(request, response, new URL(request.url ?? '/', 'http://localhost'));
     return;
   }
   if (request.method === 'POST' && pathname === '/v1/uploads') {
@@ -619,6 +707,16 @@ const server = createServer((request, response) => {
     if (request.method === 'POST' && pathname === '/__lane/fail-next-voice-draft-delete') {
       request.resume();
       voiceDraftDeleteFailuresRemaining = ADEPTHOOD_DELETE_ATTEMPTS;
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/record-agent-call') {
+      await recordAgentCall(request, response);
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/leak-next-activity') {
+      request.resume();
+      activityLeakArmed = true;
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }

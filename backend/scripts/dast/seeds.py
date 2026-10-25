@@ -40,6 +40,9 @@ Everything here is pure. The requests themselves belong to the runner.
 
 from __future__ import annotations
 
+import enum
+import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -116,6 +119,29 @@ _REPLAY_NAME = "dast replay"
 _HIERARCHICAL_REFLECTION = "hierarchical_reflection"
 
 
+class IdSource(enum.Enum):
+    """Where a create response carries the value the next step needs.
+
+    Almost every create answers JSON, and ``JSON`` reads it through
+    ``id_pointer``. The other two exist for the one object that cannot be made
+    that way: an agent grant (#3534) is written only by a person pressing
+    Approve on the consent page (#3532), so its seed walks the page a browser
+    walks -- the ticket is read out of the rendered form, and the approval is
+    read off the redirect back to the agent.
+    """
+
+    JSON = "json"
+    BODY_TEXT = "body_text"
+    LOCATION = "location"
+
+
+# A redirect: what the consent decision answers, and the only non-2xx a seed
+# may count as success.
+_REDIRECT_FLOOR = 300
+_REDIRECT_CEILING = 400
+_SUCCESS_FLOOR = 200
+
+
 @dataclass(frozen=True)
 class SeedSpec:
     """How to create one object of the kind a path parameter names.
@@ -126,10 +152,16 @@ class SeedSpec:
         payload: The request body, whose string values may interpolate an
             earlier seed or ``{unique}``.
         id_pointer: How to read the new object's id out of the response, e.g.
-            ``("id",)`` or ``("goals", 0, "id")``.
+            ``("id",)`` or ``("goals", 0, "id")``. Read only for an
+            ``IdSource.JSON`` spec.
         depends_on: Parameters that must be seeded first. Every parameter the
             create path interpolates has to appear here, or the ordering would
             be luck.
+        form_encoded: Send the payload as ``application/x-www-form-urlencoded``
+            rather than JSON, as an HTML form does.
+        id_source: Where the response carries the value; see :class:`IdSource`.
+        id_pattern: For a text or redirect source, the regular expression whose
+            first group is the value.
     """
 
     create_method: str
@@ -137,6 +169,35 @@ class SeedSpec:
     payload: Mapping[str, object]
     id_pointer: tuple[str | int, ...]
     depends_on: tuple[str, ...] = ()
+    form_encoded: bool = False
+    id_source: IdSource = IdSource.JSON
+    id_pattern: str | None = None
+
+
+# --- an agent grant, the way a person makes one (#3534) ----------------------
+#
+# Five steps, each one ordinary request: connect a vault, register an agent,
+# open its consent page, press Approve, and read the grant back off the list
+# Settings renders. The vault is an address literal, so connecting it stores the
+# address without a lookup; the agent is a public client returning to this
+# computer, which the consent page admits on any port.
+
+_AGENT_VAULT_URL = "https://1.1.1.1"
+_AGENT_REDIRECT = "http://127.0.0.1/callback"
+# RFC 7636 appendix B's published S256 challenge. Only its shape matters here:
+# the matrix never exchanges the code it is sent.
+_AGENT_CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"  # pragma: allowlist secret
+_AGENT_AUTHORIZE_PATH = (
+    "/oauth/authorize?response_type=code&client_id={agent_client}"
+    f"&redirect_uri={_AGENT_REDIRECT}&code_challenge={_AGENT_CHALLENGE}"
+    "&code_challenge_method=S256&state=dast&scope=vault:read"
+    "&resource={agent_vault}"
+)
+_CONSENT_TICKET = r'name="ticket" value="([^"]+)"'
+_AUTHORIZATION_CODE = r"[?&]code=([^&]+)"
+# A public client authenticates with nothing (RFC 7591 ``none``); named so the
+# registration body reads as the method it is rather than as a literal secret.
+_PUBLIC_CLIENT_AUTH = "none"
 
 
 SEED_REGISTRY: Mapping[str, SeedSpec] = MappingProxyType(
@@ -253,6 +314,59 @@ SEED_REGISTRY: Mapping[str, SeedSpec] = MappingProxyType(
             payload={"anchor_start": 0, "anchor_end": 4},
             id_pointer=("id",),
             depends_on=("entry_id",),
+        ),
+        # The steps an agent grant is made by (see the block above SeedSpec).
+        # Only the last is named by a path parameter; the four before it are
+        # reached through ``depends_on``, which is how each earns its keep.
+        "agent_vault": SeedSpec(
+            create_method="PUT",
+            create_path="/vault/connection",
+            # A throwaway per-cell value the vault is never dialled with.
+            payload={
+                "vault_url": _AGENT_VAULT_URL,
+                "api_key": "dast-vault-{unique}",  # pragma: allowlist secret
+            },
+            id_pointer=("mcp_address",),
+        ),
+        "agent_client": SeedSpec(
+            create_method="POST",
+            create_path="/oauth/register",
+            payload={
+                "client_name": "DAST agent {unique}",
+                "redirect_uris": [_AGENT_REDIRECT],
+                "grant_types": ["authorization_code", "refresh_token"],
+                "response_types": ["code"],
+                "token_endpoint_auth_method": _PUBLIC_CLIENT_AUTH,
+            },
+            id_pointer=("client_id",),
+        ),
+        "agent_consent_ticket": SeedSpec(
+            create_method="GET",
+            create_path=_AGENT_AUTHORIZE_PATH,
+            payload={},
+            id_pointer=(),
+            depends_on=("agent_client", "agent_vault"),
+            id_source=IdSource.BODY_TEXT,
+            id_pattern=_CONSENT_TICKET,
+        ),
+        "agent_approval": SeedSpec(
+            create_method="POST",
+            create_path="/oauth/authorize/decision",
+            payload={"ticket": "{agent_consent_ticket}", "decision": "approve"},
+            id_pointer=(),
+            depends_on=("agent_consent_ticket",),
+            form_encoded=True,
+            id_source=IdSource.LOCATION,
+            id_pattern=_AUTHORIZATION_CODE,
+        ),
+        # Newest approval first, and every cell approves a fresh agent, so the
+        # head of the list is the grant this cell just made.
+        "agent_id": SeedSpec(
+            create_method="GET",
+            create_path="/vault/agents",
+            payload={},
+            id_pointer=(0, "id"),
+            depends_on=("agent_approval",),
         ),
         "practice_session_id": SeedSpec(
             create_method="POST",
@@ -489,6 +603,65 @@ def resolve_id(body: object, pointer: Sequence[str | int]) -> str | None:
         if current is None:
             return None
     return str(current)
+
+
+def create_bodies(
+    spec: SeedSpec, values: Mapping[str, object]
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    """Render a create request's body as ``(json, form)``, at most one of them set.
+
+    Args:
+        spec: The seed strategy being run.
+        values: The seeded ids of this cell plus ``unique``.
+
+    Returns:
+        The rendered body in the slot ``spec`` sends it in -- JSON for every
+        create but a form an HTML page would post -- and ``None`` in the other.
+    """
+    body = create_body(spec, values)
+    if spec.form_encoded:
+        return None, body
+    return body, None
+
+
+def seed_succeeded(spec: SeedSpec, status: int) -> bool:
+    """Report whether a create answered the way ``spec`` expects a success to look.
+
+    A 2xx for every spec but one read off a redirect, which must be a 3xx: the
+    consent decision answers by sending the browser back to the agent, and a
+    2xx there would be a page saying the request stopped.
+    """
+    if spec.id_source is IdSource.LOCATION:
+        return _REDIRECT_FLOOR <= status < _REDIRECT_CEILING
+    return _SUCCESS_FLOOR <= status < _REDIRECT_FLOOR
+
+
+def _json_or_none(text: str) -> object | None:
+    """Parse ``text`` as JSON, or return ``None`` for a body that is not."""
+    try:
+        parsed: object = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed
+
+
+def read_seed_id(spec: SeedSpec, *, text: str, location: str | None) -> str | None:
+    """Read the value a create produced, from wherever ``spec`` says it is.
+
+    Args:
+        spec: The seed strategy that was run.
+        text: The response body as text.
+        location: The ``Location`` header, if the response carried one.
+
+    Returns:
+        The value as text, or ``None`` when the response does not hold it -- the
+        same "unseedable, not fatal" answer :func:`resolve_id` gives.
+    """
+    if spec.id_source is IdSource.JSON:
+        return resolve_id(_json_or_none(text), spec.id_pointer)
+    haystack = text if spec.id_source is IdSource.BODY_TEXT else location or ""
+    match = re.search(spec.id_pattern, haystack) if spec.id_pattern else None
+    return match.group(1) if match else None
 
 
 def replay_body(

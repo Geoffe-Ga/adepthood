@@ -40,6 +40,7 @@ from domain.creek_vault import (
     CreekVaultContractError,
     CreekVaultError,
     CreekVaultPayloadError,
+    CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
     HandshakeResult,
     VaultErrorCode,
@@ -2007,8 +2008,8 @@ async def test_ingest_connect_failure_raises_unavailable(
         ),
         pytest.param(
             _IngestReply(status=HTTPStatus.TOO_MANY_REQUESTS, payload={"detail": "slow down"}),
-            CreekVaultUnavailableError,
-            id="uncoded_429_is_throttling",
+            CreekVaultRateLimitedError,
+            id="uncoded_429_is_a_wait",
         ),
         pytest.param(
             _IngestReply(status=HTTPStatus.INTERNAL_SERVER_ERROR, payload={"detail": "boom"}),
@@ -2033,7 +2034,17 @@ async def test_ingest_classifies_an_uncoded_status_by_class(
     expected: type[CreekVaultError],
     http_clients: ClientFactory,
 ) -> None:
-    """Uncoded, a 4xx is our contract fault -- except the two that describe the vault."""
+    """Uncoded, a 4xx is our contract fault -- except the two that describe the vault.
+
+    The ``type(...) is expected`` identity is what makes the 429 row a claim
+    rather than a tautology: that status is narrowed to
+    :class:`CreekVaultRateLimitedError`, a *subclass* of the unavailable type
+    (Creek-Vault#1903 step 6), so an assertion by ``isinstance`` would have
+    passed before and after the narrowing, and one naming the parent would pass
+    for a classifier that had stopped narrowing at all. Every other row asserts,
+    by the same identity, that the narrowing did **not** reach it: a 408 and a
+    500 are still plain absences, because waiting is not what clears them.
+    """
     client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
     with pytest.raises(expected) as exc_info:
         await client.ingest(_ingest_request())
@@ -3211,6 +3222,24 @@ async def _drive_ingest_unavailable(
         await client.ingest(_ingest_request())
 
 
+async def _drive_ingest_rate_limited(
+    http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Drive a cap, which is a wait rather than a call that will never land.
+
+    On ``ingest`` rather than on a model-backed route, and deliberately so: the
+    classification narrows *any* ``429`` on any ``/v1`` call, so a cap shed by
+    an intermediary in front of a route that wakes no model is a real path to
+    this counter and the cheapest one to drive. The vault's own model-call cap
+    reaching a reflection or a letter is the same exception by the same
+    chokepoint -- ``test_creek_vault_rate_limited.py`` drives those two.
+    """
+    reply = _IngestReply(status=HTTPStatus.TOO_MANY_REQUESTS, payload={"detail": "capped"})
+    client = await _handshaken_client(_VaultRouteHandler([reply]), http_clients)
+    with pytest.raises(CreekVaultRateLimitedError):
+        await client.ingest(_ingest_request())
+
+
 async def _drive_ingest_auth_failed(
     http_clients: ClientFactory, _monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3325,6 +3354,11 @@ _OUTCOME_DRIVERS: tuple[tuple[VaultTelemetryOutcome, CreekCapability, OutcomeDri
         _drive_ingest_contract_failure,
     ),
     (VaultTelemetryOutcome.TIMEOUT, CreekCapability.JOURNAL, _drive_ingest_timeout),
+    (
+        VaultTelemetryOutcome.RATE_LIMITED,
+        CreekCapability.JOURNAL,
+        _drive_ingest_rate_limited,
+    ),
     (VaultTelemetryOutcome.REFUSED, CreekCapability.REFLECT, _drive_reflect_refused),
     (VaultTelemetryOutcome.ESCALATED, CreekCapability.REFLECT, _drive_reflect_escalated),
     (

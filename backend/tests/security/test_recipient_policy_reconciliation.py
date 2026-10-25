@@ -38,6 +38,7 @@ EXPECTED_LEAD_INS = frozenset(
         "Sentry",
         "An email relay (Resend, or the deployment's own mail server)",
         "Google and Apple",
+        "An agent you connect to your vault",
     }
 )
 

@@ -198,6 +198,67 @@
         "title": "AdminUserSummary",
         "type": "object"
       },
+      "AgentActivityResponse": {
+        "additionalProperties": false,
+        "description": "The most recent calls, newest first, or why there is nothing to show.",
+        "properties": {
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/AgentActivityRowResponse"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentActivityStatus"
+          }
+        },
+        "required": [
+          "status",
+          "rows"
+        ],
+        "title": "AgentActivityResponse",
+        "type": "object"
+      },
+      "AgentActivityRowResponse": {
+        "additionalProperties": false,
+        "description": "One call against the vault: who, what, when and whether.",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/VaultAgentActivityOutcome"
+          },
+          "tool_label": {
+            "title": "Tool Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent",
+          "tool_label",
+          "at",
+          "outcome"
+        ],
+        "title": "AgentActivityRowResponse",
+        "type": "object"
+      },
+      "AgentActivityStatus": {
+        "description": "Whether the vault's activity could be read at all.",
+        "enum": [
+          "ok",
+          "unavailable"
+        ],
+        "title": "AgentActivityStatus",
+        "type": "string"
+      },
       "AppleOAuthRequest": {
         "description": "Apple sign-in payload -- the shared shape plus the one-shot ``full_name``.\n\nApple never puts the name in the token.  It is handed to the client once,\nduring the very first authorization, and never sent again -- so the client\nforwards it here or it is lost.  That also makes it the one field on this\nroute the provider has *not* vouched for, which is why the ladder consults\nit only when creating a brand-new row: a later request carrying a different\nname can never relabel an account that already exists.\n\nBlank (or whitespace-only) means \"no name\", not an empty name, so the\ncolumn stays ``NULL`` and every reader's fallback keeps working.  The\nlength bound matches the column's, so an over-long name is a 422 here\nrather than a truncating write or a 500 from mid-transaction.",
         "properties": {
@@ -704,6 +765,149 @@
         "title": "CheckInResult",
         "type": "object"
       },
+      "ClientRegistrationRequest": {
+        "description": "What an agent says about itself: RFC 7591 client metadata, the fields read here.",
+        "properties": {
+          "client_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Name"
+          },
+          "grant_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grant Types"
+          },
+          "logo_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Uri"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redirect Uris",
+            "type": "array"
+          },
+          "response_types": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Types"
+          },
+          "token_endpoint_auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Endpoint Auth Method"
+          }
+        },
+        "required": [
+          "redirect_uris"
+        ],
+        "title": "ClientRegistrationRequest",
+        "type": "object"
+      },
+      "ClientRegistrationResponse": {
+        "description": "The registered client, as RFC 7591 section 3.2.1 returns it. No secret.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "client_id_issued_at": {
+            "title": "Client Id Issued At",
+            "type": "integer"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "grant_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grant Types",
+            "type": "array"
+          },
+          "logo_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Uri"
+          },
+          "redirect_uris": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redirect Uris",
+            "type": "array"
+          },
+          "response_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Response Types",
+            "type": "array"
+          },
+          "token_endpoint_auth_method": {
+            "title": "Token Endpoint Auth Method",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_id",
+          "client_id_issued_at",
+          "client_name",
+          "redirect_uris",
+          "logo_uri",
+          "grant_types",
+          "response_types",
+          "token_endpoint_auth_method"
+        ],
+        "title": "ClientRegistrationResponse",
+        "type": "object"
+      },
       "CompletionDetectionResponse": {
         "description": "New offers from an entry-only completion check.\n\n``checked`` distinguishes a successful check with no matches from a\nbest-effort provider failure. This lets the journal explain honestly what\nstill happened when literary resonance itself could not be generated.",
         "properties": {
@@ -885,6 +1089,71 @@
         ],
         "title": "CompletionTargetType",
         "type": "string"
+      },
+      "ConnectedAgentResponse": {
+        "description": "One agent this account has approved and not revoked.\n\n``name`` is the agent's own word for itself, unverified, and ``None`` when it\ngave none -- the screen says so in its own words rather than showing a\nblank. ``last_used_at`` is stamped by the token endpoint on every code\nexchange and refresh (#3533), so it moves roughly every ten minutes while an\nagent is working, not on every call it makes to the vault; ``None`` means it\nhas not signed in since it was approved. ``redirect_host`` is the host of the\nfirst redirect the agent registered -- ``127.0.0.1`` for a program on the\nperson's own computer, a site's name for a hosted connector -- or ``None`` if\nnone can be read.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "grants": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grants",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "redirect_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Host"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "grants",
+          "created_at",
+          "last_used_at",
+          "redirect_host"
+        ],
+        "title": "ConnectedAgentResponse",
+        "type": "object"
       },
       "ContentBodyResponse": {
         "description": "Raw Markdown body + metadata for native in-app rendering.\n\nIssue #393 replaced the legacy CMS proxy fields: ``body_html`` and\nthe \"Open original\" ``url`` are gone; ``body_markdown`` is vendored\nMarkdown served verbatim from local content (no server-side\nrendering), and ``content_type`` lets the reader pick a layout.  The\nfrontend Markdown renderer lands in the follow-up issue (#394).\n``title`` comes from the manifest; the client should prefer it over\n``ContentItemResponse.title``, which is what the backend seeded.",
@@ -1146,6 +1415,21 @@
         ],
         "title": "CorpusSource",
         "type": "string"
+      },
+      "CorpusSweepEstimateResponse": {
+        "description": "How much of this account's own writing is still without a fragment.\n\nA count, and deliberately nothing else. Nothing from any entry, for the\nreason :class:`CorpusConsentResponse` gives about the audit log: an account\nis entitled to know how much of its writing is waiting, and a surface that\ncould render the writing itself would be describing egress this read does\nnot perform.\n\nNo price either, because sorting has none: every path that ontologizes an\nentry is free, and the consent screen says so. What bounds the provider\nbill is a per-account ceiling on server-paid classifications, not a charge\nsomebody is quoted here.",
+        "properties": {
+          "entries_pending": {
+            "minimum": 0.0,
+            "title": "Entries Pending",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "entries_pending"
+        ],
+        "title": "CorpusSweepEstimateResponse",
+        "type": "object"
       },
       "CountUpConfig": {
         "additionalProperties": false,
@@ -4371,6 +4655,23 @@
         "title": "JournalTag",
         "type": "string"
       },
+      "JsonWebKeySet": {
+        "description": "The key set the vault verifies agent tokens with, newest key first.",
+        "properties": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/PublicJsonWebKey"
+            },
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "keys"
+        ],
+        "title": "JsonWebKeySet",
+        "type": "object"
+      },
       "LicenseBindingSummary": {
         "description": "One redeemed licence: which Gumroad sale this account holds, and since when.\n\nIds only. The binding is the answer to \"is this key spent, and by whom?\" —\nthe raw licence key is never stored, so there is nothing else to show.",
         "properties": {
@@ -5041,6 +5342,31 @@
           "title"
         ],
         "title": "NextUnreadResponse",
+        "type": "object"
+      },
+      "OAuthErrorResponse": {
+        "description": "An RFC 6749 / RFC 7591 error body: a code a client switches on, and a sentence.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "error_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Description"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "OAuthErrorResponse",
         "type": "object"
       },
       "OperationSource": {
@@ -6477,7 +6803,7 @@
         "type": "object"
       },
       "PromptListResponse": {
-        "description": "Paginated list of prompt responses; ``total`` is ``None`` when not requested.",
+        "description": "Prompt history, optionally including unanswered weeks; total is nullable.",
         "properties": {
           "has_more": {
             "title": "Has More",
@@ -6588,6 +6914,50 @@
           "receipt_version"
         ],
         "title": "ProvenanceReceipt",
+        "type": "object"
+      },
+      "PublicJsonWebKey": {
+        "description": "One P-256 public key as RFC 7517 / RFC 7518 section 6.2.1 publish it. No private part.",
+        "properties": {
+          "alg": {
+            "title": "Alg",
+            "type": "string"
+          },
+          "crv": {
+            "title": "Crv",
+            "type": "string"
+          },
+          "kid": {
+            "title": "Kid",
+            "type": "string"
+          },
+          "kty": {
+            "title": "Kty",
+            "type": "string"
+          },
+          "use": {
+            "title": "Use",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "string"
+          },
+          "y": {
+            "title": "Y",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kty",
+          "crv",
+          "x",
+          "y",
+          "kid",
+          "alg",
+          "use"
+        ],
+        "title": "PublicJsonWebKey",
         "type": "object"
       },
       "RandomIntervalBellConfig": {
@@ -8482,6 +8852,40 @@
         "title": "TimezoneUpdate",
         "type": "object"
       },
+      "TokenResponse": {
+        "description": "A successful token response, RFC 6749 section 5.1, with the scope always stated.",
+        "properties": {
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "token_type": {
+            "title": "Token Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "refresh_token",
+          "scope"
+        ],
+        "title": "TokenResponse",
+        "type": "object"
+      },
       "TranscribePageRequest": {
         "description": "One captured image of text (a page, screenshot, or screen) to transcribe.\n\n``image_base64`` is the base64-encoded image bytes and ``media_type`` its\ndeclared MIME type. ``classification`` is the tier of the entry the page\nbelongs to, judged before anything else. No field is stored: the request\nis stateless, so the bytes live only for the duration of the single vision\ncall.",
         "properties": {
@@ -9380,6 +9784,15 @@
         "title": "VaultActivationResponse",
         "type": "object"
       },
+      "VaultAgentActivityOutcome": {
+        "description": "Whether one call against the vault got past its pre-dispatch gates.\n\nCreek's closed two-member enum, mirrored. ``ADMITTED`` means \"dispatched to\nthe tool\" and nothing more: the audit chain logs the attempt before a tool\nresolves its target and never the result, so it cannot say whether content\ncame back, and neither can anything built on it. ``REFUSED`` is a refusal\nbefore any tool ran -- a tool outside the agent's profile, or a ceiling\nabove ``personal``.",
+        "enum": [
+          "admitted",
+          "refused"
+        ],
+        "title": "VaultAgentActivityOutcome",
+        "type": "string"
+      },
       "VaultConnectionRequest": {
         "description": "Where a user's own vault lives and the credential that opens it.\n\n``api_key`` is write-only by construction: it exists on this request and on\nno response, so there is no code path that could return it and no reviewer\nwho has to check that none does.",
         "properties": {
@@ -9402,11 +9815,22 @@
         "type": "object"
       },
       "VaultConnectionResponse": {
-        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.",
+        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.\n\n``mcp_address`` is the address a person gives an agent they run elsewhere\n(#3534): the vault's MCP URL, which is also the audience every agent token\nfor this vault names. It follows ``vault_url``'s rule exactly -- ``None``\nwhen nothing is connected and ``None`` for a managed vault, whose address\nstays private; the agent's own sign-in flow, or a connector's listing,\nsupplies it there.",
         "properties": {
           "connected": {
             "title": "Connected",
             "type": "boolean"
+          },
+          "mcp_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mcp Address"
           },
           "vault_url": {
             "anyOf": [
@@ -9422,7 +9846,8 @@
         },
         "required": [
           "connected",
-          "vault_url"
+          "vault_url",
+          "mcp_address"
         ],
         "title": "VaultConnectionResponse",
         "type": "object"
@@ -9827,6 +10252,188 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/.well-known/jwks.json": {
+      "get": {
+        "description": "Publish the public halves of every configured signing key, newest first.",
+        "operationId": "json_web_key_set__well_known_jwks_json_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JsonWebKeySet"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Json Web Key Set",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "description": "Publish RFC 8414 metadata for this authorization server.",
+        "operationId": "authorization_server_metadata_document__well_known_oauth_authorization_server_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Authorization Server Metadata Document",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
     "/admin/capabilities": {
       "get": {
         "description": "Confirm the caller is an administrator, and say what they may use.\n\nThe client's only source of admin knowledge: a 200 here reveals the inbox,\nand a 401 or 403 hides it. No client ever infers the role from a token.",
@@ -13856,6 +14463,126 @@
           }
         },
         "summary": "Put Corpus Invitation",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/corpus/sweep": {
+      "get": {
+        "description": "Report how much of this account's writing is still unsorted.\n\nA sweep is bounded, so an account with a backlog finishes it by asking\nagain -- and asking again is only a decision somebody can make if they can\nsee what is left. This is the read that makes the remainder visible.\n\nNever a 404 and never an error state, the contract\n:func:`get_voice_readiness` keeps: an account that has written nothing is\ntold zero, which is the most common answer rather than a missing resource.\nConsent is deliberately *not* required -- granting it runs a sweep, so this\nnumber is exactly what a prospective yes would reach, and withholding it\nuntil after the yes would put the disclosure after the decision.\n\nThe account comes from the token, so no request can read anyone else's\nbacklog. One indexed count, no commit, and no provider call.",
+        "operationId": "get_corpus_sweep_estimate_corpus_sweep_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorpusSweepEstimateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body is past a declared ceiling."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Get Corpus Sweep Estimate",
         "tags": [
           "corpus"
         ]
@@ -22054,6 +22781,921 @@
         ]
       }
     },
+    "/oauth/authorize": {
+      "get": {
+        "description": "Check an authorization request and show the person what it asks for.\n\n``query`` declares the parameters for the published schema; the handler\nreads the raw query so a parameter sent twice is refused rather than\nsilently resolved to one of its values.",
+        "operationId": "authorize_oauth_authorize_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "response_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Response Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "client_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "redirect_uri",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Redirect Uri"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code_challenge",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code Challenge"
+            }
+          },
+          {
+            "in": "query",
+            "name": "code_challenge_method",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code Challenge Method"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The page."
+          },
+          "303": {
+            "description": "Back to the agent with a code or an error."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Authorize",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/oauth/authorize/decision": {
+      "post": {
+        "description": "Act on Approve or Decline for the request the consent ticket carries.",
+        "operationId": "authorize_decision_oauth_authorize_decision_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The page."
+          },
+          "303": {
+            "description": "Back to the agent with a code or an error."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Authorize Decision",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/oauth/authorize/sign-in": {
+      "post": {
+        "description": "Sign the person in on the consent page, then show them the decision.",
+        "operationId": "authorize_sign_in_oauth_authorize_sign_in_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The page."
+          },
+          "303": {
+            "description": "Back to the agent with a code or an error."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Authorize Sign In",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/oauth/consent.css": {
+      "get": {
+        "description": "Serve the consent page's stylesheet.",
+        "operationId": "consent_stylesheet_oauth_consent_css_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Consent Stylesheet",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/oauth/register": {
+      "post": {
+        "description": "Register a public client (RFC 7591). The response carries no secret, ever.",
+        "operationId": "register_oauth_client_oauth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientRegistrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuthErrorResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RefusalResponse"
+                    }
+                  ],
+                  "title": "Response 400 Register Oauth Client Oauth Register Post"
+                }
+              }
+            },
+            "description": "Client metadata RFC 7591 refuses, or a body that is not JSON."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Register Oauth Client",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/oauth/revoke": {
+      "post": {
+        "description": "Revoke a refresh token and every rotation of it (RFC 7009).",
+        "operationId": "revoke_oauth_revoke_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "properties": {
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "token": {
+                    "type": "string"
+                  },
+                  "token_type_hint": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Revoked, or nothing to revoke (RFC 7009 2.2)."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthErrorResponse"
+                }
+              }
+            },
+            "description": "An RFC 6749 section 5.2 error."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Revoke",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "description": "Exchange an authorization code or a refresh token for a token pair.",
+        "operationId": "exchange_token_oauth_token_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "properties": {
+                  "client_id": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string"
+                  },
+                  "code_verifier": {
+                    "type": "string"
+                  },
+                  "grant_type": {
+                    "type": "string"
+                  },
+                  "redirect_uri": {
+                    "type": "string"
+                  },
+                  "refresh_token": {
+                    "type": "string"
+                  },
+                  "resource": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthErrorResponse"
+                }
+              }
+            },
+            "description": "An RFC 6749 section 5.2 error."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "A required dependency is temporarily unusable."
+          }
+        },
+        "summary": "Exchange Token",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
     "/practice-recipes/": {
       "get": {
         "description": "List recipes visible to the caller; paginated on ``?paginate=true``.\n\nBatches the step lookup into a single ``WHERE recipe_id IN (...)``\nquery so the picker, which fires this endpoint every time the sheet\nopens, scales with library size instead of N+1.  Pagination slices the\nrecipe rows (and the ``mode`` filter feeds the count) *before*\nhydration, so the step lookup stays bounded to the current page\n(issue #470).",
@@ -25602,7 +27244,7 @@
     },
     "/prompts/history": {
       "get": {
-        "description": "List all past prompts and responses for the user, paginated.\n\nWith ``include_total=true`` (default) the count subquery runs and\n``has_more`` is ``offset + limit < total``.  With\n``include_total=false`` the response carries ``total=None`` and\nuses a peek pattern -- fetch ``limit + 1`` rows, return at most\n``limit`` items, set ``has_more`` from whether the peek row\nmaterialised -- so cursor pagination stays accurate for mid-\ncurriculum users without paying for ``COUNT(*)``.",
+        "description": "List saved responses, optionally including unanswered past weekly prompts.\n\n``include_unanswered`` adds questions from completed weeks across recorded\nprogram cycles, counted in the caller's timezone. Past questions survive\nbegin-again; missing historical calendars are never guessed. The default\nremains answered-only for clients that use history to determine which\nprompts have been written to.\n\nWith ``include_total=true`` (default) the count subquery runs and\n``has_more`` is ``offset + limit < total``.  With\n``include_total=false`` the response carries ``total=None`` and\nuses a peek pattern -- fetch ``limit + 1`` rows, return at most\n``limit`` items, set ``has_more`` from whether the peek row\nmaterialised -- so cursor pagination stays accurate for mid-\ncurriculum users without paying for ``COUNT(*)``.",
         "operationId": "list_prompt_history_prompts_history_get",
         "parameters": [
           {
@@ -25636,6 +27278,16 @@
             "schema": {
               "default": true,
               "title": "Include Total",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_unanswered",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Unanswered",
               "type": "boolean"
             }
           },
@@ -30114,6 +31766,326 @@
           }
         },
         "summary": "Retry Managed Vault Activation",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/agents": {
+      "get": {
+        "description": "Every agent this account has approved and not revoked, newest approval first.\n\nAn empty list for an account that has approved nobody -- an answer about a\nset every account has, never a 404 -- so the screen renders its empty state\nstraight from the reply.",
+        "operationId": "list_vault_agents_vault_agents_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConnectedAgentResponse"
+                  },
+                  "title": "Response List Vault Agents Vault Agents Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "List Vault Agents",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/agents/activity": {
+      "get": {
+        "description": "What agents asked this account's vault for, newest first, in plain words.\n\nAlways a ``200``: a vault that is absent, unreachable, refuses, or does not\noffer the read answers ``status: \"unavailable\"`` with no rows, so Settings\nsays it could not check rather than rendering an error. The vault is the\ncaller's own, resolved from their token like every other vault read; no\naccount or agent id is read from the request.",
+        "operationId": "read_vault_agent_activity_vault_agents_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentActivityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Read Vault Agent Activity",
+        "tags": [
+          "vault"
+        ]
+      }
+    },
+    "/vault/agents/{agent_id}": {
+      "delete": {
+        "description": "Stop one agent. ``204`` again for an agent already stopped; ``404`` for one not yours.",
+        "operationId": "revoke_vault_agent_vault_agents__agent_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "Agent Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Revoke Vault Agent",
         "tags": [
           "vault"
         ]

@@ -118,7 +118,7 @@ def test_request_key_providers_are_read_leniently(raw: object, expected: set[str
 
 
 def test_a_conformant_handshake_carries_its_key_vendors() -> None:
-    """A Creek 0.18 capability document is parsed through to ``accepts_key``."""
+    """A Creek 0.18+ capability document is parsed through to ``accepts_key``."""
     minor = ".".join(CONTRACT_VERSION.split(".")[:2])
     parsed = _parse_handshake(
         {
@@ -136,7 +136,7 @@ def test_a_conformant_handshake_carries_its_key_vendors() -> None:
 
 
 def test_creeks_published_capability_example_is_read_through_to_accepts_key() -> None:
-    """The vendored 0.18 ``capabilities/success`` cell, parsed as the client parses it.
+    """The vendored ``capabilities/success`` cell (0.21), parsed as the client parses it.
 
     Creek's own published document, not a hand-written one: if the bundle's
     field name or vendor spelling ever moves, the relay must stop admitting

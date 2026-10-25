@@ -905,6 +905,31 @@ async def login(
     return AuthResponse(token=token, user_id=user.id, timezone=user.timezone)
 
 
+async def verify_password_sign_in(
+    session: AsyncSession, payload: AuthRequest, ip_address: str
+) -> User:
+    """Run login's lockout, credential and account-state gates for another sign-in surface.
+
+    The agent consent page (#3532) signs a person in on a server-rendered form
+    rather than through ``POST /auth/login``. It must be exactly as hard to
+    guess a password there as here, so it goes through the same serialized
+    lockout-and-verify sequence and records its attempts in the same table,
+    and raises the same uniform ``invalid_credentials`` 401 on every refusal.
+    """
+    async with _serialize_login(session, payload.email):
+        return await _verify_login_or_raise(session, payload, ip_address)
+
+
+def session_signing_secret() -> str:
+    """Return the deployment secret, for a caller that derives its own key from it.
+
+    Public so a module minting a token of another kind -- the OAuth consent
+    ticket -- can derive a separate key from the same secret rather than read
+    the environment a second time or sign with this one directly.
+    """
+    return _get_secret_key()
+
+
 def _decode_token_payload(authorization: str | None) -> dict[str, object]:
     """Decode the bearer JWT and return its payload, or raise 401.
 

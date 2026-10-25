@@ -8,6 +8,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
+import { AGENTS_HEADING } from '../agentsCopy';
 import {
   HIGHER_SELF_GAIN,
   VAULT_ADDRESS_EXTRA_PARTS,
@@ -102,7 +103,14 @@ jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api');
   return {
     ...actual,
-    vault: { connection: jest.fn(), connect: jest.fn(), disconnect: jest.fn() },
+    vault: {
+      connection: jest.fn(),
+      connect: jest.fn(),
+      disconnect: jest.fn(),
+      agents: jest.fn(() => Promise.resolve([])),
+      agentActivity: jest.fn(() => Promise.resolve({ status: 'ok', rows: [] })),
+      revokeAgent: jest.fn(),
+    },
     vaultActivation: { status: jest.fn() },
   };
 });
@@ -120,12 +128,20 @@ const TYPED_KEY = 'typed-vault-key-never-rendered'; // pragma: allowlist secret
 const HTTP_UNPROCESSABLE = 422;
 const HTTP_SERVER_ERROR = 500;
 
-const NOT_CONNECTED: VaultConnection = { connected: false, vault_url: null };
-const CONNECTED: VaultConnection = { connected: true, vault_url: VAULT_URL };
-const REPLACED: VaultConnection = { connected: true, vault_url: REPLACEMENT_VAULT_URL };
+const NOT_CONNECTED: VaultConnection = { connected: false, vault_url: null, mcp_address: null };
+const CONNECTED: VaultConnection = { connected: true, vault_url: VAULT_URL, mcp_address: null };
+const REPLACED: VaultConnection = {
+  connected: true,
+  vault_url: REPLACEMENT_VAULT_URL,
+  mcp_address: null,
+};
 // The server cannot produce this pair, but the type can, and a screen that
 // read it as "nothing connected" would be inventing an answer nobody gave.
-const CONNECTED_WITHOUT_ADDRESS: VaultConnection = { connected: true, vault_url: null };
+const CONNECTED_WITHOUT_ADDRESS: VaultConnection = {
+  connected: true,
+  vault_url: null,
+  mcp_address: null,
+};
 const AVAILABLE_ACTIVATION: VaultActivation = {
   active: false,
   state: 'inactive',
@@ -1194,5 +1210,43 @@ describe('VaultSettingsScreen — the fold is remembered for this visit only', (
     const second = await renderVault(NOT_CONNECTED);
 
     expect(foldExpanded(second)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Agents that may read your vault (#3534)
+// ---------------------------------------------------------------------------
+
+describe('VaultSettingsScreen — agents that may read your vault', () => {
+  const mockAgents = vault.agents as jest.MockedFunction<typeof vault.agents>;
+  const AGENT_ADDRESS = `${VAULT_URL}/mcp`;
+
+  test('shows the section, with the address to give an agent, under a vault you run', async () => {
+    const { getByTestId } = await renderVault({ ...CONNECTED, mcp_address: AGENT_ADDRESS });
+
+    const section = within(getByTestId('vault-agents-section'));
+    expect(section.getByText(AGENTS_HEADING)).toBeTruthy();
+    expect(section.getByText(AGENT_ADDRESS)).toBeTruthy();
+  });
+
+  test('takes the address from the one connection read, and asks for the list once', async () => {
+    await renderVault({ ...CONNECTED, mcp_address: AGENT_ADDRESS });
+
+    expect(mockConnection).toHaveBeenCalledTimes(1);
+    expect(mockAgents).toHaveBeenCalledTimes(1);
+  });
+
+  test('leaves the section out for an account with no vault and no agents', async () => {
+    const { queryByTestId } = await renderVault(NOT_CONNECTED);
+
+    expect(queryByTestId('vault-agents-section')).toBeNull();
+  });
+
+  test('renders the section after the connection, so the deck still leads', async () => {
+    const { toJSON } = await renderVault({ ...CONNECTED, mcp_address: AGENT_ADDRESS });
+    const tree = JSON.stringify(toJSON());
+
+    expect(tree.indexOf(VAULT_PROMISE)).toBeLessThan(tree.indexOf(AGENTS_HEADING));
+    expect(tree.indexOf('vault-advanced-toggle')).toBeLessThan(tree.indexOf(AGENTS_HEADING));
   });
 });

@@ -69,7 +69,7 @@ What happens, per request:
   fail-closed `reflection_source_unavailable`.
 
 To confirm a pilot vault takes writer keys, read its handshake: a managed
-vault on Creek contract 0.18 answers `GET /v1/capabilities` with
+vault on Creek contract 0.18 or later answers `GET /v1/capabilities` with
 `"request_key_providers": ["anthropic", "openai"]`.
 
 ## Enabling a bounded cohort

@@ -38,6 +38,7 @@ from domain.creek_vault import (
     CreekVaultContractError,
     CreekVaultError,
     CreekVaultPayloadError,
+    CreekVaultRateLimitedError,
     CreekVaultUnavailableError,
     VaultErrorCode,
     VaultIngestAction,
@@ -328,6 +329,7 @@ def test_outcome_wire_values_are_stable() -> None:
         "vault_fallback_not_owner",
         "vault_unavailable",
         "vault_timeout",
+        "vault_rate_limited",
         "vault_auth_failed",
         "vault_incompatible_version",
         "vault_schema_failure",
@@ -353,6 +355,11 @@ def test_a_timed_out_call_is_still_an_unavailable_error() -> None:
             VaultCallTimedOutError("timed out"),
             VaultTelemetryOutcome.TIMEOUT,
             id="timed_out_before_unavailable",
+        ),
+        pytest.param(
+            CreekVaultRateLimitedError("capped"),
+            VaultTelemetryOutcome.RATE_LIMITED,
+            id="rate_limited_before_unavailable",
         ),
         pytest.param(
             CreekVaultCareEscalationError(),
@@ -519,6 +526,7 @@ _SEVERITY_BY_OUTCOME: Mapping[VaultTelemetryOutcome, int] = {
     VaultTelemetryOutcome.ESCALATED: logging.DEBUG,
     VaultTelemetryOutcome.UNAVAILABLE: logging.WARNING,
     VaultTelemetryOutcome.TIMEOUT: logging.WARNING,
+    VaultTelemetryOutcome.RATE_LIMITED: logging.WARNING,
     VaultTelemetryOutcome.AUTH_FAILED: logging.WARNING,
     VaultTelemetryOutcome.INCOMPATIBLE_VERSION: logging.WARNING,
     VaultTelemetryOutcome.SCHEMA_FAILURE: logging.WARNING,
@@ -992,3 +1000,42 @@ async def test_a_real_refusal_carries_the_vaults_own_code_onto_the_record(
     assert len(outcomes) == 1
     assert outcomes[0].__dict__["outcome"] == VaultTelemetryOutcome.REFUSED.value
     assert outcomes[0].__dict__["code"] == VaultErrorCode.PRIVACY_REFUSED.value
+
+
+def test_a_cap_is_not_the_outcome_an_absent_vault_is() -> None:
+    """A cap and an absence are different outcomes, because their remedies are.
+
+    The distinction :class:`~domain.creek_vault.CreekVaultRateLimitedError`
+    exists to carry is only worth carrying if *something* observes it, and this
+    module is the only observer on the seam: the letters service logs any vault
+    error as one ``vault_error`` reason, and the read path collapses every
+    availability fault into one degrade reason. So a table with no row for the
+    cap would leave it visible in exactly zero places -- an on-call engineer
+    paged for ``vault_unavailable`` while the vault is healthy and shedding.
+
+    Both halves are asserted because the pair is the claim: the cap reaches its
+    own outcome, *and* the plain unavailable error still reaches ``UNAVAILABLE``.
+    A fall-through fails the first; a row written as the wide type -- which
+    would swallow every absence into the cap -- fails the second.
+    """
+    assert outcome_for_error(CreekVaultRateLimitedError("capped")) is (
+        VaultTelemetryOutcome.RATE_LIMITED
+    )
+    assert outcome_for_error(CreekVaultUnavailableError("absent")) is (
+        VaultTelemetryOutcome.UNAVAILABLE
+    )
+
+
+def test_the_cap_row_does_not_shadow_the_timeout_beside_it() -> None:
+    """Two unavailability subclasses now share the table, and neither may win the other's row.
+
+    They are siblings, not parent and child, so no ordering between them is
+    wrong -- but a row written as the *base* class would swallow both, which is
+    the mistake the table's own comment warns about and the one a single
+    positive assertion would miss.
+    """
+    assert outcome_for_error(VaultCallTimedOutError("slow")) is VaultTelemetryOutcome.TIMEOUT
+    assert (
+        outcome_for_error(CreekVaultRateLimitedError("capped"))
+        is VaultTelemetryOutcome.RATE_LIMITED
+    )

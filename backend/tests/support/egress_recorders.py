@@ -55,6 +55,7 @@ from domain.creek_vault import (
     CreekCapability,
     CreekVaultUnavailableError,
     HandshakeResult,
+    VaultAgentActivity,
     VaultClassification,
     VaultClassificationPass,
     VaultIngestAction,
@@ -321,6 +322,11 @@ class RecordingVault:
         """Record the content-free read."""
         await self._dial("wheel", "")
         return VaultWheelBalance(aspects=())
+
+    async def agent_activity(self, _limit: int, /) -> VaultAgentActivity:
+        """Record the content-free activity read; an empty log carries nothing."""
+        await self._dial("agent_activity", "")
+        return VaultAgentActivity(rows=())
 
     async def upsert_voice_draft(self, request: VaultVoiceDraftRequest, /) -> VaultVoiceDraftResult:
         """Record the AI-authored draft and keep it remotely."""

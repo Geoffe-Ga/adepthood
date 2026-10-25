@@ -4,7 +4,7 @@
 - **Date:** 2026-07-31
 - **Issue:** [#2044](https://github.com/Geoffe-Ga/adepthood/issues/2044)
   (epic [#2043](https://github.com/Geoffe-Ga/adepthood/issues/2043))
-- **Pinned contract version:** 0.20.0 (tracks Creek's published
+- **Pinned contract version:** 0.22.0 (tracks Creek's published
   constant; the pin opened at 0.2.0 with the 2026-07-31 note at the end
   of this document, moved to 0.8.0 with the 2026-08-19 note, which
   records why that move became a prerequisite rather than housekeeping,
@@ -14,8 +14,10 @@
   with the 2026-09-12 note, which adopts journal withdrawal, moved to
   0.17.0 with the 2026-10-15 note, which adopts vault-written letters, and
   moved to 0.18.0 with the 2026-10-20 note, which adopts request-scoped keys
-  on a managed vault, and moved to 0.20.0 with the 2026-10-21 note, which
-  refuses a pool-less managed vault's keyless pass before any charge)
+  on a managed vault, moved to 0.21.0 with the 2026-10-22 note, which
+  adopts the coded model-call cap on both model-backed routes, and moved to
+  0.22.0 with the 2026-10-24 note, which adopts the content-free agent-activity
+  read)
 
 ## Context
 
@@ -1583,35 +1585,102 @@ INTIMATE content never reaches a key-spending path. The vault routes any
 INTIMATE work it is asked for onto its local model or refuses it, and
 adepthood's own egress gate is unchanged.
 
-## Note, 2026-10-21 — the pin moves to 0.20.0; a pool-less vault's keyless pass is refused before any charge
+## Note, 2026-10-22 — the pin moves to 0.21.0; a capped model call is a coded wait on both routes
 
-Creek-Vault#1940 (head `198f2f12`) publishes `keyless_inference` on the
-handshake (Creek-Vault#1938) and Adepthood #3501 adopts it. The vendored bundle
-is re-cut byte-for-byte from that commit. The counts are unchanged: 112
-manifest entries, 41 schemas, a 10 × 7 example matrix. The ontology version is
-unchanged.
+The pin moves in lockstep with the deployed vault, not ahead of it. Creek
+refuses any minor its `supported_contract_minors` does not list exactly, so a
+pin ahead of the image fails every handshake with `incompatible_version`
+(Creek-Vault#1888 was that outage, at 0.18). This move ships together with the
+managed vault's re-image to Creek `main`, whose window runs from 0.2 up to
+0.21.
+
+The vendored bundle is re-cut byte-for-byte from upstream `e6d021b9`. Thirteen
+files move: six schemas (`CapabilitiesResponse`, `ErrorEnvelope`,
+`ReflectionResponse`, `LetterResponse`, `ClassificationResponse`, and
+`JobStatusResponse`, which embeds the last), five examples
+(`capabilities/success`, `capabilities/empty`, `reflections/success`,
+`reflections/empty`, `letters/success`), `retry-policy.json` and the manifest.
+No file is added or removed: 112 manifest entries, 114 vendored files, 41
+schemas, a 10 × 7 example matrix, and an unchanged ontology version.
+
+What 0.19 through 0.21 publish, and what adepthood does with each:
+
+- **`rate_limited` (0.19)** joins the error vocabulary at `429`, with a
+  `retry_with_backoff` disposition. Creek serves it on `POST /v1/reflections`
+  to callers at or above 0.19 and on `POST /v1/letters/{external_id}` to
+  callers at or above 0.21; below either gate the cap is downgraded to `503
+  temporarily_unavailable`, indistinguishable from an outage. At 0.21 both
+  routes now reach adepthood as a coded `429`. `VaultErrorCode` gains
+  `RATE_LIMITED`, and the one availability classifier raises
+  `CreekVaultRateLimitedError` for that code or for a `429` status, so the two
+  routes tell a writer one story about one budget (Creek-Vault#1903 step 6).
+- **`inference_source` (0.19)** on reflection, letter and classification
+  answers, **`inference_pool` (0.19)** and **`keyless_inference` (0.20)** on
+  the handshake. Parsed and ignored. Labelling each use from the route,
+  refusing a route that differs from the disclosed one as the existing `409`,
+  and asking for a writer's key when a vault reports `keyless_inference: false`
+  are Creek-Vault#1903 steps 3 and 4, and they rest on an owner ADR 0009
+  decision that is still open. `tests/test_creek_contract_0_21.py` pins that
+  none of the three fields changes what adepthood does with an answer.
+
+## Note, 2026-10-24 — the pin moves to 0.22.0; Settings reads what agents asked the vault for
+
+The pin moves in lockstep with the deployed vault, as the 2026-10-22 note
+requires: this move ships together with the managed vault's re-image to Creek
+`main` at `c72f4362`, the image that serves `/mcp` for epic Creek-Vault#1961,
+whose window runs from 0.2 up to 0.22. A vault still on the 0.21 image fails
+the handshake as `incompatible_version`, exactly as the #1888 rule says it
+must, so the re-image is a prerequisite of this pin rather than a follow-up.
+
+The vendored bundle is re-cut byte-for-byte from upstream `c72f4362`. Ten files
+are added -- the `agent-activity` example column (seven cells, two of them
+unreachable sentinels) and three schemas (`AgentActivityQuery`,
+`AgentActivityResponse`, `AgentActivityRow`) -- and four move:
+`CapabilitiesResponse`, `capabilities/success`, `capabilities/empty` and the
+manifest. 122 manifest entries, 124 vendored files, 44 schemas, an 11 × 7
+example matrix, and an unchanged ontology version.
+
+What 0.22 publishes, and what adepthood does with it:
+
+- **`agent-activity` (0.22, Creek-Vault#1968)**: `GET /v1/agent-activity`,
+  the vault's MCP audit chain projected onto four fields per call --
+  `consumer`, `tool`, `at`, `outcome` (`admitted | refused`). Consumed by
+  `GET /vault/agents/activity` (#3535), which Settings renders as "Recent
+  activity" under the agents a person approved. The adapter validates the
+  published response strictly -- a fifth field, an unknown outcome or a value
+  outside a published pattern refuses the whole answer as a payload fault --
+  and the route re-projects each row onto `{agent, tool_label, at, outcome}`
+  in adepthood's own words, so no argument, path, fragment id or prose can
+  cross it whatever a vault sends.
+- **Attribution is per person, not per agent, until Creek-Vault#1976.** Creek
+  stamps a JWT agent's calls with the token's `sub`, which names the person
+  (on a managed vault, the same consumer identity the app's own `/v1` calls
+  carry). The route therefore names an agent only when the stamp is one of
+  the person's own grant `client_id`s -- which is what #1976 will make it --
+  and otherwise says what the stamp can honestly support. See
+  `docs/creek-vault-mcp-contract.md`, "Recent agent activity".
+- `tests/test_creek_contract_0_22.py` pins the move: the declared minor, the
+  re-imaged window negotiating, a 0.21-only vault refused as version skew, and
+  the new capability advertised and called.
+
+## Note, 2026-10-24 — a pool-less vault's keyless pass is refused before any charge
+
+No pin move: `keyless_inference` (Creek 0.20) has been on the handshake since
+the 0.21 move, parsed and ignored. Adepthood #3501 consumes it, on the owner's
+decision of 2026-10-21.
 
 **Why.** On 2026-10-21 every reflection on the managed pilot vault failed. A
 managed vault ships no inference runtime and refuses its operator's cloud key,
-so until the shared pool (Creek-Vault ADR-0016) is pinned, the only reflection
-it can write is one powered by the writer's own key. Adepthood could not see
-that ahead of time, so it charged a credit, dialled, was refused, refunded, and
-showed "give it a moment and try again". Retrying could never help.
+so until the shared pool (Creek-Vault ADR-0016) is pinned, it writes only with
+the writer's own key. Adepthood charged a credit, dialled, was refused,
+refunded, and told the writer to "give it a moment and try again". Retrying
+could never help.
 
-**What.** `keyless_inference: false` means a model call with no writer key is
-refused before any model is dialled. When a vault-bound pass carries no key
-the vault will spend and its vault says `false`, the pass is answered
-`402 vault_key_required` before the payer gate, the wallet or the reflect
-route. The frontend routes that to the existing add-a-key remedy. A locally
-care-flagged entry still gets care, and a pass with no vault tier is never
-probed. The pre-charge probe's handshake is reused by the reflect gate, so a
-pass still handshakes once.
-
-**What 0.19 brings along.** Moving past 0.19 also opts into its additions.
-`inference_source` on the three model-backed answers is read leniently and
-ignored for now. `rate_limited` (429) is not classified: an uncoded 429
-already reads as the availability story, which is what a shed request is.
-
-**Deploy order.** Adepthood requires its pinned minor in a vault's
-`supported_contract_minors`, so this pin must not ship before a vault speaking
-0.20 is deployed. Otherwise every handshake degrades to `incompatible_version`.
+**What.** When a vault-bound pass carries no key its vault will spend, and the
+vault reports `keyless_inference: false`, the pass is answered
+`402 vault_key_required` ahead of the payer gate. No wallet row is written and
+no reflect call is made. The frontend routes that to the existing add-a-key
+remedy. A locally care-flagged entry still gets care, a pass with no vault tier
+is never probed, and the reflect gate reuses the probe's handshake, so a pass
+still handshakes once. `inference_source` and `inference_pool` stay parsed and
+ignored.

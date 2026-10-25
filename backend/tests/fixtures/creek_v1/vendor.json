@@ -1,10 +1,38 @@
 {
   "bundle": "adepthood-v1",
-  "contract_version": "0.20.0",
+  "contract_version": "0.22.0",
   "files": [
     {
       "path": "README.md",
       "sha256": "c8d44983572ec148dc31cd99d65f2ec3b00cb03f931a0a73f5ae44e35882e3e9"
+    },
+    {
+      "path": "examples/agent-activity/care-escalation.json",
+      "sha256": "340f5faee0dd9f946e24e02d09ba23e378562dc96023a999f4cdecfc55c1d7fa"
+    },
+    {
+      "path": "examples/agent-activity/empty.json",
+      "sha256": "dc197f8a1cc9411f772a12725befcf4d3d4776a74f84d46d8841c69d7e91e1df"
+    },
+    {
+      "path": "examples/agent-activity/incompatible-version.json",
+      "sha256": "68155caf438a52199ca41ecbf667a1583ac113b95c68e092ae01c7458a6671e0"
+    },
+    {
+      "path": "examples/agent-activity/malformed-input.json",
+      "sha256": "9f64e590193b837acc82840276d0ec247947d1e8eae1ac65b7ed88f4eb383582"
+    },
+    {
+      "path": "examples/agent-activity/refusal.json",
+      "sha256": "a025e80e4b8223fd864c0dfef629f8ea809fcb61c0221940ad8625089e48562d"
+    },
+    {
+      "path": "examples/agent-activity/success.json",
+      "sha256": "5c894510d76769dc77197ea64911f3325ac00d92d99fe84acda9ea99658acda8"
+    },
+    {
+      "path": "examples/agent-activity/unavailable-service.json",
+      "sha256": "4fd021809d1f39b749d794869ecc62eec8410375dde49d09bdebd334ae6bf9a9"
     },
     {
       "path": "examples/capabilities/care-escalation.json",
@@ -12,7 +40,7 @@
     },
     {
       "path": "examples/capabilities/empty.json",
-      "sha256": "d53ef16d562a4f04014917b42a6b16a0cda575c39844731bc32e185c28ffe691"
+      "sha256": "edb786df8a4d0938a2abac9645cd9e3b5cf593c918df1efafcd46fa167cdd6f9"
     },
     {
       "path": "examples/capabilities/incompatible-version.json",
@@ -28,7 +56,7 @@
     },
     {
       "path": "examples/capabilities/success.json",
-      "sha256": "c72ce07f5a4514e0accd48bfb7ad519473ef8999c08c7887a8a8430bb4f28a8c"
+      "sha256": "0c6b072663dfce10f84c426c71e6a16f35791835d04c0e281b571d9387395fc9"
     },
     {
       "path": "examples/capabilities/unavailable-service.json",
@@ -288,15 +316,27 @@
     },
     {
       "path": "manifest.json",
-      "sha256": "1c9ad8a6b82dbb3042379686401d639f0479e83410c26484100965e1bb47895a"
+      "sha256": "7f07f80d8bde37a48cbce2ff9f91b18da670f3c13bddc2370045a5ec7f7f97b3"
     },
     {
       "path": "retry-policy.json",
       "sha256": "9351047069af3f87a273fd8bcb677857cc83fcee9f45beb211a09e60c8fa633b"
     },
     {
+      "path": "schemas/AgentActivityQuery.schema.json",
+      "sha256": "210fd2e56f4353f4320c6165cc99ac1ea88dfda80863f585345f0b4134913a6d"
+    },
+    {
+      "path": "schemas/AgentActivityResponse.schema.json",
+      "sha256": "6c202f22211fec11fb6e8d9c3deb4977312ae95cb6d259d5feb2e7cdf152b7b0"
+    },
+    {
+      "path": "schemas/AgentActivityRow.schema.json",
+      "sha256": "64fc4e86188f63b7b2c9c0f3a6e482f5a13e64424e0c5c51b9331e0ee0dba108"
+    },
+    {
       "path": "schemas/CapabilitiesResponse.schema.json",
-      "sha256": "b8161715c2fb7588c44c17988fb603ef4d6013053ec07e57c8022dfb16ffd58c"
+      "sha256": "6a39db50eee719f36e7697d63544c0c4ecff147dd2f95a06bc5c58125ce05964"
     },
     {
       "path": "schemas/CareEscalationResponse.schema.json",
@@ -344,7 +384,7 @@
     },
     {
       "path": "schemas/ErrorEnvelope.schema.json",
-      "sha256": "dbe92ea9de79fb0ebb3cda5fa3338f5acb24c14e3d61253e3521e983f4c2c691"
+      "sha256": "c76028a2a57b542f70b8b7dcb5da32eb41f1029f982917524af23c98612e302d"
     },
     {
       "path": "schemas/JobAcceptedResponse.schema.json",
@@ -461,7 +501,7 @@
   ],
   "ontology_version": "aptitude-wavelength/2026-05-23",
   "source": {
-    "commit": "198f2f12fb6ac58866e4688bcb036071c267a3e2",
+    "commit": "c72f43620bf20fd57a85035fe09dadfc404b077a",
     "path": "docs/contracts/adepthood-v1",
     "repo": "Geoffe-Ga/creek-vault"
   }

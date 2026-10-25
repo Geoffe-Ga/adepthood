@@ -1,7 +1,15 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { expect, test, type Locator, type Page, type Request } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIResponse,
+  type Locator,
+  type Page,
+  type Request,
+  type Route,
+} from '@playwright/test';
 
 import { backendUrl, frontendUrl, signUp, tokenFor } from './journalHabitsBrowserSupport';
 import { runBackendModule } from './laneDatabase';
@@ -966,9 +974,33 @@ const PAYER_CHANGED =
  * price a writer read before another device connected this vault (#3385).
  * Only that field changes; the real owner resolver still decides every POST.
  */
+/**
+ * ``route.fetch()``, tolerating one transport failure against the lane's own
+ * server.
+ *
+ * The interception below needs the *real* body in order to override a single
+ * field on it, so it cannot fall through to ``route.continue()`` when the fetch
+ * dies: the override would silently not happen and the assertion downstream
+ * would report a copy mismatch instead of the transport fault that caused it.
+ * That is exactly how this spec failed on #3515 — ``route.fetch: socket hang
+ * up`` on ``GET /user/usage``, reported as the wallet line appearing where the
+ * key-funded line was expected.
+ *
+ * One retry, not a loop: a blip against an in-process server is worth
+ * absorbing, and a server that is genuinely down fails the second call too, so
+ * a real outage still fails the spec rather than hanging it.
+ */
+async function fetchToleratingOneHangUp(route: Route): Promise<APIResponse> {
+  try {
+    return await route.fetch();
+  } catch {
+    return await route.fetch();
+  }
+}
+
 async function serveRouteReadBeforeVaultConnected(page: Page, stale: () => boolean): Promise<void> {
   await page.route('**/user/usage', async (route) => {
-    const actual = await route.fetch();
+    const actual = await fetchToleratingOneHangUp(route);
     const usage = await actual.json();
     expect(usage.resonance_route).toBe('vault_bound');
     const served = stale() ? { ...usage, resonance_route: 'app_provider' } : usage;

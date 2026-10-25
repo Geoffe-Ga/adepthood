@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from models.corpus_fragment import CorpusSource
 
@@ -105,3 +105,21 @@ class CorpusInvitationResponse(BaseModel):
     offer: bool
     dismissed_at: datetime | None
     do_not_ask_again: bool
+
+
+class CorpusSweepEstimateResponse(BaseModel):
+    """How much of this account's own writing is still without a fragment.
+
+    A count, and deliberately nothing else. Nothing from any entry, for the
+    reason :class:`CorpusConsentResponse` gives about the audit log: an account
+    is entitled to know how much of its writing is waiting, and a surface that
+    could render the writing itself would be describing egress this read does
+    not perform.
+
+    No price either, because sorting has none: every path that ontologizes an
+    entry is free, and the consent screen says so. What bounds the provider
+    bill is a per-account ceiling on server-paid classifications, not a charge
+    somebody is quoted here.
+    """
+
+    entries_pending: int = Field(ge=0)

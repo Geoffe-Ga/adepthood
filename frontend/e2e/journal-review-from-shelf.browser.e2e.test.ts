@@ -37,51 +37,142 @@ test('on a review day the shelf’s one call to write is the Weekly Review', asy
   );
 });
 
-test('a review can be begun early from the shelf on a day nothing is due', async ({ page }) => {
-  const email = await signUp(page, 'review-early-day-nine');
-  const token = await tokenFor(page.request, email);
-  const headers = { Authorization: `Bearer ${token}` };
-  setProgramAnchorDaysAgo(email, DAY_NINE);
-  await page.reload();
-  await openPrompts(page);
+for (const width of [390, 1280]) {
+  test(`the early-review card explains reviews and starts or resumes one at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 844 });
+    const email = await signUp(page, 'review-early-day-nine');
+    const token = await tokenFor(page.request, email);
+    const headers = { Authorization: `Bearer ${token}` };
+    setProgramAnchorDaysAgo(email, DAY_NINE);
+    await page.reload();
+    await openPrompts(page);
 
-  // Nothing is due on day 9, so the daily page holds the primary slot.
-  await expect(page.getByRole('button', { name: 'Begin a page of morning pages' })).toBeVisible();
-  await expect(page.getByTestId('journal-reflection-band')).toHaveCount(0);
+    // Nothing is due on day 9, so the daily page holds the primary slot.
+    await expect(page.getByRole('button', { name: 'Begin a page of morning pages' })).toBeVisible();
+    await expect(page.getByTestId('journal-reflection-band')).toHaveCount(0);
 
-  await page.getByRole('button', { name: /^Start a review early/ }).click();
-  await expect(page.getByTestId('journal-review-scope-section')).toBeVisible();
-  await page.getByTestId('journal-review-scope-week').click();
+    const card = page.getByTestId('journal-review-early-card');
+    await expect(card.getByText('Review your Morning Pages', { exact: true })).toBeVisible();
+    await expect(card).toContainText('carrying quotes from daily entries into broader learnings');
+    await expect(card).toContainText(
+      'this week, this stage, this trimester, or across the whole course',
+    );
+    const action = card.getByRole('button', { name: /^Start a review early/ });
+    await action.scrollIntoViewIfNeeded();
+    const geometry = await card.evaluate((element) => {
+      const morning = document.querySelector('[data-testid="journal-morning-pages-band"]');
+      const button = element.querySelector('[data-testid="journal-review-early"]');
+      if (!(morning instanceof HTMLElement) || !(button instanceof HTMLElement)) return null;
+      const bounds = element.getBoundingClientRect();
+      const actionBounds = button.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const morningStyle = getComputedStyle(morning);
+      return {
+        raised: style.backgroundColor === morningStyle.backgroundColor,
+        rule:
+          style.borderLeftColor === morningStyle.borderLeftColor &&
+          parseFloat(style.borderLeftWidth) > 0,
+        radius:
+          style.borderRadius === morningStyle.borderRadius && parseFloat(style.borderRadius) > 0,
+        contained:
+          actionBounds.left >= bounds.left &&
+          actionBounds.right <= bounds.right &&
+          actionBounds.top >= bounds.top &&
+          actionBounds.bottom <= bounds.bottom,
+        touchHeight: actionBounds.height,
+        withinViewport: bounds.left >= 0 && bounds.right <= window.innerWidth,
+      };
+    });
+    expect(geometry).toMatchObject({
+      raised: true,
+      rule: true,
+      radius: true,
+      contained: true,
+      withinViewport: true,
+    });
+    expect(geometry?.touchHeight).toBeGreaterThanOrEqual(44);
+    const screenshotPath = testInfo.outputPath('early-review-card.png');
+    await card.screenshot({ path: screenshotPath });
+    await testInfo.attach('early-review-card', { path: screenshotPath, contentType: 'image/png' });
 
-  const title = page.getByRole('textbox', { name: 'Entry title' });
-  await expect(title).toHaveValue('Weekly Review — Week 2');
-  await page.getByRole('textbox', { name: 'Entry body' }).fill('Halfway through week two.');
-  await expect(page.getByTestId('journal-save-hint')).toHaveText('Saved');
+    await action.click();
+    await expect(card.getByTestId('journal-review-scope-section')).toBeVisible();
+    await card.getByTestId('journal-review-scope-week').click();
 
-  const saved = await page.request.get(`${backendUrl()}/journal/`, { headers });
-  const { items } = (await saved.json()) as { items: SavedEntry[] };
-  const review = items.find((entry) => entry.reflection_scope_key === 'c1:w2');
-  expect(review).toEqual(
-    expect.objectContaining({ tag: 'hierarchical_reflection', reflection_level: 'week' }),
-  );
+    const title = page.getByRole('textbox', { name: 'Entry title' });
+    await expect(title).toHaveValue('Weekly Review — Week 2');
+    await page.getByRole('textbox', { name: 'Entry body' }).fill('Halfway through week two.');
+    await expect(page.getByTestId('journal-save-hint')).toHaveText('Saved');
 
-  // Back on the shelf, the picker offers to CONTINUE that review rather than
-  // start a second one, and pressing it reopens the very page just written.
-  await page.getByTestId('journal-close-entry').click();
-  await openPrompts(page);
-  await page.getByRole('button', { name: /^Start a review early/ }).click();
-  const continueRow = page.getByRole('button', { name: /^Continue — Weekly Review — Week 2/ });
-  await expect(continueRow).toBeVisible();
-  await continueRow.click();
-  await expect(page.getByRole('textbox', { name: 'Entry body' })).toHaveValue(
-    'Halfway through week two.',
-  );
-  await expect(page.getByRole('textbox', { name: 'Entry title' })).toHaveValue(
-    'Weekly Review — Week 2',
-  );
-  const after = await page.request.get(`${backendUrl()}/journal/`, { headers });
-  const { items: afterItems } = (await after.json()) as { items: SavedEntry[] };
-  expect(afterItems.filter((entry) => entry.reflection_scope_key === 'c1:w2')).toEqual([
-    expect.objectContaining({ id: review?.id }),
-  ]);
-});
+    const saved = await page.request.get(`${backendUrl()}/journal/`, { headers });
+    const { items } = (await saved.json()) as { items: SavedEntry[] };
+    const review = items.find((entry) => entry.reflection_scope_key === 'c1:w2');
+    expect(review).toEqual(
+      expect.objectContaining({ tag: 'hierarchical_reflection', reflection_level: 'week' }),
+    );
+
+    // Back on the shelf, the picker offers to CONTINUE that review rather than
+    // start a second one, and pressing it reopens the very page just written.
+    await page.getByTestId('journal-close-entry').click();
+    await openPrompts(page);
+    await page.getByRole('button', { name: /^Start a review early/ }).click();
+    const continueRow = page.getByRole('button', { name: /^Continue — Weekly Review — Week 2/ });
+    await expect(continueRow).toBeVisible();
+    await continueRow.click();
+    await expect(page.getByRole('textbox', { name: 'Entry body' })).toHaveValue(
+      'Halfway through week two.',
+    );
+    await expect(page.getByRole('textbox', { name: 'Entry title' })).toHaveValue(
+      'Weekly Review — Week 2',
+    );
+    const after = await page.request.get(`${backendUrl()}/journal/`, { headers });
+    const { items: afterItems } = (await after.json()) as { items: SavedEntry[] };
+    expect(afterItems.filter((entry) => entry.reflection_scope_key === 'c1:w2')).toEqual([
+      expect.objectContaining({ id: review?.id }),
+    ]);
+  });
+
+  test(`the review card can be set aside and restored by keyboard at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const email = await signUp(page, `review-decline-${width}`);
+    setProgramAnchorDaysAgo(email, DAY_NINE);
+    await page.reload();
+    await openPrompts(page);
+    const card = page.getByTestId('journal-review-early-card');
+    const close = card.getByRole('button', { name: 'Set the early review invitation aside' });
+    const restore = page.getByRole('button', { name: 'Bring reviews back', exact: true });
+    const action = page.getByTestId('journal-review-early');
+    await expect(close).toBeVisible();
+    const x = await close.boundingBox();
+    const title = await card.getByText('Review your Morning Pages', { exact: true }).boundingBox();
+    expect(x?.width).toBeGreaterThanOrEqual(44);
+    expect(x?.height).toBeGreaterThanOrEqual(44);
+    expect(title!.x + title!.width).toBeLessThanOrEqual(x!.x);
+
+    await close.focus();
+    await close.press('Enter');
+    await expect(card).toHaveCount(0);
+    await expect(restore).toBeFocused();
+    await page.reload();
+    await openPrompts(page);
+    await expect(restore).toBeVisible();
+    await expect(card).toHaveCount(0);
+    await restore.focus();
+    await restore.press('Enter');
+    await expect(action).toBeFocused();
+    await action.click();
+    await expect(card.getByTestId('journal-review-scope-week')).toBeVisible();
+    await close.click();
+    await expect(restore).toBeFocused();
+    // Other writing invitations still hand focus to the available review door.
+    await page.getByTestId('journal-morning-pages-dismiss').click();
+    await expect(restore).toBeFocused();
+    await restore.click();
+    await expect(action).toBeFocused();
+    await expect(card.getByTestId('journal-review-scope-week')).toHaveCount(0);
+  });
+}

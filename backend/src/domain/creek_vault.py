@@ -41,13 +41,48 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from http import HTTPStatus
 from typing import NoReturn, Protocol
 from uuid import UUID
 
 # Semantic contract version adepthood presents at handshake and compares against
 # what a vault advertises. A major-version mismatch degrades to unavailable
 # rather than risking a call under an incompatible surface.
-CONTRACT_VERSION = "0.20.0"
+#
+# It matches Creek `main` (0.22), and it moves only in lockstep with the vault
+# it talks to -- read this before moving it again:
+#
+# 1. `supported_contract_minors` is a property of the **deployed** vault, not of
+#    Creek's `main`, and Creek refuses any minor that list does not name
+#    exactly. Declaring a minor the deployed image does not serve fails *every*
+#    handshake with `incompatible_version` (Creek-Vault#1888 was that outage, at
+#    0.18). This pin moved to 0.22 together with the managed vault's re-image to
+#    Creek `main` at c72f4362 -- the image that serves `/mcp` for epic
+#    Creek-Vault#1961, whose window runs from 0.2 up to 0.22; the next move
+#    belongs to the next re-image, not to whichever PR notices a gap.
+# 2. What 0.19-0.22 add, and what adepthood does with each:
+#    - `rate_limited` (0.19, `PROVENANCE_SINCE_MINOR`) on reflections, and on
+#      letters from 0.21 (`LETTER_RATE_LIMITED_SINCE_MINOR`). Consumed: we are
+#      at or above both gates, so a cap on either model-backed route now reaches
+#      us as `429 rate_limited` -- a coded wait, `CreekVaultRateLimitedError`
+#      carrying `VaultErrorCode.RATE_LIMITED` -- rather than being downgraded to
+#      `503 temporarily_unavailable` (Creek-Vault#1903 step 6).
+#    - `inference_source` (0.19) on reflection, letter and classification
+#      answers and `inference_pool` (0.19) on the handshake. Parsed and ignored:
+#      labelling each use from the route and refusing a mismatched route as the
+#      existing `409` are Creek-Vault#1903 steps 3-4, not part of a pin move.
+#      `tests/test_creek_contract_0_21.py` pins that neither changes what
+#      adepthood does with an answer.
+#    - `keyless_inference` (0.20) on the handshake. Consumed (#3501, owner
+#      decision 2026-10-21): a vault-bound pass carrying no key its vault will
+#      spend, against a vault reporting `false`, is refused `402
+#      vault_key_required` before any charge (`services.vault_byok`).
+#    - `agent-activity` (0.22, Creek-Vault#1968): `GET /v1/agent-activity`, the
+#      content-free projection of the vault's MCP audit chain. Consumed by the
+#      Settings "Recent activity" list (#3535) through
+#      `CreekVaultClient.agent_activity`; `tests/test_creek_contract_0_22.py`
+#      pins the move.
+CONTRACT_VERSION = "0.22.0"
 
 
 class CreekCapability(enum.StrEnum):
@@ -79,7 +114,10 @@ class CreekCapability(enum.StrEnum):
     ``LETTERS`` (contract 0.17) is the vault writing a margin note's letter
     itself and storing it as one of those Voice Drafts, so a vault-bound
     writer's first letter is answered by their vault and never by the app's
-    provider (#3203).
+    provider (#3203). ``AGENT_ACTIVITY`` (contract 0.22) is the content-free
+    list of what agents asked the vault for, which Settings renders under the
+    agents a person approved (#3535): who, which tool, when and whether it was
+    admitted -- never an argument and never a result.
     """
 
     HANDSHAKE = "creek.handshake"
@@ -94,6 +132,7 @@ class CreekCapability(enum.StrEnum):
     PIPELINE = "creek.pipeline"
     VOICE_DRAFTS = "creek.voice_drafts"
     LETTERS = "creek.letters"
+    AGENT_ACTIVITY = "creek.agent_activity"
 
 
 class VaultTierCeiling(enum.StrEnum):
@@ -225,7 +264,7 @@ def resolve_vault_owner(raw: str | None) -> int | None:
 class VaultErrorCode(enum.StrEnum):
     """The machine-readable failure vocabulary a vault may answer an error with.
 
-    Seven of the nine codes Creek publishes, and deliberately still closed: these
+    Eight of the eleven codes Creek publishes, and deliberately still closed: these
     are the *only* strings the adapter may ever parse out of a vault response.
     Anything else -- a newer code, a typo, or a hostile string smuggling control
     characters toward a log -- is dropped on the floor rather than stored or
@@ -234,11 +273,18 @@ class VaultErrorCode(enum.StrEnum):
     was when the vocabulary was smaller; widening the set widens what we can
     classify, never what a vault may put in front of an operator.
 
-    The two published codes deliberately absent are ``unauthenticated`` and
-    ``internal_error``. Neither adds anything a member would be read for: a
-    refused credential already classifies from its status class alone, and so
-    does a server fault, so parsing either code would only give two spellings of
-    a decision already made.
+    Two of the three published codes absent are deliberately so:
+    ``unauthenticated`` and ``internal_error``. Neither adds anything a member
+    would be read for: a refused credential already classifies from its status
+    class alone, and so does a server fault, so parsing either code would only
+    give two spellings of a decision already made. The third,
+    ``unsupported_source`` (0.8, ``POST /v1/uploads`` only), classifies from its
+    4xx status as a contract error and has never had a member.
+
+    ``RATE_LIMITED`` is the 0.19 addition, and the only member that is not
+    about the request or the vault itself: it is the relayed model-call cap, a
+    wait rather than an outage. It is last so the pinned order of the others
+    does not move.
 
     Values are the wire strings, so they are contract and must not be reworded
     casually, and the member order is pinned by a test.
@@ -251,6 +297,7 @@ class VaultErrorCode(enum.StrEnum):
     PRIVACY_REFUSED = "privacy_refused"
     NOT_FOUND = "not_found"
     UNAVAILABLE = "unavailable"
+    RATE_LIMITED = "rate_limited"
 
 
 #: The static message a suspended vault send carries: content-free by design.
@@ -286,6 +333,83 @@ class CreekVaultUnavailableError(CreekVaultError):
         """Store the static message and, when the vault named one we know, its code."""
         super().__init__(message)
         self.code = code
+
+
+class CreekVaultRateLimitedError(CreekVaultUnavailableError):
+    """The destination this call would have reached refused to admit it: a wait, not an outage.
+
+    **Relayed, never minted.** The vault keeps no hourly or in-flight counter
+    of its own, so the refusal is the shared inference pool's ``429`` or one
+    from whichever vendor the call reached -- the writer's own request key, or
+    an operator's cloud key on a self-hosted vault. Whether that budget is
+    scoped per vault or per account is a pool-side fact Creek's contract does
+    not publish, so this type does not claim it either.
+
+    What *is* provable, and is the load-bearing part: the cap is **one budget
+    across both model-backed routes**, not one per route.
+    ``POST /v1/reflections`` and ``POST /v1/letters/{external_id}`` resolve the
+    one ``generation`` stage through the same provider chokepoint, and the
+    request
+    Creek sends the pool carries no route, verb or capability -- so a per-route
+    budget cannot exist even in principle, and a writer held at the cap is held
+    at it on both in the same second. Creek reports it identically on both from
+    contract 0.21 (``429 rate_limited`` with ``Retry-After: 60``,
+    Creek-Vault#1903 step 6), and this is adepthood's side of that: one type,
+    raised from one place, so the two routes cannot tell a writer two different
+    stories about one limit.
+
+    **Raised for any ``429`` on any ``/v1`` call**, not only on those two
+    routes. Creek's model-call cap is its principal cause rather than its only
+    one: a ``429`` shed by an intermediary that never reached the vault's error
+    vocabulary arrives here too, and is still a wait. What it is *not* is
+    Creek's two concurrency limits, which shed as ``temporarily_unavailable``
+    with a ``503`` on every route whatever the minor -- they are about how many
+    requests that process is carrying, not about an allowance.
+
+    **What the pin buys.** Creek downgrades a capped *reflection* to ``503
+    temporarily_unavailable`` for a caller declaring a minor below ``0.19``,
+    and a capped *letter* the same way below ``0.21``. :data:`CONTRACT_VERSION`
+    is at ``0.21``, above both gates, so a vault cap on either route reaches us
+    as ``429 rate_limited`` and is raised as this type with
+    :attr:`~VaultErrorCode.RATE_LIMITED` as its ``code``. A ``503`` from a
+    vault is therefore an outage again, not a cap nothing on the wire could
+    distinguish from one.
+
+    It subclasses :class:`CreekVaultUnavailableError` rather than sitting
+    beside it, which is the whole of the design. A cap *is* a reason the call
+    did not land, so every caller that already degrades on an absent vault
+    keeps degrading untouched -- the narrowing costs no call site anything --
+    and only a caller that wants to show a wait rather than an outage has to
+    know the difference. :class:`~services.creek_vault_telemetry.VaultCallTimedOutError`
+    is the same shape for the same reason, and the same observer redeems both:
+    :attr:`~services.creek_vault_telemetry.VaultTelemetryOutcome.RATE_LIMITED`
+    is what keeps a shedding vault from reading like an absent one on a
+    dashboard. Without that row the narrowing would buy nothing today, since
+    the letters service records one ``vault_error`` reason for any vault error
+    and the read path collapses every availability fault into one degrade
+    reason.
+
+    It is never a :class:`CreekVaultContractError`: a cap says nothing about
+    the request adepthood sent, and classifying it as a contract defect would
+    send an operator hunting a payload bug that is not there.
+    """
+
+
+#: The one HTTP status Creek publishes ``rate_limited`` at, and the status an
+#: intermediary sheds load with before the vault's vocabulary is ever reached.
+RATE_LIMITED_STATUS = HTTPStatus.TOO_MANY_REQUESTS
+
+
+def signals_rate_limit(status_code: int, code: VaultErrorCode | None) -> bool:
+    """Return whether a failed vault answer is the model-call cap: a wait, not an outage.
+
+    The vault's own ``rate_limited`` code decides it whatever status carried the
+    code -- the code-first rule every classifier in the adapter follows. Absent
+    that code, a ``429`` still decides it, because a shed from an intermediary
+    carries no code at all and ``429`` has no competing code to be misattributed
+    from. :class:`CreekVaultRateLimitedError` is what a ``True`` here raises.
+    """
+    return code is VaultErrorCode.RATE_LIMITED or status_code == RATE_LIMITED_STATUS
 
 
 class VaultSendSuspendedError(CreekVaultUnavailableError):
@@ -1168,6 +1292,58 @@ class VaultWheelBalance:
     aspects: tuple[VaultWheelAspect, ...]
 
 
+#: The most rows one ``GET /v1/agent-activity`` answers with. Creek clamps a
+#: larger ``limit`` to it (``AGENT_ACTIVITY_MAX_LIMIT``, contract 0.22) and its
+#: response schema publishes the same bound as ``maxItems``.
+AGENT_ACTIVITY_MAX_LIMIT = 200
+
+
+class VaultAgentActivityOutcome(enum.StrEnum):
+    """Whether one call against the vault got past its pre-dispatch gates.
+
+    Creek's closed two-member enum, mirrored. ``ADMITTED`` means "dispatched to
+    the tool" and nothing more: the audit chain logs the attempt before a tool
+    resolves its target and never the result, so it cannot say whether content
+    came back, and neither can anything built on it. ``REFUSED`` is a refusal
+    before any tool ran -- a tool outside the agent's profile, or a ceiling
+    above ``personal``.
+    """
+
+    ADMITTED = "admitted"
+    REFUSED = "refused"
+
+
+@dataclass(frozen=True)
+class VaultAgentActivityRow:
+    """One call against the vault, reduced to who, what, when and whether.
+
+    ``consumer`` is the vault's audit stamp, verbatim: the static bearer's
+    consumer name, or a JWT agent's ``sub`` -- which names the *person*, not the
+    agent, until Creek-Vault#1976 stamps the agent's ``client_id`` instead.
+    ``tool`` is the tool name the entry was written under. Neither is copy:
+    both are identifiers a caller maps onto its own words before anyone reads
+    them. ``at`` is timezone-aware UTC.
+    """
+
+    consumer: str
+    tool: str
+    at: datetime
+    outcome: VaultAgentActivityOutcome
+
+
+@dataclass(frozen=True)
+class VaultAgentActivity:
+    """The vault's most recent calls, newest first, as :meth:`agent_activity` reads them.
+
+    Only the rows cross the seam. Creek's ``skipped`` count (log lines it could
+    not project) and its echoed ``tier_ceiling`` are validated at the parse
+    boundary and dropped: neither is anything a person reading their activity
+    could act on.
+    """
+
+    rows: tuple[VaultAgentActivityRow, ...]
+
+
 class CreekVaultClient(Protocol):
     """The seam adepthood calls into for all vault interaction.
 
@@ -1294,6 +1470,27 @@ class CreekVaultClient(Protocol):
         """
 
 
+class CreekVaultAgentActivityClient(CreekVaultClient, Protocol):
+    """The client surface the Settings activity list needs: ``agent-activity`` (0.22).
+
+    Separate from :class:`CreekVaultClient` for the reason
+    :class:`CreekVaultVoiceDraftClient` is: consumers and doubles that only
+    ingest or read a vault should not acquire a method they never call.
+    """
+
+    async def agent_activity(self, limit: int, /) -> VaultAgentActivity:
+        """Read the vault's most recent calls, newest first, at most ``limit`` of them.
+
+        Content-free by construction: Creek publishes four fields per call and
+        the adapter refuses an answer carrying a fifth. Fails as
+        :meth:`CreekVaultClient.wheel` does -- an unreadable or off-schema
+        answer as :class:`CreekVaultPayloadError`, a refusal as
+        :class:`CreekVaultContractError`, an absent vault as
+        :class:`CreekVaultUnavailableError`, and an unadvertised capability as
+        :class:`CreekCapabilityUnsupportedError` before any request is built.
+        """
+
+
 class CreekVaultVoiceDraftClient(CreekVaultClient, Protocol):
     """The narrow client surface required by optional Voice Draft mirroring.
 
@@ -1332,12 +1529,15 @@ class CreekVaultLetterClient(CreekVaultVoiceDraftClient, Protocol):
         """
 
 
-class CreekVaultPipelineClient(CreekVaultLetterClient, Protocol):
-    """The narrower extension required only by durable pipeline orchestration.
+class CreekVaultPipelineClient(CreekVaultLetterClient, CreekVaultAgentActivityClient, Protocol):
+    """The whole per-request surface: every narrower client, plus pipeline polling.
 
     Status polling is absent from :class:`CreekVaultClient` deliberately. Most
     consumers use ingest, upload, reflection, or wheel reads and should not have
     to implement a pipeline-only operation in their adapters or test doubles.
+    This is the type the per-request dependency resolves, so it also carries
+    :class:`CreekVaultAgentActivityClient`: the Settings activity route (#3535)
+    reads through the same resolved client every other route does.
     """
 
     async def pipeline_job(

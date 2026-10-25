@@ -78,9 +78,10 @@ def _document(**overrides: object) -> dict[str, object]:
 # --- the handshake ----------------------------------------------------------------
 
 
-def test_the_pin_is_contract_0_20() -> None:
-    """``keyless_inference`` is a 0.20 field; a 0.19 pin would never be told it."""
-    assert CONTRACT_VERSION == "0.20.0"
+def test_the_pin_is_at_least_contract_0_20() -> None:
+    """``keyless_inference`` is a 0.20 field; a pin below 0.20 would never be told it."""
+    major, minor = (int(part) for part in CONTRACT_VERSION.split(".")[:2])
+    assert (major, minor) >= (0, 20)
 
 
 @pytest.mark.parametrize(

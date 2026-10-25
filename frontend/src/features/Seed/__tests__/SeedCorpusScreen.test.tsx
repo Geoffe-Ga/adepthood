@@ -51,7 +51,7 @@ function vaultConnectionReply(connected: boolean, vaultUrl: string | null) {
   return Promise.resolve({
     ok: true,
     status: 200,
-    json: () => Promise.resolve({ connected, vault_url: vaultUrl }),
+    json: () => Promise.resolve({ connected, vault_url: vaultUrl, mcp_address: null }),
   });
 }
 

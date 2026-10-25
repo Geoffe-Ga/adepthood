@@ -729,3 +729,18 @@ async def backfill_after_consent(
             )
         )
     return outcome
+
+
+async def count_pending_entries(session: AsyncSession, user_id: int) -> int:
+    """How much of ``user_id``'s own writing is still without a fragment.
+
+    The public read behind ``GET /corpus/sweep``. It delegates to
+    :func:`_count_pending` rather than restating its predicate, so the number
+    an account is quoted is the number over the rows a sweep would actually
+    take -- the same reason :func:`_pending_conditions` is written once and
+    shared by the count and the batch.
+
+    No write, no commit and no provider call: an account may read this while
+    deciding whether to ask, as often as it likes.
+    """
+    return await _count_pending(session, user_id)

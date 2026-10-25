@@ -64,6 +64,12 @@ export const LLM_KEY_REQUIRED_COPY =
 // since credits are not what is missing.
 export const AI_ACCESS_REVOKED_COPY =
   "BotMason can't do this on the app's allowance any more, because this account's APTITUDE membership is no longer active. Nothing was charged. Your journal, the course, your habits and your practice are all still here, and you can export or delete your data whenever you like.";
+// Owner-approved wording (#3501, 2026-10-24; #3262): a managed vault with no
+// shared pool writes only with the writer's own key. Refused before any charge
+// and permanent until a key is added, so it names the remedy and never asks the
+// writer to wait.
+export const VAULT_KEY_REQUIRED_COPY =
+  'Your vault writes reflections and letters only with your own API key for now, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.';
 
 const MONTHLY_FREE_MESSAGES_USED =
   "You've used up this month's free BotMason messages. Add your own API key in Settings, or wait for next month's fresh batch.";
@@ -235,12 +241,8 @@ export const USER_FACING_ERROR_MESSAGES: Readonly<Record<string, string>> = Obje
   generation_guard_unavailable:
     "BotMason couldn't start this just now, and nothing was charged. Give it a moment and try again.",
   llm_key_required: LLM_KEY_REQUIRED_COPY,
-  // A managed vault with no shared pool writes only with the writer's own key
-  // (#3501). Refused before any charge, and permanent until a key is added, so
-  // the copy names the remedy and never asks the writer to wait. Pending owner
-  // approval of the wording (#3262 governs money copy).
-  vault_key_required:
-    'Your vault writes reflections and letters only with your own API key for now, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.',
+  // A managed vault with no shared pool writes only with the writer's own key (#3501).
+  vault_key_required: VAULT_KEY_REQUIRED_COPY,
   invalid_llm_api_key_format:
     "That API key doesn't look right. Copy the full key from your OpenAI or Anthropic dashboard and paste it into Settings.",
   // A permanent, billing-level refusal — deliberately NOT inheriting the bare

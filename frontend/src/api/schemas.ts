@@ -1528,9 +1528,70 @@ export type VoiceReadinessT = z.infer<typeof voiceReadinessSchema>;
 export const vaultConnectionResponseSchema = z.object({
   connected: z.boolean(),
   vault_url: z.string().nullable(),
+  /**
+   * The address a person gives an agent they run elsewhere (#3534). Null on
+   * exactly the answers ``vault_url`` is null on: nothing connected, or a
+   * managed vault whose address stays private.
+   */
+  mcp_address: z.string().nullable(),
 });
 
 export type VaultConnectionT = z.infer<typeof vaultConnectionResponseSchema>;
+
+/**
+ * One agent this account approved for its vault and has not stopped (mirrors
+ * the backend ``ConnectedAgentResponse``, #3534).
+ *
+ * ``grants`` are scope names, never prose: the Settings screen maps each to the
+ * phrase the consent page used and renders nothing for a name it does not
+ * know, so ``vault:desk`` never reaches a person. ``name`` is the agent's own
+ * word for itself, null when it gave none.
+ */
+export const connectedAgentSchema = z.object({
+  id: z.number().int().positive(),
+  name: z.string().nullable(),
+  grants: z.array(z.string()),
+  created_at: isoDateTime,
+  last_used_at: isoDateTime.nullable(),
+  redirect_host: z.string().nullable(),
+});
+
+export type ConnectedAgentT = z.infer<typeof connectedAgentSchema>;
+
+/**
+ * One call an agent (or the app) made against this account's vault, in plain
+ * words (mirrors the backend ``AgentActivityRowResponse``, #3535).
+ *
+ * Four fields and no more: ``agent`` and ``tool_label`` are always the
+ * server's own words -- never a tool name or an audit stamp the vault chose --
+ * and nothing here can carry what was asked or what came back. ``.strict()``
+ * on purpose, unlike most schemas here: a fifth field on this surface is a
+ * broken promise to refuse, not an addition to tolerate.
+ */
+export const agentActivityRowResponseSchema = z
+  .object({
+    agent: z.string(),
+    tool_label: z.string(),
+    at: isoDateTime,
+    outcome: z.enum(['admitted', 'refused']),
+  })
+  .strict();
+
+export type AgentActivityRowT = z.infer<typeof agentActivityRowResponseSchema>;
+
+/**
+ * What ``GET /vault/agents/activity`` answers: the most recent calls, newest
+ * first, or ``unavailable`` when the vault could not be read -- which the
+ * screen says, rather than claiming nothing happened.
+ */
+export const agentActivityResponseSchema = z
+  .object({
+    status: z.enum(['ok', 'unavailable']),
+    rows: z.array(agentActivityRowResponseSchema),
+  })
+  .strict();
+
+export type AgentActivityT = z.infer<typeof agentActivityResponseSchema>;
 
 /** Durable, secret-free progress for an explicitly requested Creek allocation. */
 export const vaultActivationResponseSchema = z

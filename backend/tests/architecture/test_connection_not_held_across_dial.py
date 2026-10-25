@@ -67,6 +67,13 @@ _MODULES_IMPORTING_A_TRANSPORT = frozenset(
         # request helpers release the injected database session first.
         "services.creek_provisioning_client",
         "services.creek_vault_client",
+        # The agent-activity read (#3535) and the transport exception sets it
+        # shares with the client import httpx for its response type and its
+        # exception classes. The read dials only through the client's own
+        # authorized transport, which it is handed; its one route commits the
+        # request's transaction before the vault is called.
+        "services.creek_vault_activity_wire",
+        "services.creek_vault_call_errors",
         "services.creek_vault_pinned_transport",
         "services.creek_vault_url_resolution",
         "services.email",
@@ -79,6 +86,16 @@ _MODULES_IMPORTING_A_TRANSPORT = frozenset(
         "services.oidc",
         # Encodes and decodes tokens with the same library; never fetches.
         "routers.auth",
+        # Signs and reads the OAuth consent ticket with PyJWT, locally, under a
+        # derived HMAC key; never fetches (#3532).
+        "services.oauth_authorization",
+        # Fetches an agent's client metadata document over httpx, through the
+        # pinning transport. Its one caller, services.oauth_clients, commits the
+        # request's transaction before calling it (#3532).
+        "services.oauth_metadata_fetch",
+        # Signs agent access tokens with PyJWT, locally, under the configured
+        # ES256 key; never fetches (#3533).
+        "services.oauth_tokens",
     }
 )
 

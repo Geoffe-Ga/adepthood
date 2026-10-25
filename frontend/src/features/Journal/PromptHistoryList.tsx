@@ -1,4 +1,4 @@
-/** Answered questions and their responses, paged beneath the current Prompts inbox. */
+/** Past questions, with any saved responses, below the current Prompts inbox. */
 import React from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
@@ -57,7 +57,7 @@ const EmptyBody = ({ history }: { history: PromptHistoryState }): React.JSX.Elem
     <ActivityIndicator accessibilityLabel="Loading past prompts" testID="prompt-history-loading" />
   ) : (
     <Text style={styles.empty} testID="prompt-history-empty">
-      You have not answered a weekly prompt yet. Current prompts appear above.
+      No past prompts yet. Current prompts appear above.
     </Text>
   );
 };

@@ -42,10 +42,19 @@ function mockStubSection(slot: string, testID: string) {
   };
 }
 
-jest.mock('../JournalPrimaryInvitation', () => ({
-  __esModule: true,
-  default: mockStubSection('writing', 'stub-writing'),
-}));
+jest.mock('../JournalPrimaryInvitation', () => {
+  const Writing = mockStubSection('writing', 'stub-writing');
+  const Early = mockStubSection('earlyReview', 'stub-early-review');
+  return {
+    __esModule: true,
+    default: () => (
+      <>
+        <Writing />
+        <Early />
+      </>
+    ),
+  };
+});
 jest.mock('../PromptHistoryList', () => ({ __esModule: true, default: () => null }));
 jest.mock('../useNotificationCount', () => ({ useFocusRefreshKey: () => 0 }));
 
@@ -125,6 +134,13 @@ beforeEach(() => {
 });
 
 describe('NotificationCenterScreen', () => {
+  it('heads and counts an early-review invitation even when the primary writing card is set aside', () => {
+    setSlots({ earlyReview: { visible: true, count: 1 } });
+    const { getByText, queryByTestId } = render(<NotificationCenterScreen />);
+    expect(getByText('Writing invitations')).toBeTruthy();
+    expect(queryByTestId('journal-notification-center-empty')).toBeNull();
+  });
+
   it('renders the five sections inside one scroll, in order', () => {
     setSlots({
       today: { visible: true, count: 0 },

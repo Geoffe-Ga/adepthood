@@ -35,12 +35,14 @@ names, so "what a vault advertises" was a fact about the vault alone. Contract
 caller's declared minor, ``upload`` is published only at or above ``0.8``, and
 ``POST /v1/uploads`` refuses a caller below that threshold outright. The
 consequence for this suite is that ``examples/capabilities/success.json`` is the
-document a **0.17** caller receives, not a document every caller receives, and
-the counts in :mod:`tests.creek_bundle_facts` (ten capabilities, seventy cells,
-nine unreachable sentinels) are the 0.17 shape rather than a permanent one.
-0.9.0 added ``drive-connector``, 0.10.0 added ``pipeline``, 0.15.0 added
+document a **0.22** caller receives, not a document every caller receives, and
+the counts in :mod:`tests.creek_bundle_facts` (eleven capabilities, seventy-seven
+cells, eleven unreachable sentinels) are the 0.22 shape rather than a permanent
+one. 0.9.0 added ``drive-connector``, 0.10.0 added ``pipeline``, 0.15.0 added
 ``voice-drafts``, 0.16.0 added ``journal-withdraw``, and 0.17.0 added
-``letters``; treat every count here as a fact about one pinned commit.
+``letters``; 0.18 through 0.21 added fields and an error code but no
+capability, and 0.22.0 added ``agent-activity``. Treat every count here as a
+fact about one pinned commit.
 
 Naming a capability is not calling it
 -------------------------------------
@@ -672,12 +674,18 @@ def test_the_parametrised_case_list_covers_every_capability() -> None:
 
 
 def test_only_published_impossible_branches_are_unreachable() -> None:
-    """Care runs only where a model writes, and journal withdrawal cannot reveal refusal."""
+    """Care runs only where a model writes; two capabilities have nothing to refuse.
+
+    Journal withdrawal cannot reveal a refusal (an unknown identity is
+    absent-equivalent), and agent activity (0.22) resolves no vault object and
+    reads no content, so neither publishes a privacy-refusal shape.
+    """
     pairs = {(cell.capability, cell.state) for cell in _UNREACHABLE}
     cared_for = {"reflections", "letters"}
     assert pairs == {
         *((capability, "care-escalation") for capability in _CAPABILITIES - cared_for),
         ("journal-withdraw", "refusal"),
+        ("agent-activity", "refusal"),
     }
     assert {cell.model for cell in _UNREACHABLE} == {"NotApplicableExample"}
 
@@ -778,7 +786,14 @@ def test_the_capabilities_added_since_0_8_are_named_and_carry_a_full_example_col
     than they appear to.
     """
     added = frozenset(
-        {"drive-connector", "pipeline", "voice-drafts", "journal-withdraw", "letters"}
+        {
+            "drive-connector",
+            "pipeline",
+            "voice-drafts",
+            "journal-withdraw",
+            "letters",
+            "agent-activity",
+        }
     )
 
     assert added <= frozenset(_CAPABILITY_BY_CREEK_NAME)
