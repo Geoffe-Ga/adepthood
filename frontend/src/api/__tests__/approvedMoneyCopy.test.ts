@@ -7,12 +7,14 @@ import {
   AI_ACCESS_REVOKED_COPY,
   INSUFFICIENT_OFFERINGS_COPY,
   LLM_KEY_REQUIRED_COPY,
+  VAULT_KEY_REQUIRED_COPY,
 } from '../errorMessages';
 
 import { NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY } from '@/features/Settings/byokOnlyCopy';
 
 /**
- * The five money strings the owner approved as written (#3262).
+ * The six money strings the owner approved as written (#3262; the sixth, the
+ * pool-less vault's add-a-key refusal, on 2026-10-24 for #3501).
  *
  * Each is pinned by its exact text, written out here by hand, so a later edit
  * to any of them is a visible decision rather than a silent drift.
@@ -35,6 +37,11 @@ describe('owner-approved money copy (#3262)', () => {
       "BotMason can't do this on the app's allowance any more, because this account's APTITUDE membership is no longer active. Nothing was charged. Your journal, the course, your habits and your practice are all still here, and you can export or delete your data whenever you like.",
     ],
     [
+      'VAULT_KEY_REQUIRED_COPY',
+      VAULT_KEY_REQUIRED_COPY,
+      'Your vault writes reflections and letters only with your own API key for now, so nothing was charged. Add your OpenAI or Anthropic key in Settings to continue.',
+    ],
+    [
       'NO_KEY_HINT',
       NO_KEY_HINT,
       "No key saved yet. BotMason's cloud AI features — resonance notes, letters, completion checks and page reading — need a key of your own, and credits don't pay for them. Resonance notes and letters can still come from your vault if you have one.",
@@ -54,6 +61,7 @@ const SOURCES: ReadonlyArray<[string, string]> = [
   ['api/errorMessages.ts', 'INSUFFICIENT_OFFERINGS_COPY'],
   ['api/errorMessages.ts', 'LLM_KEY_REQUIRED_COPY'],
   ['api/errorMessages.ts', 'AI_ACCESS_REVOKED_COPY'],
+  ['api/errorMessages.ts', 'VAULT_KEY_REQUIRED_COPY'],
   ['features/Settings/byokOnlyCopy.ts', 'NO_KEY_HINT'],
   ['features/Settings/byokOnlyCopy.ts', 'REMOVE_KEY_DIALOG_BODY'],
 ];

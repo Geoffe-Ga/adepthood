@@ -89,6 +89,7 @@ describe('USER_FACING_ERROR_MESSAGES', () => {
       'daily_generation_limit_reached',
       'generation_guard_unavailable',
       'llm_key_required',
+      'vault_key_required',
       'invalid_llm_api_key_format',
       // permanently exhausted provider balance on the caller's own key
       'llm_credit_exhausted',

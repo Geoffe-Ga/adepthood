@@ -12,19 +12,23 @@ Every expectation below is a literal rather than a value derived from
 what the pin should be passes whatever the pin is, which is exactly the
 vacuity this suite exists to avoid.
 
-The 0.19 and 0.20 fields are **parsed and ignored** on purpose. Labelling each
-use from ``inference_source``, refusing a mismatched route as the existing
-``409``, and asking a writer for a key when a vault reports
-``keyless_inference: false`` are Creek-Vault#1903 steps 3 and 4 and the owner's
-ADR 0009 amendment -- product and custody decisions, not part of a pin move.
-What *is* part of a pin move is proving that the new fields cannot change what
+The 0.19 fields are **parsed and ignored** on purpose. Labelling each use from
+``inference_source`` and refusing a mismatched route as the existing ``409``
+are Creek-Vault#1903 steps 3 and 4 -- product decisions, not part of a pin move.
+What *is* part of a pin move is proving that those fields cannot change what
 adepthood does with an answer, which is what the ``ignored`` tests pin.
+
+0.20's ``keyless_inference`` is the exception: since #3501 (the owner's decision
+of 2026-10-21) it is consumed, and a pool-less vault's keyless pass is refused
+``402 vault_key_required`` before any charge. Here it is pinned only as read
+through to the handshake; the refusal itself is ``tests/test_vault_key_required.py``.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from http import HTTPStatus
 from pathlib import Path
 from typing import Final, cast
@@ -68,8 +72,9 @@ _PUBLISHED_0_21: Final = "0.21"
 #: and adepthood must say so rather than call it.
 _PRE_021_WINDOW: Final = ("0.20", "0.19", "0.18")
 
-#: The fields 0.19 and 0.20 added to the handshake, which adepthood ignores.
-_HANDSHAKE_ADDITIONS: Final = ("inference_pool", "keyless_inference")
+#: The field 0.19 added to the handshake, which adepthood ignores. 0.20's
+#: ``keyless_inference`` is consumed (#3501), so it is not listed here.
+_HANDSHAKE_ADDITIONS: Final = ("inference_pool",)
 
 #: The field 0.19 added to every model-backed answer, which adepthood ignores.
 _PROVENANCE_FIELD: Final = "inference_source"
@@ -272,7 +277,7 @@ async def test_a_rate_limited_code_is_a_wait_whatever_status_carries_it() -> Non
 
 @pytest.mark.asyncio
 async def test_the_handshake_additions_are_ignored() -> None:
-    """``inference_pool`` and ``keyless_inference`` change nothing adepthood decides.
+    """``inference_pool`` changes nothing adepthood decides.
 
     Compared against the same document with both fields stripped, so the claim
     is "the field had no effect" rather than "the parse did not crash".
@@ -286,19 +291,21 @@ async def test_the_handshake_additions_are_ignored() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_vault_reporting_no_keyless_inference_still_negotiates_unchanged() -> None:
-    """``keyless_inference: false`` is the value a consumer would one day act on.
+async def test_a_vault_reporting_no_keyless_inference_is_read_through() -> None:
+    """``keyless_inference: false`` reaches the handshake, and changes nothing else.
 
-    Acting on it -- asking the writer for a key rather than charging for a pass
-    that cannot run -- is a product decision outside a pin move, so for now it
-    must not alter the handshake in either direction.
+    Acting on it is #3501's refusal before charging. Here the claim is narrower:
+    the field is read as the vault sent it, and every other negotiated fact is
+    identical to the published document's.
     """
-    refusing = _client(
+    refusing = await _client(
         _ScriptedVault(handshake=_published_handshake() | {"keyless_inference": False})
-    )
-    baseline = _client(_ScriptedVault())
+    ).handshake()
+    baseline = await _client(_ScriptedVault()).handshake()
 
-    assert await refusing.handshake() == await baseline.handshake()
+    assert refusing.refuses_keyless_inference() is True
+    assert baseline.refuses_keyless_inference() is False
+    assert replace(refusing, keyless_inference=None) == replace(baseline, keyless_inference=None)
 
 
 @pytest.mark.asyncio

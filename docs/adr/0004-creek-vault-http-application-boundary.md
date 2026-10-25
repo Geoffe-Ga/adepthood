@@ -1662,3 +1662,25 @@ What 0.22 publishes, and what adepthood does with it:
 - `tests/test_creek_contract_0_22.py` pins the move: the declared minor, the
   re-imaged window negotiating, a 0.21-only vault refused as version skew, and
   the new capability advertised and called.
+
+## Note, 2026-10-24 — a pool-less vault's keyless pass is refused before any charge
+
+No pin move: `keyless_inference` (Creek 0.20) has been on the handshake since
+the 0.21 move, parsed and ignored. Adepthood #3501 consumes it, on the owner's
+decision of 2026-10-21.
+
+**Why.** On 2026-10-21 every reflection on the managed pilot vault failed. A
+managed vault ships no inference runtime and refuses its operator's cloud key,
+so until the shared pool (Creek-Vault ADR-0016) is pinned, it writes only with
+the writer's own key. Adepthood charged a credit, dialled, was refused,
+refunded, and told the writer to "give it a moment and try again". Retrying
+could never help.
+
+**What.** When a vault-bound pass carries no key its vault will spend, and the
+vault reports `keyless_inference: false`, the pass is answered
+`402 vault_key_required` ahead of the payer gate. No wallet row is written and
+no reflect call is made. The frontend routes that to the existing add-a-key
+remedy. A locally care-flagged entry still gets care, a pass with no vault tier
+is never probed, and the reflect gate reuses the probe's handshake, so a pass
+still handshakes once. `inference_source` and `inference_pool` stay parsed and
+ignored.

@@ -68,13 +68,15 @@ from uuid import UUID
 #      carrying `VaultErrorCode.RATE_LIMITED` -- rather than being downgraded to
 #      `503 temporarily_unavailable` (Creek-Vault#1903 step 6).
 #    - `inference_source` (0.19) on reflection, letter and classification
-#      answers, `inference_pool` (0.19) and `keyless_inference` (0.20) on the
-#      handshake. Parsed and ignored: labelling each use from the route, refusing
-#      a mismatched route as the existing `409`, and asking for a writer's key
-#      when a vault reports `keyless_inference: false` are Creek-Vault#1903
-#      steps 3-4 and an owner ADR 0009 decision, not part of a pin move.
-#      `tests/test_creek_contract_0_21.py` pins that none of them changes what
+#      answers and `inference_pool` (0.19) on the handshake. Parsed and ignored:
+#      labelling each use from the route and refusing a mismatched route as the
+#      existing `409` are Creek-Vault#1903 steps 3-4, not part of a pin move.
+#      `tests/test_creek_contract_0_21.py` pins that neither changes what
 #      adepthood does with an answer.
+#    - `keyless_inference` (0.20) on the handshake. Consumed (#3501, owner
+#      decision 2026-10-21): a vault-bound pass carrying no key its vault will
+#      spend, against a vault reporting `false`, is refused `402
+#      vault_key_required` before any charge (`services.vault_byok`).
 #    - `agent-activity` (0.22, Creek-Vault#1968): `GET /v1/agent-activity`, the
 #      content-free projection of the vault's MCP audit chain. Consumed by the
 #      Settings "Recent activity" list (#3535) through
@@ -672,10 +674,19 @@ class HandshakeResult:
     #: PERSONAL work (Creek contract 0.18). Empty for a self-connected vault, an
     #: older vault, and every degraded handshake.
     request_key_providers: frozenset[VaultKeyProvider] = frozenset()
+    #: Whether the vault may attempt a model call carrying no writer key
+    #: (Creek contract 0.20, #3501). ``False`` is a managed vault with no shared
+    #: pool, which refuses every keyless reflection; ``None`` is a vault that
+    #: did not say, and changes nothing.
+    keyless_inference: bool | None = None
 
     def accepts_key(self, provider: VaultKeyProvider) -> bool:
         """Whether this usable vault will spend a writer's ``provider`` key."""
         return self.available and provider in self.request_key_providers
+
+    def refuses_keyless_inference(self) -> bool:
+        """Whether this usable vault said a keyless model call cannot run here."""
+        return self.available and self.keyless_inference is False
 
     @classmethod
     def unavailable(cls) -> HandshakeResult:

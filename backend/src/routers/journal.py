@@ -163,6 +163,7 @@ from services.creek_vault_letters import (
 from services.creek_vault_pipeline import VaultPipelineTrigger, drive_vault_pipeline
 from services.creek_vault_reflect import (
     VaultRelatedSurfaces,
+    pass_reaches_vault,
     reflection_receipt,
     related_surfaces,
     select_reflection_llm,
@@ -258,9 +259,10 @@ from services.resonance_care import (
 from services.usage import get_monthly_cap
 from services.users import get_user_timezone
 from services.vault_byok import (
+    PassReach,
     paying_key,
-    reading_vault_key,
     refused_whatever_pays,
+    resonance_vault_reading,
     vault_provider_key,
 )
 from services.voice_draft_privacy import journal_vault_mutations, voice_draft_privacy
@@ -1891,13 +1893,20 @@ async def _resonance_pass_or_care(
 
 @dataclass(frozen=True, slots=True)
 class _ReflectionRequest:
-    """One admitted pass's body and the other writing it carries, all read under the hold."""
+    """One admitted pass's body and the other writing it carries, all read under the hold.
+
+    ``vault_probed`` is carried from :class:`_ReflectionClients` (#3501): when
+    the pre-charge keyless probe already handshook this request's vault client,
+    the reflect gate reads that cached answer rather than dialling the vault a
+    second time, so a vault-bound pass still handshakes exactly once.
+    """
 
     entry_id: int
     message: str
     classification: str
     prior: list[str]
     prior_letters: list[str]
+    vault_probed: bool = False
 
 
 def _metered_usage(app_llm: BotmasonResonanceLLM | None) -> Sequence[LLMResponse]:
@@ -1924,7 +1933,10 @@ async def _reflection_source(
     if app_llm is not None:
         return app_llm
     return await select_reflection_llm(
-        vault_client, body=request.message, classification=request.classification
+        vault_client,
+        body=request.message,
+        classification=request.classification,
+        probed=request.vault_probed,
     )
 
 
@@ -2297,6 +2309,9 @@ class _ReflectionClients:
     free_only: bool = False
     disclosed_route: PayerRoute | None = None
     vault_key: VaultProviderKey | None = field(default=None, repr=False)
+    #: Set by the handler when the pre-charge keyless check (#3501) already
+    #: handshook ``vault_client`` this request, so the reflect gate reuses it.
+    vault_probed: bool = False
 
 
 def _reflection_clients(
@@ -2444,20 +2459,25 @@ async def run_resonance(
     # A vault-bound writer's own key pays when their vault will spend it
     # (#3437). Decided before the payer gate, so a writer with a key and no
     # credits is admitted; a pass refused whoever pays is never probed.
-    clients = replace(
-        clients,
-        vault_key=await reading_vault_key(
-            session,
-            clients.vault_client,
-            clients.boundary,
-            clients.api_key,
+    # A pool-less managed vault's keyless pass is answered first (#3501): no
+    # credit can buy what its vault will not write, so an empty-wallet writer
+    # must not be told to refill. The probe's handshake is reused by the
+    # reflect gate (``vault_probed``), so the pass still handshakes once.
+    reading = await resonance_vault_reading(
+        session,
+        clients.vault_client,
+        clients.boundary,
+        clients.api_key,
+        reach=PassReach(
             refused_whatever_pays=refused_whatever_pays(
                 free_only=clients.free_only,
                 disclosed_route=clients.disclosed_route,
                 boundary=clients.boundary,
             ),
+            reaches_vault=pass_reaches_vault(message, entry.classification),
         ),
     )
+    clients = replace(clients, vault_key=reading.key, vault_probed=reading.probed)
     refusal = await payer_refusal(
         session,
         current_user,
@@ -2465,6 +2485,7 @@ async def run_resonance(
         app_provider=clients.boundary is ReflectionBoundary.APP_PROVIDER,
         vault_spends_key=clients.vault_key is not None,
     )
+    refusal = reading.ahead_of(refusal)
     refusal = free_only_refusal(refusal, free_only=clients.free_only)
     # So is a pass whose disclosed payer route is no longer this caller's (#3385).
     refusal = stale_route_refusal(
@@ -2568,6 +2589,7 @@ async def _run_admitted_resonance(
                     classification=entry.classification,
                     prior=list(grounding.bodies),
                     prior_letters=prior_letters,
+                    vault_probed=clients.vault_probed,
                 ),
                 clients.vault_client,
                 app_llm,
