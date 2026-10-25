@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 import { API_BASE_URL } from '@/config';
+import { OAuthClientInformationFull } from '@/testing/mcpClientInformation';
 
 /**
  * The agent's half of connecting an agent to a vault, spoken over the wire.
@@ -67,7 +68,13 @@ async function expectStatus(response: Response, status: number, step: string): P
   }
 }
 
-/** Register the agent the way `profile` does, and return its client id. */
+/**
+ * Register the agent the way `profile` does, and return its client id.
+ *
+ * The body is read the way an MCP SDK agent reads it -- through the SDK's own
+ * client-information schema -- so a response the agent would refuse (a
+ * `"logo_uri": null`, #3543) fails here at registration, as it failed OpenClaw.
+ */
 export async function registerAgent(profile: AgentProfile): Promise<string> {
   const response = await fetch(`${API_BASE_URL}/oauth/register`, {
     method: 'POST',
@@ -81,8 +88,7 @@ export async function registerAgent(profile: AgentProfile): Promise<string> {
     }),
   });
   await expectStatus(response, HTTP_CREATED, 'registration');
-  const body = (await response.json()) as { client_id: string };
-  return body.client_id;
+  return OAuthClientInformationFull.parse(await response.json()).client_id;
 }
 
 /** The query an agent sends the person's browser to the consent page with. */
