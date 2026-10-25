@@ -15,6 +15,7 @@ from http import HTTPStatus
 from typing import Final
 from urllib.parse import parse_qs, urlsplit
 
+import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -114,11 +115,23 @@ def redirect_query(response: Response) -> tuple[str, dict[str, str]]:
     return f"{parts.scheme}://{parts.netloc}{parts.path}", query
 
 
-async def decide(client: AsyncClient, ticket: str, decision: str) -> Response:
-    """Press Approve or Decline on a rendered consent page."""
+async def decide(
+    client: AsyncClient, ticket: str, decision: str, *, scopes: tuple[str, ...] | None = None
+) -> Response:
+    """Press a decision with explicit checkbox choices (all requested by default in tests)."""
+    if scopes is None:
+        try:
+            claims = jwt.decode(ticket, options={"verify_signature": False})
+            scopes = tuple(str(claims.get("sc", "")).split())
+        except jwt.PyJWTError:
+            scopes = ()
     return await client.post(
         "/oauth/authorize/decision",
-        data={"ticket": ticket, "decision": decision},
+        data={
+            "ticket": ticket,
+            "decision": decision,
+            **{f"grant.{scope}": "on" for scope in scopes},
+        },
     )
 
 

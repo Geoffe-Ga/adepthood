@@ -1,14 +1,15 @@
 """The token half of the vault-agent authorization server (#3533).
 
 An agent that a person approved (#3532) arrives here with a one-time code and
-its PKCE verifier, and leaves with two things:
+its PKCE verifier, and leaves with access bounded by the person's choices:
 
 * an **access token** -- an ES256 JWT that lives :data:`ACCESS_TOKEN_TTL`,
   whose ``aud`` is exactly the person's vault MCP URL and whose ``scope`` is
   what they approved. The vault verifies it against the published key set with
   no call back here (Creek-Vault#1963);
-* a **refresh token** -- opaque, stored only as its SHA-256, alive for
-  :data:`REFRESH_TOKEN_TTL` and rotated on every use.
+* a **refresh token**, only if they approved ``offline_access`` -- opaque,
+  stored only as its SHA-256, alive for :data:`REFRESH_TOKEN_TTL` and rotated
+  on every use. Without that approval no refresh token or database row is made.
 
 Everything the token may say was decided at approval and is re-checked here:
 the code must be unspent and unexpired, presented by the client it was issued
@@ -138,7 +139,7 @@ class IssuedTokens:
     """A successful token response, before it is put on the wire."""
 
     access_token: str = field(repr=False)
-    refresh_token: str = field(repr=False)
+    refresh_token: str | None = field(repr=False)
     scope: str
     expires_in: int = int(ACCESS_TOKEN_TTL.total_seconds())
 
@@ -277,20 +278,22 @@ class _Issuance:
 
 
 async def _issue(session: AsyncSession, issuance: _Issuance, signer: Signer) -> IssuedTokens:
-    """Store a new refresh token, stamp the grant's ``last_used_at``, and sign the pair."""
+    """Sign access, and issue refresh only when the person approved staying connected."""
     grant = issuance.grant
     subject = await agent_subject(session, grant.user_id, secret=signer.subject_secret)
-    refresh_token = mint_refresh_token()
-    session.add(
-        OAuthRefreshToken(
-            token_hash=hash_code(refresh_token),
-            family_id=issuance.family_id,
-            grant_id=_persisted_id(grant),
-            user_id=grant.user_id,
-            created_at=signer.now,
-            expires_at=signer.now + REFRESH_TOKEN_TTL,
+    refresh_token = None
+    if "offline_access" in issuance.scope.split():
+        refresh_token = mint_refresh_token()
+        session.add(
+            OAuthRefreshToken(
+                token_hash=hash_code(refresh_token),
+                family_id=issuance.family_id,
+                grant_id=_persisted_id(grant),
+                user_id=grant.user_id,
+                created_at=signer.now,
+                expires_at=signer.now + REFRESH_TOKEN_TTL,
+            )
         )
-    )
     grant.last_used_at = signer.now
     session.add(grant)
     await session.commit()

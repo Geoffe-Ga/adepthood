@@ -30,6 +30,11 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 
 from services import oauth_consent_copy as copy
 from services.email_templates import PALETTE
+from services.oauth_consent_selection import (
+    DEFAULT_SELECTION,
+    GRANT_CHECKED_VALUE,
+    GRANT_FIELD_PREFIX,
+)
 
 _TEMPLATE_DIR: Final = Path(__file__).resolve().parent.parent / "templates" / "oauth"
 
@@ -108,7 +113,15 @@ def render_consent(
         "consent.html",
         agent_name=agent_name if named else copy.CONSENT_UNNAMED_AGENT,
         named=named,
-        grants=[copy.GRANT_DESCRIPTIONS[scope] for scope in scopes],
+        grants=[
+            (
+                f"{GRANT_FIELD_PREFIX}{scope}",
+                copy.GRANT_DESCRIPTIONS[scope],
+                scope in DEFAULT_SELECTION,
+            )
+            for scope in scopes
+        ],
+        checked_value=GRANT_CHECKED_VALUE,
         return_host=return_host,
         local_program=local_program,
         ticket=ticket,

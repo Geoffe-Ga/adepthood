@@ -3071,5 +3071,23 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/vault-agent-activity.e2e.test.ts"
+  },
+  {
+    "id": "vault.agent-consent-subset",
+    "description": "A person connecting an agent that asks for every permission sees only reading and drafting checked by default, unchecks drafting, and approves reading alone (#3544). The consent page posts those explicit choices; the code exchange issues an access token with only vault:read and no refresh token, and the production vault.agents client lists exactly that approved subset in Settings. The agent cannot acquire journal or pipeline permission by requesting them. Backend regressions also pin forged, duplicate, empty and unrequested choices and refresh scope preservation.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/VaultSettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "vault"],
+      "routes": ["PUT /vault/connection", "GET /vault/agents"],
+      "tables": [
+        "user",
+        "uservaultconfig",
+        "oauth_client",
+        "oauth_authorization_code",
+        "agent_grant"
+      ]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-agent-consent-subset.e2e.test.ts"
   }
 ]

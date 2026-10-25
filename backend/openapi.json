@@ -8864,8 +8864,15 @@
             "type": "integer"
           },
           "refresh_token": {
-            "title": "Refresh Token",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refresh Token"
           },
           "scope": {
             "title": "Scope",
@@ -8880,7 +8887,6 @@
           "access_token",
           "token_type",
           "expires_in",
-          "refresh_token",
           "scope"
         ],
         "title": "TokenResponse",
@@ -23570,7 +23576,7 @@
     },
     "/oauth/token": {
       "post": {
-        "description": "Exchange an authorization code or a refresh token for a token pair.",
+        "description": "Exchange a code or refresh token; staying connected requires approved offline access.",
         "operationId": "exchange_token_oauth_token_post",
         "requestBody": {
           "content": {

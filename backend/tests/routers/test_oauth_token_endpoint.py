@@ -65,7 +65,7 @@ from tests.helpers.openapi_errors import declared_response_schema, live_document
 _TOKEN: Final = "/oauth/token"
 _REVOKE: Final = "/oauth/revoke"
 _JWKS: Final = "/.well-known/jwks.json"
-_SCOPE: Final = "vault:read vault:desk"
+_SCOPE: Final = "vault:read vault:desk offline_access"
 # A verifier of the right shape that is not the one the challenge was made from.
 _WRONG_VERIFIER: Final = "x" * 43
 # The claims the vault requires (Creek-Vault#1963 ``REQUIRED_CLAIMS``).
@@ -112,7 +112,9 @@ async def _tokens(
     async_client: AsyncClient, db_session: AsyncSession, name: str
 ) -> tuple[dict[str, object], str, str, int]:
     """Approve and exchange for a fresh account; return the body, client, resource, account."""
-    code, client_id, resource, user_id = await approved_code(async_client, db_session, name)
+    code, client_id, resource, user_id = await approved_code(
+        async_client, db_session, name, scope=_SCOPE
+    )
     response = await exchange(async_client, code_exchange_form(code, client_id))
     assert response.status_code == HTTPStatus.OK, response.text
     return response.json(), client_id, resource, user_id
@@ -183,7 +185,9 @@ async def test_a_code_and_its_verifier_buy_an_access_and_a_refresh_token(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """The happy path: a short-lived bearer for the vault, and a refresh token."""
-    code, client_id, _resource, user_id = await approved_code(async_client, db_session, "happy")
+    code, client_id, _resource, user_id = await approved_code(
+        async_client, db_session, "happy", scope=_SCOPE
+    )
     response = await exchange(async_client, code_exchange_form(code, client_id))
 
     assert response.status_code == HTTPStatus.OK, response.text
@@ -308,7 +312,9 @@ async def test_a_code_spent_twice_is_refused_and_revokes_what_it_bought(
     async_client: AsyncClient, db_session: AsyncSession
 ) -> None:
     """OAuth 2.1 section 4.1.3: a replayed code revokes the tokens issued from it."""
-    code, client_id, _resource, _user_id = await approved_code(async_client, db_session, "replay")
+    code, client_id, _resource, _user_id = await approved_code(
+        async_client, db_session, "replay", scope=_SCOPE
+    )
     first = await exchange(async_client, code_exchange_form(code, client_id))
     assert first.status_code == HTTPStatus.OK
     replay = await exchange(async_client, code_exchange_form(code, client_id))
@@ -534,7 +540,7 @@ async def test_a_refresh_token_from_before_a_re_approval_stays_dead(
         "/auth/login", json={"email": "again@example.com", "password": PASSWORD}
     )
     headers = {"Authorization": f"Bearer {login.json()['token']}"}
-    code = await approve(async_client, headers, client_id, resource)
+    code = await approve(async_client, headers, client_id, resource, scope=_SCOPE)
 
     _assert_refused(await _refresh(async_client, str(body["refresh_token"])), "invalid_grant")
     fresh = await exchange(async_client, code_exchange_form(code, client_id))
@@ -592,6 +598,7 @@ async def test_a_refresh_may_narrow_its_scope_but_never_widen_it(
     narrower = await _refresh(async_client, str(body["refresh_token"]), scope="vault:read")
     assert narrower.status_code == HTTPStatus.OK, narrower.text
     assert narrower.json()["scope"] == "vault:read"
+    assert "refresh_token" not in narrower.json()
     claims = await _verify_as_the_vault(async_client, narrower.json()["access_token"], resource)
     assert claims["scope"] == "vault:read"
 

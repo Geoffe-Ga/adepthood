@@ -102,7 +102,7 @@ describe('vault.agent-approve-draft-revoke for OpenClaw, against a live server',
     for (const scope of PROFILE.scope.split(' ')) {
       expect(page.html).toContain(String(AGENT_GRANT_PHRASES.get(scope)));
     }
-    const back = await decide(page.ticket, 'approve');
+    const back = await decide(page.ticket, 'approve', PROFILE.scope.split(' '));
 
     expect(`${back.origin}${back.pathname}`).toBe(PROFILE.presentedRedirect);
     expect(back.searchParams.get('state')).toBe(state);

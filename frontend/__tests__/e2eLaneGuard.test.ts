@@ -203,6 +203,7 @@ const EXPECTED_JOURNEYS = [
   'vault-agent-activity.e2e.test.ts',
   'vault-agent-chatgpt.e2e.test.ts',
   'vault-agent-claude-code.e2e.test.ts',
+  'vault-agent-consent-subset.e2e.test.ts',
   'vault-agent-consent.e2e.test.ts',
   'vault-agent-openclaw.e2e.test.ts',
   'vault-connection.e2e.test.ts',
