@@ -114,6 +114,9 @@ from services.creek_vault_pipeline_results import (
 from services.creek_vault_pipeline_results import counts_from_result as _counts_from_result
 from services.creek_vault_pipeline_results import failed_job as _failed_job
 from services.creek_vault_pipeline_results import job_from_run as _job_from_run
+from services.creek_vault_pipeline_results import (
+    pending_admission_event as _pending_admission_event,
+)
 from services.creek_vault_pipeline_results import pending_job as _pending_job
 from services.creek_vault_pipeline_results import persisted_counts as _persisted_counts
 from services.creek_vault_pipeline_results import (
@@ -984,7 +987,7 @@ async def _attempt_committed_run(
         return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.FAILED)
     except (CreekVaultError, TimeoutError):
         _LOGGER.info(
-            "creek vault pipeline stage did not land",
+            _pending_admission_event(run, stage),
             extra={"stage": stage.value},
         )
         return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.ATTEMPTED)

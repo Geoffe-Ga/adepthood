@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -359,10 +360,12 @@ async def test_a_due_keyed_classification_is_admitted_even_after_the_polling_clo
     async_client: AsyncClient,
     managed_jobs: _ManagedJobVault,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A spent foreground polling budget does not spend the writer's one key opportunity."""
     headers = await _signup(async_client, "spent_clock_relay")
     monkeypatch.setattr(pipeline, "_JOURNAL_RUN_BUDGET_SECONDS", 0.0)
+    caplog.set_level(logging.INFO, logger=pipeline.__name__)
 
     response = await async_client.post(
         "/journal/",
@@ -374,6 +377,9 @@ async def test_a_due_keyed_classification_is_admitted_even_after_the_polling_clo
     assert managed_jobs.peer.keyed() == [_CLASSIFICATIONS], managed_jobs.peer.sends
     assert list(managed_jobs.sources.values()) == ["request_key:anthropic"]
     assert {key for _path, key in managed_jobs.peer.sends if key} == {ANTHROPIC_KEY}
+    assert "creek vault pipeline job admitted; polling deferred" in caplog.messages
+    assert "creek vault pipeline stage did not land" not in caplog.messages
+    assert ANTHROPIC_KEY not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -537,6 +543,34 @@ async def test_only_first_admission_may_relay_the_key_when_the_vault_refuses(
     run = rows.scalars().one()
     assert run.outcome == expected_outcome.value
     assert run.attempt_count == attempts
+
+
+@pytest.mark.asyncio
+async def test_an_unconfirmed_admission_log_does_not_claim_the_stage_failed(
+    async_client: AsyncClient,
+    managed_jobs: _ManagedJobVault,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A missing answer cannot prove either admission or rejection."""
+    managed_jobs.admission_failure = HTTPStatus.SERVICE_UNAVAILABLE
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    caplog.set_level(logging.INFO, logger=pipeline.__name__)
+    headers = await _signup(async_client, "unconfirmed_relay")
+
+    response = await async_client.post(
+        "/journal/",
+        json={"message": "the willow bent", "classification": "personal"},
+        headers={**headers, _BYOK_HEADER: ANTHROPIC_KEY},
+    )
+    await wait_for_vault_pipeline_tasks()
+
+    assert response.status_code == HTTPStatus.CREATED, response.text
+    assert managed_jobs.sources == {}
+    assert "creek vault pipeline admission unconfirmed" in caplog.messages
+    assert "creek vault pipeline job admitted; polling deferred" not in caplog.messages
+    assert "creek vault pipeline stage did not land" not in caplog.messages
+    assert ANTHROPIC_KEY not in caplog.text
 
 
 @pytest.mark.parametrize("failures", [1, 2], ids=["recovered", "degraded"])

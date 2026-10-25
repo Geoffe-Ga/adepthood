@@ -127,6 +127,13 @@ def job_from_run(run: VaultPipelineRun, stage: VaultPipelineStage) -> VaultPipel
     )
 
 
+def pending_admission_event(run: VaultPipelineRun, stage: VaultPipelineStage) -> str:
+    """An accepted durable handle is distinct from an unanswered admission."""
+    if job_from_run(run, stage) is not None:
+        return "creek vault pipeline job admitted; polling deferred"
+    return "creek vault pipeline admission unconfirmed"
+
+
 def failed_job(job: VaultPipelineJob) -> VaultPipelineJob:
     """Return the content-free terminal handle used for definitive status faults."""
     return VaultPipelineJob(
