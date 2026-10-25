@@ -109,11 +109,11 @@ class VaultConnectionResponse(OwnedResourcePublic):
     that says so instead of from an absence it has to interpret.
 
     ``mcp_address`` is the address a person gives an agent they run elsewhere
-    (#3534): the vault's MCP URL, which is also the audience every agent token
-    for this vault names. It follows ``vault_url``'s rule exactly -- ``None``
-    when nothing is connected and ``None`` for a managed vault, whose address
-    stays private; the agent's own sign-in flow, or a connector's listing,
-    supplies it there.
+    (#3534), and the audience every token for that vault names. A managed
+    binding keeps ``vault_url`` private. Its agent address is returned only
+    after authenticated per-allocation discovery reports the exact owned
+    resource and this deployment's issuer. Legacy, disabled, malformed or
+    unreachable discovery returns ``None``; the stored binding stays connected.
     """
 
     connected: bool

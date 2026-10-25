@@ -583,6 +583,18 @@ is the resource server and verifies what Adepthood issues
 `token_endpoint` (`/oauth/token`), `jwks_uri` (`/.well-known/jwks.json`) and
 `revocation_endpoint` (`/oauth/revoke`) under the issuer `OAUTH_ISSUER_URL`.
 
+**Acceptance clients (observed 2026-10-24).** Claude Code uses the CIMD client
+id `https://claude.ai/oauth/claude-code-client-metadata`, with declared redirects
+`http://localhost/callback` and `http://127.0.0.1/callback`; the authorize request
+adds the port of its loopback listener. It does not use dynamic registration.
+OpenClaw uses DCR with `http://127.0.0.1:8989/oauth/callback`, including its port.
+ChatGPT uses a per-app callback, `https://chatgpt.com/connector/oauth/{callback_id}`;
+`https://chatgpt.com/connector_platform_oauth_redirect` is legacy, for already
+published apps only. The per-client journeys pin these shapes. The network-isolated
+Claude journey arranges a validated fresh CIMD cache rather than fetching the
+vendor over the internet; backend route/service tests cover fetching, expiry and
+refusals.
+
 **The access token** is a JWT, `ES256` over P-256:
 
 | Part | Value |
@@ -686,8 +698,48 @@ from a path or a body:
   `resource_access_denied`.
 - `GET /vault/connection` carries `mcp_address`: the vault MCP URL in the one
   spelling the authorization server compares a `resource` in (so it is exactly
-  the `aud` the agent's tokens will name), or `null` exactly when `vault_url` is
-  -- nothing connected, or a managed vault whose address stays private.
+  the `aud` the agent's tokens will name). Nothing connected returns `null`.
+  A managed binding keeps its private `vault_url` hidden. Once the allocation
+  is ready, authenticated per-allocation discovery must name this account's
+  exact MCP resource and this deployment's exact issuer before `mcp_address`
+  is returned. Otherwise it remains `null`, and Settings says "Adepthood can’t
+  show an agent sign-in address for this vault yet." Existing agent Stop
+  controls remain available. The public resource is the handed-off `/v1` URL with `/v1`
+  dropped and `/mcp` added, exactly `account_vault_resource`'s derivation.
+
+**Authenticated agent discovery (0.24 extension; content pin stays 0.22).**
+Creek-Vault#1974 stores OAuth configuration per allocation, including a safe
+rollout for older allocations. Presence of a ready binding, or the shared
+edge's unauthenticated RFC 9728 metadata, cannot establish that one allocation
+has been rolled. The existing authenticated `GET /v1/capabilities` therefore
+adds `agent_mcp: {resource, authorization_server} | null` in discovery 0.24;
+older declared minors omit it. The producer reports it only for an actually
+mounted, OAuth-enabled public MCP surface. Managed private-TLS routing, whose
+public router has no `/mcp` route, remains `null` even with OAuth runtime vars.
+
+Adepthood's capability fetch is already unversioned discovery. Its optional
+parser validates exactly two bounded public HTTPS URLs and retains their
+verbatim spellings. It returns only the independently derived owned resource,
+never unrecognized metadata, and only when both resource and issuer match
+exactly. An absent, malformed, disabled or unavailable extension hides only
+the unconfirmed address; it does not disable an otherwise valid content
+handshake.
+Automatic address confirmation requires this 0.24 discovery extension at
+runtime. An older allocation can already support OAuth while omitting that
+metadata; a missing address does not assert that its existing agent sign-ins
+are disabled.
+
+A fresh read observes an allocation rolled after its original handoff without
+requiring a database migration. DNS and discovery run after the owner-safe
+resolver has returned the database connection to the pool.
+
+This metadata extension is separate from content negotiation: all versioned
+content calls still declare `X-Creek-Contract-Version: 0.22`, and the discovery
+response must continue advertising support for that minor. Canonical 0.24
+schemas and ready/disabled discovery fixtures live separately under
+`backend/tests/fixtures/creek_discovery_0_24`; they do not replace the vendored
+0.22 content bundle. Their source is [Creek-Vault commit 541e1dc](https://github.com/Geoffe-Ga/Creek-Vault/tree/541e1dc5593153129d5af2f9dfeddc30d6850834/docs/contracts/adepthood-v1).
+The managed card's browser seam is tracked by #3546.
 
 Re-approving a revoked agent clears `revoked_at` and restarts `created_at`, so
 it reappears on the list; refresh tokens minted under the earlier consent stay

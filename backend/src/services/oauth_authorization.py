@@ -398,9 +398,12 @@ async def account_vault_resource(session: AsyncSession, user_id: int) -> str | N
 
     The only audience a request signed in as this account may name. A managed
     vault counts only once its activation is ``ready``, matching the rule that
-    keeps a handed-off credential inert until then. Until Creek-Vault#1962 gives
-    a managed vault a public MCP address of its own, the stored address plus
-    ``/mcp`` is the resource, for both kinds of vault.
+    keeps a handed-off credential inert until then. Creek-Vault#1962/#1973
+    serves a managed vault through the shared pilot edge: dropping ``/v1``
+    from the handoff URL and adding ``/mcp`` gives its public resource, exactly
+    as for a self-connected vault. This names the audience; it does not assert
+    the allocation has enabled OAuth; authenticated ``agent_mcp`` discovery
+    reports that separately (Creek contract 0.24).
 
     The deployment-wide vault an operator configures by environment is not an
     account's vault in this sense and is never a resource here.

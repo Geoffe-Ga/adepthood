@@ -23,7 +23,7 @@ from sqlmodel import func, select
 from models.agent_grant import AgentGrant
 from models.login_attempt import LoginAttempt
 from models.oauth_authorization_code import OAuthAuthorizationCode
-from models.oauth_client import OAuthClient
+from models.oauth_client import OAuthClient, OAuthClientSource
 from models.user import User
 from routers.auth import session_signing_secret
 from services import oauth_metadata_fetch
@@ -651,3 +651,51 @@ async def test_the_stylesheet_is_candle_and_ink(async_client: AsyncClient) -> No
     assert PALETTE["canvas"] in response.text
     assert PALETTE["accent_primary"] in response.text
     assert "&#39;" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1"])
+async def test_claude_code_uses_its_cimd_document_with_port_agnostic_redirects(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    host: str,
+) -> None:
+    """Real Claude Code metadata, fetched on first authorize without DCR (#3545)."""
+    document_url = "https://claude.ai/oauth/claude-code-client-metadata"
+    fetched: list[str] = []
+
+    def _serve(request: httpx.Request) -> httpx.Response:
+        fetched.append(str(request.url))
+        return httpx.Response(
+            HTTPStatus.OK,
+            json={
+                "client_id": document_url,
+                "client_name": "Claude Code",
+                "redirect_uris": ["http://localhost/callback", "http://127.0.0.1/callback"],
+            },
+        )
+
+    monkeypatch.setattr(
+        oauth_metadata_fetch, "build_metadata_transport", lambda: httpx.MockTransport(_serve)
+    )
+    headers, user_id = await signup(async_client, f"claude_cimd_{host.replace('.', '_')}")
+    resource = await connect_vault(db_session, user_id, "claude-cimd")
+    callback = f"http://{host}:53682/callback"
+    params = authorize_params(document_url, resource, redirect_uri=callback)
+
+    page = await async_client.get("/oauth/authorize", params=params, headers=headers)
+
+    assert page.status_code == HTTPStatus.OK, page.text
+    assert "Claude Code" in page.text
+    response = await decide(async_client, ticket_from(page), "approve")
+    target, query = redirect_query(response)
+    assert target == callback
+    assert "code" in query
+    assert fetched == [document_url]
+    client = (
+        await db_session.execute(select(OAuthClient).where(OAuthClient.client_id == document_url))
+    ).scalar_one()
+    assert client.source == OAuthClientSource.METADATA_DOCUMENT
+    assert client.redirect_uris == ["http://localhost/callback", "http://127.0.0.1/callback"]
+    assert client.metadata_fetched_at is not None

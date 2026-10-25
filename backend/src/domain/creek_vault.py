@@ -652,6 +652,14 @@ class VaultProviderKey:
 
 
 @dataclass(frozen=True)
+class AgentMcpDiscovery:
+    """The public agent resource and its issuer, from this allocation's discovery."""
+
+    resource: str
+    authorization_server: str
+
+
+@dataclass(frozen=True)
 class HandshakeResult:
     """Immutable outcome of a ``creek.handshake`` negotiation.
 
@@ -672,6 +680,9 @@ class HandshakeResult:
     #: PERSONAL work (Creek contract 0.18). Empty for a self-connected vault, an
     #: older vault, and every degraded handshake.
     request_key_providers: frozenset[VaultKeyProvider] = frozenset()
+    #: Optional authenticated discovery extension (0.24). Content stays pinned
+    #: independently; absent or malformed metadata leaves the address unconfirmed.
+    agent_mcp: AgentMcpDiscovery | None = None
 
     def accepts_key(self, provider: VaultKeyProvider) -> bool:
         """Whether this usable vault will spend a writer's ``provider`` key."""

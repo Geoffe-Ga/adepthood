@@ -75,7 +75,7 @@ describe('useVaultConnectionState', () => {
     const { result } = renderHook(() => useVaultConnectionState());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
-    expect(result.current.state).toEqual({ kind: 'managed' });
+    expect(result.current.state).toEqual({ kind: 'managed', agentAddress: null });
   });
 
   test('reads a failed read as unknown, never as none, and reports it once', async () => {

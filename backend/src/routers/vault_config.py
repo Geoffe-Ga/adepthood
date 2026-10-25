@@ -47,6 +47,7 @@ from fastapi import Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_session
+from dependencies.creek_vault import resolve_creek_vault_client
 from error_responses import build_router
 from errors import conflict, unprocessable
 from models.user_vault_config import UserVaultConfig
@@ -56,12 +57,18 @@ from schemas.vault_config import (
     VaultConnectionResponse,
     credential_is_usable,
 )
+from services.creek_vault_agent_discovery import matching_agent_resource
 from services.creek_vault_url import classify_vault_url
 from services.creek_vault_url_resolution import (
     classify_resolved_user_vault_url_off_the_pool,
 )
 from services.creek_vault_url_user import classify_user_vault_url_host, vault_url_host
-from services.oauth_authorization import normalize_resource, vault_mcp_url
+from services.oauth_authorization import (
+    account_vault_resource,
+    configured_issuer,
+    normalize_resource,
+    vault_mcp_url,
+)
 from services.user_vault_config import (
     clear_vault_config,
     load_vault_config,
@@ -152,12 +159,29 @@ def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
     if config is None:
         return VaultConnectionResponse(connected=False, vault_url=None, mcp_address=None)
     if config.provisioned:
+        # The private /v1 binding is never returned. A separate authenticated
+        # discovery read below may name its public agent resource.
         return VaultConnectionResponse(connected=True, vault_url=None, mcp_address=None)
     return VaultConnectionResponse(
         connected=True,
         vault_url=config.vault_url,
         mcp_address=normalize_resource(vault_mcp_url(config.vault_url)),
     )
+
+
+async def _managed_mcp_address(session: AsyncSession, user_id: int) -> str | None:
+    """Discover only a ready account's public agent resource, off the database pool."""
+    resource = await account_vault_resource(session, user_id)
+    issuer = configured_issuer()
+    if resource is None or issuer is None:
+        return None
+    # The owner-safe resolver snapshots the binding and commits before returning,
+    # so neither DNS nor the authenticated discovery round trip holds a connection.
+    client = await resolve_creek_vault_client(session, user_id)
+    handshake = await client.handshake()
+    if not handshake.available:
+        return None
+    return matching_agent_resource(handshake.agent_mcp, resource=resource, issuer=issuer)
 
 
 @router.get("/connection", response_model=VaultConnectionResponse)
@@ -172,7 +196,11 @@ async def get_vault_connection(
     not a missing resource, and answering it plainly is what lets a client
     render the connect affordance without first handling an error.
     """
-    return _to_response(await load_vault_config(session, user_id))
+    config = await load_vault_config(session, user_id)
+    response = _to_response(config)
+    if config is not None and config.provisioned:
+        response.mcp_address = await _managed_mcp_address(session, user_id)
+    return response
 
 
 @router.put("/connection", response_model=VaultConnectionResponse)

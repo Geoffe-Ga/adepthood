@@ -59,7 +59,13 @@ describe('readConnectionState', () => {
   it('recognizes a managed connection without disclosing an address', () => {
     const connection: VaultConnection = { connected: true, vault_url: null, mcp_address: null };
 
-    expect(readConnectionState(connection)).toEqual({ kind: 'managed' });
+    expect(readConnectionState(connection)).toEqual({ kind: 'managed', agentAddress: null });
+  });
+
+  it('keeps a managed vault public agent address separate from its private binding', () => {
+    expect(
+      readConnectionState({ connected: true, vault_url: null, mcp_address: AGENT_ADDRESS }),
+    ).toEqual({ kind: 'managed', agentAddress: AGENT_ADDRESS });
   });
 
   it('lets the connected flag decide, even when an address rides along with it', () => {

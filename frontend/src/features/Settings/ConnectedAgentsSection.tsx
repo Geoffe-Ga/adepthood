@@ -24,7 +24,8 @@
  *
  * The address to give an agent is the vault's ``mcp_address`` from
  * ``GET /vault/connection``, shown with a copy control exactly when the server
- * names one; a managed vault's stays private, as its ``/v1`` address does.
+ * names one. Its public agent address is separate from a managed vault's
+ * private ``/v1`` address; when the public address cannot be confirmed, say so plainly.
  *
  * The recent-activity list (#3535), ``AgentActivityList``, renders beneath the
  * agent rows, inside this section, and says its times through the same
@@ -51,6 +52,7 @@ import {
   AGENTS_EYEBROW,
   AGENTS_HEADING,
   AGENTS_LOAD_FAILED,
+  AGENTS_MANAGED_ADDRESS_UNAVAILABLE,
   AGENTS_STOP,
   AGENTS_STOPPED,
   AGENTS_STOPPING,
@@ -199,7 +201,9 @@ function sectionShows(vaultState: VaultConnectionState, list: AgentList): boolea
 
 /** The address to give an agent, when the server named one. */
 function agentAddressOf(vaultState: VaultConnectionState): string | null {
-  return vaultState.kind === 'connected' ? vaultState.agentAddress : null;
+  return vaultState.kind === 'connected' || vaultState.kind === 'managed'
+    ? (vaultState.agentAddress ?? null)
+    : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +332,13 @@ const AgentRow = ({
 };
 
 /** The rows, or what to say in their place. */
-const AgentRows = ({ controller }: { controller: AgentsController }): React.JSX.Element => {
+const AgentRows = ({
+  controller,
+  addressUnavailable,
+}: {
+  controller: AgentsController;
+  addressUnavailable: boolean;
+}): React.JSX.Element | null => {
   const t = typeRamp(useWindowDimensions().width);
   const { list } = controller;
   if (list.kind === 'loading') {
@@ -346,6 +356,7 @@ const AgentRows = ({ controller }: { controller: AgentsController }): React.JSX.
     );
   }
   if (list.agents.length === 0) {
+    if (addressUnavailable) return null;
     return (
       <Text style={[t.body, styles.muted]} testID="vault-agents-empty">
         {AGENTS_EMPTY}
@@ -381,6 +392,7 @@ const ConnectedAgentsSection = ({
   const controller = useConnectedAgents();
   if (!sectionShows(vaultState, controller.list)) return null;
   const address = agentAddressOf(vaultState);
+  const addressUnavailable = vaultState.kind === 'managed' && address === null;
   return (
     <View style={styles.section} testID="vault-agents-section">
       <Text style={[t.caption, styles.eyebrow]}>{AGENTS_EYEBROW}</Text>
@@ -389,7 +401,10 @@ const ConnectedAgentsSection = ({
       </Text>
       <Text style={[t.body, styles.body]}>{AGENTS_WHAT_THEY_ARE}</Text>
       {address === null ? null : <AgentAddress address={address} onCopy={controller.copyAddress} />}
-      <AgentRows controller={controller} />
+      {addressUnavailable ? (
+        <Text style={[t.body, styles.muted]}>{AGENTS_MANAGED_ADDRESS_UNAVAILABLE}</Text>
+      ) : null}
+      <AgentRows controller={controller} addressUnavailable={addressUnavailable} />
       <AgentActivityList />
       <SettingsFeedbackBanner
         idPrefix="vault-agents"
