@@ -431,6 +431,18 @@ vault directly, because adepthood holds the vault credential.
    table (`test_a_relayed_key_is_never_logged_persisted_or_echoed`). It ends
    with the request: a pipeline continuation the request leaves running starts
    in a context with the key cleared, so off-request work goes keyless.
+
+   **Classification admission (#3550, implementation clarification).** A due,
+   unstarted classification is submitted while the original journal/import
+   request can still relay its key, including a queued follow-up. The submit
+   keeps the adapter's bounded deadline and its returned durable handle is
+   committed before keyless continuation polls it; a spent foreground polling
+   clock does not discard that admission opportunity. An already-admitted job
+   retains its identity and is never submitted a second time. The existing
+   stage intervals and scheduler compare-and-swap still apply. Polling,
+   retries, scheduler runs and restart recovery remain keyless. No provider
+   key is added to a continuation or to stored state, and this clarification
+   changes no custody decision.
 6. **Labelled on each use.** Before a reading or letter the price line says
    "Your vault will write this {reading|letter} with your own
    {Anthropic|OpenAI} key. Your key pays for it, not your BotMason messages.";

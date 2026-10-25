@@ -180,6 +180,7 @@ const EXPECTED_JOURNEYS = [
   'habit-delete.e2e.test.ts',
   'habits-empty.e2e.test.ts',
   'habits.e2e.test.ts',
+  'journal-byok-classification.e2e.test.ts',
   'journal-delete.e2e.test.ts',
   'journal-essay-economy.e2e.test.ts',
   'journal-habit-offer.e2e.test.ts',
@@ -639,7 +640,7 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
     expect(setup).not.toContain('dependency_overrides');
   });
 
-  it('advertises only the eight capabilities the vault journeys exercise', () => {
+  it('keeps eight default capabilities and makes classification explicitly opt-in', () => {
     // The sharpest constraint on this boundary: every added word is a new class
     // of production traffic. The deployment owner is reserved for the upload
     // and withdrawal specs, while all other accounts stay on local fallback.
@@ -654,7 +655,10 @@ describe('the external Creek Vault boundary stays protocol-shaped and narrowly a
       "  'capabilities',\n  'upload',\n  'journal-upsert',\n  'journal-withdraw',\n  'voice-drafts',\n  'reflections',\n  'letters',\n  'agent-activity',\n];",
     );
     expect(fake).not.toContain("'wheel'");
-    expect(fake).not.toContain("'pipeline'");
+    expect(fake).toContain('let pipelineAdvertised = false;');
+    expect(fake).toContain(".concat(pipelineAdvertised ? ['pipeline'] : [])");
+    expect(fake).toContain("pathname === '/__lane/enable-pipeline'");
+    expect(fake).toContain("pathname === '/__lane/disable-pipeline'");
     expect(fake).not.toContain("'classify'");
   });
 
