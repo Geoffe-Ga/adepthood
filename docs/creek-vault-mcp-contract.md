@@ -593,7 +593,7 @@ is the resource server and verifies what Adepthood issues
 | `iss` | the issuer, exactly as the metadata publishes it |
 | `sub` | the account's stable, opaque consumer identity (below) |
 | `aud` | ONE string: the account's own vault MCP URL, the RFC 8707 `resource` the person approved |
-| `scope` | the approved grants, space-separated, in server order: `vault:read`, `vault:desk`, `vault:journal`, `vault:pipeline` (and `offline_access` when requested, which the vault ignores) |
+| `scope` | the approved grants, space-separated, in server order: `vault:read`, `vault:desk`, `vault:journal`, `vault:pipeline` (and `offline_access` when approved, which the vault ignores) |
 | `client_id` | the OAuth client id of the agent (RFC 9068), so the vault can audit per agent (Creek-Vault#1976) |
 | `iat`, `exp` | issue time and issue time plus 600 seconds |
 | `jti` | a random id |
@@ -608,12 +608,21 @@ an HMAC of the account id under a key derived from the deployment secret --
 stable, and meaningless outside Adepthood. One person is one `sub`; the agent
 is `client_id`.
 
-**Refresh tokens** are opaque (`rt_` plus 256 random bits), stored only as a
+**Refresh tokens** are issued only when the person checks `offline_access` on
+the consent page. Otherwise the token response omits `refresh_token` and no
+refresh-token row is stored. They are opaque (`rt_` plus 256 random bits), stored only as a
 SHA-256, valid 30 days and rotated on every use. Presenting a rotated-away
 token revokes its whole rotation family and answers `invalid_grant`; a replayed
 authorization code revokes every refresh token under its grant. Errors are the
 RFC 6749 codes (`invalid_request`, `invalid_grant`, `unsupported_grant_type`,
 `invalid_scope`) plus RFC 8707's `invalid_target`.
+
+A client requesting only the `vault:` permissions receives a 600-second access
+token and no refresh token, even if it previously received refresh tokens for
+those permissions. To stay connected it must request `offline_access` and the
+person must check that choice. Otherwise the client starts a new browser
+approval when its access token expires; the server never silently adds that
+permission to the request or the approved subset.
 
 **The key set.** `OAUTH_SIGNING_KEYS` lists PEM P-256 private keys newest
 first, the shape of `JOURNAL_ENCRYPTION_KEYS`: the first signs, all are
@@ -628,6 +637,15 @@ agent's next refresh; an access token already issued runs out its ten minutes,
 because the vault verifies tokens offline and never calls back.
 
 ## Agent grants in plain words, and the Settings list (adepthood-owned)
+
+**Choosing permissions (adepthood #3544).** The consent page offers a checkbox
+for each requested permission. Only requested `vault:read` and `vault:desk` are
+checked by default; journal, pipeline and staying connected are opt-in. The
+server bounds submitted choices by the signed request, rejects unrequested or
+malformed choices, and records exactly the approved subset in the code,
+`agent_grant.grants`, and token scope. Unchecking every permission returns
+`access_denied` without creating a code or grant. A narrower refresh request
+also omits a replacement refresh token if its scope drops `offline_access`.
 
 A person reads what an agent may do twice: on the consent page before they
 approve it (adepthood #3532), and under Settings, "Where your writing lives",

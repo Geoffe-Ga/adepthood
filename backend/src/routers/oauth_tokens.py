@@ -5,7 +5,7 @@ one-time code. This router serves what the metadata advertises for the rest:
 
 * ``POST /oauth/token`` -- RFC 6749 section 4.1.3 and section 6: a code and its
   PKCE verifier, or a refresh token, for an ES256 access token whose audience is
-  the person's vault and a rotated refresh token;
+  the person's vault, and a rotated refresh token only with approved offline access;
 * ``GET /.well-known/jwks.json`` -- the public keys the vault verifies those
   tokens with (Creek-Vault#1963), current and previous;
 * ``POST /oauth/revoke`` -- RFC 7009: an agent signing out ends its refresh
@@ -159,7 +159,7 @@ async def exchange_token(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> JSONResponse:
-    """Exchange an authorization code or a refresh token for a token pair."""
+    """Exchange a code or refresh token; staying connected requires approved offline access."""
     signer = Signer(
         issuer=_issuer(),
         key=_signing_key(),
@@ -179,7 +179,7 @@ async def exchange_token(
         refresh_token=issued.refresh_token,
         scope=issued.scope,
     )
-    return JSONResponse(body.model_dump(), headers=_NO_STORE)
+    return JSONResponse(body.model_dump(exclude_none=True), headers=_NO_STORE)
 
 
 @router.get("/.well-known/jwks.json", response_model=JsonWebKeySet)

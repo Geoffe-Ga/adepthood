@@ -101,6 +101,7 @@ async def test_the_seeded_grant_passes_its_controls_and_refuses_the_intruder(
     assert refused.status_code == HTTPStatus.NOT_FOUND
     grant = await db_session.get(AgentGrant, grant_id)
     assert grant is not None
+    assert grant.grants == ["vault:read"]
     assert grant.revoked_at is None
 
     own = await async_client.delete(f"/vault/agents/{grant_id}", headers=owner)
@@ -167,7 +168,14 @@ def test_a_form_spec_sends_its_payload_as_a_form_and_never_as_json() -> None:
     vault = SEED_REGISTRY["agent_vault"]
     values = {"unique": "u", "agent_consent_ticket": "t.k"}
 
-    assert create_bodies(approval, values) == (None, {"ticket": "t.k", "decision": "approve"})
+    assert create_bodies(approval, values) == (
+        None,
+        {
+            "ticket": "t.k",
+            "decision": "approve",
+            "grant.vault:read": "on",
+        },
+    )
     json_body, form = create_bodies(vault, values)
     assert form is None
     assert json_body is not None

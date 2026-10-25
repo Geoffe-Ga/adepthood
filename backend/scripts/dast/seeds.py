@@ -352,7 +352,11 @@ SEED_REGISTRY: Mapping[str, SeedSpec] = MappingProxyType(
         "agent_approval": SeedSpec(
             create_method="POST",
             create_path="/oauth/authorize/decision",
-            payload={"ticket": "{agent_consent_ticket}", "decision": "approve"},
+            payload={
+                "ticket": "{agent_consent_ticket}",
+                "decision": "approve",
+                "grant.vault:read": "on",
+            },
             id_pointer=(),
             depends_on=("agent_consent_ticket",),
             form_encoded=True,

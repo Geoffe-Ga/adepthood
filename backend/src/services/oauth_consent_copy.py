@@ -48,7 +48,8 @@ CONSENT_UNNAMED_AGENT: Final = "An agent that did not give its name"
 #: Under the name, so nobody mistakes the agent's word for Adepthood's.
 CONSENT_NAME_NOTE: Final = "That is the name the agent gave itself."
 
-CONSENT_GRANTS_HEADING: Final = "If you approve, it may:"
+CONSENT_GRANTS_HEADING: Final = "Choose what this agent may do"
+CONSENT_GRANTS_NOTE: Final = "Only the checked choices are shared. You can uncheck any of them."
 
 #: What each grant lets an agent do, in the person's terms.
 GRANT_DESCRIPTIONS: Final = MappingProxyType(

@@ -109,6 +109,7 @@ from services.oauth_consent_page import (
     render_sign_in,
     render_stylesheet,
 )
+from services.oauth_consent_selection import selected_request
 
 logger = logging.getLogger(__name__)
 
@@ -490,7 +491,7 @@ async def _ticketed_request(
 
 
 async def _act_on(
-    decision: str | None,
+    form: dict[str, str],
     session: AsyncSession,
     request: AuthorizationRequest,
     user_id: int,
@@ -498,8 +499,12 @@ async def _act_on(
     issuer: str,
 ) -> Response:
     """Approve or Decline -- the only two answers -- or stop on anything else."""
+    decision = form.get("decision")
     if decision == _APPROVE:
-        return await _approve(session, request, user_id, issuer)
+        approved = selected_request(request, form)
+        if isinstance(approved, AuthorizationError):
+            return _error_to_agent(request.redirect_uri, approved, request.state, issuer=issuer)
+        return await _approve(session, approved, user_id, issuer)
     if decision == _DECLINE:
         return _error_to_agent(
             request.redirect_uri, AuthorizationError.ACCESS_DENIED, request.state, issuer=issuer
@@ -526,9 +531,7 @@ async def authorize_decision(
     if isinstance(ticketed, Response):
         return ticketed
     authorization_request, user_id = ticketed
-    return await _act_on(
-        form.get("decision"), session, authorization_request, user_id, issuer=issuer
-    )
+    return await _act_on(form, session, authorization_request, user_id, issuer=issuer)
 
 
 @router.get("/oauth/consent.css", response_class=Response)

@@ -138,11 +138,17 @@ export async function openConsent(
  * `redirect: 'manual'` keeps the 303 in hand: following it would dial the
  * agent's own listener, which in the field is the agent and here is nothing.
  */
-export async function decide(ticket: string, decision: 'approve' | 'decline'): Promise<URL> {
+export async function decide(
+  ticket: string,
+  decision: 'approve' | 'decline',
+  scopes: readonly string[] = [],
+): Promise<URL> {
+  const form = new URLSearchParams({ ticket, decision });
+  for (const scope of scopes) form.set(`grant.${scope}`, 'on');
   const response = await fetch(`${API_BASE_URL}/oauth/authorize/decision`, {
     method: 'POST',
     headers: { 'Content-Type': FORM_TYPE },
-    body: new URLSearchParams({ ticket, decision }).toString(),
+    body: form.toString(),
     redirect: 'manual',
   });
   await expectStatus(response, HTTP_SEE_OTHER, 'the decision');

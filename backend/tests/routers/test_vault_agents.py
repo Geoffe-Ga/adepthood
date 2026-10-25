@@ -96,7 +96,9 @@ async def _connected_agent(
     headers, user_id = await signup(async_client, name)
     resource = await connect_vault(db_session, user_id, name)
     client_id = await register_agent(async_client)
-    code = await approve(async_client, headers, client_id, resource)
+    code = await approve(
+        async_client, headers, client_id, resource, scope="vault:read vault:desk offline_access"
+    )
     issued = await exchange(async_client, code_exchange_form(code, client_id))
     assert issued.status_code == HTTPStatus.OK, issued.text
     return headers, client_id, str(issued.json()["refresh_token"])

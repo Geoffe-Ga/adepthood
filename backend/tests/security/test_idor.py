@@ -2809,7 +2809,7 @@ async def test_idor_oauth_refresh_and_revoke_refuse_another_agents_token(
     monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
     oauth_flow.install_signing_keys(monkeypatch)
     code, alice_client, alice_resource, _alice_id = await oauth_flow.approved_code(
-        async_client, db_session, "alice_refresh"
+        async_client, db_session, "alice_refresh", scope="vault:read vault:desk offline_access"
     )
     issued = await oauth_flow.exchange(
         async_client, oauth_flow.code_exchange_form(code, alice_client)
@@ -2860,7 +2860,7 @@ async def test_idor_revoking_another_accounts_agent_is_refused_and_changes_nothi
     monkeypatch.setenv(OAUTH_ISSUER_ENV_VAR, oauth_flow.ISSUER)
     oauth_flow.install_signing_keys(monkeypatch)
     code, alice_client, _resource, alice_id = await oauth_flow.approved_code(
-        async_client, db_session, "alice_agents"
+        async_client, db_session, "alice_agents", scope="vault:read vault:desk offline_access"
     )
     issued = await oauth_flow.exchange(
         async_client, oauth_flow.code_exchange_form(code, alice_client)
