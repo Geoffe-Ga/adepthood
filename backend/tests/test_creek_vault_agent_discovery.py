@@ -207,3 +207,19 @@ async def test_public_hosts_retain_verbatim_discovery(field: str, host: str) -> 
     assert result.agent_mcp is not None
     assert result.agent_mcp.resource == metadata["resource"]
     assert result.agent_mcp.authorization_server == metadata["authorization_server"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keyless", [True, False, None])
+async def test_agent_discovery_preserves_the_separate_funding_declaration(
+    keyless: bool | None,
+) -> None:
+    """Both handshake extensions survive, including an OAuth-ready vault without a pool."""
+    payload = _payload({"resource": _RESOURCE, "authorization_server": _ISSUER})
+    payload["keyless_inference"] = keyless
+    result, _ = await _handshake(payload)
+    assert result.available
+    assert result.agent_mcp is not None
+    assert result.agent_mcp.resource == _RESOURCE
+    assert result.keyless_inference is keyless
+    assert result.refuses_keyless_inference() is (keyless is False)

@@ -731,8 +731,19 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
         capabilities=_parse_capabilities(payload["capabilities"]),
         attestation=_parse_attestation(payload.get("attestation")),
         request_key_providers=parse_request_key_providers(payload.get("request_key_providers")),
+        keyless_inference=_parse_keyless_inference(payload.get("keyless_inference")),
         agent_mcp=parse_agent_mcp(payload.get("agent_mcp"), minor=payload.get("contract_minor")),
     )
+
+
+def _parse_keyless_inference(raw: object) -> bool | None:
+    """Read Creek 0.20's ``keyless_inference`` leniently: a literal boolean, else ``None``.
+
+    ``None`` means "the vault did not say", which changes nothing about a pass, so
+    a vault that omits the field, or sends something other than a boolean, is
+    treated exactly as an older vault is.
+    """
+    return raw if isinstance(raw, bool) else None
 
 
 def _unsupported_message(capability: CreekCapability) -> str:
