@@ -866,15 +866,8 @@
             "type": "array"
           },
           "logo_uri": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Logo Uri"
+            "title": "Logo Uri",
+            "type": "string"
           },
           "redirect_uris": {
             "items": {
@@ -900,7 +893,6 @@
           "client_id_issued_at",
           "client_name",
           "redirect_uris",
-          "logo_uri",
           "grant_types",
           "response_types",
           "token_endpoint_auth_method"
