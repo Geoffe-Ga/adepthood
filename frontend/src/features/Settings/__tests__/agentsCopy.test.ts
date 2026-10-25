@@ -63,6 +63,12 @@ describe('agentsCopy — the deck, verbatim', () => {
     expect(agentsCopy.AGENTS_EMPTY).not.toMatch(/\b(tap|press|click|button|add one here)\b/iu);
   });
 
+  it('describes an unconfirmed address without claiming sign-in is unsupported', () => {
+    expect(agentsCopy.AGENTS_MANAGED_ADDRESS_UNAVAILABLE).toBe(
+      'Adepthood can’t show an agent sign-in address for this vault yet.',
+    );
+  });
+
   it('asks before stopping, and says stopping can be undone from the agent', () => {
     expect(agentsCopy.AGENTS_STOP_CONFIRM).toMatch(/^Stop this agent\?/u);
     expect(agentsCopy.AGENTS_STOP_CONFIRM).toMatch(/approve it again/iu);

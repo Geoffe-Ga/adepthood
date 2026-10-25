@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, describe, expect, it } from '@jest/globals';
 
+import { runBackendModule } from './laneDatabase';
 import { freshLicenseKey } from './licenseKey';
 import {
   accessClaims,
@@ -11,7 +12,6 @@ import {
   openConsent,
   pkcePair,
   refreshTokens,
-  registerAgent,
   type AgentProfile,
   type AgentTokens,
 } from './vaultAgentFlow';
@@ -22,8 +22,9 @@ import { AGENT_GRANT_PHRASES } from '@/features/Settings/agentsCopy';
 /**
  * Claude Code approved, listed and stopped -- across the wire (#3534).
  *
- * Claude Code (`claude mcp add --transport http`) registers itself dynamically
- * with a `localhost` redirect, listens on an ephemeral port for the code, and
+ * Claude Code identifies itself by its Client ID Metadata Document (CIMD),
+ * which declares port-agnostic localhost and 127.0.0.1 callbacks. It listens
+ * on an ephemeral port for the code, and
  * sends a PKCE S256 challenge and an RFC 8707 resource on authorize.
  *
  * The person's half runs through the production client: the address Settings
@@ -46,6 +47,7 @@ const TIMEZONE = 'UTC';
 const VAULT_URL = 'https://1.1.1.1';
 const VAULT_API_KEY = 'e2e-vault-credential'; // pragma: allowlist secret
 const HTTP_BAD_REQUEST = 400;
+const CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata';
 
 const PROFILE: AgentProfile = {
   name: 'Claude Code',
@@ -93,7 +95,20 @@ describe('vault.agent-approve-draft-revoke for Claude Code, against a live serve
   });
 
   it('is approved on the consent page, in the words Settings will use', async () => {
-    clientId = await registerAgent(PROFILE);
+    // Arrange a fresh, validated document cache, never a DCR registration.
+    // The lane forbids third-party network; fetching/expiry is covered by
+    // backend/tests/routers/test_oauth_authorization_server.py.
+    const cached = JSON.parse(runBackendModule('tests.e2e.oauth_client_metadata', [])) as {
+      client_id: string;
+      source: string;
+      redirect_uris: string[];
+    };
+    expect(cached).toEqual({
+      client_id: CLIENT_ID,
+      source: 'cimd',
+      redirect_uris: ['http://localhost/callback', 'http://127.0.0.1/callback'],
+    });
+    clientId = cached.client_id;
     const page = await openConsent(
       authorizeQuery(PROFILE, clientId, resource, pkce.challenge, state),
       String(sessionToken),

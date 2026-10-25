@@ -385,6 +385,11 @@ def vault_mcp_url(vault_url: str) -> str:
     return f"{vault_base_url(vault_url).rstrip('/')}{MCP_PATH}"
 
 
+def vault_oauth_resource(vault_url: str) -> str | None:
+    """Derive the exact normalized audience accepted for one stored vault URL."""
+    return normalize_resource(vault_mcp_url(vault_url))
+
+
 async def _activation_is_ready(session: AsyncSession, user_id: int) -> bool:
     """Whether the account's managed allocation has reached ``ready``."""
     result = await session.execute(
@@ -398,9 +403,12 @@ async def account_vault_resource(session: AsyncSession, user_id: int) -> str | N
 
     The only audience a request signed in as this account may name. A managed
     vault counts only once its activation is ``ready``, matching the rule that
-    keeps a handed-off credential inert until then. Until Creek-Vault#1962 gives
-    a managed vault a public MCP address of its own, the stored address plus
-    ``/mcp`` is the resource, for both kinds of vault.
+    keeps a handed-off credential inert until then. Creek-Vault#1962/#1973
+    serves a managed vault through the shared pilot edge: dropping ``/v1``
+    from the handoff URL and adding ``/mcp`` gives its public resource, exactly
+    as for a self-connected vault. This names the audience; it does not assert
+    the allocation has enabled OAuth; authenticated ``agent_mcp`` discovery
+    reports that separately (Creek contract 0.24).
 
     The deployment-wide vault an operator configures by environment is not an
     account's vault in this sense and is never a resource here.
@@ -410,7 +418,7 @@ async def account_vault_resource(session: AsyncSession, user_id: int) -> str | N
         return None
     if config.provisioned and not await _activation_is_ready(session, user_id):
         return None
-    return normalize_resource(vault_mcp_url(config.vault_url))
+    return vault_oauth_resource(config.vault_url)
 
 
 async def account_may_authorize(session: AsyncSession, user_id: int) -> bool:

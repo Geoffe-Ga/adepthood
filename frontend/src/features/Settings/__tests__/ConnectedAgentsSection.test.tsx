@@ -340,7 +340,31 @@ describe('ConnectedAgentsSection — the address to give an agent', () => {
     expect(getByText(AGENTS_ADDRESS_COPY_FAILED)).toBeTruthy();
   });
 
-  test('shows no address and no copy for a vault whose address stays private', async () => {
+  test('explains when the agent address cannot be confirmed for a managed vault', async () => {
+    mockAgents.mockResolvedValue([]);
+    const { getByText, queryByText } = await renderSection(MANAGED);
+
+    expect(
+      getByText('Adepthood can’t show an agent sign-in address for this vault yet.'),
+    ).toBeTruthy();
+    expect(queryByText(AGENTS_EMPTY)).toBeNull();
+  });
+
+  test('shows a managed public agent address when the server names one', async () => {
+    const { getByTestId, queryByText } = await renderSection({
+      kind: 'managed',
+      agentAddress: AGENT_ADDRESS,
+    });
+
+    expect(within(getByTestId('vault-agents-address')).getByText(AGENT_ADDRESS)).toBeTruthy();
+    expect(
+      queryByText('Adepthood can’t show an agent sign-in address for this vault yet.'),
+    ).toBeNull();
+    fireEvent.press(getByTestId('vault-agents-copy'));
+    await waitFor(() => expect(mockCopy).toHaveBeenCalledWith(AGENT_ADDRESS));
+  });
+
+  test('shows no address and no copy when a managed public address is unconfirmed', async () => {
     const { queryByTestId, queryByText } = await renderSection(MANAGED);
 
     expect(queryByTestId('vault-agents-address')).toBeNull();

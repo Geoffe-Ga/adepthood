@@ -23,8 +23,8 @@ import { AGENT_GRANT_PHRASES } from '@/features/Settings/agentsCopy';
  * a ChatGPT connector approved, listed and stopped -- across the wire (#3534).
  *
  * A ChatGPT developer-mode connector is hosted: it registers dynamically with
- * an https callback on its own site, so approving sends the person back there
- * rather than to a program on their computer.
+ * its per-app https://chatgpt.com/connector/oauth/{callback_id} callback,
+ * so approving sends the person back to that app callback.
  *
  * The person's half runs through the production client: the address Settings
  * shows (`GET /vault/connection`'s `mcp_address`) is the resource the agent asks
@@ -49,8 +49,8 @@ const HTTP_BAD_REQUEST = 400;
 
 const PROFILE: AgentProfile = {
   name: 'ChatGPT',
-  registeredRedirect: 'https://chatgpt.com/connector_platform_oauth_redirect',
-  presentedRedirect: 'https://chatgpt.com/connector_platform_oauth_redirect',
+  registeredRedirect: 'https://chatgpt.com/connector/oauth/e2e-callback-id',
+  presentedRedirect: 'https://chatgpt.com/connector/oauth/e2e-callback-id',
   scope: 'vault:read vault:desk offline_access',
   expectedHost: 'chatgpt.com',
 };

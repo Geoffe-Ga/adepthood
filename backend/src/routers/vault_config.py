@@ -56,12 +56,16 @@ from schemas.vault_config import (
     VaultConnectionResponse,
     credential_is_usable,
 )
+from services.creek_vault_agent_connection import managed_agent_address
 from services.creek_vault_url import classify_vault_url
 from services.creek_vault_url_resolution import (
     classify_resolved_user_vault_url_off_the_pool,
 )
 from services.creek_vault_url_user import classify_user_vault_url_host, vault_url_host
-from services.oauth_authorization import normalize_resource, vault_mcp_url
+from services.oauth_authorization import (
+    normalize_resource,
+    vault_mcp_url,
+)
 from services.user_vault_config import (
     clear_vault_config,
     load_vault_config,
@@ -152,6 +156,8 @@ def _to_response(config: UserVaultConfig | None) -> VaultConnectionResponse:
     if config is None:
         return VaultConnectionResponse(connected=False, vault_url=None, mcp_address=None)
     if config.provisioned:
+        # The private /v1 binding is never returned. A separate authenticated
+        # discovery read below may name its public agent resource.
         return VaultConnectionResponse(connected=True, vault_url=None, mcp_address=None)
     return VaultConnectionResponse(
         connected=True,
@@ -172,7 +178,11 @@ async def get_vault_connection(
     not a missing resource, and answering it plainly is what lets a client
     render the connect affordance without first handling an error.
     """
-    return _to_response(await load_vault_config(session, user_id))
+    config = await load_vault_config(session, user_id)
+    response = _to_response(config)
+    if config is not None and config.provisioned:
+        response.mcp_address = await managed_agent_address(session, user_id, config)
+    return response
 
 
 @router.put("/connection", response_model=VaultConnectionResponse)

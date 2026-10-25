@@ -7,8 +7,8 @@ import { OAuthClientInformationFull } from '@/testing/mcpClientInformation';
  * The agent's half of connecting an agent to a vault, spoken over the wire.
  *
  * The app never makes these requests -- an agent does: it registers itself
- * (RFC 7591), sends the person's browser to the consent page, receives the code
- * on its own redirect and trades it, with its PKCE verifier, for tokens
+ * (RFC 7591, or by its CIMD URL), sends the person's browser to consent, receives
+ * the code on its own redirect and trades it, with its PKCE verifier, for tokens
  * (#3532, #3533). There is therefore no wrapper for them in `src/api`, and the
  * specs that use this module reach them with plain `fetch`, exactly as an agent
  * would. Everything the *person* does afterwards -- reading the agent list,

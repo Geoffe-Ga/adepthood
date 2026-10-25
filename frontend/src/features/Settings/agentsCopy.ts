@@ -50,6 +50,10 @@ export const AGENTS_ADDRESS_LABEL = 'Where an agent finds your vault';
 export const AGENTS_ADDRESS_NOTE =
   'Give this address to the agent you run. It will ask you to approve it here before it can read anything.';
 
+/** A managed allocation whose public agent address could not be confirmed (#3545). */
+export const AGENTS_MANAGED_ADDRESS_UNAVAILABLE =
+  'Adepthood can’t show an agent sign-in address for this vault yet.';
+
 /** The copy affordance beside the address. */
 export const AGENTS_ADDRESS_COPY = 'Copy address';
 

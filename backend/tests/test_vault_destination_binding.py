@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
 from database import get_session
-from dependencies import creek_vault as creek_vault_dependency
 from dependencies.creek_vault import (
     get_creek_vault_client,
     resolve_creek_vault_client,
@@ -674,7 +673,9 @@ def dialable_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _never_undialable(_session: AsyncSession, _vault_url: str) -> bool:
         return False
 
-    monkeypatch.setattr(creek_vault_dependency, "_stored_host_is_undialable", _never_undialable)
+    monkeypatch.setattr(
+        "services.creek_vault_stored_client.stored_host_is_undialable", _never_undialable
+    )
 
 
 @pytest.mark.asyncio

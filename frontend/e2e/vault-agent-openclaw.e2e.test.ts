@@ -23,8 +23,8 @@ import { AGENT_GRANT_PHRASES } from '@/features/Settings/agentsCopy';
  * OpenClaw approved, listed and stopped -- across the wire (#3534).
  *
  * OpenClaw (2026.3.31 and later) speaks streamable HTTP with `auth: "oauth"`: it
- * registers itself with a loopback redirect, listens on a port it picks per
- * sign-in, and opens the person's browser at the consent page.
+ * registers http://127.0.0.1:8989/oauth/callback including its port, and
+ * opens the person's browser at the consent page.
  *
  * The person's half runs through the production client: the address Settings
  * shows (`GET /vault/connection`'s `mcp_address`) is the resource the agent asks
@@ -49,8 +49,8 @@ const HTTP_BAD_REQUEST = 400;
 
 const PROFILE: AgentProfile = {
   name: 'OpenClaw',
-  registeredRedirect: 'http://127.0.0.1/oauth/callback',
-  presentedRedirect: 'http://127.0.0.1:47613/oauth/callback',
+  registeredRedirect: 'http://127.0.0.1:8989/oauth/callback',
+  presentedRedirect: 'http://127.0.0.1:8989/oauth/callback',
   scope: 'vault:read vault:desk offline_access',
   expectedHost: '127.0.0.1',
 };

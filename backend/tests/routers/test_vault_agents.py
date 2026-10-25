@@ -409,11 +409,11 @@ async def test_no_vault_has_no_address(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_managed_vault_keeps_its_address_private(
+async def test_a_managed_vault_without_oauth_readiness_has_no_agent_address(
     async_client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """The ``vault_url: null`` rule holds for the agent address too."""
+    """A binding alone does not establish its allocation's OAuth readiness."""
     headers, user_id = await signup(async_client, "agents_managed")
     db_session.add(
         UserVaultConfig(

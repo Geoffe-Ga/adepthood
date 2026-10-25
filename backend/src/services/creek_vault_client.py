@@ -142,6 +142,7 @@ from domain.creek_vault import (
     wire_ceiling_for,
 )
 from services.creek_vault_activity_wire import read_agent_activity
+from services.creek_vault_agent_discovery import parse_agent_mcp
 from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
 from services.creek_vault_call_errors import (
     HTTP_CALL_TIMED_OUT_ERRORS as _HTTP_CALL_TIMED_OUT_ERRORS,
@@ -731,6 +732,7 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
         attestation=_parse_attestation(payload.get("attestation")),
         request_key_providers=parse_request_key_providers(payload.get("request_key_providers")),
         keyless_inference=_parse_keyless_inference(payload.get("keyless_inference")),
+        agent_mcp=parse_agent_mcp(payload.get("agent_mcp"), minor=payload.get("contract_minor")),
     )
 
 

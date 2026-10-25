@@ -44,7 +44,6 @@ from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
-from dependencies import creek_vault as creek_vault_dependencies
 from models.agent_grant import AgentGrant
 from models.completion_suggestion import (
     CompletionSuggestion,
@@ -2971,8 +2970,8 @@ async def test_idor_agent_activity_reads_only_the_callers_own_vault_and_agents(
     async def _dialable(_session: AsyncSession, _vault_url: str) -> bool:
         return False
 
-    monkeypatch.setattr(creek_vault_dependencies, "build_connected_vault_client", _build)
-    monkeypatch.setattr(creek_vault_dependencies, "_stored_host_is_undialable", _dialable)
+    monkeypatch.setattr("services.creek_vault_stored_client.build_connected_vault_client", _build)
+    monkeypatch.setattr("services.creek_vault_stored_client.stored_host_is_undialable", _dialable)
     grants_before = await _grant_count(db_session)
 
     response = await async_client.get("/vault/agents/activity", headers=bob_headers)

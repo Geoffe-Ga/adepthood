@@ -13,7 +13,7 @@ import type { VaultConnection } from '@/api';
 export type VaultConnectionState =
   | { readonly kind: 'unknown' }
   | { readonly kind: 'none' }
-  | { readonly kind: 'managed' }
+  | { readonly kind: 'managed'; readonly agentAddress?: string | null }
   | {
       readonly kind: 'connected';
       readonly address: string;
@@ -39,12 +39,14 @@ function connectedTo(address: string, agentAddress: string | null): VaultConnect
 }
 
 /**
- * A null address on a connected answer is the managed binding's privacy rule.
- * Keep it present for import and replacement gates without exposing an address.
+ * A null vault_url identifies the private managed binding. Its public agent
+ * address is independent: retain it when the server can name one.
  */
 export function readConnectionState(connection: VaultConnection): VaultConnectionState {
   if (!connection.connected) return NOTHING_CONNECTED;
-  if (connection.vault_url === null) return { kind: 'managed' };
+  if (connection.vault_url === null) {
+    return { kind: 'managed', agentAddress: connection.mcp_address };
+  }
   return connectedTo(connection.vault_url, connection.mcp_address);
 }
 
