@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
  * would prove the routing and assume the protocol, and the protocol is the half
  * only a live server can exercise.
  *
- * **It advertises eight capabilities and no more.** The upload journey needs
+ * **It advertises eight capabilities by default.** The upload journey needs
  * `capabilities` and `upload`; the withdrawal journey needs `journal-upsert`,
  * `journal-withdraw`, `voice-drafts`, `reflections` and `letters` -- the bound
  * owner is vault-bound (#3061), so its resonance pass and its first letter are
@@ -29,6 +29,8 @@ import { fileURLToPath } from 'node:url';
  * model provider. The deployment binding still keeps
  * every other lane account on Adepthood's local fallback, so only the two specs
  * that deliberately log in as the bound owner can send traffic here.
+ * Classification is enabled only by its own journey through an authenticated
+ * control route; its opaque job handles and counts never retain a provider key.
  *
  * Shapes come from the vendored bundle at `backend/tests/fixtures/creek_v1/`:
  * capability, upload, journal upsert/withdrawal, Voice Draft upsert/deletion,
@@ -66,6 +68,7 @@ const READY_PREFIX = 'FAKE_VAULT_READY port=';
 const LOOPBACK_HOST = '127.0.0.1';
 
 const HTTP_OK = 200;
+const HTTP_ACCEPTED = 202;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_NOT_FOUND = 404;
@@ -83,7 +86,7 @@ const CEILING_HEADER = 'x-creek-tier-ceiling';
 /**
  * Everything this vault says it can do.
  *
- * Eight names, and the shortness is the safety property rather than an economy:
+ * Eight default names; the separate classification journey opts into pipeline:
  * adepthood consults this list before every capability call, so a name added
  * here is a new class of traffic aimed at this process from journeys that have
  * nothing to do with seeding.
@@ -174,6 +177,12 @@ let letterEscalationArmed = false;
  * 0.18) lists none and is never sent a key.
  */
 let requestKeysAdvertised = false;
+/** Classification traffic is enabled only by its own journey, never by default. */
+let pipelineAdvertised = false;
+/** Keep the job non-terminal until its journey has observed the journal reply. */
+let pipelineJobsHeld = false;
+/** Opaque handles and counts only; no request key survives the admitting call. */
+const pipelineJobs = new Map();
 /** The vendors a managed Creek vault spends a writer's own key for. */
 const REQUEST_KEY_PROVIDERS = ['anthropic', 'openai'];
 const PROVIDER_HEADER = 'x-creek-provider';
@@ -220,7 +229,9 @@ function digestOf(contentBase64) {
 
 function capabilities(response) {
   send(response, HTTP_OK, {
-    capabilities: ADVERTISED_CAPABILITIES.filter((name) => !lettersHeld || name !== 'letters'),
+    capabilities: ADVERTISED_CAPABILITIES.filter(
+      (name) => !lettersHeld || name !== 'letters',
+    ).concat(pipelineAdvertised ? ['pipeline'] : []),
     contract_minor: CONTRACT_MINOR,
     contract_version: CONTRACT_VERSION,
     ontology_version: ONTOLOGY_VERSION,
@@ -604,8 +615,75 @@ async function recordAgentCall(request, response) {
   send(response, HTTP_OK, { status: 'ok' });
 }
 
+/** The opt-in pipeline publishes only counts and a bounded inference source. */
+async function pipelineCall(request, response, pathname) {
+  if (!pipelineAdvertised) return false;
+  const jobId = pathname.startsWith('/v1/jobs/') ? pathname.slice('/v1/jobs/'.length) : null;
+  if (request.method === 'GET' && jobId !== null) {
+    received.push({ method: 'GET', path: pathname, externalId: null, tier: null });
+    const result = pipelineJobs.get(jobId);
+    if (result === undefined) refuse(response, HTTP_NOT_FOUND, 'invalid_request');
+    else if (pipelineJobsHeld) {
+      send(response, HTTP_OK, { status: 'ok', job_id: jobId, state: 'running' });
+    } else send(response, HTTP_OK, { status: 'ok', job_id: jobId, state: 'succeeded', result });
+    return true;
+  }
+  if (request.method !== 'POST' || !['/v1/classifications', '/v1/links'].includes(pathname)) {
+    return false;
+  }
+  const body = await readJson(request);
+  const method = pathname === '/v1/classifications' ? 'llm' : 'temporal';
+  if (
+    body === null ||
+    typeof body !== 'object' ||
+    Object.keys(body).join() !== 'method' ||
+    body.method !== method
+  ) {
+    refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
+    return true;
+  }
+  received.push({ method: 'POST', path: pathname, externalId: null, tier: null });
+  if (method === 'temporal') {
+    send(response, HTTP_OK, {
+      status: 'ok',
+      tier_ceiling: 'personal',
+      method,
+      fragment_count: 1,
+      link_count: 1,
+      largest_cluster_fragments: 1,
+      clusters_split: 0,
+      oversized_discarded: 0,
+    });
+    return true;
+  }
+  const provider = request.headers[PROVIDER_HEADER];
+  const keyedProvider =
+    requestKeysAdvertised &&
+    REQUEST_KEY_PROVIDERS.includes(provider) &&
+    typeof request.headers[PROVIDER_KEY_HEADER] === 'string';
+  const handle = randomUUID();
+  pipelineJobs.set(handle, {
+    status: 'ok',
+    tier_ceiling: 'personal',
+    method,
+    total: 1,
+    classified: 1,
+    preserved_manual: 0,
+    preserved_llm: 0,
+    privacy_tiers_assigned: 0,
+    retiered: 0,
+    praxis_marked: 0,
+    tags_extracted: 1,
+    complete: true,
+    inference_source: keyedProvider ? `request_key:${provider}` : 'local',
+  });
+  send(response, HTTP_ACCEPTED, { status: 'accepted', job_id: handle, state: 'queued' });
+  return true;
+}
+
 /** Serve one authorised `/v1` call, or say this vault has no such route. */
 async function capability(request, response, pathname) {
+  if (await pipelineCall(request, response, pathname)) return;
   if (request.method === 'GET' && pathname === '/v1/capabilities') {
     received.push({ method: 'GET', path: pathname, externalId: null, tier: null, digest: null });
     capabilities(response);
@@ -663,6 +741,22 @@ const server = createServer((request, response) => {
     if (request.method === 'GET' && pathname === '/__lane/uploads') {
       request.resume();
       send(response, HTTP_OK, { received, fragments: [...fragments.values()], keyed });
+      return;
+    }
+    if (
+      request.method === 'POST' &&
+      (pathname === '/__lane/enable-pipeline' || pathname === '/__lane/disable-pipeline')
+    ) {
+      request.resume();
+      pipelineAdvertised = pathname === '/__lane/enable-pipeline';
+      pipelineJobsHeld = pipelineAdvertised;
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (request.method === 'POST' && pathname === '/__lane/release-pipeline-jobs') {
+      request.resume();
+      pipelineJobsHeld = false;
+      send(response, HTTP_OK, { status: 'ok' });
       return;
     }
     if (

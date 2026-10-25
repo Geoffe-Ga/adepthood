@@ -85,6 +85,7 @@ from services import botmason, creek_vault_url_resolution
 from services import frequency_classification as frequency_classification_service
 from services import marginalia as marginalia_service
 from services.botmason import ImagePayload, LLMResponse
+from services.creek_vault_pipeline import wait_for_vault_pipeline_tasks
 from services.reflection_boundary import REFLECTION_SOURCE_UNAVAILABLE
 from services.user_vault_config import store_vault_config
 from tests.provider_transport import OPENAI_KEY, OPENAI_MODEL
@@ -378,15 +379,19 @@ async def network_edge(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Network
     async def _resolve(host: str) -> tuple[str, ...]:
         return (_ADDRESSES[host],) if host in _ADDRESSES else ()
 
-    async def _no_backoff(*_args: object, **_kwargs: object) -> None:
-        return None
-
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _httpx)
     monkeypatch.setattr(httpx2.AsyncHTTPTransport, "handle_async_request", _httpx2)
     monkeypatch.setattr(creek_vault_url_resolution, "resolve_host_addresses", _resolve)
-    monkeypatch.setattr(botmason.asyncio, "sleep", _no_backoff)
+    # Shorten only provider backoff; scheduler and lease-heartbeat timers keep
+    # their own real asyncio sleep and cannot spin on this fixture's database.
+    monkeypatch.setattr(botmason, "_RETRY_BASE_DELAY", 0.0)
     monkeypatch.setenv("LLM_MODEL", OPENAI_MODEL)
-    yield edge
+    try:
+        yield edge
+    finally:
+        # The network patch and StaticPool schema must outlive the bounded
+        # continuation this real request admitted.
+        await wait_for_vault_pipeline_tasks()
 
 
 @dataclass(frozen=True, slots=True)
@@ -547,11 +552,13 @@ async def _essay(client: AsyncClient, writer: Writer, *, byok: bool) -> httpx.Re
 
 
 async def _classify(client: AsyncClient, writer: Writer, *, byok: bool) -> httpx.Response:
-    return await client.post(
+    response = await client.post(
         "/journal/",
         json={"message": _BODY, "classification": "personal"},
         headers=writer.with_key(byok=byok),
     )
+    await wait_for_vault_pipeline_tasks()
+    return response
 
 
 async def _transcribe(client: AsyncClient, writer: Writer, *, byok: bool) -> httpx.Response:
@@ -1073,6 +1080,7 @@ async def test_a_relayed_key_is_never_logged_persisted_or_echoed(
                 "/journal/", json={"message": _BODY, "classification": "personal"}, headers=keyed
             )
         )
+        await wait_for_vault_pipeline_tasks()
         responses.append(await harness.client.get("/user/usage", headers=keyed))
         responses.append(await harness.client.get(_VENDORS, headers=keyed))
         harness.edge.condition = Condition.VAULT_TIMEOUT

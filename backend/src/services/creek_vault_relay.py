@@ -1,4 +1,4 @@
-"""A writer's own provider key, relayed to their vault for one dial (#3437).
+"""A writer's own provider key, relayed to their vault for one request (#3437).
 
 ADR 0009's 2026-10-16 amendment: a vault-bound writer's BYOK key travels device
 -> adepthood -> vault, per request, so a managed vault can write with it
@@ -76,6 +76,15 @@ def keyless_context() -> Context:
     context = copy_context()
     context.run(_FORWARDED_PROVIDER_KEY.set, None)
     return context
+
+
+def has_forwarded_provider_key() -> bool:
+    """Whether the current request has a candidate key, without exposing that key.
+
+    The pipeline uses this only to admit unstarted classification before this
+    context ends. Vendor eligibility remains the adapter's send-time decision.
+    """
+    return _FORWARDED_PROVIDER_KEY.get() is not None
 
 
 def relay_headers(*, spends_key: bool, handshake: HandshakeResult) -> Mapping[str, str]:
