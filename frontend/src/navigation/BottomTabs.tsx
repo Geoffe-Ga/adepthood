@@ -41,8 +41,16 @@ export type RootTabParamList = {
       }
     | undefined;
   Practice: { stageNumber?: number } | undefined;
-  // contentId/scrollOffset are optional restore hints from a Back-to-reading return.
-  Course: { stageNumber?: number; contentId?: number; scrollOffset?: number } | undefined;
+  Course:
+    | {
+        stageNumber?: number;
+        /** One-shot request to show this section, replacing any open reader. */
+        openSection?: true;
+        /** Optional restore hints from a Back-to-reading return. */
+        contentId?: number;
+        scrollOffset?: number;
+      }
+    | undefined;
   Journal: undefined;
   Prompts: undefined;
   Map: undefined;

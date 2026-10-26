@@ -37,6 +37,11 @@ function invitation(overrides: Partial<Invitation> = {}): Invitation {
 }
 
 const noop = () => Promise.resolve();
+const mockNavigate = jest.fn();
+jest.mock('@react-navigation/native', () => ({
+  ...jest.requireActual<object>('@react-navigation/native'),
+  useNavigation: () => ({ navigate: mockNavigate }),
+}));
 const correspondence = jest.spyOn(stages, 'correspondence');
 
 beforeEach(() => {
@@ -57,6 +62,62 @@ function StyleSheetMin(node: { props: { style: unknown } }): number {
 }
 
 describe('InvitationNote', () => {
+  it('opens the invited course section without dismissing the invitation', () => {
+    const onDismiss = jest.fn(() => Promise.resolve());
+    const { getByRole } = render(
+      <InvitationNote
+        invitation={invitation({ target_type: 'course', target_id: 2, kind: 'readiness' })}
+        onDismiss={onDismiss}
+      />,
+    );
+    const open = getByRole('button', { name: 'View reading' });
+    expect(StyleSheetMin(open)).toBeGreaterThanOrEqual(touchTarget.minimum);
+    fireEvent.press(open);
+    expect(mockNavigate).toHaveBeenCalledTimes(1);
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', {
+      screen: 'Course',
+      params: { stageNumber: 2, openSection: true },
+    });
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
+  it('can open the invited section before its Aspect lookup succeeds', () => {
+    const { getByRole } = render(
+      <InvitationNote
+        invitation={invitation({ target_type: 'course', target_id: 9 })}
+        onDismiss={noop}
+      />,
+    );
+    fireEvent.press(getByRole('button', { name: 'View reading' }));
+    expect(mockNavigate).toHaveBeenCalledWith('Tabs', {
+      screen: 'Course',
+      params: { stageNumber: 9, openSection: true },
+    });
+  });
+
+  it('keeps the decline separate from opening the reading', () => {
+    const onDismiss = jest.fn(() => Promise.resolve());
+    const { getByTestId } = render(
+      <InvitationNote
+        invitation={invitation({ target_type: 'course', target_id: 2 })}
+        onDismiss={onDismiss}
+      />,
+    );
+    fireEvent.press(getByTestId('invitation-1-dismiss'));
+    expect(onDismiss).toHaveBeenCalledWith(1);
+    expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { target_type: 'course' as const, target_id: null },
+    { target_type: 'practice' as const, target_id: 2 },
+  ])('offers no reading action without a course destination: %s', (target) => {
+    const { queryByRole } = render(
+      <InvitationNote invitation={invitation(target)} onDismiss={noop} />,
+    );
+    expect(queryByRole('button', { name: 'View reading' })).toBeNull();
+  });
+
   it('renders derived microcopy line for habit/consistency invitation', () => {
     const inv = invitation({ id: 5, target_type: 'habit', kind: 'consistency' });
     const expected = invitationCopy('habit', 'consistency').line;

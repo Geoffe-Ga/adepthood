@@ -72,13 +72,22 @@ describe('invitationCopy drift guard', () => {
       expect(generic).toContain('course reading');
       if (kind === 'readiness') {
         expect(named).toContain('writing has circled Self-Love');
-        expect(named).toContain('built for exactly that');
+        expect(named).toContain('A related reading is available.');
       } else {
         expect(named).toContain('Self-Love reading is open to you');
         expect(named).not.toContain('built for exactly that');
       }
     },
   );
+
+  it('offers a related reading without presuming the writer wants it', () => {
+    expect(invitationCopy('course', 'readiness', { aspect: 'Embodied Understanding' }).line).toBe(
+      'Your writing has circled Embodied Understanding. A related reading is available.',
+    );
+    expect(invitationCopy('course', 'readiness').line).toBe(
+      'A theme in your writing has grown full enough to stand out. A related course reading is available.',
+    );
+  });
 });
 
 /**

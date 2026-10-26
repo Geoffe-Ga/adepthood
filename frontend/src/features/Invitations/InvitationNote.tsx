@@ -1,11 +1,12 @@
 /**
  * ``InvitationNote`` — a quiet paper card that offers one declinable invitation
- * (NORTH-STAR §6). It renders the derived microcopy line plus a single decline
- * affordance; there is no accept action, because the invitation is the offer.
- * Presentational + reduced-motion-safe; tokens only.
+ * (NORTH-STAR §6). Course invitations open the offered section; the corner
+ * decline stays independently reachable. Reduced-motion-safe; tokens only.
  */
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { invitationCopy } from './invitationCopy';
 import { useInvitationAspect } from './useInvitationAspect';
@@ -14,6 +15,7 @@ import type { Invitation } from '@/api';
 import {
   BORDER_RADIUS,
   SPACING,
+  accent,
   colors,
   editorialType,
   paperShadow,
@@ -21,10 +23,31 @@ import {
   touchTarget,
 } from '@/design/tokens';
 import ReflectionDismiss, { closeCornerReserve } from '@/features/Journal/ReflectionDismiss';
+import type { RootStackParamList } from '@/navigation/RootStack';
 
 export interface InvitationNoteProps {
   invitation: Invitation;
   onDismiss: (_id: number) => void | Promise<void>;
+}
+
+/** The signal names a course stage, so keep that coordinate through navigation. */
+function CourseReadingLink({ stageNumber, id }: { stageNumber: number; id: number }) {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  return (
+    <TouchableOpacity
+      style={styles.openReading}
+      accessibilityRole="button"
+      testID={`invitation-${id}-open`}
+      onPress={() =>
+        navigation.navigate('Tabs', {
+          screen: 'Course',
+          params: { stageNumber, openSection: true },
+        })
+      }
+    >
+      <Text style={styles.openReadingLabel}>View reading</Text>
+    </TouchableOpacity>
+  );
 }
 
 function InvitationNote({ invitation, onDismiss }: InvitationNoteProps): React.JSX.Element {
@@ -35,6 +58,9 @@ function InvitationNote({ invitation, onDismiss }: InvitationNoteProps): React.J
       <Text style={styles.line} testID={`invitation-${invitation.id}-line`}>
         {copy.line}
       </Text>
+      {invitation.target_type === 'course' && invitation.target_id !== null ? (
+        <CourseReadingLink stageNumber={invitation.target_id} id={invitation.id} />
+      ) : null}
       <ReflectionDismiss
         variant="close"
         testID={`invitation-${invitation.id}-dismiss`}
@@ -64,6 +90,20 @@ const styles = StyleSheet.create({
     ...editorialType.marginNote,
     marginRight: closeCornerReserve(SPACING.md),
     color: colors.paper.ink,
+  },
+  openReading: {
+    alignSelf: 'flex-start',
+    minHeight: touchTarget.minimum,
+    minWidth: touchTarget.minimum,
+    maxWidth: '100%',
+    justifyContent: 'center',
+    marginTop: spacing(1),
+    paddingVertical: spacing(1),
+  },
+  openReadingLabel: {
+    ...editorialType.action,
+    color: accent.primary,
+    flexShrink: 1,
   },
 });
 

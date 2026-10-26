@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { expect, test, type Browser, type Page } from '@playwright/test';
 
 import { seedInvitations } from './declineOwnershipBrowserSupport';
-import { signUp } from './journalHabitsBrowserSupport';
+import { frontendUrl, setProgramAnchorDaysAgo, signUp } from './journalHabitsBrowserSupport';
 import { BACKEND_DIR, pythonExecutable, readLaneState } from './laneState';
 
 /**
@@ -62,9 +62,7 @@ asyncio.run(main())
   return JSON.parse(result.stdout) as FieldWrite;
 };
 
-const expectedLine =
-  `Your writing has circled ${LONG_ASPECT}. ` +
-  'There is a reading built for exactly that. It is here when you want it, and I think you want it.';
+const expectedLine = `Your writing has circled ${LONG_ASPECT}. A related reading is available.`;
 
 async function assertCardGeometry(page: Page, id: number): Promise<void> {
   const card = page.getByTestId(`invitation-${String(id)}`);
@@ -75,6 +73,14 @@ async function assertCardGeometry(page: Page, id: number): Promise<void> {
   await expect(card).not.toContainText(PRIVATE_PERSONA);
   await expect(decline).toHaveAccessibleName('Dismiss this invitation');
   await expect(decline.locator('svg')).toHaveCount(1);
+  const open = card.getByRole('button', { name: 'View reading', exact: true });
+  await expect(open).toBeVisible();
+  const openBox = await open.boundingBox();
+  const lineBox = await page.getByTestId(`invitation-${String(id)}-line`).boundingBox();
+  if (openBox === null || lineBox === null) throw new Error('Reading action is missing');
+  expect(openBox.width).toBeGreaterThanOrEqual(44);
+  expect(openBox.height).toBeGreaterThanOrEqual(44);
+  expect(openBox.y).toBeGreaterThanOrEqual(lineBox.y + lineBox.height);
 
   const geometry = await card.evaluate(
     (root, dismissTestId) => {
@@ -136,6 +142,9 @@ async function exerciseViewport(
   const page = await context.newPage();
   try {
     const email = await signUp(page, `invitation-reason-${label}`);
+    // Reading keeps the course's existing calendar pace. Arrange stage 2 as
+    // available so the action is proved all the way through a real body read.
+    setProgramAnchorDaysAgo(email, 28);
     const [id] = seedInvitations(email, [
       { targetType: 'course', targetId: STAGE, kind: 'readiness' },
     ]);
@@ -156,6 +165,30 @@ async function exerciseViewport(
 
     mkdirSync(ARTIFACTS, { recursive: true });
     await page.screenshot({ path: join(ARTIFACTS, `${label}.png`) });
+
+    const offeredContent = page.waitForResponse(
+      (candidate) =>
+        candidate.request().method() === 'GET' &&
+        new URL(candidate.url()).pathname === `/course/stages/${String(STAGE)}/content`,
+    );
+    const open = page.getByTestId(`invitation-${String(id)}-open`);
+    await open.focus();
+    await page.keyboard.press('Enter');
+    expect((await offeredContent).ok()).toBe(true);
+    await expect(page.getByTestId('stage-cover')).toContainText(`Chapter ${String(STAGE)}`);
+    const body = page.waitForResponse(
+      (candidate) =>
+        candidate.request().method() === 'GET' &&
+        /^\/course\/content\/\d+\/body$/u.test(new URL(candidate.url()).pathname),
+    );
+    await page.locator('[data-testid^="content-card-"]').first().click();
+    expect((await body).ok()).toBe(true);
+    await expect(page.getByTestId('reader-markdown')).toBeVisible();
+
+    // Taking up the offer is not a decline: it remains available on return.
+    await page.goto(frontendUrl());
+    await page.getByTestId('journal-notifications-open').click();
+    await expect(page.getByTestId(`invitation-${String(id)}`)).toContainText(expectedLine);
 
     if (dismiss) {
       const response = page.waitForResponse(
@@ -185,11 +218,62 @@ test.afterAll(() => {
   if (previousPersona !== null) writeStageField('relationship_to_free_will', previousPersona);
 });
 
-test('course invitation explains its real reason, names the served Aspect, and stays clear', async ({
+test('course invitation offers a related reading, opens its section, and stays clear', async ({
   browser,
 }) => {
   await exerciseViewport(browser, '390x844-100', { width: 390, height: 844 }, 1, true);
   // 200% effective browser size: a 195×422 CSS viewport rendered to 390×844 pixels.
   await exerciseViewport(browser, '390x844-200', { width: 195, height: 422 }, 2);
   await exerciseViewport(browser, '1280x800-100', { width: 1280, height: 800 });
+});
+
+async function returnToPrompts(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'Open Course menu', exact: true }).click();
+  await page.getByTestId('drawer-nav-Prompts').click();
+}
+
+test('reopening an invitation selects its section after browsing another stage', async ({
+  page,
+}) => {
+  const email = await signUp(page, 'invitation-warm-stage');
+  setProgramAnchorDaysAgo(email, 28);
+  const [id] = seedInvitations(email, [
+    { targetType: 'course', targetId: STAGE, kind: 'readiness' },
+  ]);
+  await page.getByTestId('journal-notifications-open').click();
+  await page.getByTestId(`invitation-${String(id)}-open`).click();
+  await expect(page.getByTestId('stage-cover')).toContainText('Chapter 2');
+  await page.getByTestId('stage-pill-1').click();
+  await expect(page.getByTestId('stage-cover')).toContainText('Chapter 1');
+  await returnToPrompts(page);
+  await page.getByTestId(`invitation-${String(id)}-open`).click();
+  await expect(page.getByTestId('stage-cover')).toContainText('Chapter 2');
+
+  // The request was consumed: later manual browsing keeps the chosen section.
+  await page.getByTestId('stage-pill-1').click();
+  await expect(page.getByTestId('stage-cover')).toContainText('Chapter 1');
+});
+
+test('an invitation replaces an old reader while ordinary tab returns preserve it', async ({
+  page,
+}) => {
+  const email = await signUp(page, 'invitation-warm-reader');
+  setProgramAnchorDaysAgo(email, 28);
+  const [id] = seedInvitations(email, [
+    { targetType: 'course', targetId: STAGE, kind: 'readiness' },
+  ]);
+  await page.getByRole('button', { name: 'Open Journal menu', exact: true }).click();
+  await page.getByTestId('drawer-nav-Course').click();
+  await page.getByTestId('stage-pill-1').click();
+  await page.locator('[data-testid^="content-card-"]').first().click();
+  await expect(page.getByTestId('reader-markdown')).toBeVisible();
+  const previousText = await page.getByTestId('reader-markdown').textContent();
+  await returnToPrompts(page);
+  await page.getByRole('button', { name: 'Open Prompts menu', exact: true }).click();
+  await page.getByTestId('drawer-nav-Course').click();
+  await expect(page.getByTestId('reader-markdown')).toHaveText(previousText ?? '');
+  await returnToPrompts(page);
+  await page.getByTestId(`invitation-${String(id)}-open`).click();
+  await expect(page.getByTestId('reader-markdown')).toHaveCount(0);
+  await expect(page.getByTestId('stage-cover')).toContainText('Chapter 2');
 });
