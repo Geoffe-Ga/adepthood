@@ -76,13 +76,18 @@ from sqlmodel import col, select
 from dependencies.creek_vault import get_creek_vault_client, get_reflection_boundary
 from domain.creek_vault import VaultPipelineStage
 from domain.frequencies import Frequency
+from domain.reading_recommendations import ReadingRequest
 from main import app
+from models.course_stage import CourseStage
 from models.goal import Goal
 from models.habit import Habit
+from models.invitation_signal import InvitationSignal
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia, MarginaliaKind
+from models.stage_content import StageContent
 from models.vault_pipeline_run import VaultPipelineOutcome, VaultPipelineRun
 from services import creek_vault_pipeline as pipeline
+from services.content_repository import get_content_repository
 from services.creek_vault_pipeline import VaultPipelineTrigger
 from services.creek_vault_pipeline import _Continuation as Continuation
 from services.creek_vault_pipeline import _continue_ladder_body as continue_ladder_body
@@ -261,6 +266,72 @@ def _ok(response: Response) -> None:
 
 
 # ── Seeds the acts need ──────────────────────────────────────────────────────
+
+
+class ReadingRecordingVault(RecordingVault):
+    """The optional model operation records the complete context it receives."""
+
+    async def recommend_reading(self, request: ReadingRequest) -> None:
+        """Record the actual model input; an empty recommendation is valid."""
+        await self._dial("recommend_reading", json.dumps(request.wire_body()))
+
+
+async def _seed_reading(h: Harness) -> None:
+    """Make one real canonical chapter available without visiting the course."""
+    async with h.factory() as session:
+        stage = (
+            await session.execute(select(CourseStage).where(CourseStage.stage_number == 1))
+        ).scalar_one_or_none()
+        if stage is None:
+            stage = CourseStage(
+                stage_number=1,
+                title="Stage",
+                subtitle="Stage",
+                overview_url="",
+                category="",
+                aspect="",
+                spiral_dynamics_color="",
+                growing_up_stage="",
+                divine_gender_polarity="",
+                relationship_to_free_will="",
+                free_will_description="",
+            )
+            session.add(stage)
+            await session.flush()
+            assert stage.id is not None
+            chapter = get_content_repository().list_chapters()[0]
+            session.add(
+                StageContent(
+                    course_stage_id=stage.id,
+                    title=chapter.title,
+                    content_type="essay",
+                    release_day=1,
+                    url=f"content://{chapter.id}",
+                )
+            )
+        session.add(
+            InvitationSignal(user_id=h.user_id, target_type="course", target_id=1, kind="readiness")
+        )
+        await session.commit()
+
+
+async def _act_reading(h: Harness, entry_id: int) -> None:
+    """List offers for finished writing, exercising the real source filter."""
+    async with h.factory() as session:
+        entry = await session.get(JournalEntry, entry_id)
+        assert entry is not None
+        entry.status = "finished"
+        session.add(entry)
+        await session.commit()
+    mark = h.ledger.mark()
+    _ok(await h.client.get("/invitations", headers=h.headers))
+    async with h.factory() as session:
+        current = await session.get(JournalEntry, entry_id)
+        assert current is not None
+        if current.classification == _PERSONAL:
+            assert any(
+                event.verb == "recommend_reading" for event in h.ledger.since(mark, Recorder.VAULT)
+            )
 
 
 async def _seed_habit(h: Harness) -> None:
@@ -475,6 +546,13 @@ _WRITE_PATH: Final[Mapping[Recorder, Expect]] = {
 
 ROWS: Final[tuple[Row, ...]] = (
     Row(
+        ("GET", "/invitations"),
+        "managed reading",
+        _act_reading,
+        {Recorder.VAULT: Expect.CARRIES},
+        prepare=_seed_reading,
+    ),
+    Row(
         ("POST", "/journal/"),
         "",
         _act_nothing,
@@ -608,7 +686,7 @@ async def harness(
     # order of what is sent is the property, not the production clock.
     monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", _FAST_RETRY_SECONDS)
     ledger = Ledger()
-    vault = RecordingVault(ledger)
+    vault = ReadingRecordingVault(ledger)
     app.dependency_overrides[get_creek_vault_client] = lambda: vault
     assert record_provider_dials(monkeypatch, ledger, classifier_reply=_CLASSIFIED_REPLY), (
         "no module binds the provider dial: the provider recorder would watch nothing"
