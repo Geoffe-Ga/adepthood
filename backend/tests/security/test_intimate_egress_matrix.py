@@ -330,7 +330,8 @@ async def _act_reading(h: Harness, entry_id: int) -> None:
         assert current is not None
         if current.classification == _PERSONAL:
             assert any(
-                event.verb == "recommend_reading" for event in h.ledger.since(mark, Recorder.VAULT)
+                event.verb == "recommend_reading" and carries(event.payload, h.canary)
+                for event in h.ledger.since(mark, Recorder.VAULT)
             )
 
 
@@ -725,6 +726,8 @@ async def _race(
     tier: str,
     flight: Callable[[], Coroutine[object, object, object]],
     entry_id: int | None,
+    *,
+    dial_verb: str | None = None,
 ) -> tuple[int, int]:
     """Hold ``flight``'s first dial open, reclassify meanwhile, then let it finish.
 
@@ -733,12 +736,17 @@ async def _race(
     (``routers.journal.create_journal_entry``), so the id is read from the
     database while the dial is held -- the response has not been sent yet.
 
+    ``dial_verb`` selects the protected model call rather than an earlier
+    content-free probe, and requires reclassification to queue while it runs.
+
     Returns the entry and the mark after which nothing may carry the canary:
     the moment the reclassification answered. For the Personal twin nothing is
     reclassified, and the mark is where the flight began.
     """
     start = h.ledger.mark()
-    h.ledger.arm_pause(frozenset({Recorder.VAULT, Recorder.PROVIDER, Recorder.CLASSIFIER}))
+    h.ledger.arm_pause(
+        frozenset({Recorder.VAULT, Recorder.PROVIDER, Recorder.CLASSIFIER}), verb=dial_verb
+    )
     in_flight = asyncio.create_task(flight())
     try:
         await asyncio.wait_for(h.ledger.paused.wait(), _RENDEZVOUS_SECONDS)
@@ -748,15 +756,22 @@ async def _race(
             h.ledger.release.set()
             await in_flight
             return entry_id, start
-        reclassifying = asyncio.create_task(h.patch(entry_id, classification=_INTIMATE))
+
+        async def reclassify() -> tuple[Response, int]:
+            response = await h.patch(entry_id, classification=_INTIMATE)
+            return response, h.ledger.mark()
+
+        reclassifying = asyncio.create_task(reclassify())
         await asyncio.sleep(_QUEUE_PROBE_SECONDS)
+        if dial_verb is not None:
+            assert not reclassifying.done(), "reclassification acknowledged during model egress"
         h.ledger.release.set()
         await in_flight
-        reclassified = await reclassifying
+        reclassified, acknowledged_mark = await reclassifying
     finally:
         h.ledger.disarm_pause()
     assert reclassified.status_code in {HTTPStatus.OK, HTTPStatus.NOT_FOUND}, reclassified.text
-    return entry_id, h.ledger.mark()
+    return entry_id, acknowledged_mark
 
 
 async def _drive(h: Harness, row: Row, step: Step, tier: str) -> tuple[int, int]:
@@ -785,7 +800,13 @@ async def _drive(h: Harness, row: Row, step: Step, tier: str) -> tuple[int, int]
     else:
         entry_id = await h.create(message=h.body(), title=h.title_canary, tier=_PERSONAL)
         if step is Step.RECLASSIFY_RACE:
-            return await _race(h, tier, partial(row.act, h, entry_id), entry_id)
+            return await _race(
+                h,
+                tier,
+                partial(row.act, h, entry_id),
+                entry_id,
+                dial_verb="recommend_reading" if row.act is _act_reading else None,
+            )
         if tier == _INTIMATE:
             _ok(await h.patch(entry_id, classification=_INTIMATE))
         if tier == _INTIMATE or row.act is not _act_nothing:
