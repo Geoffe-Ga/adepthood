@@ -21,6 +21,7 @@ from models.completion_suggestion import (
 )
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
+from models.goal_log_event import GoalLogEvent
 from models.habit import Habit
 from models.practice import Practice
 from models.practice_session import PracticeSession
@@ -223,6 +224,8 @@ async def test_accept_logs_completion_and_flips_to_accepted(
     assert "user_id" not in data["suggestion"]
     assert data["check_in"]["streak"] == 1
     assert await _completion_count(db_session, goal_id) == 1
+    event = (await db_session.execute(select(GoalLogEvent))).scalar_one()
+    assert (event.source, event.goal_id, event.delta_units) == ("journal", goal_id, 5.0)
 
 
 @pytest.mark.asyncio

@@ -80,6 +80,7 @@ from models.completion_suggestion import (
     SuggestionStatus,
 )
 from models.goal import Goal
+from models.goal_log_event import GoalLogSource
 from models.habit import Habit
 from models.journal_entry import JournalEntry, JournalTag
 from models.marginalia import Marginalia, MarginaliaKind, MarginaliaStatus
@@ -3109,6 +3110,7 @@ async def _accept_pending_habit(
         session,
         ctx,
         CheckInCommand(
+            source=GoalLogSource.JOURNAL,
             completed_on=logged_on,
             completed_units=suggestion.completed_units,
             idempotency_key=f"{_ACCEPT_HABIT_OPERATION_PREFIX}{suggestion.id}",

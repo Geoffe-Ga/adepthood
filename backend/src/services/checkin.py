@@ -32,6 +32,7 @@ from domain.streaks import is_scheduled_on
 from errors import bad_request
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
+from models.goal_log_event import GoalLogEvent, GoalLogSource
 from models.habit import Habit
 from schemas import CheckInResult
 from schemas.checkin import CheckInReasonCode
@@ -90,6 +91,7 @@ class _CheckInJob:
     # on an "abstain from sugar" habit is success, not a chain break.
     # ``None`` selects the additive code path.
     subtractive: SubtractiveContext | None
+    source: GoalLogSource
     # Weekly / monthly cadence: the streak counts met periods over the whole
     # habit's history instead of days (#2819). ``None`` keeps the day streak.
     cadence: PeriodCadence | None = None
@@ -361,6 +363,7 @@ async def _persist_and_build_response(session: AsyncSession, job: _CheckInJob) -
         completion.timestamp = job.timestamp
     async with session.begin_nested():
         session.add(completion)
+        _append_log_event(session, job, completion.completed_units)
         await session.flush()
     await session.commit()
     # ``new_streak`` was computed alongside ``old_streak`` from one history read
@@ -479,8 +482,33 @@ def _new_explicit_completion(job: _CheckInJob) -> GoalCompletion:
     return completion
 
 
+def _append_log_event(session: AsyncSession, job: _CheckInJob, delta: float) -> None:
+    """Append only the actual persisted change, in the aggregate's transaction."""
+    if delta == 0:
+        return
+    session.add(
+        GoalLogEvent(
+            goal_id=job.goal_id,
+            user_id=job.user_id,
+            local_day=job.target_day,
+            delta_units=delta,
+            via_timer=job.via_timer,
+            source=job.source,
+        )
+    )
+
+
+def _subtract_and_record(
+    session: AsyncSession, job: _CheckInJob, rows: list[GoalCompletion]
+) -> None:
+    """Record the clamped correction once, even when it consumes several tiers."""
+    before = sum(row.completed_units for row in rows)
+    _subtract_across_tiers(rows, job.goal_id, job.completed_units)
+    _append_log_event(session, job, sum(row.completed_units for row in rows) - before)
+
+
 async def _apply_explicit_delta(session: AsyncSession, job: _CheckInJob) -> bool:
-    """Mutate canonical tier rows and report whether this adjusted an existing day."""
+    """Mutate tier rows and append one event for the actual habit/day delta."""
     rows = await _habit_day_completions(
         session,
         job.habit_id,
@@ -489,8 +517,9 @@ async def _apply_explicit_delta(session: AsyncSession, job: _CheckInJob) -> bool
     )
     existing = next((row for row in rows if row.goal_id == job.goal_id), None)
     if job.completed_units < 0:
-        _subtract_across_tiers(rows, job.goal_id, job.completed_units)
+        _subtract_and_record(session, job, rows)
         return True
+    _append_log_event(session, job, job.completed_units)
     if existing is not None:
         existing.completed_units = max(0.0, existing.completed_units + job.completed_units)
         return True
@@ -569,6 +598,7 @@ class CheckInContext:
 class CheckInCommand:
     """Writer-supplied values for one check-in operation."""
 
+    source: GoalLogSource = GoalLogSource.MANUAL
     did_complete: bool = True
     completed_on: date | None = None
     completed_units: float | None = None
@@ -747,6 +777,7 @@ async def record_goal_completion(
         target_day=target_day,
         timestamp=_completion_timestamp(command.completed_on, ctx.user_timezone),
         subtractive=subtractive,
+        source=command.source,
         cadence=cadence,
         via_timer=command.via_timer,
     )

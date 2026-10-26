@@ -433,6 +433,7 @@ RETENTION: Mapping[str, RetentionRule] = {
     "goalgroup": until_account_deletion(
         "The account's own goal groupings; shared templates carry no account.",
     ),
+    "goallogevent": until_account_deletion("Every timestamped unit change the account logged."),
     "gumroadsale": nightly(
         conditional(
             fixed_days(

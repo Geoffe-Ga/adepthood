@@ -21,6 +21,7 @@ from .goal import Goal
 from .goal_completion import GoalCompletion
 from .goal_completion_idempotency import GoalCompletionSpend
 from .goal_group import GoalGroup
+from .goal_log_event import GoalLogEvent
 from .gumroad_sale import GumroadSale
 from .habit import Habit
 from .invitation_signal import InvitationSignal
@@ -91,6 +92,7 @@ __all__ = [
     "GoalCompletion",
     "GoalCompletionSpend",
     "GoalGroup",
+    "GoalLogEvent",
     "GumroadSale",
     "Habit",
     "InvitationSignal",

@@ -3006,6 +3006,16 @@
             "title": "Goal Id",
             "type": "integer"
           },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GoalLogSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "via_timer": {
             "default": false,
             "title": "Via Timer",
@@ -3138,6 +3148,18 @@
         ],
         "title": "GoalGroupResponse",
         "type": "object"
+      },
+      "GoalLogSource": {
+        "description": "The check-in path that produced a unit change.",
+        "enum": [
+          "manual",
+          "timer",
+          "journal",
+          "practice_link",
+          "backfill"
+        ],
+        "title": "GoalLogSource",
+        "type": "string"
       },
       "GoalTier": {
         "description": "Allowed tier values for a Goal.",

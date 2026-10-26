@@ -17,7 +17,13 @@ import {
   goals as goalsApi,
   toLocalHabit,
 } from '../../../api';
-import type { ApiHabit, CheckInResult, GoalUnitsPayload, GoalUpdatePayload } from '../../../api';
+import type {
+  ApiHabit,
+  CheckInResult,
+  GoalLogSource,
+  GoalUnitsPayload,
+  GoalUpdatePayload,
+} from '../../../api';
 import { formatApiError } from '../../../api/errorMessages';
 import { captureSessionToken, getAuthSession } from '../../../api/sessionToken';
 import type { ToastConfig } from '../../../components/Toast';
@@ -2190,10 +2196,12 @@ export const habitManager = {
     ctx: LogUnitContext,
     {
       viaTimer = false,
+      source,
       isCurrent = () => true,
       onCommitted,
     }: {
       viaTimer?: boolean;
+      source?: GoalLogSource;
       isCurrent?: () => boolean;
       onCommitted?: (_result: CheckInResult) => void;
     } = {},
@@ -2230,6 +2238,7 @@ export const habitManager = {
             completed_on: ctx.completedOn,
             completed_units: ctx.amount,
             ...(viaTimer ? { via_timer: true } : {}),
+            ...(source ? { source } : {}),
           },
           {
             idempotencyKey: logUnitIdempotencyKey(ctx.operationId),

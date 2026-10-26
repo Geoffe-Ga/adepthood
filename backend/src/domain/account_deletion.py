@@ -226,6 +226,7 @@ POLICY: Mapping[str, TablePolicy] = {
             "invariant true and never reaches the SET NULL."
         ),
     ),
+    "goallogevent": _erase("user_id", "Every timestamped unit change the account logged."),
     "gumroadsale": TablePolicy(
         disposition=Disposition.ANONYMISE,
         rationale=(
