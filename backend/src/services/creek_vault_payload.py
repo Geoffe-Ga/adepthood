@@ -1256,7 +1256,8 @@ def _parse_classification_pass(
     """
     if not _admissible_pipeline_body(payload, _CLASSIFICATION_RESPONSE_REQUIRED_FIELDS, accepted):
         return None
-    if _wire_value(VaultClassificationMethod, payload["method"]) != expected_method.value:
+    method = _wire_value(VaultClassificationMethod, payload["method"])
+    if method not in {expected_method.value, VaultClassificationMethod.RULES.value}:
         return None
     complete = payload["complete"]
     counts = _counts(payload, _CLASSIFICATION_COUNT_FIELDS)
@@ -1272,6 +1273,7 @@ def _parse_classification_pass(
         praxis_marked=counts["praxis_marked"],
         tags_extracted=counts["tags_extracted"],
         complete=complete,
+        method=VaultClassificationMethod(method),
     )
 
 

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from domain.creek_vault import (
+    VaultClassificationMethod,
     VaultClassificationPass,
     VaultLinkPass,
     VaultLinkStage,
@@ -32,7 +33,8 @@ def classification_outcome(result: VaultClassificationPass) -> VaultPipelineOutc
     to call again — and the labels it did write are real, which is why the stages
     that read them are still allowed to run in the same pass.
     """
-    return VaultPipelineOutcome.COMPLETED if result.complete else VaultPipelineOutcome.INCOMPLETE
+    semantic_complete = result.complete and result.method is VaultClassificationMethod.LLM
+    return VaultPipelineOutcome.COMPLETED if semantic_complete else VaultPipelineOutcome.INCOMPLETE
 
 
 @dataclass(frozen=True)

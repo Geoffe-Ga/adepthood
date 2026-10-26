@@ -37,6 +37,8 @@ from sqlmodel import col, select
 from domain.creek_vault import (
     CreekCapability,
     CreekCapabilityUnsupportedError,
+    VaultClassificationMethod,
+    VaultClassificationPass,
     VaultLinkStage,
     VaultPipelineJob,
     VaultPipelineStage,
@@ -265,6 +267,7 @@ class _DurableJobRecorder:
         reject_first_classification: bool = False,
         fail_first_classification_job: bool = False,
         lose_first_classification_job: bool = False,
+        classification_method: str = "llm",
     ) -> None:
         """Optionally fault the first admission or first admitted job."""
         self.requests: list[httpx.Request] = []
@@ -274,6 +277,7 @@ class _DurableJobRecorder:
         self._fail_first_classification_job = fail_first_classification_job
         self._lose_first_classification_job = lose_first_classification_job
         self._polls: dict[str, int] = {}
+        self._classification_method = classification_method
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         """Serve the published admission, status, and synchronous response shapes."""
@@ -343,7 +347,7 @@ class _DurableJobRecorder:
             )
         if job_id == self.CLASSIFICATION_JOB:
             result = _example("pipeline", "success")
-            result["method"] = "llm"
+            result["method"] = self._classification_method
         else:
             result = _link_body("embeddings")
         return httpx.Response(
@@ -513,6 +517,54 @@ async def test_a_journal_write_converges_through_a_durable_llm_job(
     ]
     assert all(row.resume_claimed_at is None for row in rows)
     assert (rows[0].fragments_seen, rows[0].fragments_touched) == (12, 10)
+
+
+@pytest.mark.asyncio
+async def test_a_durable_rules_fallback_keeps_counts_without_retrying_as_a_failure(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Creek's managed fallback lands labels but has not completed semantic classification."""
+    monkeypatch.setattr(pipeline, "_JOB_POLL_INITIAL_SECONDS", 0.001)
+    monkeypatch.setattr(pipeline, "_RETRY_INITIAL_SECONDS", 0.001)
+    recorder = _DurableJobRecorder(classification_method="rules")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(recorder)) as http:
+        client = HttpCreekVaultClient(_VAULT_URL, _API_KEY, http_client=http)
+        await client.handshake()
+        await drive_vault_pipeline(
+            db_session, client, user_id=_OWNER, trigger=VaultPipelineTrigger.JOURNAL_WRITE
+        )
+        await _wait_for_background_pipeline()
+
+    assert recorder.classification_submissions == 1
+    rows = await _rows(db_session)
+    assert [(row.stage, row.outcome) for row in rows] == [
+        ("classify", VaultPipelineOutcome.INCOMPLETE),
+        ("temporal", VaultPipelineOutcome.COMPLETED),
+    ]
+    assert rows[0].attempt_count == 1
+    assert rows[0].job_id == recorder.CLASSIFICATION_JOB
+    assert (rows[0].fragments_seen, rows[0].fragments_touched) == (12, 10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["llm", "rules"])
+async def test_a_classification_result_preserves_the_method_that_actually_ran(
+    method: str,
+    http_clients: Callable[[_RecorderLike], httpx.AsyncClient],
+    handshaken: Callable[[_RecorderLike, httpx.AsyncClient], Any],
+) -> None:
+    """A rules floor must never be projected into a successful LLM receipt."""
+    body = _example("pipeline", "success")
+    body["method"] = method
+    recorder = _Recorder(classification=httpx.Response(200, json=body))
+    client = await handshaken(recorder, http_clients(recorder))
+
+    result = await client.classify_corpus()
+
+    assert isinstance(result, VaultClassificationPass)
+    assert result.method is VaultClassificationMethod(method)
+    assert result.complete is True
 
 
 @pytest.mark.asyncio

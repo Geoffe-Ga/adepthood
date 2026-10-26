@@ -137,9 +137,11 @@ import {
 } from './schemas';
 import {
   beginAuthSession,
+  captureAuthScope,
   captureAnonymousScope,
   captureSessionToken,
   installSessionTokenGetter,
+  isAuthScopeCurrent,
 } from './sessionToken';
 import { createTokenRotation, type RecoveryMode } from './tokenRotation';
 import { classifyTranscription } from './transcriptionContract';
@@ -567,6 +569,20 @@ function onboardingKeyHeaders(token?: string): Record<string, string> | undefine
     return undefined;
   }
   return vaultKeyVendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
+}
+
+/** Refresh key eligibility before an explicit upload, including after a Vault upgrade. */
+async function documentOnboardingKeyHeaders(
+  token?: string,
+): Promise<Record<string, string> | undefined> {
+  const vendor = vaultKeyVendorFor(llmApiKeyGetter?.() ?? null);
+  if (vendor === null) return undefined;
+  // Discovery has the ordinary HTTP timeout. An old empty answer can outlive
+  // a Vault upgrade; a failed refresh must not reuse an old affirmative one.
+  const vendors = await vaultRequestKeys.get(token).catch(() => null);
+  if (vendors === null) return undefined;
+  // Re-read the key after discovery: a removed or rotated key is current.
+  return onboardingKeyHeaders(token);
 }
 
 /** How a successful response body is read. */
@@ -2148,11 +2164,17 @@ export const corpus = {
     { filename, contentBase64, classification }: ImportDocumentInput,
     token?: string,
   ): Promise<DocumentImportT> {
+    const scope = captureAuthScope();
+    const epoch = vaultKeyEpoch;
     try {
+      const headers = await documentOnboardingKeyHeaders(token);
+      if (epoch !== vaultKeyEpoch || !isAuthScopeCurrent(scope)) {
+        throw new DocumentUploadError('unknown', null);
+      }
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
         body: { filename, content_base64: contentBase64, classification },
-        headers: onboardingKeyHeaders(token),
+        headers,
         token,
         timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
         schema: documentImportSchema as unknown as z.ZodType<DocumentImportT>,
