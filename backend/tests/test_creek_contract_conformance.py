@@ -696,7 +696,7 @@ def test_state_status_table_matches_the_manifest() -> None:
 
 
 def test_capability_translation_table_matches_the_manifest() -> None:
-    """The client's wire-name table must name exactly Creek's published capabilities.
+    """The translation table covers the base bundle and the pinned 0.25 extension.
 
     Not some of them, and not some plus whatever the client invented: the set is
     read off the manifest, so a capability Creek publishes and the client cannot
@@ -704,8 +704,8 @@ def test_capability_translation_table_matches_the_manifest() -> None:
     injectivity half matters just as much -- two wire names collapsing onto one
     member would make ``supports`` answer for a capability nobody advertised.
     """
-    assert frozenset(_CAPABILITY_BY_CREEK_NAME) == _CAPABILITIES
-    assert len(frozenset(_CAPABILITY_BY_CREEK_NAME.values())) == CAPABILITY_COUNT
+    assert frozenset(_CAPABILITY_BY_CREEK_NAME) == _CAPABILITIES | {"reading-recommendations"}
+    assert len(frozenset(_CAPABILITY_BY_CREEK_NAME.values())) == CAPABILITY_COUNT + 1
 
 
 def test_the_capability_document_advertises_exactly_the_published_matrix_axis() -> None:
@@ -863,7 +863,10 @@ async def test_ratified_capability_documents_are_understood(
     result = await success.handshake()
 
     assert result.available is True
-    assert result.capabilities == frozenset(_CAPABILITY_BY_CREEK_NAME.values())
+    assert result.capabilities == frozenset(
+        _CAPABILITY_BY_CREEK_NAME[name] for name in _CAPABILITIES
+    )
+    assert not success.supports(CreekCapability.READING_RECOMMENDATIONS)
     assert success.supports(CreekCapability.JOURNAL) is True
     assert success.last_degrade_reason is None
 

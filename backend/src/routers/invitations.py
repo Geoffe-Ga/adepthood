@@ -20,7 +20,7 @@ an invitation's existence to a non-owner.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,8 +35,9 @@ from error_responses import build_router
 from errors import not_found
 from models.invitation_signal import InvitationSignal
 from routers.auth import get_current_user
-from schemas.invitations import InvitationResponse
+from schemas.invitations import InvitationResponse, ReadingInvitation
 from services.invitations import list_pending_invitations
+from services.reading_recommendations import reading_invitation
 
 router = build_router(prefix="/invitations", tags=["invitations"])
 
@@ -73,7 +74,39 @@ async def list_invitations(
     ``created_at``; declined, quieted and other users' invitations are excluded.
     """
     rows = await list_pending_invitations(session, user_id, user_timezone, vault_client)
-    return [_to_response(row) for row in rows]
+    choice = await _choose_reading(rows, session, user_id, user_timezone, vault_client)
+    return [response for row in rows if (response := _pending_response(row, choice)) is not None]
+
+
+def _has_course_target(row: InvitationSignal) -> bool:
+    return row.target_type == "course" and row.target_id is not None
+
+
+async def _choose_reading(
+    rows: list[InvitationSignal],
+    session: AsyncSession,
+    user_id: int,
+    tz: str,
+    vault: CreekVaultClient,
+) -> tuple[int | None, ReadingInvitation] | None:
+    """Offer at most one course reading rather than a stack of model-written offers."""
+    targets = {cast("int", row.target_id): row.id for row in filter(_has_course_target, rows)}
+    if not targets:
+        return None
+    reading = await reading_invitation(session, user_id, tuple(targets), tz, vault)
+    return (targets[reading.stage_number], reading) if reading is not None else None
+
+
+def _pending_response(
+    row: InvitationSignal, choice: tuple[int | None, ReadingInvitation] | None
+) -> InvitationResponse | None:
+    if row.target_type != "course":
+        return _to_response(row)
+    if choice is None or row.id != choice[0]:
+        return None
+    response = _to_response(row)
+    response.reading = choice[1]
+    return response
 
 
 @router.post("/{invitation_id}/dismiss", response_model=InvitationResponse)

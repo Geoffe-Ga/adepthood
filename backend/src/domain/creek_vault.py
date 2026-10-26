@@ -133,6 +133,7 @@ class CreekCapability(enum.StrEnum):
     VOICE_DRAFTS = "creek.voice_drafts"
     LETTERS = "creek.letters"
     AGENT_ACTIVITY = "creek.agent_activity"
+    READING_RECOMMENDATIONS = "creek.reading_recommendations"
 
 
 class VaultTierCeiling(enum.StrEnum):

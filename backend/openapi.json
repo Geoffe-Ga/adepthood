@@ -4157,6 +4157,16 @@
             "title": "Kind",
             "type": "string"
           },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingInvitation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "target_id": {
             "anyOf": [
               {
@@ -7247,6 +7257,62 @@
           "bells_struck"
         ],
         "title": "RandomIntervalBellMetadata",
+        "type": "object"
+      },
+      "ReadingInvitation": {
+        "description": "A specific chapter and the current writing behind its model explanation.",
+        "properties": {
+          "benefit": {
+            "title": "Benefit",
+            "type": "string"
+          },
+          "content_id": {
+            "title": "Content Id",
+            "type": "integer"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "integer"
+          },
+          "entry_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Title"
+          },
+          "quote": {
+            "title": "Quote",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "stage_number": {
+            "title": "Stage Number",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_id",
+          "stage_number",
+          "title",
+          "entry_id",
+          "entry_title",
+          "quote",
+          "reason",
+          "benefit"
+        ],
+        "title": "ReadingInvitation",
         "type": "object"
       },
       "ReflectionCurrentResponse": {

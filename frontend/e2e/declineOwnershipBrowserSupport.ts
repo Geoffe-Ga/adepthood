@@ -40,7 +40,7 @@ export interface InvitationSeed {
 const DECLINE_SEEDS: readonly InvitationSeed[] = [
   { targetType: 'habit', kind: 'consistency' },
   { targetType: 'practice', kind: 'consistency' },
-  { targetType: 'course', kind: 'consistency' },
+  { targetType: 'sangha', kind: 'consistency' },
 ];
 
 export function seedInvitations(

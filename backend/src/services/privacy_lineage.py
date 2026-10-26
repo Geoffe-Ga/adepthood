@@ -75,6 +75,7 @@ class LineageOperation(StrEnum):
     VAULT_WRITE = "vault_write"
     VOICE_DRAFT_MIRROR = "voice_draft_mirror"
     PRIOR_CONTEXT = "prior_context"
+    READING_RECOMMENDATION = "reading_recommendation"
 
 
 class LineageCounts(NamedTuple):

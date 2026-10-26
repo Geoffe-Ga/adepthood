@@ -67,6 +67,8 @@ _MODULES_IMPORTING_A_TRANSPORT = frozenset(
         # request helpers release the injected database session first.
         "services.creek_provisioning_client",
         "services.creek_vault_client",
+        # Optional recommendation operation delegates to the same authorized sender.
+        "services.creek_vault_readings",
         # The agent-activity read (#3535) and the transport exception sets it
         # shares with the client import httpx for its response type and its
         # exception classes. The read dials only through the client's own
@@ -113,6 +115,12 @@ _WATCHED_PROTOCOLS = frozenset(DIAL_METHODS.values())
 # belongs to one family. A new class defining ``complete`` or ``handshake`` fails
 # here, asking whether it is a member or a collision.
 _CLASSES_IMPLEMENTING = {
+    "domain.reading_recommendations.ReadingRecommendationClient": frozenset(
+        {
+            "domain.reading_recommendations.ReadingRecommendationClient",
+            "services.creek_vault_client.HttpCreekVaultClient",
+        }
+    ),
     "domain.creek_vault.CreekVaultClient": frozenset(
         {
             "domain.creek_vault.CreekVaultClient",

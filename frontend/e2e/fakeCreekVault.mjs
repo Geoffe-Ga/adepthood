@@ -80,6 +80,8 @@ const ADEPTHOOD_DELETE_ATTEMPTS = 3;
 /** The contract this vault serves, and the minor a caller must declare to use it. */
 const CONTRACT_VERSION = '0.22.0';
 const CONTRACT_MINOR = '0.22';
+const READING_MINOR = '0.25';
+let readingsAdvertised = false;
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
 
@@ -229,15 +231,18 @@ function digestOf(contentBase64) {
 
 function capabilities(response) {
   send(response, HTTP_OK, {
-    capabilities: ADVERTISED_CAPABILITIES.filter(
-      (name) => !lettersHeld || name !== 'letters',
-    ).concat(pipelineAdvertised ? ['pipeline'] : []),
-    contract_minor: CONTRACT_MINOR,
-    contract_version: CONTRACT_VERSION,
+    capabilities: ADVERTISED_CAPABILITIES.filter((name) => !lettersHeld || name !== 'letters')
+      .concat(pipelineAdvertised ? ['pipeline'] : [])
+      .concat(readingsAdvertised ? ['reading-recommendations'] : []),
+    contract_minor: readingsAdvertised ? READING_MINOR : CONTRACT_MINOR,
+    contract_version: readingsAdvertised ? '0.25.0' : CONTRACT_VERSION,
+    ...(readingsAdvertised ? { keyless_inference: true } : {}),
     ontology_version: ONTOLOGY_VERSION,
     request_key_providers: requestKeysAdvertised ? REQUEST_KEY_PROVIDERS : [],
     status: 'ok',
-    supported_contract_minors: [CONTRACT_MINOR],
+    supported_contract_minors: readingsAdvertised
+      ? [CONTRACT_MINOR, READING_MINOR]
+      : [CONTRACT_MINOR],
     tier_model: { ceilings: ADMITTED_TIERS, default: 'open', intimate_never_egresses: true },
     vault: { available: true },
   });
@@ -681,8 +686,54 @@ async function pipelineCall(request, response, pathname) {
   return true;
 }
 
+/** Synthetic generation at the external boundary; identity and quotes still cross the real app. */
+async function recommendReading(request, response) {
+  if (!readingsAdvertised || request.headers[CONTRACT_HEADER] !== READING_MINOR) {
+    refuse(response, HTTP_INCOMPATIBLE_VERSION, 'incompatible_version');
+    return;
+  }
+  const body = await readJson(request);
+  const source = body?.sources?.find((item) => item.content.includes('tension in my shoulders'));
+  const reading = body?.readings?.[0];
+  if (
+    !reading ||
+    !source ||
+    !ADMITTED_TIERS.includes(source.tier) ||
+    Object.keys(body).sort().join() !== 'catalog_version,readings,sources' ||
+    Object.keys(reading).sort().join() !== 'content,content_id,title' ||
+    Object.keys(source).sort().join() !== 'content,entry_id,tier' ||
+    request.headers[CEILING_HEADER] !== 'personal' ||
+    request.headers[PROVIDER_KEY_HEADER]
+  ) {
+    refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
+    return;
+  }
+  received.push({
+    method: 'POST',
+    path: '/v1/reading-recommendations',
+    tier: source.tier,
+    externalId: null,
+    digest: createHash('sha256').update(JSON.stringify(body)).digest('hex'),
+  });
+  send(response, HTTP_OK, {
+    status: 'ok',
+    inference_source: 'local',
+    recommendation: {
+      content_id: reading.content_id,
+      entry_id: source.entry_id,
+      quote: 'tension in my shoulders',
+      reason: 'You describe tension as a bodily sensation in your journal.',
+      benefit: 'This reading offers a way to explore attention to physical sensations.',
+    },
+  });
+}
+
 /** Serve one authorised `/v1` call, or say this vault has no such route. */
 async function capability(request, response, pathname) {
+  if (request.method === 'POST' && pathname === '/v1/reading-recommendations') {
+    await recommendReading(request, response);
+    return;
+  }
   if (await pipelineCall(request, response, pathname)) return;
   if (request.method === 'GET' && pathname === '/v1/capabilities') {
     received.push({ method: 'GET', path: pathname, externalId: null, tier: null, digest: null });
@@ -766,6 +817,15 @@ const server = createServer((request, response) => {
     ) {
       request.resume();
       requestKeysAdvertised = pathname === '/__lane/advertise-request-keys';
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (
+      request.method === 'POST' &&
+      ['/__lane/advertise-readings', '/__lane/withdraw-readings'].includes(pathname)
+    ) {
+      request.resume();
+      readingsAdvertised = pathname === '/__lane/advertise-readings';
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }

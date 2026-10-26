@@ -16,7 +16,11 @@ export function visibleInvitations(
   invitations: readonly Invitation[],
   enabled: Readonly<Record<DepthRing, boolean>>,
 ): Invitation[] {
-  return invitations.filter((invitation) => enabled[RING_FOR_TARGET[invitation.target_type]]);
+  return invitations.filter(
+    (invitation) =>
+      enabled[RING_FOR_TARGET[invitation.target_type]] &&
+      (invitation.target_type !== 'course' || invitation.reading != null),
+  );
 }
 
 /**

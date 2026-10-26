@@ -1,5 +1,5 @@
 /* eslint-env jest */
-import { jest, afterEach, beforeEach, describe, it, expect } from '@jest/globals';
+import { jest, beforeEach, describe, it, expect } from '@jest/globals';
 import { act, fireEvent, render } from '@testing-library/react-native';
 import { X } from 'lucide-react-native';
 import React from 'react';
@@ -7,12 +7,9 @@ import { StyleSheet } from 'react-native';
 
 import { invitationCopy, INVITATION_COPY_ENTRIES } from '../invitationCopy';
 import InvitationNote from '../InvitationNote';
-import { resetInvitationAspectCacheForTests } from '../useInvitationAspect';
 
-import { stages, type Invitation, type StageCorrespondence } from '@/api';
+import type { Invitation } from '@/api';
 import { accent, ink, touchTarget } from '@/design/tokens';
-import type { StageData } from '@/features/Map/stageData';
-import { useStageStore } from '@/store/useStageStore';
 import { BANNED_PHRASES } from '@/testing/bannedInvitationPhrases';
 
 const FALSE_MODESTY_PHRASES = [
@@ -42,17 +39,20 @@ jest.mock('@react-navigation/native', () => ({
   ...jest.requireActual<object>('@react-navigation/native'),
   useNavigation: () => ({ navigate: mockNavigate }),
 }));
-const correspondence = jest.spyOn(stages, 'correspondence');
-
 beforeEach(() => {
-  resetInvitationAspectCacheForTests();
-  correspondence.mockReset();
-  correspondence.mockRejectedValue(new Error('offline'));
+  mockNavigate.mockClear();
 });
 
-afterEach(() => {
-  useStageStore.getState().reset();
-});
+const reading = {
+  content_id: 24,
+  stage_number: 2,
+  title: 'Noticing resentment',
+  entry_id: 8,
+  entry_title: 'Yesterday',
+  quote: 'resentment in my shoulders',
+  reason: 'You describe resentment as a bodily sensation.',
+  benefit: 'A practice for noticing that sensation before responding.',
+};
 
 /** Smallest of the flattened minHeight/minWidth on a pressable, for 44dp checks. */
 function StyleSheetMin(node: { props: { style: unknown } }): number {
@@ -66,17 +66,17 @@ describe('InvitationNote', () => {
     const onDismiss = jest.fn(() => Promise.resolve());
     const { getByRole } = render(
       <InvitationNote
-        invitation={invitation({ target_type: 'course', target_id: 2, kind: 'readiness' })}
+        invitation={invitation({ target_type: 'course', target_id: 2, kind: 'readiness', reading })}
         onDismiss={onDismiss}
       />,
     );
-    const open = getByRole('button', { name: 'View reading' });
+    const open = getByRole('button', { name: reading.title });
     expect(StyleSheetMin(open)).toBeGreaterThanOrEqual(touchTarget.minimum);
     fireEvent.press(open);
     expect(mockNavigate).toHaveBeenCalledTimes(1);
     expect(mockNavigate).toHaveBeenCalledWith('Tabs', {
       screen: 'Course',
-      params: { stageNumber: 2, openSection: true },
+      params: { stageNumber: 2, contentId: 24, openReading: true },
     });
     expect(onDismiss).not.toHaveBeenCalled();
   });
@@ -84,14 +84,18 @@ describe('InvitationNote', () => {
   it('can open the invited section before its Aspect lookup succeeds', () => {
     const { getByRole } = render(
       <InvitationNote
-        invitation={invitation({ target_type: 'course', target_id: 9 })}
+        invitation={invitation({
+          target_type: 'course',
+          target_id: 9,
+          reading: { ...reading, stage_number: 9 },
+        })}
         onDismiss={noop}
       />,
     );
-    fireEvent.press(getByRole('button', { name: 'View reading' }));
+    fireEvent.press(getByRole('button', { name: reading.title }));
     expect(mockNavigate).toHaveBeenCalledWith('Tabs', {
       screen: 'Course',
-      params: { stageNumber: 9, openSection: true },
+      params: { stageNumber: 9, contentId: 24, openReading: true },
     });
   });
 
@@ -99,7 +103,7 @@ describe('InvitationNote', () => {
     const onDismiss = jest.fn(() => Promise.resolve());
     const { getByTestId } = render(
       <InvitationNote
-        invitation={invitation({ target_type: 'course', target_id: 2 })}
+        invitation={invitation({ target_type: 'course', target_id: 2, reading })}
         onDismiss={onDismiss}
       />,
     );
@@ -115,7 +119,7 @@ describe('InvitationNote', () => {
     const { queryByRole } = render(
       <InvitationNote invitation={invitation(target)} onDismiss={noop} />,
     );
-    expect(queryByRole('button', { name: 'View reading' })).toBeNull();
+    expect(queryByRole('button', { name: reading.title })).toBeNull();
   });
 
   it('renders derived microcopy line for habit/consistency invitation', () => {
@@ -178,74 +182,18 @@ describe('InvitationNote', () => {
     }
   });
 
-  it('names a course invitation by the served Aspect and never its persona', () => {
-    useStageStore.setState({
-      stagesByNumber: {
-        4: {
-          aspect: 'Self-Love',
-          relationshipToFreeWill: 'Persona That Must Stay Private',
-        } as StageData,
-      },
-    });
-    const inv = invitation({ id: 14, target_type: 'course', target_id: 4, kind: 'readiness' });
-    const expected = invitationCopy('course', 'readiness', { aspect: 'Self-Love' }).line;
-    const { getByText, queryByText } = render(<InvitationNote invitation={inv} onDismiss={noop} />);
-
-    expect(getByText(expected)).toBeTruthy();
-    expect(queryByText(/Persona That Must Stay Private/)).toBeNull();
-  });
-
-  it('uses the generic course reason when the served stage has no Aspect', () => {
-    const inv = invitation({ id: 15, target_type: 'course', target_id: 9, kind: 'readiness' });
-    const generic = invitationCopy('course', 'readiness').line;
-    const { getByText } = render(<InvitationNote invitation={inv} onDismiss={noop} />);
-    expect(getByText(generic)).toBeTruthy();
-  });
-
-  it('loads the served Aspect on a cold Journal route without exposing its persona', async () => {
-    correspondence.mockResolvedValue([
-      {
-        stage_number: 4,
-        aspect: 'Self-Love',
-        relationship_to_free_will: 'Persona That Must Stay Private',
-      } as StageCorrespondence,
-    ]);
-    const inv = invitation({ id: 16, target_type: 'course', target_id: 4, kind: 'readiness' });
-    const expected = invitationCopy('course', 'readiness', { aspect: 'Self-Love' }).line;
-    const { findByText, queryByText } = render(
-      <InvitationNote invitation={inv} onDismiss={noop} />,
+  it('shows the exact source, connection and benefit and links the original entry', () => {
+    const { getByText, getByTestId } = render(
+      <InvitationNote
+        invitation={invitation({ target_type: 'course', target_id: 2, reading })}
+        onDismiss={noop}
+      />,
     );
-
-    expect(await findByText(expected)).toBeTruthy();
-    expect(correspondence).toHaveBeenCalledTimes(1);
-    expect(queryByText(/Persona That Must Stay Private/)).toBeNull();
-  });
-
-  it('deduplicates the visit-free Aspect lookup across invitation cards', async () => {
-    correspondence.mockResolvedValue([
-      { stage_number: 4, aspect: 'Self-Love' } as StageCorrespondence,
-      { stage_number: 5, aspect: 'Compassion' } as StageCorrespondence,
-    ]);
-    const { findByText } = render(
-      <>
-        <InvitationNote
-          invitation={invitation({ id: 17, target_type: 'course', target_id: 4 })}
-          onDismiss={noop}
-        />
-        <InvitationNote
-          invitation={invitation({ id: 18, target_type: 'course', target_id: 5 })}
-          onDismiss={noop}
-        />
-      </>,
-    );
-
-    expect(
-      await findByText(invitationCopy('course', 'consistency', { aspect: 'Self-Love' }).line),
-    ).toBeTruthy();
-    expect(
-      await findByText(invitationCopy('course', 'consistency', { aspect: 'Compassion' }).line),
-    ).toBeTruthy();
-    expect(correspondence).toHaveBeenCalledTimes(1);
+    expect(getByText(reading.reason)).toBeTruthy();
+    expect(getByText(`“${reading.quote}”`)).toBeTruthy();
+    expect(getByText(reading.benefit)).toBeTruthy();
+    fireEvent.press(getByTestId('invitation-1-source'));
+    expect(mockNavigate).toHaveBeenCalledWith('JournalEntry', { entryId: 8 });
   });
 
   it('uses a corner X with pressed-ink feedback', () => {
