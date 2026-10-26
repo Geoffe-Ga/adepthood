@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
@@ -86,13 +87,17 @@ class ModelVault(LocalFallbackCreekVaultClient):
         super().__init__()
         self.calls = 0
         self.after_send = AsyncMock()
+        self.reply: Callable[[ReadingRequest], ReadingRecommendation | None] = self._reply
 
     def is_available(self) -> bool:
         return True
 
-    async def recommend_reading(self, request: ReadingRequest) -> ReadingRecommendation:
+    async def recommend_reading(self, request: ReadingRequest) -> ReadingRecommendation | None:
         self.calls += 1
         await self.after_send()
+        return self.reply(request)
+
+    def _reply(self, request: ReadingRequest) -> ReadingRecommendation:
         return ReadingRecommendation(
             request.readings[0].content_id,
             request.sources[0].entry_id,
@@ -249,7 +254,7 @@ async def test_public_source_uses_open_wire_tier(db_session: AsyncSession) -> No
     await db_session.commit()
     vault = ModelVault()
 
-    async def check(request: ReadingRequest) -> ReadingRecommendation:
+    def check(request: ReadingRequest) -> ReadingRecommendation:
         assert request.sources[0].tier == "open"
         assert request.wire_body()["sources"]
         return ReadingRecommendation(
@@ -260,7 +265,7 @@ async def test_public_source_uses_open_wire_tier(db_session: AsyncSession) -> No
             "A way to notice it.",
         )
 
-    vault.recommend_reading = check
+    vault.reply = check
     assert await reading_invitation(db_session, user_id, 1, "UTC", vault) is not None
 
 
@@ -300,9 +305,9 @@ async def test_multiple_pending_stages_make_only_one_generation_attempt(
         for index in range(1, 11)
     ]
     vault = ModelVault()
-    vault.recommend_reading = AsyncMock(return_value=None)
+    vault.reply = lambda _request: None
     assert await _choose_reading(signals, db_session, user_id, "UTC", vault) is None
-    vault.recommend_reading.assert_awaited_once()
+    assert vault.calls == 1
 
 
 @pytest.mark.asyncio
