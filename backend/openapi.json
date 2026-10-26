@@ -6305,6 +6305,171 @@
         "title": "PracticeStatsResponse",
         "type": "object"
       },
+      "PracticeStoryResponse": {
+        "description": "Lifetime and stage facts returned by ``GET /practice-sessions/story``.",
+        "properties": {
+          "first_session_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Session On"
+          },
+          "insight_count": {
+            "title": "Insight Count",
+            "type": "integer"
+          },
+          "last_insight": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Insight"
+          },
+          "last_insight_timestamp": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Insight Timestamp"
+          },
+          "mode_totals": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Mode Totals",
+            "type": "object"
+          },
+          "modes": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Modes",
+            "type": "object"
+          },
+          "partial_sessions": {
+            "title": "Partial Sessions",
+            "type": "integer"
+          },
+          "recent_sits": {
+            "items": {
+              "$ref": "#/components/schemas/PracticeStorySit"
+            },
+            "title": "Recent Sits",
+            "type": "array"
+          },
+          "stage_ask_minutes": {
+            "title": "Stage Ask Minutes",
+            "type": "number"
+          },
+          "stage_average_minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Average Minutes"
+          },
+          "stage_partial_sessions": {
+            "title": "Stage Partial Sessions",
+            "type": "integer"
+          },
+          "stage_session_count": {
+            "title": "Stage Session Count",
+            "type": "integer"
+          },
+          "time_of_day": {
+            "$ref": "#/components/schemas/PracticeTimeOfDay"
+          },
+          "total_minutes": {
+            "title": "Total Minutes",
+            "type": "number"
+          },
+          "total_sessions": {
+            "title": "Total Sessions",
+            "type": "integer"
+          },
+          "weekly": {
+            "items": {
+              "$ref": "#/components/schemas/PracticeSessionWeeklyCount"
+            },
+            "title": "Weekly",
+            "type": "array"
+          },
+          "weekly_target": {
+            "title": "Weekly Target",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_minutes",
+          "total_sessions",
+          "weekly",
+          "weekly_target",
+          "recent_sits",
+          "time_of_day",
+          "modes",
+          "stage_ask_minutes",
+          "stage_average_minutes",
+          "stage_session_count",
+          "stage_partial_sessions",
+          "partial_sessions",
+          "insight_count",
+          "last_insight",
+          "last_insight_timestamp",
+          "mode_totals",
+          "first_session_on"
+        ],
+        "title": "PracticeStoryResponse",
+        "type": "object"
+      },
+      "PracticeStorySit": {
+        "description": "One of the last thirty counted sits, in chronological order.",
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "duration_minutes": {
+            "title": "Duration Minutes",
+            "type": "number"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          }
+        },
+        "required": [
+          "timestamp",
+          "duration_minutes",
+          "completed",
+          "mode"
+        ],
+        "title": "PracticeStorySit",
+        "type": "object"
+      },
       "PracticeTagCreate": {
         "description": "Body accepted by ``POST /practice-tags``.\n\nThe router always sets ``owner_user_id`` from the JWT subject, so\nthe body never carries it.  Clients cannot create a system tag.",
         "properties": {
@@ -6385,6 +6550,35 @@
           "label"
         ],
         "title": "PracticeTagUpdate",
+        "type": "object"
+      },
+      "PracticeTimeOfDay": {
+        "description": "Four explicit user-local time buckets, including those with no sits.",
+        "properties": {
+          "dawn": {
+            "title": "Dawn",
+            "type": "integer"
+          },
+          "day": {
+            "title": "Day",
+            "type": "integer"
+          },
+          "dusk": {
+            "title": "Dusk",
+            "type": "integer"
+          },
+          "night": {
+            "title": "Night",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dawn",
+          "day",
+          "dusk",
+          "night"
+        ],
+        "title": "PracticeTimeOfDay",
         "type": "object"
       },
       "PrivacySuspensionStatus": {
@@ -25007,6 +25201,127 @@
           }
         },
         "summary": "Get Practice Stats",
+        "tags": [
+          "practice-sessions"
+        ]
+      }
+    },
+    "/practice-sessions/story": {
+      "get": {
+        "description": "Return server-computed Story facts for this owner's complete practice history.",
+        "operationId": "get_practice_story_practice_sessions_story_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user_practice_id",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "User Practice Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeStoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request body could not be parsed, or a value it carried was refused."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No usable credential was presented."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller is authenticated but does not own the resource."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "No such resource -- or none this caller is allowed to see."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The request conflicts with the resource's current state."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorResponse"
+                }
+              }
+            },
+            "description": "The request failed validation -- an array of rejected fields -- or a check applied after the schema refused it, as one snake_case code."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefusalResponse"
+                }
+              }
+            },
+            "description": "The caller went past a rate limit."
+          }
+        },
+        "summary": "Get Practice Story",
         "tags": [
           "practice-sessions"
         ]
