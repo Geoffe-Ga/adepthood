@@ -19,6 +19,7 @@ global.fetch = mockFetch;
 jest.mock('@/config', () => ({ API_BASE_URL: 'http://test' }));
 
 const KEY = 'sk-ant-api03-onboarding3437'; // pragma: allowlist secret
+const ROTATED_KEY = 'sk-ant-api03-rotated3437'; // pragma: allowlist secret
 const VENDORS_PATH = '/user/vault-key-vendors';
 
 function jsonResponse(data: unknown, status = 200) {
@@ -82,6 +83,147 @@ beforeEach(() => {
 });
 
 describe('the onboarding key header (#3437)', () => {
+  test('the first document import discovers vendors before sending the saved key', async () => {
+    serve({ vendors: ['anthropic'] });
+
+    await corpus.importDocument(
+      { filename: 'a.md', contentBase64: 'aGVsbG8=', classification: 'personal' },
+      'tok',
+    );
+
+    expect(callsTo(VENDORS_PATH)).toHaveLength(1);
+    expect(lastHeadersTo('/corpus/import')[LLM_API_KEY_HEADER]).toBe(KEY);
+  });
+
+  test('an upload refreshes an empty vendor answer left from an older vault', async () => {
+    serve({ vendors: [] });
+    await vaultRequestKeys.get('tok');
+    serve({ vendors: ['anthropic'] });
+
+    await corpus.importDocument(
+      { filename: 'a.md', contentBase64: 'aGVsbG8=', classification: 'personal' },
+      'tok',
+    );
+
+    expect(lastHeadersTo('/corpus/import')[LLM_API_KEY_HEADER]).toBe(KEY);
+    expect(callsTo(VENDORS_PATH)).toHaveLength(2);
+  });
+
+  test('an upload withholds its key when the vault no longer accepts that vendor', async () => {
+    serve({ vendors: ['anthropic'] });
+    await vaultRequestKeys.get('tok');
+    serve({ vendors: [] });
+
+    await corpus.importDocument(
+      { filename: 'a.md', contentBase64: 'aGVsbG8=', classification: 'personal' },
+      'tok',
+    );
+
+    expect(lastHeadersTo('/corpus/import')[LLM_API_KEY_HEADER]).toBeUndefined();
+    expect(callsTo(VENDORS_PATH)).toHaveLength(2);
+  });
+
+  test.each([
+    ['a different vendor', { vendors: ['openai'] }],
+    ['no eligible vendor', { vendors: [] }],
+  ])('a first import withholds the key for %s', async (_name, vendors) => {
+    serve(vendors);
+
+    await corpus.importDocument(
+      { filename: 'a.md', contentBase64: 'aGVsbG8=', classification: 'personal' },
+      'tok',
+    );
+
+    expect(callsTo(VENDORS_PATH)).toHaveLength(1);
+    expect(lastHeadersTo('/corpus/import')[LLM_API_KEY_HEADER]).toBeUndefined();
+  });
+
+  test.each([null, 'not-a-provider-key'])('an import with key %s skips discovery', async (key) => {
+    setLlmApiKeyGetter(() => key);
+    serve({ vendors: ['anthropic'] });
+
+    await corpus.importDocument(
+      { filename: 'a.md', contentBase64: 'aGVsbG8=', classification: 'personal' },
+      'tok',
+    );
+
+    expect(callsTo(VENDORS_PATH)).toHaveLength(0);
+    expect(lastHeadersTo('/corpus/import')[LLM_API_KEY_HEADER]).toBeUndefined();
+  });
+
+  test.each([false, true])('failed discovery with cache=%s withholds the key', async (cached) => {
+    if (cached) {
+      serve({ vendors: ['anthropic'] });
+      await vaultRequestKeys.get('tok');
+    }
+    mockFetch.mockImplementation((url: string) =>
+      url.endsWith(VENDORS_PATH)
+        ? jsonResponse({ detail: 'refused' }, 403)
+        : jsonResponse(IMPORTED, 202),
+    );
+
+    await corpus.importDocument(
+      { filename: 'a.md', contentBase64: 'aGVsbG8=', classification: 'personal' },
+      'tok',
+    );
+
+    expect(callsTo(VENDORS_PATH)).toHaveLength(cached ? 2 : 1);
+    expect(lastHeadersTo('/corpus/import')[LLM_API_KEY_HEADER]).toBeUndefined();
+  });
+
+  test.each([null, ROTATED_KEY])('discovery honors a key changed to %s', async (key) => {
+    mockFetch.mockImplementation((url: string) => {
+      if (url.endsWith(VENDORS_PATH)) {
+        setLlmApiKeyGetter(() => key);
+        return jsonResponse({ vendors: ['anthropic'] });
+      }
+      return jsonResponse(IMPORTED, 202);
+    });
+
+    await corpus.importDocument(
+      { filename: 'a.md', contentBase64: 'aGVsbG8=', classification: 'personal' },
+      'tok',
+    );
+
+    expect(lastHeadersTo('/corpus/import')[LLM_API_KEY_HEADER]).toBe(key ?? undefined);
+  });
+
+  test('an import waiting for vendor discovery stops when the session ends', async () => {
+    let release: (() => void) | undefined;
+    const discovery = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    serve({ vendors: ['anthropic'] });
+    const respond = mockFetch.getMockImplementation();
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith(VENDORS_PATH)) await discovery;
+      return respond?.(url);
+    });
+
+    const uploading = corpus.importDocument(
+      { filename: 'a.md', contentBase64: 'aGVsbG8=', classification: 'personal' },
+      'old-account',
+    );
+    const result = uploading.then(
+      () => 'sent',
+      () => 'cancelled',
+    );
+    resetLlmApiKey();
+    setLlmApiKeyGetter(() => 'sk-ant-api03-another-account');
+    release?.();
+
+    expect(await result).toBe('cancelled');
+    expect(callsTo('/corpus/import')).toHaveLength(0);
+    await settle();
+    const readsAfterCancellation = callsTo(VENDORS_PATH).length;
+    serve({ vendors: [] });
+
+    await journal.create({ message: 'another account' }, { token: 'new-account' });
+
+    expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBeUndefined();
+    expect(readsAfterCancellation).toBe(1);
+  });
+
   test('a save carries the key once the vault said it writes with that vendor', async () => {
     serve({ vendors: ['anthropic'] });
     await vaultRequestKeys.get('tok');

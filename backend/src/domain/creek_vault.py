@@ -1240,6 +1240,8 @@ class VaultClassificationPass:
         complete: Whether every visited fragment was processed without error.
             ``False`` is not a failure -- the pass is resumable, so it means the
             honest next step is to call again.
+        method: The classifier that actually ran. A managed rules fallback can
+            finish its own work while semantic LLM classification is still due.
     """
 
     total: int
@@ -1251,6 +1253,7 @@ class VaultClassificationPass:
     praxis_marked: int
     tags_extracted: int
     complete: bool
+    method: VaultClassificationMethod = VaultClassificationMethod.LLM
 
 
 @dataclass(frozen=True)

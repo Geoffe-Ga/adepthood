@@ -3106,11 +3106,23 @@
   },
   {
     "id": "journal.managed-vault-classification-own-key",
-    "description": "A writer saves a personal journal page with their own provider key while an unstarted classification is queued (#3550). The production journal.create wrapper sends the request-scoped key to the live server, which admits CLASSIFY through the real managed-vault adapter and commits the returned handle before replying. The opt-in lane vault keeps the job non-terminal until the journey observes that handle, records the key only by digest on the single classification POST, then completes the same handle through keyless status polling. The test-only arrange module resolves the authenticated lane owner and touches only content-free pipeline state in the disposable e2e database. Backend controls cover fresh follow-up admission, a spent foreground clock, absent/ineligible keys, already admitted jobs, synchronous completion, database recovery and the stale-continuation race; detached retries and restart recovery remain keyless under ADR0009/Creek ADR0015.",
+    "description": "A writer saves a personal journal page or imports a document with their own provider key while an unstarted classification is queued (#3550). The document case starts with a cold vendor cache and lets the production corpus.importDocument wrapper discover the eligible vendor before sending its first upload; a second document case first caches an empty vendor answer, then enables request keys to prove recovery after a Vault upgrade; the journal case keeps its non-blocking save and explicitly primes eligibility. The production journal.create wrapper sends the request-scoped key to the live server, which admits CLASSIFY through the real managed-vault adapter and commits the returned handle before replying. The opt-in lane vault keeps the job non-terminal until the journey observes that handle, records the key only by digest on the single classification POST, then completes the same handle through keyless status polling. The test-only arrange module resolves the authenticated lane owner and touches only content-free pipeline state in the disposable e2e database. Backend controls cover fresh follow-up admission, a spent foreground clock, absent/ineligible keys, already admitted jobs, synchronous completion, database recovery and the stale-continuation race; detached retries and restart recovery remain keyless under ADR0009/Creek ADR0015.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["auth", "setTokenGetter", "setLlmApiKeyGetter", "vaultRequestKeys", "journal"],
-      "routes": ["POST /auth/login", "GET /user/vault-key-vendors", "POST /journal/"],
+      "client": [
+        "auth",
+        "setTokenGetter",
+        "setLlmApiKeyGetter",
+        "vaultRequestKeys",
+        "journal",
+        "corpus"
+      ],
+      "routes": [
+        "POST /auth/login",
+        "GET /user/vault-key-vendors",
+        "POST /journal/",
+        "POST /corpus/import"
+      ],
       "tables": ["user", "journalentry", "vaultpipelinerun"]
     },
     "status": "covered",
