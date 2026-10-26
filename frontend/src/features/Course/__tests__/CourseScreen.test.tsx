@@ -639,6 +639,7 @@ describe('CourseScreen', () => {
     expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
     expect(mockSetParams).toHaveBeenCalledWith({
       openSection: undefined,
+      openReading: undefined,
       contentId: undefined,
       scrollOffset: undefined,
     });
@@ -664,6 +665,26 @@ describe('CourseScreen', () => {
     expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
     expect(mockRouteParams.contentId).toBeUndefined();
     expect(mockRouteParams.scrollOffset).toBeUndefined();
+  });
+
+  it('opens the specific suggested chapter again after backing out, from its beginning', async () => {
+    mockRouteParams = { stageNumber: 1 };
+    const { getByTestId, queryByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      mockRouteParams = { stageNumber: 1, contentId: 1, openReading: true, scrollOffset: 80 };
+      rerender(<CourseScreen />);
+      await settle();
+      // The navigation stub mutates params; emulate the route render emitted by setParams.
+      rerender(<CourseScreen />);
+      await settle();
+      expect(getByTestId('chapter-reader')).toBeTruthy();
+      expect(mockRouteParams.openReading).toBeUndefined();
+      expect(mockRouteParams.scrollOffset).toBe(0);
+      fireEvent.press(getByTestId('reader-back-button'));
+      await settle();
+      expect(queryByTestId('chapter-reader')).toBeNull();
+    }
   });
 
   it('keeps an open reader on an ordinary return to Course', async () => {

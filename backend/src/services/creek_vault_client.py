@@ -94,6 +94,7 @@ import logging
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 from http import HTTPStatus
 from types import MappingProxyType, TracebackType
 from typing import Final, NoReturn, cast
@@ -141,6 +142,10 @@ from domain.creek_vault import (
     signals_rate_limit,
     wire_ceiling_for,
 )
+from domain.reading_recommendations import (
+    ReadingRecommendation,
+    ReadingRequest,
+)
 from services.creek_vault_activity_wire import read_agent_activity
 from services.creek_vault_agent_discovery import parse_agent_mcp
 from services.creek_vault_call_errors import HTTP_CALL_FAILED_ERRORS as _HTTP_CALL_FAILED_ERRORS
@@ -178,6 +183,7 @@ from services.creek_vault_payload import (
     _wheel_balance_from,
 )
 from services.creek_vault_pinned_transport import build_pinned_destination_transport
+from services.creek_vault_readings import recommend_from_vault
 from services.creek_vault_relay import parse_request_key_providers, relay_headers
 from services.creek_vault_telemetry import (
     VaultCallTimedOutError,
@@ -593,6 +599,7 @@ def _require_str(payload: Mapping[str, object], key: str) -> str:
 _CAPABILITY_BY_WIRE_NAME: Mapping[str, CreekCapability] = MappingProxyType(
     {
         "capabilities": CreekCapability.HANDSHAKE,
+        "reading-recommendations": CreekCapability.READING_RECOMMENDATIONS,
         "journal-upsert": CreekCapability.JOURNAL,
         "journal-withdraw": CreekCapability.JOURNAL_WITHDRAW,
         "reflections": CreekCapability.REFLECT,
@@ -1086,6 +1093,7 @@ class _CallDepartures:
             key unless it says so.
     """
 
+    contract_minor: str = CONTRACT_MINOR
     contract_versioned: bool = True
     deadline: float | None = None
     forwards_provider_key: bool = False
@@ -1096,6 +1104,7 @@ class _CallDepartures:
 #: each site, so the common case allocates nothing and reads as the default it is.
 _STANDING_CALL = _CallDepartures()
 _UNVERSIONED_CALL = _CallDepartures(contract_versioned=False)
+_READING_CALL = _CallDepartures(contract_minor="0.25", deadline=30.0)
 
 # The departures one reflection runs under: keyed, like the letter route beside
 # it, and one of the two calls that ask for the standing deadline *explicitly*.
@@ -1844,7 +1853,7 @@ class HttpCreekVaultClient:
             _CEILING_HEADER: ceiling.value,
         }
         if departures.contract_versioned:
-            headers[_CONTRACT_VERSION_HEADER] = CONTRACT_MINOR
+            headers[_CONTRACT_VERSION_HEADER] = departures.contract_minor
         headers.update(
             relay_headers(
                 spends_key=departures.forwards_provider_key, handshake=self._last_handshake
@@ -2451,6 +2460,17 @@ class HttpCreekVaultClient:
         reflection = _parse_reflection_result(payload, tier_ceiling)
         record_vault_outcome(VaultTelemetryOutcome.SUCCESS, CreekCapability.REFLECT)
         return reflection
+
+    async def recommend_reading(self, request: ReadingRequest) -> ReadingRecommendation | None:
+        """Use the advertised keyless model for a bounded grounded offer."""
+        send = partial(
+            self._authorized_request,
+            "POST",
+            f"{self._url}/v1/reading-recommendations",
+            departures=_READING_CALL,
+        )
+        with _CountingOutcome(CreekCapability.READING_RECOMMENDATIONS):
+            return await recommend_from_vault(request, self._last_handshake, send, _read_failure)
 
     async def _post_pipeline(
         self,

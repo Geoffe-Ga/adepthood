@@ -3,6 +3,10 @@ import { jest, afterEach, beforeEach, describe, it, expect } from '@jest/globals
 import { act, fireEvent, render } from '@testing-library/react-native';
 import React from 'react';
 
+jest.mock('@react-navigation/native', () => ({
+  ...jest.requireActual<object>('@react-navigation/native'),
+  useNavigation: () => ({ navigate: jest.fn() }),
+}));
 const mockDismiss = jest.fn();
 let mockInvitations: Invitation[] = [];
 jest.mock('../useInvitations', () => ({
@@ -25,6 +29,19 @@ const makeInvitation = (
   target_id: null,
   kind: 'readiness',
   created_at: '2026-01-01T00:00:00Z',
+  reading:
+    target_type === 'course'
+      ? {
+          content_id: 24,
+          stage_number: 2,
+          title: 'A reading',
+          entry_id: 8,
+          entry_title: null,
+          quote: 'A journal passage',
+          reason: 'A specific connection',
+          benefit: 'An exercise',
+        }
+      : null,
 });
 
 beforeEach(() => {
@@ -33,6 +50,10 @@ beforeEach(() => {
 });
 
 describe('InvitationStack', () => {
+  it('hides a course offer without a complete managed-vault recommendation', () => {
+    mockInvitations = [{ ...makeInvitation(1, 'course'), reading: null }];
+    expect(render(<InvitationStack />).toJSON()).toBeNull();
+  });
   it('renders nothing when there are no pending invitations', () => {
     const { toJSON } = render(<InvitationStack />);
     expect(toJSON()).toBeNull();

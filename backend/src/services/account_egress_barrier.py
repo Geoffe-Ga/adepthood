@@ -28,9 +28,9 @@ detached pipeline continuation in :mod:`services.creek_vault_pipeline`, which
 opens its own session and dials after the request that scheduled it returned.
 
 **What deliberately does not.** Paths that only *read* from the vault
-(``GET /stages/wheel``, ``GET /invitations``) and paths carrying only bytes
+(``GET /stages/wheel``) and paths carrying only bytes
 supplied in the same request (``POST /journal/transcribe-page``). Neither can
-expose stored content after an erasure, and serializing the first two would cost
+expose stored content after an erasure, and serializing these would cost
 the app's two hottest authenticated reads for no confidentiality gain.
 
 **That list is not maintained by hand, and it is not trusted.** It is derived

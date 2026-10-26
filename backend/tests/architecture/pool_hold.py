@@ -161,6 +161,7 @@ DIAL_METHODS: Mapping[str, str] = {
     "link_corpus": "domain.creek_vault.CreekVaultClient",
     "pipeline_job": "domain.creek_vault.CreekVaultPipelineClient",
     "reflect": "domain.creek_vault.CreekVaultClient",
+    "recommend_reading": "domain.reading_recommendations.ReadingRecommendationClient",
     "wheel": "domain.creek_vault.CreekVaultClient",
     "send": "services.email.EmailSender",
     "complete": "domain.resonance.ResonanceLLM",

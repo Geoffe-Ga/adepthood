@@ -601,12 +601,26 @@ function useOpenCourseSection(
   const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList, 'Course'>>();
   const stageNumber = route.params?.stageNumber;
   const openSection = route.params?.openSection;
+  const openReading = route.params?.openReading;
   useEffect(() => {
-    if (openSection !== true || stageNumber === undefined) return;
+    if ((openSection !== true && openReading !== true) || stageNumber === undefined) return;
     setSelectedStage(stageNumber);
     closeViewer();
-    navigation.setParams({ openSection: undefined, contentId: undefined, scrollOffset: undefined });
-  }, [openSection, stageNumber, setSelectedStage, closeViewer, navigation]);
+    navigation.setParams({
+      openSection: undefined,
+      openReading: undefined,
+      contentId: openReading ? route.params?.contentId : undefined,
+      scrollOffset: openReading ? 0 : undefined,
+    });
+  }, [
+    openSection,
+    openReading,
+    stageNumber,
+    route.params?.contentId,
+    setSelectedStage,
+    closeViewer,
+    navigation,
+  ]);
 }
 
 /** On a return from the journal, auto-open the returned content restored to its
@@ -629,7 +643,7 @@ function useReaderRestore(
   const route = useAppRoute<'Course'>();
   const contentId = route.params?.contentId ?? null;
   const scrollOffset = route.params?.scrollOffset ?? 0;
-  const openingSection = route.params?.openSection === true;
+  const openingSection = route.params?.openSection === true || route.params?.openReading === true;
   const restoredIdRef = useRef<number | null>(null);
   const [armSeq, setArmSeq] = useState(0);
 

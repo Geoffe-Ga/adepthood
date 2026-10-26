@@ -46,6 +46,8 @@ export type RootTabParamList = {
         stageNumber?: number;
         /** One-shot request to show this section, replacing any open reader. */
         openSection?: true;
+        /** One-shot request to open a specific suggested chapter from its beginning. */
+        openReading?: true;
         /** Optional restore hints from a Back-to-reading return. */
         contentId?: number;
         scrollOffset?: number;

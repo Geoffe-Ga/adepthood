@@ -146,12 +146,14 @@ persisted INTIMATE guard, while the transaction is still read-only, then calls
 the language model. Essay text and usage remain staged and committed together
 only after a successful response.
 
-**4. GET /invitations -> CreekVaultClient.handshake / .wheel**, through
+**4. GET /invitations -> CreekVaultClient.handshake / .wheel / .recommend_reading**, through
 ``generate_invitation_signals`` -> ``_gather_aggregates`` ->
 ``_gather_corpus_themes``. **Closed by a subsequent change.** The aggregate now
 materializes its three database sources, commits their read-only transaction,
 and only then gathers vault themes. Candidate computation and every signal
-write remain below the remote call.
+write remain below the remote call. Reading recommendations collect current
+consented source excerpts under the account barrier and commit before their one
+model call, then revalidate after it returns.
 
 **5. POST /auth/password-reset/confirm -> EmailSender.send**, through
 ``_send_change_notification_safely``. **Closed by a subsequent change.** The
@@ -320,9 +322,9 @@ paragraph is prose *about* that derivation, not the derivation.
 * ``GET /stages/wheel`` (row 7) -- a read-only dial: ``select_wheel_balance``
   *fetches* a wheel and transmits no stored adepthood content, so a call landing
   after an erasure exposes nothing.
-* ``GET /invitations`` (row 4) -- a read-only dial for the same reason. Both are
-  parallel app-load fetches, and a per-account exclusive lock would serialize the
-  two hottest authenticated reads in the app for no confidentiality gain.
+The content-bearing reading recommendation on ``GET /invitations`` (row 4)
+takes the account barrier before collecting stored source excerpts. Its wheel
+lookup remains read-only and precedes that protected region.
 
 **The classification rule**, stated once so a future boundary is decided without
 re-litigation: *take the barrier where a path transmits content adepthood has
@@ -431,6 +433,7 @@ _VAULT_DIAL_VERBS: Final[tuple[str, ...]] = (
     "classify_corpus",
     "link_corpus",
     "reflect",
+    "recommend_reading",
     "wheel",
 )
 
