@@ -32,6 +32,8 @@ def classification_outcome(result: VaultClassificationPass) -> VaultPipelineOutc
     on what it already stamped, so an incomplete run means the honest next step is
     to call again — and the labels it did write are real, which is why the stages
     that read them are still allowed to run in the same pass.
+    A finished rules fallback likewise leaves semantic classification pending;
+    its real counts can land without claiming an LLM completed the work.
     """
     semantic_complete = result.complete and result.method is VaultClassificationMethod.LLM
     return VaultPipelineOutcome.COMPLETED if semantic_complete else VaultPipelineOutcome.INCOMPLETE

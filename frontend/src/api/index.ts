@@ -560,29 +560,27 @@ export const vaultRequestKeys = {
  * on the vault: before the first answer it goes without the key and starts the
  * one read later saves use.
  */
-function onboardingKeyHeaders(token?: string): Record<string, string> | undefined {
+function onboardingKeyHeaders(
+  token?: string,
+  vendors: readonly VaultKeyVendor[] | null = vaultKeyVendors,
+): Record<string, string> | undefined {
   const key = llmApiKeyGetter?.() ?? null;
   const vendor = vaultKeyVendorFor(key);
   if (key === null || vendor === null) return undefined;
-  if (vaultKeyVendors === null) {
+  if (vendors === null) {
     vaultRequestKeys.get(token).catch(() => undefined);
     return undefined;
   }
-  return vaultKeyVendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
+  return vendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
 }
 
 /** Refresh key eligibility before an explicit upload, including after a Vault upgrade. */
-async function documentOnboardingKeyHeaders(
-  token?: string,
-): Promise<Record<string, string> | undefined> {
+function documentKeyVendors(token?: string): Promise<readonly VaultKeyVendor[] | null> {
   const vendor = vaultKeyVendorFor(llmApiKeyGetter?.() ?? null);
-  if (vendor === null) return undefined;
+  if (vendor === null) return Promise.resolve(null);
   // Discovery has the ordinary HTTP timeout. An old empty answer can outlive
   // a Vault upgrade; a failed refresh must not reuse an old affirmative one.
-  const vendors = await vaultRequestKeys.get(token).catch(() => null);
-  if (vendors === null) return undefined;
-  // Re-read the key after discovery: a removed or rotated key is current.
-  return onboardingKeyHeaders(token);
+  return vaultRequestKeys.get(token).catch(() => null);
 }
 
 /** How a successful response body is read. */
@@ -2167,10 +2165,13 @@ export const corpus = {
     const scope = captureAuthScope();
     const epoch = vaultKeyEpoch;
     try {
-      const headers = await documentOnboardingKeyHeaders(token);
+      const vendors = await documentKeyVendors(token);
       if (epoch !== vaultKeyEpoch || !isAuthScopeCurrent(scope)) {
         throw new DocumentUploadError('unknown', null);
       }
+      // Only this session may use the answer. Build from that answer rather
+      // than re-entering discovery if teardown cleared the shared cache.
+      const headers = vendors === null ? undefined : onboardingKeyHeaders(token, vendors);
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
         body: { filename, content_base64: contentBase64, classification },

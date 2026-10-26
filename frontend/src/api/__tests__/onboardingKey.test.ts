@@ -214,6 +214,14 @@ describe('the onboarding key header (#3437)', () => {
 
     expect(await result).toBe('cancelled');
     expect(callsTo('/corpus/import')).toHaveLength(0);
+    await settle();
+    const readsAfterCancellation = callsTo(VENDORS_PATH).length;
+    serve({ vendors: [] });
+
+    await journal.create({ message: 'another account' }, { token: 'new-account' });
+
+    expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBeUndefined();
+    expect(readsAfterCancellation).toBe(1);
   });
 
   test('a save carries the key once the vault said it writes with that vendor', async () => {

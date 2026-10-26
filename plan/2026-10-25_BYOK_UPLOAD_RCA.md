@@ -13,7 +13,9 @@ same browser/device. No credentials or document contents were inspected.
 
 ## Root causes and data flow
 
-1. `frontend/src/api/index.ts`, `onboardingKeyHeaders`, deliberately returns
+References identify the affected functions at base `3f527f84`, before the fix.
+
+1. `frontend/src/api/index.ts:561`, `onboardingKeyHeaders`, deliberately returns
    no key while the cached Vault vendor list is unknown. It starts vendor
    discovery without awaiting it. Both journal creation and document import
    use this helper. Consequently, a first document import with a saved key
@@ -24,9 +26,9 @@ same browser/device. No credentials or document contents were inspected.
 2. The deployed managed Vault has no local classification model. Its current
    implementation falls back to rules for a keyless LLM request. This is a
    successful model-free pass, and its durable result reports `method: rules`.
-3. `backend/src/services/creek_vault_payload.py`,
+3. `backend/src/services/creek_vault_payload.py:1354`,
    `_parse_succeeded_pipeline_job`, parses classification results with an
-   expected method of LLM. `_parse_classification_pass` rejects a rules result,
+   expected method of LLM. `_parse_classification_pass` at line 1245 rejects a rules result,
    producing `CreekVaultPayloadError` with the exact static message
    `creek vault returned an unreadable response: pipeline`.
    Reconciliation forgets the terminal handle and submits another keyless
@@ -76,6 +78,8 @@ needed for this fix.
 - Green: 98 targeted backend pipeline/relay/admission tests passed. The API
   key and journey-ledger checks passed all 88 tests, including vendor refusal,
   discovery failure, key removal/rotation and sign-out during discovery.
+  Cancellation also leaves the next account's vendor eligibility unconfirmed:
+  it starts no new read with the old token and cannot arm the new account's key.
 - The real HTTP/Postgres lane passed journal, first-document, and upgraded-Vault
   cached-empty-vendor cases
   with synthetic credentials: exactly one keyed classification POST, a
