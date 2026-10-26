@@ -14,9 +14,11 @@ instead of slipping through unnoticed.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Awaitable, Callable
 from http import HTTPStatus
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -38,7 +40,7 @@ from rate_limit import (
     limiter,
     reset_ambient_limit,
 )
-from tests.helpers.openapi_errors import route_index
+from tests.helpers.openapi_errors import live_document, route_index
 
 _LIMIT_3 = 3
 _LIMIT_5 = 5
@@ -837,10 +839,17 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
 _PATH_PARAM_SENTINEL = "1"
 _PATH_PARAM = re.compile(r"\{[^}]+\}")
 
-# 180 mounted ``APIRoute``s share 153 distinct paths. Pinned so a future router
-# that collapses the walk (the failure mode #2909 itself was) fails here rather
-# than quietly guarding fewer paths than it claims.
-_DISTINCT_MOUNTED_PATHS = 153
+_MOUNTED_PATHS_FIXTURE = Path(__file__).parent / "fixtures" / "rate_limit_mounted_paths.json"
+
+
+def _expected_mounted_paths() -> set[str]:
+    """Load the reviewed inventory independently of both live route producers.
+
+    Each feature adds its path explicitly. A collapsed walker or OpenAPI render
+    cannot silently shrink the asserted surface, and parallel additions compose
+    as individual fixture lines instead of competing edits to one numeric pin.
+    """
+    return set(json.loads(_MOUNTED_PATHS_FIXTURE.read_text(encoding="utf-8")))
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
@@ -864,7 +873,7 @@ async def test_every_mounted_path_is_charged_to_the_ambient_budget(
     """Every distinct mounted path is charged, not merely the three app-level ones.
 
     Deliberately iterates distinct *paths* with a reset between them rather than
-    routes: 180 routes share 153 paths, the ambient bucket is keyed per path,
+    routes: several methods can share a path, the ambient bucket is keyed per path,
     and a per-route walk would see the second and third method on a shared path
     charged to a bucket the first already spent.
     """
@@ -872,7 +881,9 @@ async def test_every_mounted_path_is_charged_to_the_ambient_budget(
     for method, path in route_index():
         by_path.setdefault(path, method)
 
-    assert len(by_path) == _DISTINCT_MOUNTED_PATHS
+    expected_paths = _expected_mounted_paths()
+    assert set(by_path) == expected_paths
+    assert set(live_document()["paths"]) == expected_paths
 
     for path, method in sorted(by_path.items()):
         reset_ambient_limit()

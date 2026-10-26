@@ -323,6 +323,24 @@ REFERENCE_REGISTRY: ReferenceRegistry = MappingProxyType(
                 ),
             ),
         ),
+        # Story has the same owner-only aggregate witness as the legacy totals.
+        ("GET", "/practice-sessions/story"): ReferenceProbe(
+            method="GET",
+            path="/practice-sessions/story",
+            body={},
+            references=(
+                ObjectReference(
+                    field="user_practice_id",
+                    location=ReferenceLocation.QUERY,
+                    seed_key="logged_user_practice_id",
+                    evidence=EvidenceStrategy.ECHO,
+                    witness=EvidenceWitness(
+                        pointer=("total_sessions",),
+                        condition=WitnessCondition.AT_LEAST_ONE,
+                    ),
+                ),
+            ),
+        ),
         ("POST", "/practice-sessions/"): ReferenceProbe(
             method="POST",
             path="/practice-sessions/",

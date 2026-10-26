@@ -61,7 +61,7 @@ class PracticeInsights:
     last_insight: str | None
 
 
-def _monday_of(day: date) -> date:
+def monday_of(day: date) -> date:
     """Return the Monday on or before ``day``.
 
     Sessions are bucketed by ISO week (Monday→Sunday) so the boundary
@@ -71,13 +71,13 @@ def _monday_of(day: date) -> date:
     return day - timedelta(days=day.weekday())
 
 
-def _local_week_starts(today: date, *, history_weeks: int) -> list[date]:
+def local_week_starts(today: date, *, history_weeks: int) -> list[date]:
     """Return the ``history_weeks`` Monday-start dates ending at this week.
 
     Ordered oldest-first so the chart reads left-to-right without the
     consumer having to reverse it.
     """
-    current_monday = _monday_of(today)
+    current_monday = monday_of(today)
     return [current_monday - timedelta(weeks=history_weeks - 1 - i) for i in range(history_weeks)]
 
 
@@ -94,7 +94,7 @@ def _bucket_by_week(
             # Zero-duration aborts don't move the cadence needle.
             continue
         local_day = to_user_date(tz, ensure_aware(session.timestamp))
-        buckets[_monday_of(local_day)] += 1
+        buckets[monday_of(local_day)] += 1
     return buckets
 
 
@@ -189,7 +189,7 @@ def build_insights(
     materialized = list(sessions)
 
     today = today_in_tz(tz)
-    week_starts = _local_week_starts(today, history_weeks=WEEKLY_HISTORY_WEEKS)
+    week_starts = local_week_starts(today, history_weeks=WEEKLY_HISTORY_WEEKS)
     bucket_counts = _bucket_by_week(materialized, tz=tz)
     weekly_counts = [
         WeeklyCount(week_start=ws, count=bucket_counts.get(ws, 0)) for ws in week_starts
