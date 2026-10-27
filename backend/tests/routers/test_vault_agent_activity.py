@@ -14,9 +14,9 @@ Three promises are pinned here:
   it is matched against stamps this account owns and otherwise named
   generically, and an unknown tool is "Other". An answer carrying anything
   beyond the published four fields is refused whole.
-* **Truthful attribution.** Creek stamps a JWT agent's calls with ``sub``,
-  which names the person until Creek-Vault#1976 stamps the agent's
-  ``client_id``. A stamp is named after an agent only when it *is* one of this
+* **Truthful attribution.** Creek stamps a JWT agent's calls with the
+  agent's ``client_id`` (Creek-Vault#1976); calls stamped before that carry
+  ``sub``, which names the person. A stamp is named after an agent only when it *is* one of this
   account's grant client ids; the person's own ``sub`` says only what it can.
 * **A vault that cannot answer is "unavailable", never an error page.**
 """
