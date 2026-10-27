@@ -519,6 +519,8 @@ export function setLlmApiKeyReset(reset: (() => void) | null) {
  */
 export function resetLlmApiKey(): void {
   vaultKeyVendors = null;
+  vaultKeyVendorsAt = 0;
+  vaultKeyRead = null;
   vaultKeyEpoch += 1;
   llmApiKeyReset?.();
 }
@@ -530,8 +532,25 @@ export function resetLlmApiKey(): void {
  * where another's key goes.
  */
 let vaultKeyVendors: readonly VaultKeyVendor[] | null = null;
+/** When {@link vaultKeyVendors} was answered (``Date.now()``), so a save can tell it is stale. */
+let vaultKeyVendorsAt = 0;
+/** The vendor read a save is waiting on, shared so concurrent saves ask once. */
+let vaultKeyRead: Promise<readonly VaultKeyVendor[] | null> | null = null;
 /** Bumped on teardown, so a read in flight across it cannot refill the cache. */
 let vaultKeyEpoch = 0;
+
+/**
+ * How long a journal save waits for a vendor answer it does not have yet
+ * before it goes without the key. Short, because the writing is what matters:
+ * a slower answer still lands in the cache for the next save.
+ */
+export const SAVE_KEY_DISCOVERY_WAIT_MS = 1_500;
+/**
+ * How long journal saves trust a vendor answer. A Vault upgrade can start
+ * accepting a vendor, and an answer kept for the whole session would hold every
+ * later save keyless (#3550 follow-up).
+ */
+export const VAULT_KEY_VENDORS_TTL_MS = 5 * 60_000;
 
 /**
  * Ask the server which vendors' writer keys this account's vault would write
@@ -546,32 +565,95 @@ export const vaultRequestKeys = {
       token,
       schema: vaultKeyVendorsSchema as unknown as z.ZodType<VaultKeyVendorsT>,
     });
-    if (epoch === vaultKeyEpoch) vaultKeyVendors = answer.vendors;
+    if (epoch === vaultKeyEpoch) {
+      vaultKeyVendors = answer.vendors;
+      vaultKeyVendorsAt = Date.now();
+    }
     return answer.vendors;
   },
 };
 
+/** A request's optional writer-key header. */
+type KeyHeaders = Record<string, string> | undefined;
+
 /**
  * The key header for a request that hands the vault new writing -- a journal
- * save or a document import -- whose onboarding classification a managed vault
- * runs with the writer's own key (#3437). Attached only when the stored key's
- * vendor is one the vault said it writes with, so the key travels only when a
- * feature uses it; every other save carries no key at all. A save never waits
- * on the vault: before the first answer it goes without the key and starts the
- * one read later saves use.
+ * save or edit, or a document import -- whose onboarding classification a
+ * managed vault runs with the writer's own key (#3437). Attached only when the
+ * stored key's vendor is one of ``vendors``, the vault's own answer, so the key
+ * travels only when a feature uses it; every other request carries no key at
+ * all. Callers obtain ``vendors`` first: a journal save through
+ * {@link journalKeyHeaders}, an upload through {@link documentKeyVendors}.
  */
-function onboardingKeyHeaders(
-  token?: string,
-  vendors: readonly VaultKeyVendor[] | null = vaultKeyVendors,
-): Record<string, string> | undefined {
+function onboardingKeyHeaders(vendors: readonly VaultKeyVendor[]): KeyHeaders {
   const key = llmApiKeyGetter?.() ?? null;
   const vendor = vaultKeyVendorFor(key);
   if (key === null || vendor === null) return undefined;
-  if (vendors === null) {
-    vaultRequestKeys.get(token).catch(() => undefined);
-    return undefined;
-  }
   return vendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
+}
+
+/** One shared vendor read; a failed read answers ``null`` so no older answer is reused. */
+function readVaultKeyVendors(token?: string): Promise<readonly VaultKeyVendor[] | null> {
+  if (vaultKeyRead === null) {
+    const read = vaultRequestKeys.get(token).catch(() => null);
+    vaultKeyRead = read;
+    void read.finally(() => {
+      if (vaultKeyRead === read) vaultKeyRead = null;
+    });
+  }
+  return vaultKeyRead;
+}
+
+/** ``promise``'s answer, or ``null`` once ``ms`` have passed without one. */
+function withinMs<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([promise, bound]).finally(() => clearTimeout(timer));
+}
+
+/** Why a save that waited for vendor discovery was not sent: its session ended meanwhile. */
+export const SESSION_CHANGED_DETAIL = 'session_changed';
+
+/**
+ * The key header for a journal save. Answered synchronously -- so the save is
+ * sent in the same tick, inside the auth scope it was made in -- when there is
+ * no key or a fresh vendor answer. Otherwise (the first save of a session, or
+ * an answer older than {@link VAULT_KEY_VENDORS_TTL_MS}) it waits up to
+ * {@link SAVE_KEY_DISCOVERY_WAIT_MS} for a new answer, so the first page written
+ * after sign-in or a Vault upgrade is classified with the writer's key rather
+ * than by the rules fallback. A slow or failed answer sends the save without
+ * the key.
+ */
+function journalKeyHeaders(token?: string): KeyHeaders | Promise<KeyHeaders> {
+  if (vaultKeyVendorFor(llmApiKeyGetter?.() ?? null) === null) return undefined;
+  const age = Date.now() - vaultKeyVendorsAt;
+  if (vaultKeyVendors !== null && age < VAULT_KEY_VENDORS_TTL_MS) {
+    return onboardingKeyHeaders(vaultKeyVendors);
+  }
+  return discoveredKeyHeaders(token);
+}
+
+/**
+ * Wait for a vendor answer, then refuse to send at all if the session ended
+ * meanwhile: the request would otherwise carry whichever account holds the
+ * device by then, filing one account's writing under another.
+ */
+async function discoveredKeyHeaders(token?: string): Promise<KeyHeaders> {
+  const scope = captureAuthScope();
+  const epoch = vaultKeyEpoch;
+  const vendors = await withinMs(readVaultKeyVendors(token), SAVE_KEY_DISCOVERY_WAIT_MS);
+  if (epoch !== vaultKeyEpoch || !isAuthScopeCurrent(scope)) {
+    throw new ApiError(0, SESSION_CHANGED_DETAIL);
+  }
+  return vendors === null ? undefined : onboardingKeyHeaders(vendors);
+}
+
+/** Run ``send`` with the save's key header, in the same tick when no wait is needed. */
+function withJournalKey<T>(token: string | undefined, send: (_key: KeyHeaders) => Promise<T>) {
+  const key = journalKeyHeaders(token);
+  return key instanceof Promise ? key.then(send) : send(key);
 }
 
 /** Refresh key eligibility before an explicit upload, including after a Vault upgrade. */
@@ -2175,7 +2257,7 @@ export const corpus = {
       }
       // Only this session may use the answer. Build from that answer rather
       // than re-entering discovery if teardown cleared the shared cache.
-      const headers = vendors === null ? undefined : onboardingKeyHeaders(token, vendors);
+      const headers = vendors === null ? undefined : onboardingKeyHeaders(vendors);
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
         body: { filename, content_base64: contentBase64, classification },
@@ -2247,24 +2329,33 @@ export const journal = {
     const idempotency = options.idempotencyKey
       ? { [IDEMPOTENCY_KEY_HEADER]: options.idempotencyKey }
       : undefined;
-    const onboarding = onboardingKeyHeaders(options.token);
-    return request<JournalMessage>('/journal/', {
-      method: 'POST',
-      body: entry,
-      token: options.token,
-      headers: idempotency || onboarding ? { ...idempotency, ...onboarding } : undefined,
-    });
+    return withJournalKey(options.token, (onboarding) =>
+      request<JournalMessage>('/journal/', {
+        method: 'POST',
+        body: entry,
+        token: options.token,
+        headers: idempotency || onboarding ? { ...idempotency, ...onboarding } : undefined,
+      }),
+    );
   },
   /**
    * Edit an entry. Only the fields present on ``patch`` are sent (``JSON`` drops
    * ``undefined``), so callers can update the title without touching the body.
+   *
+   * An edit to the body or the tier re-onboards the entry, so it carries the
+   * writer's key under the same rule as ``create``; any other edit hands the
+   * vault nothing new and carries no key.
    */
   update(entryId: number, patch: JournalEntryUpdate, token?: string): Promise<JournalMessage> {
-    return request<JournalMessage>(`/journal/${entryId}`, {
-      method: 'PATCH',
-      body: patch,
-      token,
-    });
+    const send = (headers: KeyHeaders) =>
+      request<JournalMessage>(`/journal/${entryId}`, {
+        method: 'PATCH',
+        body: patch,
+        token,
+        headers,
+      });
+    const reingests = patch.message !== undefined || patch.classification !== undefined;
+    return reingests ? withJournalKey(token, send) : send(undefined);
   },
   delete(entryId: number, token?: string): Promise<void> {
     return request<void>(`/journal/${entryId}`, { method: 'DELETE', token });

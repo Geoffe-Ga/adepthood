@@ -5,6 +5,8 @@
  */
 import {
   LLM_API_KEY_HEADER,
+  SAVE_KEY_DISCOVERY_WAIT_MS,
+  VAULT_KEY_VENDORS_TTL_MS,
   botmasonUsage,
   corpus,
   journal,
@@ -247,16 +249,144 @@ describe('the onboarding key header (#3437)', () => {
     expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBeUndefined();
   });
 
-  test('a save never waits on the vault: the first goes keyless and asks once', async () => {
+  test('the first save waits briefly for discovery and carries the key it confirms', async () => {
     serve({ vendors: ['anthropic'] });
 
     await journal.create({ message: 'hello' }, { token: 'tok' });
-    expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBeUndefined();
-    await settle();
     await journal.create({ message: 'again' }, { token: 'tok' });
 
-    expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBe(KEY);
+    expect(callsTo('/journal/').map(([, init]) => init.headers[LLM_API_KEY_HEADER])).toEqual([
+      KEY,
+      KEY,
+    ]);
     expect(callsTo(VENDORS_PATH)).toHaveLength(1);
+  });
+
+  test('concurrent first saves share one discovery read', async () => {
+    serve({ vendors: ['anthropic'] });
+
+    await Promise.all([
+      journal.create({ message: 'one' }, { token: 'tok' }),
+      journal.update(1, { message: 'two' }, 'tok'),
+    ]);
+
+    expect(callsTo(VENDORS_PATH)).toHaveLength(1);
+  });
+
+  test('a save does not wait past the discovery bound: it goes keyless and the read fills the cache', async () => {
+    jest.useFakeTimers();
+    try {
+      let release: (() => void) | undefined;
+      const discovery = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      serve({ vendors: ['anthropic'] });
+      const respond = mockFetch.getMockImplementation();
+      mockFetch.mockImplementation(async (url: string) => {
+        if (url.endsWith(VENDORS_PATH)) await discovery;
+        return respond?.(url);
+      });
+
+      const saving = journal.create({ message: 'hello' }, { token: 'tok' });
+      await jest.advanceTimersByTimeAsync(SAVE_KEY_DISCOVERY_WAIT_MS);
+      await saving;
+      expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBeUndefined();
+
+      release?.();
+      await jest.advanceTimersByTimeAsync(0);
+      await journal.create({ message: 'again' }, { token: 'tok' });
+      expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBe(KEY);
+      expect(callsTo(VENDORS_PATH)).toHaveLength(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a save re-asks once an empty answer is stale, so a Vault upgrade reaches saves', async () => {
+    const start = Date.now();
+    const now = jest.spyOn(Date, 'now').mockReturnValue(start);
+    try {
+      serve({ vendors: [] });
+      await vaultRequestKeys.get('tok');
+      serve({ vendors: ['anthropic'] });
+
+      await journal.create({ message: 'fresh empty answer' }, { token: 'tok' });
+      expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBeUndefined();
+      expect(callsTo(VENDORS_PATH)).toHaveLength(1);
+
+      now.mockReturnValue(start + VAULT_KEY_VENDORS_TTL_MS);
+      await journal.create({ message: 'after the upgrade' }, { token: 'tok' });
+
+      expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBe(KEY);
+      expect(callsTo(VENDORS_PATH)).toHaveLength(2);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  test('a stale answer whose refresh fails is not reused: the save goes keyless', async () => {
+    const start = Date.now();
+    const now = jest.spyOn(Date, 'now').mockReturnValue(start);
+    try {
+      serve({ vendors: ['anthropic'] });
+      await vaultRequestKeys.get('tok');
+      now.mockReturnValue(start + VAULT_KEY_VENDORS_TTL_MS);
+      mockFetch.mockImplementation((url: string) =>
+        url.endsWith(VENDORS_PATH)
+          ? jsonResponse({ detail: 'refused' }, 403)
+          : jsonResponse(ENTRY, 201),
+      );
+
+      await journal.create({ message: 'hello' }, { token: 'tok' });
+
+      expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBeUndefined();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  test('a save waiting for discovery is refused, not sent, when the session ends meanwhile', async () => {
+    let release: (() => void) | undefined;
+    const discovery = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    serve({ vendors: ['anthropic'] });
+    const respond = mockFetch.getMockImplementation();
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith(VENDORS_PATH)) await discovery;
+      return respond?.(url);
+    });
+
+    const saving = journal.update(1, { message: 'written by the first account' }, 'old-account');
+    const outcome = saving.then(
+      () => 'sent',
+      (err: unknown) => err,
+    );
+    resetLlmApiKey();
+    release?.();
+
+    expect(await outcome).toMatchObject({ status: 0, detail: 'session_changed' });
+    expect(callsTo('/journal/1')).toHaveLength(0);
+  });
+
+  test('an edit that changes the body carries the key under the same rule', async () => {
+    serve({ vendors: ['anthropic'] });
+
+    await journal.update(1, { message: 'edited' }, 'tok');
+
+    expect(lastHeadersTo('/journal/1')[LLM_API_KEY_HEADER]).toBe(KEY);
+  });
+
+  test.each([
+    ['a title-only edit', { title: 'Willow' }],
+    ['a status-only edit', { status: 'finished' as const }],
+  ])('%s re-ingests nothing, so it carries no key and asks nothing', async (_name, patch) => {
+    serve({ vendors: ['anthropic'] });
+
+    await journal.update(1, patch, 'tok');
+
+    expect(callsTo(VENDORS_PATH)).toHaveLength(0);
+    expect(lastHeadersTo('/journal/1')[LLM_API_KEY_HEADER]).toBeUndefined();
   });
 
   test('a save without a key never asks the vault', async () => {
@@ -273,20 +403,25 @@ describe('the onboarding key header (#3437)', () => {
   test('the usage snapshot never asks the vault and never arms the key', async () => {
     serve({ vendors: ['anthropic'] });
     await botmasonUsage.get('tok');
-
     expect(callsTo(VENDORS_PATH)).toHaveLength(0);
+
+    serve({ vendors: [] });
     await journal.create({ message: 'hello' }, { token: 'tok' });
+
+    expect(callsTo(VENDORS_PATH)).toHaveLength(1);
     expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBeUndefined();
   });
 
-  test('sign-out forgets the vault’s answer, so the next account’s save carries nothing', async () => {
+  test('sign-out forgets the vault’s answer, so the next account’s save asks its own vault', async () => {
     serve({ vendors: ['anthropic'] });
     await vaultRequestKeys.get('tok');
     resetLlmApiKey();
     setLlmApiKeyGetter(() => KEY);
+    serve({ vendors: [] });
 
     await journal.create({ message: 'hello' }, { token: 'tok' });
 
+    expect(callsTo(VENDORS_PATH)).toHaveLength(2);
     expect(lastHeadersTo('/journal/')[LLM_API_KEY_HEADER]).toBeUndefined();
   });
 

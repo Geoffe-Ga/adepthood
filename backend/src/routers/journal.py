@@ -1189,7 +1189,7 @@ async def update_journal_entry(
     payload: JournalEntryUpdate,
     current_user: Annotated[int, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    vault_client: Annotated[CreekVaultPipelineClient, Depends(get_creek_vault_client)],
+    vault: Annotated[OnboardingVault, Depends(get_onboarding_vault)],
 ) -> JournalEntry:
     """Patch ``message`` / ``title`` / ``status`` on the caller's own entry.
 
@@ -1202,6 +1202,12 @@ async def update_journal_entry(
     branch changes a title or a status and dials nothing, so ordering it against
     an erasure would buy no confidentiality and would put a lock on the cheapest
     PATCH the client makes.
+
+    A re-ingesting edit hands the vault changed writing just as a create does,
+    so its classification pass may carry the optional ``X-LLM-API-Key`` under
+    the same rule as :func:`create_journal_entry` (#3437): relayed only to that
+    pass and only when the vault advertised the vendor. A PATCH that re-ingests
+    nothing dials nothing, so it relays nothing.
     """
     reingests = bool(payload.model_fields_set & _REINGEST_FIELDS)
     if not reingests:
@@ -1233,11 +1239,12 @@ async def update_journal_entry(
                 await _apply_intimate_update(
                     session,
                     entry,
-                    vault_client,
+                    vault.client,
                     chose_intimate="classification" in payload.model_fields_set,
                 )
             else:
-                await _record_vault_outcome(session, entry, vault_client)
+                with forwarding_provider_key(vault.relay_key):
+                    await _record_vault_outcome(session, entry, vault.client)
                 await _record_corpus_fragment(session, entry)
     logger.info("journal_entry_updated", extra={"user_id": current_user, "entry_id": entry_id})
     return entry

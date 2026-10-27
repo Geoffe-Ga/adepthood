@@ -15,6 +15,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import Final
 from uuid import UUID
@@ -24,7 +25,7 @@ import pytest_asyncio
 from httpx import AsyncClient, MockTransport, Request, Response
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlmodel import select
+from sqlmodel import col, select, update
 
 from dependencies.creek_vault import get_creek_vault_client
 from domain.creek_vault import (
@@ -664,3 +665,90 @@ async def test_continuation_completion_callback_does_not_retain_the_request_key(
         finally:
             release.set()
             await pipeline.close_vault_pipeline_tasks()
+
+
+#: Older than every pipeline stage's stand-down, so an edit finds classification due again.
+_EARLIER_PASS_AGE: Final = timedelta(days=1)
+
+
+async def _saved_entry(
+    client: AsyncClient, session: AsyncSession, headers: Mapping[str, str], username: str
+) -> int:
+    """Save one personal entry without a key, then age its pipeline pass out of the stand-down.
+
+    An edit made right after the save would otherwise land inside the save's own
+    classification interval and dial nothing, which is not the case under test.
+    """
+    response = await client.post(
+        "/journal/",
+        json={"message": "the willow bent", "classification": "personal"},
+        headers=headers,
+    )
+    assert response.status_code == HTTPStatus.CREATED, response.text
+    entry_id = response.json()["id"]
+    assert isinstance(entry_id, int)
+    await wait_for_vault_pipeline_tasks()
+    user_id = await _owner_id(session, username)
+    await session.execute(
+        update(VaultPipelineRun)
+        .where(col(VaultPipelineRun.user_id) == user_id)
+        .values(ran_at=datetime.now(UTC) - _EARLIER_PASS_AGE)
+    )
+    await session.commit()
+    return entry_id
+
+
+@pytest.mark.asyncio
+async def test_an_edit_relays_the_key_to_its_reclassification(
+    async_client: AsyncClient, db_session: AsyncSession, managed_vault: _ManagedVault
+) -> None:
+    """Editing the body re-onboards the entry, so its classification pass carries the key too."""
+    headers = await _signup(async_client, "edit_relay")
+    entry_id = await _saved_entry(async_client, db_session, headers, "edit_relay")
+    managed_vault.sends.clear()
+
+    response = await async_client.patch(
+        f"/journal/{entry_id}",
+        json={"message": "the willow bent, then rose"},
+        headers={**headers, _BYOK_HEADER: ANTHROPIC_KEY},
+    )
+    await wait_for_vault_pipeline_tasks()
+
+    assert response.status_code == HTTPStatus.OK, response.text
+    assert any(path.startswith(_JOURNAL_ENTRIES) for path in managed_vault.paths())
+    assert managed_vault.keyed() == [_CLASSIFICATIONS], managed_vault.sends
+    assert {key for _path, key in managed_vault.sends if key} == {ANTHROPIC_KEY}
+    assert ANTHROPIC_KEY not in response.text
+
+
+@pytest.mark.parametrize(
+    ("body", "key"),
+    [
+        ({"message": "the willow bent, then rose"}, None),
+        ({"message": "the willow bent, then rose"}, _OVERLONG_KEY),
+        ({"title": "Willow"}, ANTHROPIC_KEY),
+    ],
+    ids=["edit-without-key", "edit-overlong-key", "title-only-edit"],
+)
+@pytest.mark.asyncio
+async def test_an_edit_relays_nothing_without_an_eligible_key_or_a_reingest(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    managed_vault: _ManagedVault,
+    body: dict[str, str],
+    key: str | None,
+) -> None:
+    """No key, a malformed key, or a PATCH that re-ingests nothing: no send carries a key."""
+    username = f"edit_nokey_{len(body)}_{len(key or '')}"
+    headers = await _signup(async_client, username)
+    entry_id = await _saved_entry(async_client, db_session, headers, username)
+    managed_vault.sends.clear()
+    extra = {_BYOK_HEADER: key} if key is not None else {}
+
+    response = await async_client.patch(
+        f"/journal/{entry_id}", json=body, headers={**headers, **extra}
+    )
+    await wait_for_vault_pipeline_tasks()
+
+    assert response.status_code == HTTPStatus.OK, response.text
+    assert managed_vault.keyed() == [], managed_vault.sends

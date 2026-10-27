@@ -72,7 +72,7 @@ async function settled(): Promise<Run> {
 }
 
 describe('a managed vault classifies with the writing request key', () => {
-  it.each(['journal', 'document', 'upgraded document'] as const)(
+  it.each(['journal', 'journal edit', 'document', 'upgraded document'] as const)(
     '%s commits the keyed handle before replying and polls it without the key',
     async (kind) => {
       resetLlmApiKey();
@@ -84,15 +84,28 @@ describe('a managed vault classifies with the writing request key', () => {
       setLlmApiKeyGetter(() => OWN_KEY);
       let arranged = false;
       try {
+        // An edit needs a page that already exists, written before the vault
+        // offers request keys, so its own save is keyless and admits nothing.
+        const existing =
+          kind === 'journal edit'
+            ? await journal.create({
+                message: 'A first draft about the willow.',
+                classification: 'personal',
+              })
+            : null;
         if (kind === 'upgraded document') {
           await control('withdraw-request-keys');
           expect(await vaultRequestKeys.get()).toEqual([]);
         }
         await control('advertise-request-keys');
         await control('enable-pipeline');
-        // A journal save stays non-blocking; explicit uploads discover vendors
-        // themselves, including the first upload after a session starts.
-        if (kind === 'journal') expect(await vaultRequestKeys.get()).toContain('anthropic');
+        // Saves and edits start from a cold vendor answer and wait briefly for
+        // discovery; uploads discover before sending, and the upgraded case
+        // keeps its cached empty answer to prove the refresh.
+        if (kind === 'journal' || kind === 'journal edit') {
+          resetLlmApiKey();
+          setLlmApiKeyGetter(() => OWN_KEY);
+        }
         const before = await ledger();
         const queued = run('queue');
         arranged = true;
@@ -102,6 +115,11 @@ describe('a managed vault classifies with the writing request key', () => {
             classification: 'personal',
           });
           expect(entry.id).toBeGreaterThan(0);
+        } else if (existing !== null) {
+          const edited = await journal.update(existing.id, {
+            message: 'The willow bent all night, and by morning it stood.',
+          });
+          expect(edited.id).toBe(existing.id);
         } else {
           const imported = await corpus.importDocument({
             filename: 'byok-first-upload.md',
