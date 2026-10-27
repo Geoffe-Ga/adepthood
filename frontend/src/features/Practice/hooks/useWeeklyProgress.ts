@@ -1,94 +1,117 @@
-/**
- * `useWeeklyProgress` — fetches the current week's session count for the
- * `WeeklyProgress` bar at the foot of `PracticeScreen`.
- *
- * Ritual-04 ships `GET /practice-sessions/insights` (rolling weekly counts,
- * streak, per-mode tallies). This hook prefers the newest `weekly_counts`
- * bucket when the endpoint resolves, and silently falls back to the legacy
- * `weekCount()` endpoint when the insights call fails — purely additive, as
- * the issue requires. The fallback path lets older backends or transient
- * 5xx on the new route keep the bar functional.
- *
- * Optimistic increment / authoritative refetch is preserved from the
- * pre-ritual-11 monolith so the bar still reconciles with server truth
- * after a save (BUG-FE-PRACTICE-005). The `commit` callback inside
- * `useSaveSessionMutation` calls `refresh()` here on success.
- */
-import { useCallback, useEffect, useState } from 'react';
+/** The user-wide Glance retains /insights until its API retirement (#3530). */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { practiceSessions } from '@/api';
+import { practiceSessions, type PracticeInsightsResponse } from '@/api';
+import { captureSessionToken, getAuthSession } from '@/api/sessionToken';
 import { toError } from '@/features/Practice/utils/toError';
 import { useMountedRef } from '@/hooks/useMountedRef';
+import { useAccountScope } from '@/storage/useActiveUser';
+import { parseUserId } from '@/storage/userScope';
+import { decodeJwtPayload } from '@/utils/token';
 
 export interface UseWeeklyProgressResult {
   count: number;
+  insights: PracticeInsightsResponse | null;
   isLoading: boolean;
   error: Error | null;
   refresh: () => Promise<void>;
-  /** Optimistic +1. Pair with `decrement()` for rollback. */
   increment: () => void;
-  /** Optimistic rollback (-1, floored at 0). */
   decrement: () => void;
-  /** Replace `count` with an authoritative value (e.g. from `commit`). */
   setCount: (_next: number) => void;
 }
-
-async function fetchCurrentCount(): Promise<number> {
+function useWeeklyContext() {
+  const scope = useAccountScope();
+  const token = captureSessionToken();
+  const session = getAuthSession();
+  return useMemo(
+    () => ({ scope, token, session, key: `${scope.owner}:${scope.epoch}:${session}` }),
+    [scope, token, session],
+  );
+}
+type WeeklyContext = ReturnType<typeof useWeeklyContext>;
+/** The owner stamp may update before its credential bridge. Both must agree. */
+function canReadWeekly({ scope, token, session }: WeeklyContext): boolean {
+  const liveToken = captureSessionToken();
+  return (
+    scope.owner !== null &&
+    scope.isCurrent() &&
+    getAuthSession() === session &&
+    token !== undefined &&
+    parseUserId(decodeJwtPayload(token)?.sub) === scope.owner &&
+    liveToken !== undefined &&
+    parseUserId(decodeJwtPayload(liveToken)?.sub) === scope.owner
+  );
+}
+interface WeeklyState {
+  key: string;
+  count: number;
+  insights: PracticeInsightsResponse | null;
+  isLoading: boolean;
+  error: Error | null;
+}
+async function fetchWeekly(context: WeeklyContext, current: () => boolean) {
   try {
-    const insights = await practiceSessions.insights();
-    const buckets = insights.weekly_counts;
-    if (buckets.length > 0) {
-      // The backend rolls up Monday-anchored buckets in ascending order; the
-      // current week is the last entry. An empty `weekly_counts` array means
-      // no sessions in the lookback window — fall through to the legacy
-      // endpoint, which is the simplest way to confirm "still zero".
-      const latest = buckets[buckets.length - 1];
-      if (latest) return latest.count;
-    }
-    return 0;
+    const insights = await practiceSessions.insights(context.token);
+    return { count: insights.weekly_counts.at(-1)?.count ?? 0, insights };
   } catch {
-    const legacy = await practiceSessions.weekCount();
-    return legacy.count;
+    if (!current()) return null;
+    const legacy = await practiceSessions.weekCount(context.token);
+    return { count: legacy.count, insights: null };
   }
 }
-
-export function useWeeklyProgress(): UseWeeklyProgressResult {
-  const [count, setCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-  const mountedRef = useMountedRef();
-
+function emptyWeekly(key: string): WeeklyState {
+  return { key, count: 0, insights: null, isLoading: true, error: null };
+}
+function useWeeklyRead(context: WeeklyContext) {
+  const mounted = useMountedRef();
+  const ticket = useRef(0);
+  const [state, setState] = useState<WeeklyState>(() => emptyWeekly(context.key));
   const refresh = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
+    if (!canReadWeekly(context)) return;
+    const request = ++ticket.current;
+    const current = () => mounted.current && canReadWeekly(context) && ticket.current === request;
+    setState((previous) => ({
+      ...emptyWeekly(context.key),
+      count: previous.key === context.key ? previous.count : 0,
+      insights: previous.key === context.key ? previous.insights : null,
+    }));
     try {
-      const next = await fetchCurrentCount();
-      if (!mountedRef.current) return;
-      setCount(next);
-    } catch (err) {
-      if (!mountedRef.current) return;
-      setError(toError(err));
-    } finally {
-      if (mountedRef.current) setIsLoading(false);
+      const next = await fetchWeekly(context, current);
+      if (next !== null && current())
+        setState({ key: context.key, ...next, isLoading: false, error: null });
+    } catch (error) {
+      if (current())
+        setState({ ...emptyWeekly(context.key), isLoading: false, error: toError(error) });
     }
-  }, [mountedRef]);
-
+  }, [context, mounted]);
+  return { state, setState, refresh };
+}
+export function useWeeklyProgress(): UseWeeklyProgressResult {
+  const context = useWeeklyContext();
+  const { state, setState, refresh } = useWeeklyRead(context);
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  const increment = useCallback(() => {
-    setCount((prev) => prev + 1);
-  }, []);
-
-  const decrement = useCallback(() => {
-    setCount((prev) => Math.max(0, prev - 1));
-  }, []);
-
+  const update = useCallback(
+    (change: (_previous: number) => number) => {
+      if (!canReadWeekly(context)) return;
+      setState((previous) =>
+        previous.key === context.key
+          ? { ...previous, count: change(previous.count) }
+          : { key: context.key, count: change(0), insights: null, error: null, isLoading: false },
+      );
+    },
+    [context, setState],
+  );
+  const increment = useCallback(() => update((value) => value + 1), [update]);
+  const decrement = useCallback(() => update((value) => Math.max(0, value - 1)), [update]);
+  const setCount = useCallback((next: number) => update(() => next), [update]);
+  const visible = state.key === context.key && canReadWeekly(context);
   return {
-    count,
-    isLoading,
-    error,
+    count: visible ? state.count : 0,
+    insights: visible ? state.insights : null,
+    isLoading: visible ? state.isLoading : false,
+    error: visible ? state.error : null,
     refresh,
     increment,
     decrement,

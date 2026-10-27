@@ -583,3 +583,13 @@ describe('PracticeDetailScreen — badge + body fallbacks', () => {
     expect(view.queryByTestId('practice-detail-instructions')).toBeNull();
   });
 });
+
+// These action/layout tests browse anonymously; the owner-scoped story has its own integration suite.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({
+    token: null,
+    authStatus: 'anonymous',
+    userTimezone: 'UTC',
+    userTimezoneReady: true,
+  }),
+}));

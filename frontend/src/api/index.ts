@@ -3383,6 +3383,43 @@ export interface PracticeStatsResponse {
   total_minutes: number;
 }
 
+/** A counted sitting, ordered oldest first by the practice story service. */
+export interface PracticeStorySit {
+  timestamp: string;
+  duration_minutes: number;
+  completed: boolean;
+  mode: string;
+}
+
+export interface PracticeStoryMilestone {
+  kind: string;
+  reached_on: string;
+  value: number;
+}
+
+/** Owner-scoped lifetime record; stage fields describe the current stage window. */
+export interface PracticeStoryResponse {
+  total_minutes: number;
+  total_sessions: number;
+  weekly: PracticeWeeklyBucket[];
+  weekly_target: number;
+  recent_sits: PracticeStorySit[];
+  time_of_day: { dawn: number; day: number; dusk: number; night: number };
+  modes: Record<string, number>;
+  stage_ask_minutes: number | null;
+  stage_average_minutes: number | null;
+  stage_session_count: number;
+  stage_partial_sessions: number;
+  partial_sessions: number;
+  insight_count: number;
+  last_insight: string | null;
+  last_insight_timestamp: string | null;
+  mode_totals: Record<string, number>;
+  first_session_on: string | null;
+  observations?: string[];
+  milestones?: PracticeStoryMilestone[];
+}
+
 /**
  * Payload for ``POST /practices/`` (custom-practices-07).
  *
@@ -3689,6 +3726,12 @@ export const frequency = {
 };
 
 export const practiceSessions = {
+  story(userPracticeId: number, token?: string): Promise<PracticeStoryResponse> {
+    return request<PracticeStoryResponse>(
+      `/practice-sessions/story?user_practice_id=${userPracticeId}`,
+      { token },
+    );
+  },
   create(payload: PracticeSessionCreate, token?: string): Promise<PracticeSessionResponse> {
     return request<PracticeSessionResponse>('/practice-sessions/', {
       method: 'POST',

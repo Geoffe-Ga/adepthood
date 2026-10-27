@@ -18,6 +18,8 @@ export interface HBar {
 export interface HBarsProps extends ChartBaseProps {
   bars: readonly HBar[];
   max?: number;
+  /** Native-unit header for the table twin. */
+  valueHeader?: string;
 }
 
 export const barTableRows = (bars: readonly HBar[]): ChartTableRow[] =>
@@ -98,14 +100,19 @@ function BarRow({
   );
 }
 
-export function HBars({ bars, max, ...base }: HBarsProps) {
+export function HBars({ bars, max, valueHeader = 'Value', ...base }: HBarsProps) {
   const size = useChartSize(base.width, base.height);
   const measurement = useValueLabelWidths(bars, size.width);
   const values = bars.map((bar) => bar.value);
   const maximum = scaleMaximum(values, max);
   const strongest = Math.max(0, ...values);
   return (
-    <ChartFrame {...base} onLayout={size.onLayout} rows={barTableRows(bars)} headers={['Value']}>
+    <ChartFrame
+      {...base}
+      onLayout={size.onLayout}
+      rows={barTableRows(bars)}
+      headers={[valueHeader]}
+    >
       {bars.map((bar, index) => (
         <BarRow
           key={index}

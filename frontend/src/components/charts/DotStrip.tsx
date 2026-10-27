@@ -1,17 +1,21 @@
 import React from 'react';
-import { Circle, G, Line } from 'react-native-svg';
+import { Circle, G, Line, Text as SvgText } from 'react-native-svg';
 
 import { ChartFrame, useChartSize } from './ChartFrame';
 import { dotGeometry, scaleMaximum } from './geometry';
 import { AskLabel, AskLine, AxisLabels, Plot } from './Plot';
 import type { ChartAsk, ChartBaseProps, ChartPoint, ChartTableRow } from './types';
 
-import { accent, chartLayout, surface } from '@/design/tokens';
+import { accent, chartLayout, ink, surface } from '@/design/tokens';
 
 export interface DotStripProps extends ChartBaseProps {
   points: readonly ChartPoint[];
   max?: number;
   ask?: ChartAsk;
+  /** Optional native-unit axis labels; default geometry is unchanged. */
+  yTicks?: readonly number[];
+  /** Native-unit header for the table twin. */
+  valueHeader?: string;
 }
 
 export const pointTableRows = (points: readonly ChartPoint[]): ChartTableRow[] =>
@@ -62,9 +66,50 @@ function DotMarks({
   );
 }
 
-export function DotStrip({ points, ask, max, ...base }: DotStripProps) {
+function YAxisTicks({
+  ticks,
+  axisWidth,
+  height,
+  maximum,
+}: {
+  ticks?: readonly number[];
+  axisWidth: number;
+  height: number;
+  maximum: number;
+}) {
+  return (
+    <>
+      {ticks?.map((tick) => (
+        <SvgText
+          key={tick}
+          x={axisWidth - chartLayout.plotInset}
+          y={chartLayout.plotInset + height - Math.min(Math.max(tick, 0) / maximum, 1) * height}
+          fill={ink.muted}
+          fontSize={chartLayout.labelSize}
+          textAnchor="end"
+          alignmentBaseline="middle"
+        >
+          {String(tick)}
+        </SvgText>
+      ))}
+    </>
+  );
+}
+
+export function DotStrip({
+  points,
+  ask,
+  max,
+  yTicks,
+  valueHeader = 'Value',
+  ...base
+}: DotStripProps) {
   const size = useChartSize(base.width, base.height);
-  const width = Math.max(1, size.width - 2 * chartLayout.plotInset);
+  const axisWidth = yTicks?.length
+    ? Math.max(...yTicks.map((tick) => String(tick).length)) * chartLayout.labelSize +
+      chartLayout.plotInset
+    : 0;
+  const width = Math.max(1, size.width - axisWidth - 2 * chartLayout.plotInset);
   const height = Math.max(1, size.height - 2 * chartLayout.plotInset);
   const maximum = scaleMaximum([...points.map((point) => point.value), ask?.value ?? 0], max);
   return (
@@ -72,11 +117,12 @@ export function DotStrip({ points, ask, max, ...base }: DotStripProps) {
       {...base}
       onLayout={size.onLayout}
       rows={pointTableRows(points)}
-      headers={['Value', 'State']}
+      headers={[valueHeader, 'State']}
     >
       <AskLabel ask={ask} />
       <Plot width={size.width} height={size.height}>
-        <G x={chartLayout.plotInset} y={chartLayout.plotInset}>
+        <YAxisTicks ticks={yTicks} axisWidth={axisWidth} height={height} maximum={maximum} />
+        <G testID="dot-strip-marks" x={axisWidth + chartLayout.plotInset} y={chartLayout.plotInset}>
           <Line
             x1={0}
             x2={width}
