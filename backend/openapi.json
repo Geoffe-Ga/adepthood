@@ -18345,7 +18345,7 @@
     },
     "/habits/{habit_id}/completions": {
       "delete": {
-        "description": "Bulk-delete every goal-completion row for the owned habit's goals.\n\nResets the habit's completion history in one statement so a start-date\nreset (or any other \"start fresh\" flow) leaves no stale rows behind for a\nlater refetch to embed. Ownership is enforced by ``require_owned_habit``,\nyielding the same 404 (missing) / 403 (cross-user) split as\n:func:`delete_habit`. A defense-in-depth ``user_id`` filter guarantees only\nthe caller's own rows are removed even if a foreign row is somehow parented\nto one of the habit's goals.",
+        "description": "Clear aggregate and event history for the owned habit's goals.\n\nResets the habit's completion history in one transaction so a start-date\nreset (or any other \"start fresh\" flow) leaves no stale rows behind for a\nlater refetch to embed. Ownership is enforced by ``require_owned_habit``,\nyielding the same 404 (missing) / 403 (cross-user) split as\n:func:`delete_habit`. A defense-in-depth ``user_id`` filter guarantees only\nthe caller's own rows are removed even if a foreign row is somehow parented\nto one of the habit's goals.",
         "operationId": "clear_habit_completions_habits__habit_id__completions_delete",
         "parameters": [
           {

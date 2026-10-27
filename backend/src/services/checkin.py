@@ -154,14 +154,16 @@ async def _habit_day_units(
     return float(result.scalar_one())
 
 
-async def _lock_habit_for_check_in(session: AsyncSession, habit_id: int) -> None:
-    """Serialize every check-in mutation for one habit.
+async def lock_habit_for_completion_mutation(session: AsyncSession, habit_id: int) -> None:
+    """Serialize check-ins and history resets for one habit.
 
     Goal rows are tier provenance while the arithmetic belongs to the whole
     habit/day. Locking only one goal row cannot serialize a correction against a
     simultaneous write to another tier, and locking only existing completion
     rows cannot protect the first insert. The durable parent habit is the one
-    stable lock target shared by every tier and every day-total mutation.
+    stable lock target shared by every tier, day-total mutation, and reset.
+    A reset holds it until both aggregates and their events are deleted, so a
+    simultaneous check-in cannot leave only one representation of a new log.
     """
     if session.get_bind().dialect.name == "sqlite":
         # SQLite ignores SELECT .. FOR UPDATE. A no-op DML statement acquires
@@ -737,7 +739,7 @@ async def record_goal_completion(
     )
     # Every tier shares one parent lock. It serializes day-total arithmetic and
     # also closes the empty-row insert window that row locks cannot cover.
-    await _lock_habit_for_check_in(session, habit_id)
+    await lock_habit_for_completion_mutation(session, habit_id)
     existing_response = await _legacy_existing_response(
         session,
         response_scope,

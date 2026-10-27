@@ -5,6 +5,7 @@ from http import HTTPStatus
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
 
@@ -16,11 +17,11 @@ from models.habit import Habit
 from tests.helpers.feedback_triage import make_account
 
 
-async def _goal(session: AsyncSession, user_id: int) -> Goal:
+async def _goal(session: AsyncSession, user_id: int, *, name: str = "Water") -> Goal:
     """Give an account one daily unit goal."""
     habit = Habit(
         user_id=user_id,
-        name="Water",
+        name=name,
         icon="💧",
         start_date=date(2026, 1, 1),
         energy_cost=1,
@@ -47,6 +48,130 @@ async def _events(session: AsyncSession) -> list[GoalLogEvent]:
     return list(
         (await session.execute(select(GoalLogEvent).order_by(col(GoalLogEvent.id)))).scalars()
     )
+
+
+async def _log_units(
+    client: AsyncClient, goal: Goal, headers: dict[str, str], units: float
+) -> None:
+    """Record real changes through the public write seam."""
+    response = await client.post(
+        "/goal_completions/",
+        headers=headers,
+        json={"goal_id": goal.id, "completed_units": units},
+    )
+    assert response.status_code == HTTPStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_clearing_history_erases_its_events_and_export_before_new_logs(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Starting fresh removes old audit facts while preserving unrelated history."""
+    owner = await make_account(db_session, "clear-events")
+    other = await make_account(db_session, "keep-other-events")
+    goal = await _goal(db_session, owner.user_id)
+    sibling = await _goal(db_session, owner.user_id, name="Sibling")
+    foreign = await _goal(db_session, other.user_id)
+    await _log_units(async_client, goal, owner.headers, 32)
+    await _log_units(async_client, goal, owner.headers, 32)
+    await _log_units(async_client, sibling, owner.headers, 7)
+    await _log_units(async_client, foreign, other.headers, 9)
+
+    response = await async_client.delete(
+        f"/habits/{goal.habit_id}/completions", headers=owner.headers
+    )
+    assert response.status_code == HTTPStatus.NO_CONTENT
+    assert [event.delta_units for event in await _events(db_session)] == [7, 9]
+    remaining = (await db_session.execute(select(GoalCompletion))).scalars().all()
+    assert {row.goal_id for row in remaining} == {sibling.id, foreign.id}
+    exported = await async_client.get("/users/me/export", headers=owner.headers)
+    assert exported.status_code == HTTPStatus.OK
+    assert [row["delta_units"] for row in exported.json()["records"]["goal_log_events"]] == [7]
+
+    await _log_units(async_client, goal, owner.headers, 4)
+    assert [
+        event.delta_units for event in await _events(db_session) if event.goal_id == goal.id
+    ] == [4]
+    row = (
+        await db_session.execute(select(GoalCompletion).where(GoalCompletion.goal_id == goal.id))
+    ).scalar_one()
+    assert row.completed_units == 4
+
+
+@pytest.mark.asyncio
+async def test_history_reset_scopes_event_erasure_to_actor_and_habit(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Neither cross-user reset nor malformed parentage broadens the delete scope."""
+    owner = await make_account(db_session, "scoped-clear-events")
+    other = await make_account(db_session, "foreign-clear-events")
+    goal = await _goal(db_session, owner.user_id)
+    foreign = await _goal(db_session, other.user_id)
+    await _log_units(async_client, goal, owner.headers, 32)
+    db_session.add_all(
+        [
+            GoalLogEvent(
+                goal_id=goal.id,
+                user_id=other.user_id,
+                delta_units=500,
+                local_day=today_in_tz("UTC"),
+                source="manual",
+            ),
+            GoalLogEvent(
+                goal_id=foreign.id,
+                user_id=owner.user_id,
+                delta_units=700,
+                local_day=today_in_tz("UTC"),
+                source="manual",
+            ),
+        ]
+    )
+    await db_session.commit()
+    response = await async_client.delete(
+        f"/habits/{goal.habit_id}/completions", headers=other.headers
+    )
+    assert response.status_code == HTTPStatus.FORBIDDEN
+    assert [event.delta_units for event in await _events(db_session)] == [32, 500, 700]
+    response = await async_client.delete(
+        f"/habits/{goal.habit_id}/completions", headers=owner.headers
+    )
+    assert response.status_code == HTTPStatus.NO_CONTENT
+    assert [event.delta_units for event in await _events(db_session)] == [500, 700]
+
+
+@pytest.mark.asyncio
+async def test_event_erasure_failure_rolls_back_the_aggregate_reset(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """A failed event deletion must not commit a partial history reset."""
+    owner = await make_account(db_session, "atomic-clear-events")
+    goal = await _goal(db_session, owner.user_id)
+    await _log_units(async_client, goal, owner.headers, 32)
+    goal_id, habit_id = goal.id, goal.habit_id
+    await db_session.execute(
+        text(
+            "CREATE TRIGGER reject_goal_event_clear BEFORE DELETE ON goallogevent "
+            "BEGIN SELECT RAISE(ABORT, 'test reset failure'); END"
+        )
+    )
+    await db_session.commit()
+    try:
+        response = await async_client.delete(
+            f"/habits/{habit_id}/completions", headers=owner.headers
+        )
+        assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+        await db_session.rollback()
+        row = (
+            await db_session.execute(
+                select(GoalCompletion).where(GoalCompletion.goal_id == goal_id)
+            )
+        ).scalar_one()
+        assert row.completed_units == 32
+        assert [event.delta_units for event in await _events(db_session)] == [32]
+    finally:
+        await db_session.rollback()
+        await db_session.execute(text("DROP TRIGGER reject_goal_event_clear"))
+        await db_session.commit()
 
 
 @pytest.mark.asyncio
