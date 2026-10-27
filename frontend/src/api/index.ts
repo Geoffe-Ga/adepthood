@@ -573,26 +573,22 @@ export const vaultRequestKeys = {
   },
 };
 
+/** A request's optional writer-key header. */
+type KeyHeaders = Record<string, string> | undefined;
+
 /**
  * The key header for a request that hands the vault new writing -- a journal
- * save or a document import -- whose onboarding classification a managed vault
- * runs with the writer's own key (#3437). Attached only when the stored key's
- * vendor is one the vault said it writes with, so the key travels only when a
- * feature uses it; every other save carries no key at all. A save never waits
- * on the vault: before the first answer it goes without the key and starts the
- * one read later saves use.
+ * save or edit, or a document import -- whose onboarding classification a
+ * managed vault runs with the writer's own key (#3437). Attached only when the
+ * stored key's vendor is one of ``vendors``, the vault's own answer, so the key
+ * travels only when a feature uses it; every other request carries no key at
+ * all. Callers obtain ``vendors`` first: a journal save through
+ * {@link journalKeyHeaders}, an upload through {@link documentKeyVendors}.
  */
-function onboardingKeyHeaders(
-  token?: string,
-  vendors: readonly VaultKeyVendor[] | null = vaultKeyVendors,
-): Record<string, string> | undefined {
+function onboardingKeyHeaders(vendors: readonly VaultKeyVendor[]): KeyHeaders {
   const key = llmApiKeyGetter?.() ?? null;
   const vendor = vaultKeyVendorFor(key);
   if (key === null || vendor === null) return undefined;
-  if (vendors === null) {
-    vaultRequestKeys.get(token).catch(() => undefined);
-    return undefined;
-  }
   return vendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
 }
 
@@ -617,8 +613,6 @@ function withinMs<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return Promise.race([promise, bound]).finally(() => clearTimeout(timer));
 }
 
-type KeyHeaders = Record<string, string> | undefined;
-
 /** Why a save that waited for vendor discovery was not sent: its session ended meanwhile. */
 export const SESSION_CHANGED_DETAIL = 'session_changed';
 
@@ -636,7 +630,7 @@ function journalKeyHeaders(token?: string): KeyHeaders | Promise<KeyHeaders> {
   if (vaultKeyVendorFor(llmApiKeyGetter?.() ?? null) === null) return undefined;
   const age = Date.now() - vaultKeyVendorsAt;
   if (vaultKeyVendors !== null && age < VAULT_KEY_VENDORS_TTL_MS) {
-    return onboardingKeyHeaders(token, vaultKeyVendors);
+    return onboardingKeyHeaders(vaultKeyVendors);
   }
   return discoveredKeyHeaders(token);
 }
@@ -653,7 +647,7 @@ async function discoveredKeyHeaders(token?: string): Promise<KeyHeaders> {
   if (epoch !== vaultKeyEpoch || !isAuthScopeCurrent(scope)) {
     throw new ApiError(0, SESSION_CHANGED_DETAIL);
   }
-  return vendors === null ? undefined : onboardingKeyHeaders(token, vendors);
+  return vendors === null ? undefined : onboardingKeyHeaders(vendors);
 }
 
 /** Run ``send`` with the save's key header, in the same tick when no wait is needed. */
@@ -2259,7 +2253,7 @@ export const corpus = {
       }
       // Only this session may use the answer. Build from that answer rather
       // than re-entering discovery if teardown cleared the shared cache.
-      const headers = vendors === null ? undefined : onboardingKeyHeaders(token, vendors);
+      const headers = vendors === null ? undefined : onboardingKeyHeaders(vendors);
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
         body: { filename, content_base64: contentBase64, classification },
