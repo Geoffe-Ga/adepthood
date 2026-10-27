@@ -856,8 +856,27 @@ export const invitationTargetTypeSchema = z.enum([
 ]);
 export const invitationKindSchema = z.enum(['readiness', 'consistency', 'mastery']);
 
+/** Python's wire limits count Unicode code points, including emoji as one character. */
+const readingText = (limit: number) =>
+  z
+    .string()
+    .min(1)
+    .refine((value) => Array.from(value).length <= limit);
+
+export const readingInvitationSchema = z.object({
+  content_id: z.number().int().positive(),
+  stage_number: z.number().int().min(1).max(10),
+  title: readingText(240),
+  entry_id: z.number().int().positive(),
+  entry_title: z.string().nullable(),
+  quote: readingText(280),
+  reason: readingText(400),
+  benefit: readingText(400),
+});
+
 /** One declinable invitation (mirrors the backend ``InvitationResponse``). */
 export const invitationSchema = z.object({
+  reading: readingInvitationSchema.nullish(),
   id: z.number().int(),
   target_type: invitationTargetTypeSchema,
   target_id: z.number().int().nullable(),

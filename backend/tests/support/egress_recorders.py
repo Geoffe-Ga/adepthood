@@ -133,6 +133,7 @@ class Ledger:
 
     events: list[Event] = field(default_factory=list)
     pause_on: frozenset[Recorder] = frozenset()
+    pause_verb: str | None = None
     paused: asyncio.Event = field(default_factory=asyncio.Event)
     release: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -142,20 +143,26 @@ class Ledger:
 
     async def dial(self, recorder: Recorder, verb: str, payload: str) -> None:
         """Append one crossing, holding it open first if the pause is armed here."""
-        if recorder in self.pause_on and not self.paused.is_set():
+        if (
+            recorder in self.pause_on
+            and (self.pause_verb is None or verb == self.pause_verb)
+            and not self.paused.is_set()
+        ):
             self.paused.set()
             await self.release.wait()
         self.record(recorder, verb, payload)
 
-    def arm_pause(self, recorders: frozenset[Recorder]) -> None:
-        """Hold the next crossing at any of ``recorders`` until :attr:`release` is set."""
+    def arm_pause(self, recorders: frozenset[Recorder], *, verb: str | None = None) -> None:
+        """Hold the next matching crossing; ``verb`` can select a later model dial."""
         self.paused = asyncio.Event()
         self.release = asyncio.Event()
         self.pause_on = recorders
+        self.pause_verb = verb
 
     def disarm_pause(self) -> None:
         """Stop pausing, and let anything still held go."""
         self.pause_on = frozenset()
+        self.pause_verb = None
         self.release.set()
 
     def mark(self) -> int:

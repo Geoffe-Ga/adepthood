@@ -76,9 +76,7 @@ const offerFor = (targetType: InvitationTargetTypeT, aspect: string | undefined)
 };
 
 const readinessCourseOffer = (aspect: string | undefined): string =>
-  aspect
-    ? 'There is a reading built for exactly that. It is here when you want it, and I think you want it.'
-    : 'There is a course reading built for that theme. It is here when you want it.';
+  aspect ? 'A related reading is available.' : 'A related course reading is available.';
 
 /** Compose the invitation line + its decline accessibility label for a pair. */
 export function invitationCopy(

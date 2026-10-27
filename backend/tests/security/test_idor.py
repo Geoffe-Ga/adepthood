@@ -773,11 +773,13 @@ async def test_idor_practice_session_create_returns_403(
     assert getattr(denials[0], "user_id", None) == bob_id
 
 
+@pytest.mark.parametrize("route", ["stats", "story"])
 @pytest.mark.asyncio
 async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
     async_client: AsyncClient,
     db_session: AsyncSession,
     caplog: pytest.LogCaptureFixture,
+    route: str,
 ) -> None:
     """Bob cannot read the all-time totals for Alice's practice.
 
@@ -816,7 +818,7 @@ async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
 
     with caplog.at_level(logging.WARNING):
         attack = await async_client.get(
-            "/practice-sessions/stats",
+            f"/practice-sessions/{route}",
             params={"user_practice_id": alice_practice_id},
             headers=bob_headers,
         )
@@ -831,12 +833,13 @@ async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
     # be about ownership -- and it reports his empty history, not Alice's two
     # sits on the very same catalog practice.
     baseline = await async_client.get(
-        "/practice-sessions/stats",
+        f"/practice-sessions/{route}",
         params={"user_practice_id": bob_practice_id},
         headers=bob_headers,
     )
     assert baseline.status_code == HTTPStatus.OK
-    assert baseline.json() == {"total_sessions": 0, "total_minutes": 0.0}
+    assert baseline.json()["total_sessions"] == 0
+    assert baseline.json()["total_minutes"] == 0.0
 
     # A read must not write, and must not have disturbed what it refused to show.
     after = await _sessions_where(db_session, col(PracticeSession.user_id) == alice_id)
@@ -859,7 +862,8 @@ async def _probe_missing_user_practice(
             json=_session_window_payload(_DEFINITELY_MISSING_ID),
             headers=headers,
         )
-    path = "/practice-sessions/stats" if spelling == "stats_query" else "/practice-sessions/"
+    paths = {"stats_query": "/practice-sessions/stats", "story_query": "/practice-sessions/story"}
+    path = paths.get(spelling, "/practice-sessions/")
     return await async_client.get(
         path,
         params={"user_practice_id": _DEFINITELY_MISSING_ID},
@@ -867,7 +871,7 @@ async def _probe_missing_user_practice(
     )
 
 
-@pytest.mark.parametrize("spelling", ["body", "query", "stats_query"])
+@pytest.mark.parametrize("spelling", ["body", "query", "stats_query", "story_query"])
 @pytest.mark.asyncio
 async def test_practice_session_missing_user_practice_is_404_and_unaudited(
     async_client: AsyncClient,

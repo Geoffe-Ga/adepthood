@@ -137,9 +137,11 @@ import {
 } from './schemas';
 import {
   beginAuthSession,
+  captureAuthScope,
   captureAnonymousScope,
   captureSessionToken,
   installSessionTokenGetter,
+  isAuthScopeCurrent,
 } from './sessionToken';
 import { createTokenRotation, type RecoveryMode } from './tokenRotation';
 import { classifyTranscription } from './transcriptionContract';
@@ -558,15 +560,27 @@ export const vaultRequestKeys = {
  * on the vault: before the first answer it goes without the key and starts the
  * one read later saves use.
  */
-function onboardingKeyHeaders(token?: string): Record<string, string> | undefined {
+function onboardingKeyHeaders(
+  token?: string,
+  vendors: readonly VaultKeyVendor[] | null = vaultKeyVendors,
+): Record<string, string> | undefined {
   const key = llmApiKeyGetter?.() ?? null;
   const vendor = vaultKeyVendorFor(key);
   if (key === null || vendor === null) return undefined;
-  if (vaultKeyVendors === null) {
+  if (vendors === null) {
     vaultRequestKeys.get(token).catch(() => undefined);
     return undefined;
   }
-  return vaultKeyVendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
+  return vendors.includes(vendor) ? { [LLM_API_KEY_HEADER]: key } : undefined;
+}
+
+/** Refresh key eligibility before an explicit upload, including after a Vault upgrade. */
+function documentKeyVendors(token?: string): Promise<readonly VaultKeyVendor[] | null> {
+  const vendor = vaultKeyVendorFor(llmApiKeyGetter?.() ?? null);
+  if (vendor === null) return Promise.resolve(null);
+  // Discovery has the ordinary HTTP timeout. An old empty answer can outlive
+  // a Vault upgrade; a failed refresh must not reuse an old affirmative one.
+  return vaultRequestKeys.get(token).catch(() => null);
 }
 
 /** How a successful response body is read. */
@@ -2152,11 +2166,20 @@ export const corpus = {
     { filename, contentBase64, classification }: ImportDocumentInput,
     token?: string,
   ): Promise<DocumentImportT> {
+    const scope = captureAuthScope();
+    const epoch = vaultKeyEpoch;
     try {
+      const vendors = await documentKeyVendors(token);
+      if (epoch !== vaultKeyEpoch || !isAuthScopeCurrent(scope)) {
+        throw new DocumentUploadError('unknown', null);
+      }
+      // Only this session may use the answer. Build from that answer rather
+      // than re-entering discovery if teardown cleared the shared cache.
+      const headers = vendors === null ? undefined : onboardingKeyHeaders(token, vendors);
       return await request<DocumentImportT>('/corpus/import', {
         method: 'POST',
         body: { filename, content_base64: contentBase64, classification },
-        headers: onboardingKeyHeaders(token),
+        headers,
         token,
         timeoutMs: UPLOAD_DOCUMENT_TIMEOUT_MS,
         schema: documentImportSchema as unknown as z.ZodType<DocumentImportT>,
@@ -3364,6 +3387,43 @@ export interface PracticeStatsResponse {
   total_minutes: number;
 }
 
+/** A counted sitting, ordered oldest first by the practice story service. */
+export interface PracticeStorySit {
+  timestamp: string;
+  duration_minutes: number;
+  completed: boolean;
+  mode: string;
+}
+
+export interface PracticeStoryMilestone {
+  kind: string;
+  reached_on: string;
+  value: number;
+}
+
+/** Owner-scoped lifetime record; stage fields describe the current stage window. */
+export interface PracticeStoryResponse {
+  total_minutes: number;
+  total_sessions: number;
+  weekly: PracticeWeeklyBucket[];
+  weekly_target: number;
+  recent_sits: PracticeStorySit[];
+  time_of_day: { dawn: number; day: number; dusk: number; night: number };
+  modes: Record<string, number>;
+  stage_ask_minutes: number | null;
+  stage_average_minutes: number | null;
+  stage_session_count: number;
+  stage_partial_sessions: number;
+  partial_sessions: number;
+  insight_count: number;
+  last_insight: string | null;
+  last_insight_timestamp: string | null;
+  mode_totals: Record<string, number>;
+  first_session_on: string | null;
+  observations?: string[];
+  milestones?: PracticeStoryMilestone[];
+}
+
 /**
  * Payload for ``POST /practices/`` (custom-practices-07).
  *
@@ -3670,6 +3730,12 @@ export const frequency = {
 };
 
 export const practiceSessions = {
+  story(userPracticeId: number, token?: string): Promise<PracticeStoryResponse> {
+    return request<PracticeStoryResponse>(
+      `/practice-sessions/story?user_practice_id=${userPracticeId}`,
+      { token },
+    );
+  },
   create(payload: PracticeSessionCreate, token?: string): Promise<PracticeSessionResponse> {
     return request<PracticeSessionResponse>('/practice-sessions/', {
       method: 'POST',

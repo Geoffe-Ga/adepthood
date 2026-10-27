@@ -1,0 +1,1 @@
+Optional reading-recommendation contract 0.25, copied byte-for-byte from the pinned Creek-Vault commit in vendor.json. The existing creek_v1 bundle and base contract 0.22 remain unchanged. The conformance suite verifies both this pin and Creek's manifest digests. Refresh this snapshot only from a reviewed immutable commit. All example writing is synthetic.

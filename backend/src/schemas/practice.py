@@ -408,3 +408,43 @@ class PracticeStatsResponse(BaseModel):
 
     total_sessions: int
     total_minutes: float
+
+
+class PracticeStorySit(BaseModel):
+    """One of the last thirty counted sits, in chronological order."""
+
+    timestamp: datetime
+    duration_minutes: float
+    completed: bool
+    mode: str
+
+
+class PracticeTimeOfDay(BaseModel):
+    """Four explicit user-local time buckets, including those with no sits."""
+
+    dawn: int
+    day: int
+    dusk: int
+    night: int
+
+
+class PracticeStoryResponse(BaseModel):
+    """Lifetime and stage facts returned by ``GET /practice-sessions/story``."""
+
+    total_minutes: float
+    total_sessions: int
+    weekly: list[PracticeSessionWeeklyCount]
+    weekly_target: int
+    recent_sits: list[PracticeStorySit]
+    time_of_day: PracticeTimeOfDay
+    modes: dict[str, int]
+    stage_ask_minutes: float
+    stage_average_minutes: float | None
+    stage_session_count: int
+    stage_partial_sessions: int
+    partial_sessions: int
+    insight_count: int
+    last_insight: str | None
+    last_insight_timestamp: datetime | None
+    mode_totals: dict[str, float]
+    first_session_on: date | None

@@ -17,9 +17,13 @@ from dependencies.ownership import (
     resolve_owned_user_practice,
 )
 from dependencies.timezone import current_user_timezone
+from domain.constants import STAGE_START_WEEKS, WEEKS_PER_STAGE
+from domain.dates import ensure_aware
 from domain.practice_insights import build_insights
-from domain.practice_resolution import effective_config
+from domain.practice_resolution import effective_config, effective_duration_minutes
 from domain.practice_stats import compute_practice_stats
+from domain.practice_story import PracticeStageScope, build_practice_story
+from domain.program_calendar import program_week_bounds
 from domain.stage_progress import get_user_progress, is_stage_unlocked
 from error_responses import build_router
 from errors import bad_request, conflict, forbidden, not_found
@@ -30,10 +34,12 @@ from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
 from schemas.pagination import paginate_query
 from schemas.practice import (
+    MAX_FUTURE_SKEW,
     PracticeInsightsResponse,
     PracticeSessionCreate,
     PracticeSessionResponse,
     PracticeStatsResponse,
+    PracticeStoryResponse,
     WeekCountResponse,
 )
 from schemas.practice_mode_config import MindfulAnchorConfig
@@ -489,6 +495,56 @@ async def get_practice_stats(
     _mark_uncacheable(response)
     rows = await _sessions_for_practice(session, user_practice, current_user)
     return PracticeStatsResponse.model_validate(compute_practice_stats(rows), from_attributes=True)
+
+
+async def _practice_stage_scope(
+    session: AsyncSession, user_practice: UserPractice, current_user: int, tz: str
+) -> PracticeStageScope:
+    """Prefer the recorded current-stage boundary, then a known cycle calendar.
+
+    Without progress or a usable anchor, only the named adoption is a known
+    stage population. Never use all earlier adoptions as a current-stage mean.
+    """
+    selection_id = cast("int", user_practice.id)
+    progress = await get_user_progress(session, current_user)
+    if progress is None:
+        return PracticeStageScope(selection_id)
+    if progress.current_stage == user_practice.stage_number:
+        # A slightly fast device may log through this instant under the write
+        # policy. Its just-saved sit belongs in both the lifetime and stage facts.
+        window = (ensure_aware(progress.stage_started_at), datetime.now(UTC) + MAX_FUTURE_SKEW)
+        return PracticeStageScope(selection_id, window)
+    if progress.program_started_at is None:
+        return PracticeStageScope(selection_id)
+    index = user_practice.stage_number - 1
+    first_week = STAGE_START_WEEKS[index]
+    weeks = range(first_week, first_week + WEEKS_PER_STAGE[index])
+    return PracticeStageScope(
+        selection_id, program_week_bounds(progress.program_started_at, weeks, tz=tz)
+    )
+
+
+@router.get("/story", response_model=PracticeStoryResponse)
+async def get_practice_story(
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    response: Response,
+    user_practice: Annotated[UserPractice, Depends(require_owned_user_practice_from_query)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> PracticeStoryResponse:
+    """Return server-computed Story facts for this owner's complete practice history."""
+    _mark_uncacheable(response)
+    practice = await session.get(Practice, user_practice.practice_id)
+    if practice is None:
+        raise not_found("practice")
+    rows = await _sessions_for_practice(session, user_practice, current_user)
+    story = build_practice_story(
+        rows,
+        tz=user_tz,
+        stage_ask_minutes=effective_duration_minutes(practice, user_practice),
+        stage_scope=await _practice_stage_scope(session, user_practice, current_user, user_tz),
+    )
+    return PracticeStoryResponse.model_validate(story, from_attributes=True)
 
 
 def _start_of_week_utc(tz_name: str) -> datetime:

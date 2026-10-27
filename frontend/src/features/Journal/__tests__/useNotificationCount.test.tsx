@@ -75,7 +75,23 @@ jest.mock('../VoiceReadinessBand', () => ({
 const IDLE_RETURN: ReturnShape = { arc: null, offerVisible: false, releasedHabits: [] };
 
 function invitation(id: number, target: Invitation['target_type']): Invitation {
-  return { id, target_type: target } as Invitation;
+  return {
+    id,
+    target_type: target,
+    reading:
+      target === 'course'
+        ? {
+            content_id: 24,
+            stage_number: 2,
+            title: 'A reading',
+            entry_id: 8,
+            entry_title: null,
+            quote: 'A journal passage',
+            reason: 'A specific connection',
+            benefit: 'An exercise',
+          }
+        : null,
+  } as Invitation;
 }
 
 function stageWith(dismissed: boolean[]): StagePromptsResponse {

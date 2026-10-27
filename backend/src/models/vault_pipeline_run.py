@@ -79,12 +79,11 @@ class VaultPipelineOutcome(enum.StrEnum):
 
     Six members, separating promised work, uncertain admission, incomplete work,
     failure, and ambiguity.
-    ``INCOMPLETE`` is Creek's ``complete: false`` — a classification pass that
-    skipped some fragments — and it is neither a success nor a failure: the pass
-    is resumable, so it means the honest next step is to call again, while the
-    labels it did write are real and the stages that read them may run. Folding
-    it into ``COMPLETED`` would lose the reason to come back; folding it into
-    ``FAILED`` would stand down a stage that in fact did most of its work.
+    ``INCOMPLETE`` covers Creek's ``complete: false`` and a managed rules
+    fallback: semantic classification still has work to do. The labels already
+    written are real and the stages that read them may run. Folding this into
+    ``COMPLETED`` would lose the reason to come back; folding it into ``FAILED``
+    would stand down a stage that in fact wrote usable labels.
 
     Values are stored, so they are a persisted vocabulary and must not be
     reworded without a migration.
@@ -102,9 +101,10 @@ class VaultPipelineOutcome(enum.StrEnum):
             unknown": it holds the interval closed, and it does not count as a
             classification having landed.
         COMPLETED: The vault ran the stage and reported it clean.
-        INCOMPLETE: The vault ran the stage and reported that some fragments
-            were skipped. Only a classification pass can report this; the linker
-            has no per-fragment error accumulator to collapse.
+        INCOMPLETE: Classification skipped some fragments or used only the
+            rules floor instead of the requested semantic pass. Only a
+            classification pass can report this; the linker has no
+            per-fragment error accumulator to collapse.
         FAILED: The stage definitively failed or was refused after its bounded
             retry path. A timeout or lost answer alone is not sufficient.
         AMBIGUOUS: Bounded retries were exhausted without a terminal answer.

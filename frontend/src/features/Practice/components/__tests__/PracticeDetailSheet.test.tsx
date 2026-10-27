@@ -228,3 +228,13 @@ describe('PracticeDetailSheet', () => {
     expect(queryByTestId('practice-detail-stage-picker')).toBeNull();
   });
 });
+
+// These action/layout tests browse anonymously; the owner-scoped story has its own integration suite.
+jest.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({
+    token: null,
+    authStatus: 'anonymous',
+    userTimezone: 'UTC',
+    userTimezoneReady: true,
+  }),
+}));

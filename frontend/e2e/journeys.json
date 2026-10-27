@@ -1108,7 +1108,7 @@
   },
   {
     "id": "practice.per-practice-totals-on-the-detail-screen",
-    "description": "A practitioner who has sat one practice several times walks from the player to that practice's own detail screen -- Practice, its drawer, \"Practice details\" -- and reads how much they have put into it: total sittings and total time, rendered as hours plus the minutes past 60. The totals are a backend aggregate keyed on an adoption the caller owns, never a client-side sum over a paged session list, and the aggregate widens server-side to every adoption of the same catalog practice that caller owns, so a practice carried from one stage into the next reports one lifetime figure rather than a per-stage slice. The spec logs a zero-length abort alongside two real sittings and asserts it moves neither number, which is the counting rule this endpoint had to settle: the insights rollup skips zero-duration rows, the legacy week-count route does not, and a total cannot honour both. It runs in the Playwright lane because the node lane cannot mount a screen at all (#2324), and because the rollup is read one tap from the player that writes the rows it counts -- the #2654 hazard, which only a browser holding an HTTP cache can see, so the last leg leaves the screen and comes back to force a real re-read.",
+    "description": "A practitioner who has sat one practice several times walks from the player to that practice's own detail screen -- Practice, its drawer, \"Practice details\" -- and reads how much they have put into it: lifetime hours and sittings, eight weekly columns, recent sits including early endings, time of day, and the dated last insight. Every chart has the same raw values available through the record overflow. The totals are a backend aggregate keyed on an adoption the caller owns, never a client-side sum over a paged session list, and the aggregate widens server-side to every adoption of the same catalog practice that caller owns, so a practice carried from one stage into the next reports one lifetime figure rather than a per-stage slice. The spec logs a zero-length abort alongside two real sittings and asserts it moves neither number, which is the counting rule this endpoint had to settle: the insights rollup skips zero-duration rows, the legacy week-count route does not, and a total cannot honour both. It runs in the Playwright lane because the node lane cannot mount a screen at all (#2324), and because the rollup is read one tap from the player that writes the rows it counts -- the #2654 hazard, which only a browser holding an HTTP cache can see, so the last leg leaves the screen and comes back to force a real re-read.",
     "crosses": {
       "screen": "frontend/src/features/Practice/screens/PracticeDetailScreen.tsx",
       "client": ["practices", "userPractices", "practiceSessions"],
@@ -1117,7 +1117,7 @@
         "POST /user-practices/",
         "GET /user-practices/",
         "POST /practice-sessions/",
-        "GET /practice-sessions/stats"
+        "GET /practice-sessions/story"
       ],
       "tables": ["practice", "userpractice", "practicesession"]
     },
@@ -2670,17 +2670,28 @@
     "coveredBy": "frontend/e2e/account-decline-choices.browser.e2e.test.ts"
   },
   {
-    "id": "journal.invitation-reason-and-served-aspect",
-    "description": "A course invitation explains why it appeared: a theme across the writer's full corpus has crossed the generation threshold, and the reading is named by that stage's served Aspect rather than its relationship-to-free-will persona (#3104). The browser arranges a real pending course/readiness InvitationSignal whose target_id names stage 2, opens the Notification Center directly from a cold Journal route, and requires its one visit-free GET /stages/correspondence lookup to carry a deliberately long served Aspect while excluding a deliberately distinct served persona. The same real card stays fully readable with a clear one-tap Not now action at 390x844, at an effective 200% size, and at 1280x800; glyph bounds, viewport overflow, line/action separation, the 44px target, the unchanged spoken name and the real dismiss POST are asserted. Eligibility generation itself remains pinned by the backend domain suite; this journey begins from the persisted signal so it can isolate the frontend lookup and copy seam.",
+    "id": "journal.grounded-reading-invitation",
+    "description": "A vault-bound writer with journal corpus consent receives a model-grounded reading recommendation through the real app HTTP client and versioned external vault operation (the browser lane substitutes synthetic generation at that external boundary). The card shows a verbatim current journal passage, its source entry, a specific accessible chapter title, the connection, and a concrete benefit. At phone, narrow, and desktop sizes, keyboard activation opens that exact chapter body directly. The source link opens the original entry, and declining persists across reload. Producer tests separately exercise the production generation router with a pinned fake pool, caching, cancellation, no-BYOK behavior, and strict grounding; backend tests cover source ownership, consent, deletion, edits, tiers, and read-only course eligibility.",
     "crosses": {
       "screen": "frontend/src/features/Invitations/InvitationNote.tsx",
-      "client": ["invitations", "stages"],
+      "client": ["invitations", "course", "journal", "corpusConsent", "auth"],
       "routes": [
-        "GET /stages/correspondence",
+        "POST /auth/login",
+        "POST /journal/",
+        "PATCH /journal/{entry_id}",
+        "GET /journal/{entry_id}",
+        "PUT /corpus/consent/{source}",
         "GET /invitations",
+        "GET /course/content/{content_id}/body",
         "POST /invitations/{invitation_id}/dismiss"
       ],
-      "tables": ["coursestage", "invitationsignal"]
+      "tables": [
+        "coursestage",
+        "invitationsignal",
+        "stagecontent",
+        "journalentry",
+        "corpusconsentevent"
+      ]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/invitation-reason-copy.browser.e2e.test.ts"
@@ -3111,11 +3122,23 @@
   },
   {
     "id": "journal.managed-vault-classification-own-key",
-    "description": "A writer saves a personal journal page with their own provider key while an unstarted classification is queued (#3550). The production journal.create wrapper sends the request-scoped key to the live server, which admits CLASSIFY through the real managed-vault adapter and commits the returned handle before replying. The opt-in lane vault keeps the job non-terminal until the journey observes that handle, records the key only by digest on the single classification POST, then completes the same handle through keyless status polling. The test-only arrange module resolves the authenticated lane owner and touches only content-free pipeline state in the disposable e2e database. Backend controls cover fresh follow-up admission, a spent foreground clock, absent/ineligible keys, already admitted jobs, synchronous completion, database recovery and the stale-continuation race; detached retries and restart recovery remain keyless under ADR0009/Creek ADR0015.",
+    "description": "A writer saves a personal journal page or imports a document with their own provider key while an unstarted classification is queued (#3550). The document case starts with a cold vendor cache and lets the production corpus.importDocument wrapper discover the eligible vendor before sending its first upload; a second document case first caches an empty vendor answer, then enables request keys to prove recovery after a Vault upgrade; the journal case keeps its non-blocking save and explicitly primes eligibility. The production journal.create wrapper sends the request-scoped key to the live server, which admits CLASSIFY through the real managed-vault adapter and commits the returned handle before replying. The opt-in lane vault keeps the job non-terminal until the journey observes that handle, records the key only by digest on the single classification POST, then completes the same handle through keyless status polling. The test-only arrange module resolves the authenticated lane owner and touches only content-free pipeline state in the disposable e2e database. Backend controls cover fresh follow-up admission, a spent foreground clock, absent/ineligible keys, already admitted jobs, synchronous completion, database recovery and the stale-continuation race; detached retries and restart recovery remain keyless under ADR0009/Creek ADR0015.",
     "crosses": {
       "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
-      "client": ["auth", "setTokenGetter", "setLlmApiKeyGetter", "vaultRequestKeys", "journal"],
-      "routes": ["POST /auth/login", "GET /user/vault-key-vendors", "POST /journal/"],
+      "client": [
+        "auth",
+        "setTokenGetter",
+        "setLlmApiKeyGetter",
+        "vaultRequestKeys",
+        "journal",
+        "corpus"
+      ],
+      "routes": [
+        "POST /auth/login",
+        "GET /user/vault-key-vendors",
+        "POST /journal/",
+        "POST /corpus/import"
+      ],
       "tables": ["user", "journalentry", "vaultpipelinerun"]
     },
     "status": "covered",

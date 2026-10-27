@@ -527,7 +527,7 @@ async def test_response_shape_has_required_keys_and_excludes_user_id(
     assert user.id is not None
 
     await _seed_pending_signal(
-        db_session, user.id, target_type="course", target_id=5, kind="readiness"
+        db_session, user.id, target_type="practice", target_id=5, kind="readiness"
     )
 
     resp = await async_client.get(_LIST_URL, headers=headers)
@@ -640,9 +640,8 @@ async def test_get_invitations_includes_vault_theme_candidate(
     items = resp.json()
     course_items = [i for i in items if i["target_type"] == "course"]
     habit_items = [i for i in items if i["target_type"] == "habit"]
-    assert len(course_items) == 1
-    assert course_items[0]["target_id"] == theme_stage
-    assert course_items[0]["kind"] == "readiness"
+    # A wheel signal alone is not a grounded reading recommendation.
+    assert course_items == []
     assert habit_id in [i["target_id"] for i in habit_items]
 
 
@@ -728,7 +727,7 @@ async def test_disabled_rings_hide_pending_invitations(
     shown = await _listed_ids(async_client, headers)
 
     assert pending_id not in hidden
-    assert pending_id in shown
+    assert (pending_id in shown) is (target_type != "course")
     assert dismissed_id not in hidden
     assert dismissed_id not in shown
     db_session.expire_all()

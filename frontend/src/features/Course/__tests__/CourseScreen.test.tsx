@@ -7,6 +7,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import type { ContentItem, CourseProgress, Stage } from '../../../api';
 import { colors, rhythm, STAGE_COLORS } from '../../../design/tokens';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
+import type { RootTabParamList } from '../../../navigation/BottomTabs';
 import { useProgramStore } from '../../../store/useProgramStore';
 
 import { settle } from '@/testing/asyncSettle';
@@ -180,7 +181,10 @@ jest.mock('../../../api', () => ({
 const mockNavigate = jest.fn() as any;
 // Mutable route params so a test can simulate a second Map->Course deep-link
 // reaching the already-mounted Course tab by reassigning this between renders.
-let mockRouteParams: { stageNumber?: number } | undefined;
+let mockRouteParams: RootTabParamList['Course'];
+const mockSetParams = jest.fn((params: Partial<NonNullable<RootTabParamList['Course']>>) => {
+  mockRouteParams = { ...mockRouteParams, ...params };
+});
 // CourseScreen installs its header-left drawer toggle through useAppNavigation
 // (useScreenDrawer), which calls navigation.setOptions in a layout effect on
 // every mount -- without this mock every test below would crash reading
@@ -191,7 +195,7 @@ jest.mock('../../../navigation/hooks', () => ({
 }));
 // The reflect action now pushes the root-stack JournalEntry via useNavigation.
 jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: mockNavigate }),
+  useNavigation: () => ({ navigate: mockNavigate, setParams: mockSetParams }),
 }));
 
 jest.mock('react-native-safe-area-context', () => {
@@ -619,6 +623,81 @@ describe('CourseScreen', () => {
     expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
     expect(mockStageContent.mock.calls.length).toBe(contentCallsAfterMount);
     expect(mockStagesList.mock.calls.length).toBe(stagesCallsAfterMount);
+  });
+
+  it('consumes an invitation section request even when its routed stage has not changed', async () => {
+    mockRouteParams = { stageNumber: 2 };
+    const { getByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+    fireEvent.press(getByTestId('stage-pill-1'));
+    await settle();
+    expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+
+    mockRouteParams = { stageNumber: 2, openSection: true };
+    rerender(<CourseScreen />);
+    await settle();
+    expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+    expect(mockSetParams).toHaveBeenCalledWith({
+      openSection: undefined,
+      openReading: undefined,
+      contentId: undefined,
+      scrollOffset: undefined,
+    });
+
+    // Once consumed, ordinary browsing must not keep snapping back to stage 2.
+    fireEvent.press(getByTestId('stage-pill-1'));
+    await settle();
+    expect(getByTestId('stage-pill-1').props.accessibilityState.selected).toBe(true);
+  });
+
+  it('clears an old reader and stale restore hints when an invitation opens a section', async () => {
+    mockRouteParams = { stageNumber: 1 };
+    const { getByTestId, queryByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+    fireEvent.press(getByTestId('content-card-1'));
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
+
+    mockRouteParams = { stageNumber: 2, openSection: true, contentId: 1, scrollOffset: 80 };
+    rerender(<CourseScreen />);
+    await settle();
+    expect(queryByTestId('chapter-reader')).toBeNull();
+    expect(getByTestId('stage-pill-2').props.accessibilityState.selected).toBe(true);
+    expect(mockRouteParams.contentId).toBeUndefined();
+    expect(mockRouteParams.scrollOffset).toBeUndefined();
+  });
+
+  it('opens the specific suggested chapter again after backing out, from its beginning', async () => {
+    mockRouteParams = { stageNumber: 1 };
+    const { getByTestId, queryByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      mockRouteParams = { stageNumber: 1, contentId: 1, openReading: true, scrollOffset: 80 };
+      rerender(<CourseScreen />);
+      await settle();
+      // The navigation stub mutates params; emulate the route render emitted by setParams.
+      rerender(<CourseScreen />);
+      await settle();
+      expect(getByTestId('chapter-reader')).toBeTruthy();
+      expect(mockRouteParams.openReading).toBeUndefined();
+      expect(mockRouteParams.scrollOffset).toBe(0);
+      fireEvent.press(getByTestId('reader-back-button'));
+      await settle();
+      expect(queryByTestId('chapter-reader')).toBeNull();
+    }
+  });
+
+  it('keeps an open reader on an ordinary return to Course', async () => {
+    mockRouteParams = { stageNumber: 1 };
+    const { getByTestId, rerender } = render(<CourseScreen />);
+    await settle();
+    fireEvent.press(getByTestId('content-card-1'));
+    await settle();
+    mockRouteParams = { stageNumber: 1 };
+    rerender(<CourseScreen />);
+    await settle();
+    expect(getByTestId('chapter-reader')).toBeTruthy();
+    expect(mockSetParams).not.toHaveBeenCalled();
   });
 
   // #2958: params resolved through the real linking config, exactly as a

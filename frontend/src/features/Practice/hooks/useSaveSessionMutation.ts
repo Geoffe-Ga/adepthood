@@ -14,6 +14,8 @@ import type { PracticeSessionCreate, PracticeSessionResponse } from '@/api';
 import { practiceSessions } from '@/api';
 import type { FormatErrorOptions } from '@/api/errorMessages';
 import { formatApiError } from '@/api/errorMessages';
+import { captureAuthScope } from '@/api/sessionToken';
+import { notifyPracticeRecordSaved } from '@/features/Practice/practiceRecordEvents';
 import type { OptimisticMutation } from '@/hooks/useOptimisticMutation';
 import { useOptimisticMutation } from '@/hooks/useOptimisticMutation';
 
@@ -59,7 +61,9 @@ export function useSaveSessionMutation({
       apply();
     },
     commit: async (payload) => {
+      const scope = captureAuthScope();
       const session = await practiceSessions.create(payload);
+      notifyPracticeRecordSaved(scope);
       commit();
       // Finish the sitting without waiting for its optional habit write. The
       // linked-habit controller owns that write's result and factual notice.

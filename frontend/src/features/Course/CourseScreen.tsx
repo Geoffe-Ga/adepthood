@@ -531,7 +531,7 @@ function useJournalHandoff(
   return { handleReflect, handleWriteNote };
 }
 
-function useCourseViewer(selectedStage: number) {
+function useCourseViewer(selectedStage: number, setSelectedStage: (_stageNumber: number) => void) {
   const [viewingItem, setViewingItem] = useState<ContentItem | null>(null);
   const [viewingResource, setViewingResource] = useState<ResourceTarget | null>(null);
   const [viewingIntro, setViewingIntro] = useState<number | null>(null);
@@ -571,6 +571,7 @@ function useCourseViewer(selectedStage: number) {
     viewingItem,
     clearViewingItem,
   );
+  useOpenCourseSection(setSelectedStage, handleBack);
 
   return {
     viewingItem,
@@ -585,6 +586,41 @@ function useCourseViewer(selectedStage: number) {
     handleReflect,
     handleWriteNote,
   };
+}
+
+/**
+ * An invitation asks to see a section even when Course is already mounted on
+ * that route. Consume the request so later browsing and ordinary tab returns
+ * keep their place, and discard any reader restore left by an earlier visit.
+ */
+function useOpenCourseSection(
+  setSelectedStage: (_stageNumber: number) => void,
+  closeViewer: () => void,
+): void {
+  const route = useAppRoute<'Course'>();
+  const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList, 'Course'>>();
+  const stageNumber = route.params?.stageNumber;
+  const openSection = route.params?.openSection;
+  const openReading = route.params?.openReading;
+  useEffect(() => {
+    if ((openSection !== true && openReading !== true) || stageNumber === undefined) return;
+    setSelectedStage(stageNumber);
+    closeViewer();
+    navigation.setParams({
+      openSection: undefined,
+      openReading: undefined,
+      contentId: openReading ? route.params?.contentId : undefined,
+      scrollOffset: openReading ? 0 : undefined,
+    });
+  }, [
+    openSection,
+    openReading,
+    stageNumber,
+    route.params?.contentId,
+    setSelectedStage,
+    closeViewer,
+    navigation,
+  ]);
 }
 
 /** On a return from the journal, auto-open the returned content restored to its
@@ -607,6 +643,7 @@ function useReaderRestore(
   const route = useAppRoute<'Course'>();
   const contentId = route.params?.contentId ?? null;
   const scrollOffset = route.params?.scrollOffset ?? 0;
+  const openingSection = route.params?.openSection === true || route.params?.openReading === true;
   const restoredIdRef = useRef<number | null>(null);
   const [armSeq, setArmSeq] = useState(0);
 
@@ -616,13 +653,17 @@ function useReaderRestore(
   }, []);
 
   useEffect(() => {
+    if (openingSection) {
+      restoredIdRef.current = null;
+      return;
+    }
     if (contentId === null || restoredIdRef.current === contentId) return;
     if (currentViewingId === contentId) return;
     const item = content.find((c) => c.id === contentId);
     if (!item || item.is_locked) return;
     restoredIdRef.current = contentId;
     openForRestore(item, scrollOffset);
-  }, [contentId, scrollOffset, currentViewingId, content, openForRestore, armSeq]);
+  }, [openingSection, contentId, scrollOffset, currentViewingId, content, openForRestore, armSeq]);
 
   return { rearm };
 }
@@ -1036,7 +1077,7 @@ function CourseReaderOverlay({
 const CourseScreen = (): React.JSX.Element => {
   const { allStages, selectedStage, setSelectedStage, loading, error, retry } = useStagesLoader();
   const stageContent = useStageContent(selectedStage, allStages.length > 0);
-  const viewer = useCourseViewer(selectedStage);
+  const viewer = useCourseViewer(selectedStage, setSelectedStage);
   const { readNext, onMarkRead, reloadStartHere } = useCourseReadingPosition(
     stageContent,
     viewer,
