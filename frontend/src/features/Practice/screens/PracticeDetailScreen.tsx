@@ -38,11 +38,10 @@ import {
   type PickableMode,
   resolvePickableMode,
 } from '@/features/Practice/components/ModePicker';
-import PracticeStatsBlock from '@/features/Practice/components/PracticeStatsBlock';
+import { PracticeStorySection } from '@/features/Practice/components/PracticeStorySection';
 import ShareSheet from '@/features/Practice/components/ShareSheet';
 import StageSelector from '@/features/Practice/components/StageSelector';
 import { getDeck } from '@/features/Practice/data/decks';
-import { usePracticeStats } from '@/features/Practice/hooks/usePracticeStats';
 import { copyPracticeToStage } from '@/features/Practice/utils/copyPracticeToStage';
 import { formatDuration } from '@/features/Practice/utils/formatDuration';
 import type { RootStackParamList } from '@/navigation/RootStack';
@@ -232,15 +231,12 @@ function LoadedDetail({
 }: DetailContentProps & { practice: PracticeItem }): React.JSX.Element {
   const state = controller.detail;
   const { onUseForCurrentStage, onPickStage } = useDetailUseHandlers(state, practice);
-  // Keyed on the catalog id the screen was opened with; the hook resolves the
-  // caller's own adoption of it before asking for any totals.
-  const { stats } = usePracticeStats(practice.id);
 
   return (
     <DetailScroller frame={frame}>
       <DetailHeader practice={practice} />
       <DetailBody practice={practice} />
-      <PracticeStatsBlock stats={stats} />
+      <PracticeStorySection practiceId={practice.id} stageNumber={practice.stage_number} />
       {state.actionError !== null && (
         <Text style={styles.errorText} testID="practice-detail-action-error">
           {state.actionError}

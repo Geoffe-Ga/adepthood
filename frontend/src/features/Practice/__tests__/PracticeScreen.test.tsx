@@ -9,9 +9,10 @@ import type {
   FrequencyResponse,
   PracticeCreatePayload,
   PracticeItem,
-  PracticeStatsResponse,
+  PracticeStoryResponse,
   UserPractice,
 } from '../../../api';
+import { installSessionTokenGetter } from '../../../api/sessionToken';
 import { motion } from '../../../design/tokens';
 import type { Habit } from '../../../features/Habits/Habits.types';
 import { habitManager } from '../../../features/Habits/services/habitManager';
@@ -20,10 +21,11 @@ import { TAB_CROSSFADE_LIFETIME_MS } from '../../../hooks/useTabCrossFade';
 import { FADE_COVER_LIFETIME_MS } from '../../../hooks/useThresholdFade';
 import { tabParamsFromPath } from '../../../navigation/__tests__/deepLinkTestKit';
 import { recordRecentPractice } from '../../../storage/recentPracticesStorage';
-import { setActiveUser } from '../../../storage/userScope';
+import { getActiveUser, setActiveUser } from '../../../storage/userScope';
 import { useHabitStore } from '../../../store/useHabitStore';
 import { useProgramStore } from '../../../store/useProgramStore';
 import * as accessibilityFocus from '../../../utils/accessibilityFocus';
+import { storyFixture } from '../testSupport/practiceStoryFixture';
 
 // PracticeScreen reads useSafeAreaInsets; stub it with non-zero insets (no
 // SafeAreaProvider in tests) so the safe-area padding is observable.
@@ -94,8 +96,8 @@ const mockFrequency = (jest.fn() as any).mockResolvedValue(sampleFrequency);
 // caller's lifetime totals for it; both are typed so a wrong shape fails tsc.
 const mockPracticesGet = jest.fn<(id: number) => Promise<PracticeItem>>();
 const mockPracticesCreate = jest.fn<(payload: PracticeCreatePayload) => Promise<PracticeItem>>();
-const mockPracticeSessionsStats =
-  jest.fn<(userPracticeId: number) => Promise<PracticeStatsResponse>>();
+const mockPracticeSessionsStory =
+  jest.fn<(userPracticeId: number) => Promise<PracticeStoryResponse>>();
 const mockPopToTop = jest.fn<() => void>();
 
 jest.mock('../../../api', () => ({
@@ -115,7 +117,7 @@ jest.mock('../../../api', () => ({
     create: (...args: unknown[]) => mockPracticeSessionsCreate(...args),
     weekCount: (...args: unknown[]) => mockWeekCount(...args),
     insights: (...args: unknown[]) => mockInsights(...args),
-    stats: (...args: [number]) => mockPracticeSessionsStats(...args),
+    story: (...args: [number]) => mockPracticeSessionsStory(...args),
   },
   frequency: {
     current: (...args: unknown[]) => mockFrequency(...args),
@@ -128,9 +130,19 @@ jest.mock('../../../api/practiceShare', () => ({
   practiceShare: { list: () => Promise.resolve([]) },
 }));
 
-jest.mock('../../../context/AuthContext', () => ({
-  useAuth: () => ({ token: 'test-token', userTimezone: 'UTC' }),
-}));
+jest.mock('../../../context/AuthContext', () => {
+  const credential = jest.requireActual<{ captureSessionToken: () => string | undefined }>(
+    '../../../api/sessionToken',
+  );
+  return {
+    useAuth: () => ({
+      token: credential.captureSessionToken() ?? null,
+      authStatus: 'authenticated',
+      userTimezone: 'UTC',
+      userTimezoneReady: true,
+    }),
+  };
+});
 
 const mockNavigate = jest.fn();
 const mockRootNavigate = jest.fn();
@@ -215,10 +227,30 @@ jest.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
 }));
 
-// eslint-disable-next-line import/order
-const { render, waitFor, fireEvent, act, within } = require('@testing-library/react-native');
+const {
+  render,
+  waitFor,
+  fireEvent,
+  act,
+  within,
+  cleanup,
+} = require('@testing-library/react-native');
+
 const { LOG_WINDOW_REFUSED_COPY } = require('../components/LogPracticeSessionSheet');
 const PracticeScreen = require('../PracticeScreen').default;
+const testToken = (owner: number) =>
+  `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ sub: String(owner), exp: 4102444800 })).toString('base64url')}.test`;
+beforeEach(() => {
+  setActiveUser(1);
+  installSessionTokenGetter(() => {
+    const owner = getActiveUser();
+    return owner === null ? null : testToken(owner);
+  });
+});
+afterEach(() => {
+  installSessionTokenGetter(null);
+  setActiveUser(null);
+});
 
 /** The glyph fronting the dark empty state (PracticeScreen's ``EMPTY_GLYPH``). */
 const EMPTY_GLYPH_TEXT = '🧘';
@@ -1282,8 +1314,10 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
     mockPracticesGet.mockReset();
     mockPracticesGet.mockResolvedValue(samplePractice());
     mockPracticesCreate.mockReset();
-    mockPracticeSessionsStats.mockReset();
-    mockPracticeSessionsStats.mockResolvedValue({ total_sessions: 3, total_minutes: 30 });
+    mockPracticeSessionsStory.mockReset();
+    mockPracticeSessionsStory.mockResolvedValue(
+      storyFixture({ total_sessions: 3, total_minutes: 30 }),
+    );
   });
 
   afterEach(async () => {
@@ -1410,7 +1444,7 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
     await openOverlayOnRow(view, 1);
     // The overlay's own totals read the user's practices once; the snapshot is
     // taken after that settles, so the +1 below is the flip's refresh alone.
-    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalledWith(10));
+    await waitFor(() => expect(mockPracticeSessionsStory).toHaveBeenCalledWith(10, testToken(1)));
     const listCalls = mockUserPracticesList.mock.calls.length;
 
     await act(async () => {
@@ -1629,7 +1663,7 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
       fireEvent.press(view.getByTestId('practice-detail-overlay-close'));
     });
     await openOverlayOnRow(view, 2);
-    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalled());
+    await waitFor(() => expect(mockPracticeSessionsStory).toHaveBeenCalled());
     const listCalls = mockUserPracticesList.mock.calls.length;
 
     await act(async () => {
@@ -1659,7 +1693,7 @@ describe('PracticeScreen embedded catalog detail overlay', () => {
       fireEvent.press(view.getByTestId('practice-detail-overlay-close'));
     });
     await openOverlayOnRow(view, 2);
-    await waitFor(() => expect(mockPracticeSessionsStats).toHaveBeenCalled());
+    await waitFor(() => expect(mockPracticeSessionsStory).toHaveBeenCalled());
     const listCalls = mockUserPracticesList.mock.calls.length;
 
     await act(async () => {
@@ -1739,8 +1773,10 @@ describe('PracticeScreen in-place tab cross-fade', () => {
     mockUserPracticesCreate.mockResolvedValue(sampleUserPractice());
     mockPracticesGet.mockReset();
     mockPracticesGet.mockResolvedValue(samplePractice());
-    mockPracticeSessionsStats.mockReset();
-    mockPracticeSessionsStats.mockResolvedValue({ total_sessions: 3, total_minutes: 30 });
+    mockPracticeSessionsStory.mockReset();
+    mockPracticeSessionsStory.mockResolvedValue(
+      storyFixture({ total_sessions: 3, total_minutes: 30 }),
+    );
     jest.spyOn(reducedMotion, 'useReducedMotion').mockReturnValue(false);
   });
 
@@ -2206,6 +2242,8 @@ describe('PracticeScreen manual log', () => {
   }
 
   afterEach(() => {
+    // Unmount scope subscribers before changing the owner or restoring hook mocks.
+    cleanup();
     mockHabitToken = undefined;
     setActiveUser(null);
     jest.useRealTimers();

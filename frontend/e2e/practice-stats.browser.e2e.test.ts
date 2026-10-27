@@ -29,14 +29,14 @@ const ENTRY_STAGE = 1;
 const LONG_SIT_MINUTES = 45;
 const SHORT_SIT_MINUTES = 20;
 /** 45 + 20 = 65 minutes, which is the "hours+minutes past 60" case the issue names. */
-const EXPECTED_TOTAL_TIME = '1h 5m';
-const EXPECTED_TOTAL_SESSIONS = '2';
+const EXPECTED_TOTAL_TIME = '1 h 5 m';
+const EXPECTED_TOTAL_SESSIONS = 'in practice · 2 sits';
 
 /** Logged between the two reads, so the second one has something to disagree about. */
 const THIRD_SIT_MINUTES = 30;
 /** 45 + 20 + 30 = 95 minutes. */
-const REREAD_TOTAL_TIME = '1h 35m';
-const REREAD_TOTAL_SESSIONS = '3';
+const REREAD_TOTAL_TIME = '1 h 35 m';
+const REREAD_TOTAL_SESSIONS = 'in practice · 3 sits';
 
 const MS_PER_MINUTE = 60_000;
 
@@ -92,6 +92,8 @@ async function logSitting(
   userPracticeId: number,
   minutes: number,
   endedMinutesAgo: number,
+  completed = true,
+  insight: string | null = null,
 ): Promise<void> {
   const ended = new Date(Date.now() - endedMinutesAgo * MS_PER_MINUTE);
   const started = new Date(ended.getTime() - minutes * MS_PER_MINUTE);
@@ -101,6 +103,8 @@ async function logSitting(
       user_practice_id: userPracticeId,
       started_at: started.toISOString(),
       ended_at: ended.toISOString(),
+      completed,
+      insight,
     },
   });
   if (!logged.ok()) throw new Error(`logging a ${minutes}-minute sitting failed`);
@@ -150,16 +154,26 @@ async function leavePracticeDetails(page: Page): Promise<void> {
   await expect(page.getByTestId('active-ritual-session')).toBeVisible();
 }
 
-test('a practitioner sees their own total sittings and total time for one practice', async ({
+test.use({ timezoneId: 'America/Los_Angeles' });
+
+test('a practice story shows hours, cadence and sits that refresh after another sitting', async ({
   page,
-}) => {
+}, testInfo) => {
   const email = await signUp(page, 'practice-stats');
   const token = await tokenFor(page.request, email);
   const grounding = await adoptGroundingPractice(page.request, token);
   const userPracticeId = await adoptionId(page.request, token, grounding.id);
 
   await logSitting(page.request, token, userPracticeId, LONG_SIT_MINUTES, 120);
-  await logSitting(page.request, token, userPracticeId, SHORT_SIT_MINUTES, 60);
+  await logSitting(
+    page.request,
+    token,
+    userPracticeId,
+    SHORT_SIT_MINUTES,
+    60,
+    false,
+    'A **quiet** moment.',
+  );
   // A quick-cancel: started and ended at the same instant. It is a real row in
   // the sessions table and must move neither total, which is the counting rule
   // this endpoint had to settle.
@@ -169,20 +183,92 @@ test('a practitioner sees their own total sittings and total time for one practi
   await openPracticeTab(page);
   await openPracticeDetails(page);
 
-  const sessions = page.getByTestId('practice-detail-total-sessions');
-  const time = page.getByTestId('practice-detail-total-time');
+  const sessions = page.getByTestId('practice-story-caption');
+  const time = page.getByTestId('practice-story-time');
   await expect(sessions).toHaveText(EXPECTED_TOTAL_SESSIONS);
   await expect(time).toHaveText(EXPECTED_TOTAL_TIME);
 
   // The server agrees, so a failure above is a display failure rather than a
   // miscounted aggregate -- and the abort really is in the table it excluded.
   const aggregate = await page.request.get(
-    `${backendUrl()}/practice-sessions/stats?user_practice_id=${userPracticeId}`,
+    `${backendUrl()}/practice-sessions/story?user_practice_id=${userPracticeId}`,
     { headers: { Authorization: `Bearer ${token}` } },
   );
-  expect(await aggregate.json()).toEqual({
+  expect(aggregate.headers()['cache-control']).toContain('no-store');
+  const story = (await aggregate.json()) as {
+    total_sessions: number;
+    total_minutes: number;
+    weekly: Array<{ week_start: string; count: number }>;
+    recent_sits: Array<{ timestamp: string; completed: boolean }>;
+  };
+  expect(story).toMatchObject({
     total_sessions: 2,
     total_minutes: LONG_SIT_MINUTES + SHORT_SIT_MINUTES,
+  });
+  await expect(page.getByTestId('practice-story-section-weekly')).toBeVisible();
+  await expect(page.getByText('ask · 4 sits')).toBeVisible();
+  expect(story.weekly).toHaveLength(8);
+  expect(story.recent_sits).toHaveLength(2);
+  expect(story.recent_sits[1]?.completed).toBe(false);
+  const countedWeek = story.weekly.findIndex((week) => week.count > 0);
+  await expect(page.getByTestId(`columns-${countedWeek}-0`)).toBeAttached();
+  const hollow = page.getByTestId('dot-strip-point-1');
+  await expect(hollow).toHaveAttribute('fill', '#faf6ef');
+  await expect(page.getByTestId('dot-strip-point-0')).toHaveAttribute('fill', '#a5572f');
+  await expect(page.getByTestId('practice-story-section-insight')).toContainText('Last insight');
+  await expect(page.getByTestId('practice-story-insight')).toHaveText('A quiet moment.');
+  const insightDate = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(new Date(story.recent_sits[1]!.timestamp));
+  await expect(page.getByTestId('practice-story-section-insight')).toContainText(insightDate);
+  await page.getByTestId('practice-story-time').scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: testInfo.outputPath(`practice-story-${testInfo.project.name}-viewport.png`),
+  });
+  for (const section of [
+    'time',
+    'section-weekly',
+    'section-sits',
+    'section-time-of-day',
+    'section-insight',
+  ]) {
+    const node = page.getByTestId(`practice-story-${section}`);
+    await node.scrollIntoViewIfNeeded();
+    await node.screenshot({
+      path: testInfo.outputPath(`practice-story-${testInfo.project.name}-${section}.png`),
+    });
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  // Exercise each chart's own twin before the record-wide tables view.
+  for (const [section, unit, rows] of [
+    ['sits', 'Minutes', 2],
+    ['time-of-day', 'Sits', 4],
+  ] as const) {
+    const chart = page.getByTestId(`practice-story-section-${section}`);
+    await chart.getByRole('button', { name: 'Show as table', exact: true }).click();
+    await expect(chart.getByText(unit, { exact: true })).toHaveCount(rows);
+    await expect(chart.getByText('Value', { exact: true })).toHaveCount(0);
+    await chart.getByRole('button', { name: 'Show chart', exact: true }).click();
+  }
+  await page.getByLabel('Practice record options').click();
+  await page.getByText('Show all tables', { exact: true }).click();
+  await expect(
+    page.getByTestId('practice-story-section-sits').getByText('Minutes', { exact: true }),
+  ).toHaveCount(2);
+  await expect(
+    page.getByTestId('practice-story-section-time-of-day').getByText('Sits', { exact: true }),
+  ).toHaveCount(4);
+  await expect(page.getByTestId('practice-story-section-sits')).toContainText('Ended early');
+  await expect(page.getByTestId('practice-story-section-sits')).toContainText('45');
+  await expect(page.getByTestId('practice-story-section-sits')).toContainText('20');
+  await page.getByTestId('practice-story-section-sits').scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: testInfo.outputPath(`practice-story-${testInfo.project.name}-tables-viewport.png`),
   });
   const logged = await page.request.get(
     `${backendUrl()}/practice-sessions/?user_practice_id=${userPracticeId}`,
@@ -201,8 +287,6 @@ test('a practitioner sees their own total sittings and total time for one practi
   await leavePracticeDetails(page);
   await openPracticeDetails(page);
 
-  await expect(page.getByTestId('practice-detail-total-sessions')).toHaveText(
-    REREAD_TOTAL_SESSIONS,
-  );
-  await expect(page.getByTestId('practice-detail-total-time')).toHaveText(REREAD_TOTAL_TIME);
+  await expect(page.getByTestId('practice-story-caption')).toHaveText(REREAD_TOTAL_SESSIONS);
+  await expect(page.getByTestId('practice-story-time')).toHaveText(REREAD_TOTAL_TIME);
 });

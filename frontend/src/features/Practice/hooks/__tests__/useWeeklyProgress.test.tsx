@@ -1,8 +1,10 @@
 /* eslint-env jest */
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import type { PracticeInsightsResponse, WeekCountResponse } from '@/api';
+import { beginAuthSession, installSessionTokenGetter } from '@/api/sessionToken';
+import { beginActiveUserTransition, setActiveUser } from '@/storage/userScope';
 
 const mockInsights = jest.fn() as jest.MockedFunction<() => Promise<PracticeInsightsResponse>>;
 const mockWeekCount = jest.fn() as jest.MockedFunction<() => Promise<WeekCountResponse>>;
@@ -17,6 +19,18 @@ jest.mock('@/api', () => ({
 }));
 
 const { useWeeklyProgress } = require('../useWeeklyProgress');
+const tokenFor = (owner: number) =>
+  `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ sub: String(owner), exp: 4102444800 })).toString('base64url')}.test`;
+let liveToken: string | null;
+beforeEach(() => {
+  setActiveUser(1);
+  liveToken = tokenFor(1);
+  installSessionTokenGetter(() => liveToken);
+});
+afterEach(() => {
+  installSessionTokenGetter(null);
+  setActiveUser(null);
+});
 
 function insightsFixture(counts: number[]): PracticeInsightsResponse {
   return {
@@ -188,4 +202,123 @@ describe('useWeeklyProgress', () => {
 
     expect(result.current.error).toBeNull();
   });
+});
+
+describe('weekly account and credential boundaries', () => {
+  beforeEach(() => {
+    mockInsights.mockReset();
+    mockWeekCount.mockReset();
+  });
+  it('retains the full insights payload on success', async () => {
+    const insights = { ...insightsFixture([4]), total_minutes_30d: 123, last_insight: 'Quiet.' };
+    mockInsights.mockResolvedValue(insights);
+    const { result } = renderHook(() => useWeeklyProgress());
+    await waitFor(() => expect(result.current.count).toBe(4));
+    expect(result.current.insights).toEqual(insights);
+    expect(mockInsights).toHaveBeenCalledWith(liveToken);
+  });
+  it.each(['missing', 'malformed', 'mismatch', 'transition'])(
+    'refuses dispatch for %s credentials',
+    (kind) => {
+      if (kind === 'missing') liveToken = null;
+      if (kind === 'malformed') liveToken = 'unparseable';
+      if (kind === 'mismatch') liveToken = tokenFor(2);
+      if (kind === 'transition') beginActiveUserTransition();
+      const { result } = renderHook(() => useWeeklyProgress());
+      act(() => result.current.increment());
+      expect(mockInsights).not.toHaveBeenCalled();
+      expect(result.current.count).toBe(0);
+    },
+  );
+  it.each(['owner', 'credential', 'session', 'ABA'])(
+    'refuses a late answer across %s changes',
+    async (kind) => {
+      let resolve!: (value: PracticeInsightsResponse) => void;
+      mockInsights.mockReturnValueOnce(
+        new Promise<PracticeInsightsResponse>((done) => {
+          resolve = done;
+        }),
+      );
+      mockInsights.mockResolvedValue(insightsFixture([2]));
+      const { result } = renderHook(() => useWeeklyProgress());
+      await act(async () => {
+        if (kind === 'owner') setActiveUser(2);
+        if (kind === 'credential') liveToken = tokenFor(2);
+        if (kind === 'session') beginAuthSession();
+        if (kind === 'ABA') {
+          setActiveUser(2);
+          setActiveUser(1);
+        }
+        resolve(insightsFixture([999]));
+      });
+      expect(result.current.count).not.toBe(999);
+    },
+  );
+  it('accepts a same-owner renewal without a session boundary', async () => {
+    let resolve!: (value: PracticeInsightsResponse) => void;
+    mockInsights.mockReturnValueOnce(
+      new Promise<PracticeInsightsResponse>((done) => {
+        resolve = done;
+      }),
+    );
+    mockInsights.mockReturnValue(new Promise<PracticeInsightsResponse>(() => {}));
+    const { result } = renderHook(() => useWeeklyProgress());
+    await act(async () => {
+      liveToken = `${tokenFor(1)}renewed`;
+      resolve(insightsFixture([3]));
+    });
+    expect(result.current.count).toBe(3);
+  });
+  it('does not send a fallback under the next owner credential', async () => {
+    let reject!: (error: Error) => void;
+    mockInsights.mockReturnValueOnce(
+      new Promise<PracticeInsightsResponse>((_done, fail) => {
+        reject = fail;
+      }),
+    );
+    const { result } = renderHook(() => useWeeklyProgress());
+    await act(async () => {
+      liveToken = tokenFor(2);
+      reject(new Error('offline'));
+    });
+    expect(mockWeekCount).not.toHaveBeenCalled();
+    expect(result.current.error).toBeNull();
+  });
+});
+
+describe('weekly private fields during optimistic boundary changes', () => {
+  beforeEach(() => {
+    mockInsights.mockReset();
+    mockWeekCount.mockReset();
+  });
+  it.each(['owner', 'session'])(
+    'never promotes the previous insights across a new %s key',
+    async (boundary) => {
+      mockInsights.mockResolvedValueOnce({
+        ...insightsFixture([2]),
+        last_insight: 'Private old insight.',
+      });
+      const { result, rerender } = renderHook(() => useWeeklyProgress());
+      await waitFor(() =>
+        expect(result.current.insights?.last_insight).toBe('Private old insight.'),
+      );
+      mockInsights.mockReturnValue(new Promise<PracticeInsightsResponse>(() => {}));
+      act(() => {
+        if (boundary === 'owner') {
+          liveToken = tokenFor(2);
+          setActiveUser(2);
+        } else {
+          beginAuthSession();
+          rerender({});
+        }
+      });
+      act(() => {
+        result.current.increment();
+        result.current.setCount(7);
+      });
+      expect(result.current.count).toBe(7);
+      expect(result.current.insights).toBeNull();
+      expect(result.current.error).toBeNull();
+    },
+  );
 });
