@@ -73,7 +73,7 @@ it('logs measured minutes with the original operation identity and reconciles in
   expect(p.manager.reserveLogUnitContext).toHaveBeenCalledWith(ctx);
   expect(p.manager.commitLogUnitContext).toHaveBeenCalledWith(
     ctx,
-    expect.objectContaining({ viaTimer: true, isCurrent: p.isCurrent }),
+    expect.objectContaining({ viaTimer: true, source: 'practice_link', isCurrent: p.isCurrent }),
   );
   expect(p.manager.reconcileReservedLogUnitContext).toHaveBeenCalledWith(ctx, confirmed);
   expect(p.manager.discardLogUnitContext).toHaveBeenCalledWith(ctx);

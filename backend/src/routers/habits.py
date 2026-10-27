@@ -29,6 +29,7 @@ from errors import conflict, forbidden, not_found, unprocessable
 from load_options import HABIT_WITH_GOALS_AND_COMPLETIONS, habit_with_recent_completions
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
+from models.goal_log_event import GoalLogEvent
 from models.habit import Habit
 from routers.auth import get_current_user
 from schemas import Page, PaginationParams, build_page
@@ -39,6 +40,7 @@ from schemas.habit import Habit as HabitSchema
 from schemas.habit_stats import HabitStats
 from schemas.pagination import paginate_query
 from security import TextTooLongError, sanitize_user_text
+from services.checkin import lock_habit_for_completion_mutation
 from services.habit_auto_reveal import reconcile_habit_auto_reveals
 from services.streaks import (
     compute_habit_streak,
@@ -469,9 +471,9 @@ async def clear_habit_completions(
     session: Annotated[AsyncSession, Depends(get_session)],
     habit: Annotated[Habit, Depends(require_owned_habit)],
 ) -> Response:
-    """Bulk-delete every goal-completion row for the owned habit's goals.
+    """Clear aggregate and event history for the owned habit's goals.
 
-    Resets the habit's completion history in one statement so a start-date
+    Resets the habit's completion history in one transaction so a start-date
     reset (or any other "start fresh" flow) leaves no stale rows behind for a
     later refetch to embed. Ownership is enforced by ``require_owned_habit``,
     yielding the same 404 (missing) / 403 (cross-user) split as
@@ -479,6 +481,7 @@ async def clear_habit_completions(
     the caller's own rows are removed even if a foreign row is somehow parented
     to one of the habit's goals.
     """
+    await lock_habit_for_completion_mutation(session, cast("int", habit.id))
     # ``execute`` is typed ``Result``; a DELETE yields a ``CursorResult`` whose
     # ``rowcount`` is the number of rows removed.
     result = cast(
@@ -491,6 +494,12 @@ async def clear_habit_completions(
                 col(GoalCompletion.user_id) == current_user,
             )
         ),
+    )
+    await session.execute(
+        delete(GoalLogEvent).where(
+            col(GoalLogEvent.goal_id).in_(select(col(Goal.id)).where(Goal.habit_id == habit.id)),
+            col(GoalLogEvent.user_id) == current_user,
+        )
     )
     await session.commit()
     deleted = int(result.rowcount)

@@ -51,6 +51,7 @@ from models.feedback import FeedbackReport
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
 from models.goal_group import GoalGroup
+from models.goal_log_event import GoalLogEvent
 from models.habit import Habit
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia
@@ -305,6 +306,11 @@ MANIFEST: Mapping[str, ExportRule] = {
         GoalGroup,
         "The account's own groupings of its goals. Shared community templates "
         "carry no user_id, so scoping by it cannot reach one.",
+    ),
+    "goallogevent": _include(
+        "goal_log_events",
+        GoalLogEvent,
+        "Each actual check-in change, its signed amount, source and logging time.",
     ),
     "gumroadsale": Omitted(
         "A payment record, carrying processor identifiers that mean nothing "

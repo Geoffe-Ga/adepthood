@@ -131,6 +131,8 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "goal.origin",
             "goal.tier",
             "goalgroup.source",
+            # CHECK-constrained log provenance, never a user-authored label (#3520).
+            "goallogevent.source",
             "gumroadsale.resource_name",
             "habit.notification_frequency",
             "habit.stage",

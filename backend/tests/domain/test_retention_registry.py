@@ -63,6 +63,11 @@ def test_every_table_has_a_retention_rule() -> None:
     assert retention_gaps(SQLModel.metadata) == ()
 
 
+def test_goal_log_history_is_retained_until_account_erasure() -> None:
+    """The lifetime record remains available while owned and ends with its account."""
+    assert RETENTION["goallogevent"].kind is RetentionKind.UNTIL_ACCOUNT_DELETION
+
+
 def test_unregistered_table_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
     """A new table is a gap, even when the deletion policy already erases it."""
     copied = _metadata_with_new_table()

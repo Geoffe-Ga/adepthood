@@ -56,6 +56,7 @@ from models.feedback import FeedbackReport
 from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
 from models.goal import Goal
 from models.goal_completion import GoalCompletion
+from models.goal_log_event import GoalLogEvent
 from models.habit import Habit
 from models.journal_entry import JournalClassification, JournalEntry
 from models.journal_withdrawal_obligation import JournalWithdrawalObligation
@@ -91,6 +92,38 @@ from tests.helpers.feedback_triage import (
 # Severity: probe attempts use a sentinel id well above any seeded row so
 # the missing-row branch is the same code path as a malicious enumeration.
 _DEFINITELY_MISSING_ID = 999_999
+
+
+@pytest.mark.asyncio
+async def test_cross_owner_check_in_persists_neither_aggregate_nor_log_event(
+    async_client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Keep the goal's enumeration-safe 404 and leave both write tables empty."""
+    owner = await make_account(db_session, "event-owner@example.com")
+    other = await make_account(db_session, "event-other@example.com")
+    habit = Habit(user_id=owner.user_id, **{**_HABIT_PAYLOAD, "start_date": date(2024, 1, 1)})
+    db_session.add(habit)
+    await db_session.flush()
+    goal = Goal(
+        habit_id=habit.id,
+        title="Water",
+        tier="clear",
+        target=8,
+        target_unit="cups",
+        frequency=1,
+        frequency_unit="per_day",
+    )
+    db_session.add(goal)
+    await db_session.commit()
+    response = await async_client.post(
+        "/goal_completions/",
+        headers=other.headers,
+        json={"goal_id": goal.id, "completed_units": 2, "source": "practice_link"},
+    )
+    assert response.status_code == HTTPStatus.NOT_FOUND
+    assert (await db_session.execute(select(GoalCompletion))).scalars().all() == []
+    assert (await db_session.execute(select(GoalLogEvent))).scalars().all() == []
+
 
 _JOURNAL_PROBE_MESSAGE = "A perfectly ordinary entry."
 

@@ -269,6 +269,7 @@ async def test_deletion_leaves_no_reference_to_the_erased_account(
 ) -> None:
     """No column pointing at ``user`` still holds the erased account's id."""
     headers, doomed, _ = seeded_pair
+    assert (await _references_to(db_session, doomed.user_id))["goallogevent.user_id"] > 0
 
     resp = await async_client.request(
         "DELETE",
@@ -281,6 +282,7 @@ async def test_deletion_leaves_no_reference_to_the_erased_account(
     references = await _references_to(db_session, doomed.user_id)
     remaining = {name: count for name, count in references.items() if count}
     assert remaining == {}
+    assert references["goallogevent.user_id"] == 0
 
 
 @pytest.mark.asyncio

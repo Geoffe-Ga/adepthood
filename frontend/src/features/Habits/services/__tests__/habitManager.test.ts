@@ -2763,6 +2763,16 @@ describe('habitManager', () => {
       }
     });
 
+    it('preserves practice-link provenance when posting measured habit units', async () => {
+      useHabitStore.setState({ habits: [makeServerHabit()] });
+      const ctx = habitManager.prepareLogUnit(SERVER_HABIT_ID, 10, 'UTC')!;
+      await habitManager.commitLogUnitContext(ctx, { viaTimer: true, source: 'practice_link' });
+      expect(goalCompletionsApi.create).toHaveBeenCalledWith(
+        expect.objectContaining({ completed_units: 10, via_timer: true, source: 'practice_link' }),
+        { idempotencyKey: `log-unit:${ctx.operationId}` },
+      );
+    });
+
     it('cancels a timer log that loses its owner while waiting behind an earlier commit', async () => {
       useHabitStore.setState({ habits: [makeServerHabit()] });
       let releaseFirst: ((_result: CheckInResult) => void) | undefined;

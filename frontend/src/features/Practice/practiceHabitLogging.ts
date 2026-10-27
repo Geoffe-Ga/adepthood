@@ -12,6 +12,7 @@ export interface TimerHabitLogService extends Pick<HabitManager, 'prepareLogUnit
     _ctx: LogUnitContext,
     _options: {
       viaTimer: boolean;
+      source: 'practice_link';
       isCurrent: () => boolean;
       onCommitted: (_result: CheckInResult) => void;
     },
@@ -83,6 +84,7 @@ export async function logCompletedPracticeHabit(
   try {
     result = await manager.commitLogUnitContext(ctx, {
       viaTimer: input.viaTimer ?? true,
+      source: 'practice_link',
       isCurrent: input.isCurrent,
       onCommitted: (confirmed) => {
         if (input.isOwnerCurrent()) manager.reconcileReservedLogUnitContext(ctx, confirmed);

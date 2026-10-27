@@ -1579,7 +1579,11 @@ export const habits = {
 };
 
 // Goal completion types and client
+export type GoalLogSource = 'manual' | 'timer' | 'journal' | 'practice_link' | 'backfill';
+
 export interface GoalCompletionPayload {
+  /** The write path that originated this amount; timestamps remain server-owned. */
+  source?: GoalLogSource;
   /** True only for units measured by a timer. */
   via_timer?: boolean;
   goal_id: number;

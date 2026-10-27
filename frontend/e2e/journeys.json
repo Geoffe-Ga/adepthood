@@ -1511,12 +1511,19 @@
   },
   {
     "id": "account.export-my-data",
-    "description": "Someone takes a copy of everything they have written: they open Export my data, the app downloads the JSON archive and the Markdown journal, saves both to the device and offers them to the share sheet. The archive carries their own entries as prose, never another account's, and never the ciphertext the column holds. Beta feedback reports (the feedbackreport table) travel in the same archive under feedback_reports; that half is proven at the seam by feedback.admin-triage-inbox.",
+    "description": "Someone takes a copy of everything they have written: they open Export my data, the app downloads the JSON archive and the Markdown journal, saves both to the device and offers them to the share sheet. The archive carries their own entries as prose, never another account's, and never the ciphertext the column holds. Two signed check-ins and an undo retain separate amounts, source and logging timestamps under goal_log_events alongside the daily aggregate. Beta feedback reports (the feedbackreport table) travel in the same archive under feedback_reports; that half is proven at the seam by feedback.admin-triage-inbox.",
     "crosses": {
       "screen": "frontend/src/features/Settings/ExportDataScreen.tsx",
-      "client": ["users", "journal", "auth"],
-      "routes": ["POST /journal/", "GET /users/me/export", "GET /users/me/export/journal.md"],
-      "tables": ["user", "journalentry"]
+      "client": ["users", "journal", "auth", "habits", "goalCompletions"],
+      "routes": [
+        "POST /journal/",
+        "POST /habits/",
+        "GET /habits/",
+        "POST /goal_completions/",
+        "GET /users/me/export",
+        "GET /users/me/export/journal.md"
+      ],
+      "tables": ["user", "journalentry", "habit", "goal", "goalcompletion", "goallogevent"]
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/data-export.e2e.test.ts"
