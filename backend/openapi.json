@@ -20865,7 +20865,7 @@
         ]
       },
       "patch": {
-        "description": "Patch ``message`` / ``title`` / ``status`` on the caller's own entry.\n\nScoped to the caller's non-deleted rows: a missing id, a soft-deleted row, or\nanother user's entry all resolve to 404 (enumeration-safe). Editing the body\nre-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is\nrefreshed.\n\nThe account barrier is taken on the re-ingesting branch alone. The other\nbranch changes a title or a status and dials nothing, so ordering it against\nan erasure would buy no confidentiality and would put a lock on the cheapest\nPATCH the client makes.",
+        "description": "Patch ``message`` / ``title`` / ``status`` on the caller's own entry.\n\nScoped to the caller's non-deleted rows: a missing id, a soft-deleted row, or\nanother user's entry all resolve to 404 (enumeration-safe). Editing the body\nre-sanitizes it and invokes the marginalia re-anchor seam; ``updated_at`` is\nrefreshed.\n\nThe account barrier is taken on the re-ingesting branch alone. The other\nbranch changes a title or a status and dials nothing, so ordering it against\nan erasure would buy no confidentiality and would put a lock on the cheapest\nPATCH the client makes.\n\nA re-ingesting edit hands the vault changed writing just as a create does,\nso its classification pass may carry the optional ``X-LLM-API-Key`` under\nthe same rule as :func:`create_journal_entry` (#3437): relayed only to that\npass and only when the vault advertised the vendor. A PATCH that re-ingests\nnothing dials nothing, so it relays nothing.",
         "operationId": "update_journal_entry_journal__entry_id__patch",
         "parameters": [
           {
@@ -20893,6 +20893,22 @@
                 }
               ],
               "title": "Authorization"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-LLM-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Llm-Api-Key"
             }
           }
         ],
