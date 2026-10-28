@@ -33,6 +33,7 @@ const mockDetect = jest.fn() as jest.MockedFunction<
 const mockUserTz = 'America/Chicago';
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   ...require('./readingRouteTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),

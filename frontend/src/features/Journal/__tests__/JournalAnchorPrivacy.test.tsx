@@ -38,6 +38,7 @@ jest.mock('@/navigation/hooks', () => ({
 jest.mock('@/api', () => {
   const actual = jest.requireActual('@/api') as Record<string, unknown>;
   return {
+    ...require('./journalUiFlagsTestKit'),
     ApiError: actual.ApiError,
     journal: {
       get: (...a: [number]) => mockGet(...a),
