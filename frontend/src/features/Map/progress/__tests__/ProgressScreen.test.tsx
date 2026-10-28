@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { fireEvent, render } from '@testing-library/react-native';
+import { fireEvent, render, within } from '@testing-library/react-native';
 import React from 'react';
-import { StyleSheet } from 'react-native';
+import { ScrollView, StyleSheet } from 'react-native';
 
 import { HELD_OVERVIEW_OPACITY, ProgressScreen } from '../ProgressScreen';
 
@@ -36,6 +36,14 @@ beforeEach(() => {
 });
 
 describe('ProgressScreen', () => {
+  it('keeps all sections in the scroll container when the arc table expands', () => {
+    const tree = render(<ProgressScreen />);
+    const scroller = tree.UNSAFE_getByType(ScrollView);
+    fireEvent.press(within(tree.getByTestId('progress-ribbon')).getByRole('button'));
+    expect(within(scroller).getByText('Weeks 1–3')).toBeTruthy();
+    expect(within(scroller).getByTestId('progress-energy-columns')).toBeTruthy();
+  });
+
   it('runs arc, rhythm, cycles, energy, in that order', () => {
     const tree = render(<ProgressScreen />);
     const order = ['progress-arc', 'progress-rhythm', 'progress-cycles', 'progress-energy'].map(
@@ -44,7 +52,9 @@ describe('ProgressScreen', () => {
     expect(order.every((at) => at >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(tree.getByTestId('progress-here')).toHaveTextContent('Week 23 · Yellow');
-    expect(tree.getByTestId('progress-carryovers')).toHaveTextContent('Brought with you: 💧 Water');
+    const brought = within(tree.getByTestId('progress-carryovers'));
+    expect(brought.getByText('Brought with you')).toBeTruthy();
+    expect(brought.getByText('Water')).toBeTruthy();
     expect(tree.getByTestId('progress-energy-formula')).toHaveTextContent(
       'sum(return - cost) over completions',
     );

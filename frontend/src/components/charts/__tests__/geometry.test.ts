@@ -95,7 +95,7 @@ describe('chart scales preserve the supplied figures', () => {
     ]);
     expect(barTableRows([{ label: 'Dawn', value: 12 }])).toEqual([{ label: 'Dawn', values: [12] }]);
     expect(ribbonTableRows([{ label: 'Stage', weeks: 3, color: 'unused' }])).toEqual([
-      { label: 'Stage', values: [3] },
+      { label: 'Stage', values: ['Weeks 1–3'] },
     ]);
   });
 });
