@@ -80,7 +80,7 @@ test.afterEach(async ({ page }) => {
  */
 
 const ARTIFACT_DIR = join(__dirname, 'artifacts', 'action-rows');
-/** Twenty-two routes at two viewports, each a fresh page load plus a screenshot. */
+/** Twenty-three routes at two viewports, each a fresh page load plus a screenshot. */
 const WALK_TIMEOUT_MS = 10 * 60_000;
 /**
  * How long one control may take to appear. Playwright's default is the test
@@ -165,6 +165,16 @@ const EXTRA_ROUTES: readonly Route[] = [
       await page.goto(`${frontendUrl()}/journal`);
       await page.getByRole('button', { name: 'Open Journal menu' }).click();
       await page.getByRole('dialog').getByTestId('journal-drawer-promoted-quotes').click();
+    },
+  },
+  {
+    name: 'Progress',
+    label: 'Your progress',
+    anchor: 'progress-screen',
+    open: async (page) => {
+      await page.goto(`${frontendUrl()}/map`);
+      await page.getByRole('button', { name: 'Open Map menu' }).click();
+      await page.getByRole('dialog').getByTestId('map-progress-door').click();
     },
   },
   {
