@@ -121,3 +121,7 @@ class ProgressOverviewResponse(BaseModel):
     rhythm: ProgressRhythm
     cycles: list[StageCycleRates]
     energy: ProgressEnergy
+    observations: list[str] = Field(
+        default_factory=list,
+        description="The rhythm wave's caption, worded from its facts; never a phase name.",
+    )

@@ -108,7 +108,7 @@ class HabitStoryLog(BaseModel):
 
 
 class HabitStoryMilestone(BaseModel):
-    """A future observation-engine milestone, empty in the foundation response."""
+    """A dated milestone from the observations engine (#3525)."""
 
     kind: str
     reached_on: date

@@ -99,6 +99,9 @@ export default async function globalTeardown(): Promise<void> {
     // The vault bearer is the same kind of thing: a credential for a loopback
     // process that no longer exists, and it does not outlive it either.
     rmSync(state.vaultKeyDir, { recursive: true, force: true });
+    // The server's captured output names only what its formatter lets through,
+    // but it is still a record of the run and does not outlive it.
+    if (state.serverLogDir) rmSync(state.serverLogDir, { recursive: true, force: true });
     clearLaneState();
   }
 }

@@ -19,6 +19,7 @@ from dependencies.ownership import (
 from dependencies.timezone import current_user_timezone
 from domain.constants import STAGE_START_WEEKS, WEEKS_PER_STAGE
 from domain.dates import ensure_aware
+from domain.frequencies import FREQUENCY_COLORS, Frequency
 from domain.practice_insights import build_insights
 from domain.practice_resolution import effective_config, effective_duration_minutes
 from domain.practice_story import PracticeStageScope, build_practice_story
@@ -492,6 +493,12 @@ async def _practice_stage_scope(
     )
 
 
+def _stage_name(stage_number: int) -> str | None:
+    """The stage's colour name, as the Story's sentences say it."""
+    code = f"F{stage_number}"
+    return FREQUENCY_COLORS[Frequency(code)] if code in Frequency.__members__ else None
+
+
 @router.get("/story", response_model=PracticeStoryResponse)
 async def get_practice_story(
     current_user: Annotated[int, Depends(get_current_user)],
@@ -511,6 +518,7 @@ async def get_practice_story(
         tz=user_tz,
         stage_ask_minutes=effective_duration_minutes(practice, user_practice),
         stage_scope=await _practice_stage_scope(session, user_practice, current_user, user_tz),
+        stage_name=_stage_name(user_practice.stage_number),
     )
     return PracticeStoryResponse.model_validate(story, from_attributes=True)
 

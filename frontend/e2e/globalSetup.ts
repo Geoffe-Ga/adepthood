@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -420,6 +420,20 @@ interface LaneFixtures {
   mail: MailFixture;
   provider: ProviderFixture;
   vault: VaultFixture;
+  serverLog: ServerLogFixture;
+}
+
+/** Where the server's own output is kept for the run. */
+interface ServerLogFixture {
+  serverLogDir: string;
+  serverLogFile: string;
+}
+
+const SERVER_LOG_FILE_NAME = 'server.log';
+
+function createServerLogFixture(): ServerLogFixture {
+  const serverLogDir = mkdtempSync(join(tmpdir(), 'adepthood-e2e-log-'));
+  return { serverLogDir, serverLogFile: join(serverLogDir, SERVER_LOG_FILE_NAME) };
 }
 
 /**
@@ -505,6 +519,11 @@ function launchServer(
     env: serverEnvironment(databaseUrl, adminUrl, fixtures),
   });
 
+  // Kept for the whole run, not only until the ready line: a journey reads it
+  // back to prove what the server's logs did and did not record. Appended
+  // synchronously, so a line is on disk as soon as this process has read it.
+  const logFile = fixtures.serverLog.serverLogFile;
+
   return new Promise<Launch>((resolvePort, reject) => {
     let log = '';
     const fail = (reason: string): void => {
@@ -516,6 +535,7 @@ function launchServer(
     }, BOOT_TIMEOUT_MS);
 
     const onChunk = (chunk: Buffer): void => {
+      appendFileSync(logFile, chunk, { mode: 0o600 });
       log += chunk.toString();
       const match = /E2E_READY port=(\d+)/.exec(log);
       if (match?.[1] === undefined) return;
@@ -600,8 +620,10 @@ export default async function globalSetup(): Promise<void> {
   const creek = await launchFakeCreek();
   const provider = await launchFakeProvider();
   const vault = await launchFakeVault();
-  const fixtures: LaneFixtures = { creek, mail, provider, vault };
+  const serverLog = createServerLogFixture();
+  const fixtures: LaneFixtures = { creek, mail, provider, vault, serverLog };
   const fixtureState = {
+    ...serverLog,
     creekPid: creek.pid,
     databaseUrl,
     adminUrl,

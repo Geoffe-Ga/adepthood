@@ -413,6 +413,14 @@ class PracticeTimeOfDay(BaseModel):
     night: int
 
 
+class PracticeStoryMilestone(BaseModel):
+    """A dated practice milestone from the observations engine (#3525)."""
+
+    kind: str
+    reached_on: date
+    value: int
+
+
 class PracticeStoryResponse(BaseModel):
     """Lifetime and stage facts returned by ``GET /practice-sessions/story``."""
 
@@ -433,3 +441,5 @@ class PracticeStoryResponse(BaseModel):
     last_insight_timestamp: datetime | None
     mode_totals: dict[str, float]
     first_session_on: date | None
+    observations: list[str] = []
+    milestones: list[PracticeStoryMilestone] = []
