@@ -1,12 +1,14 @@
 import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { Circle, G, Line, Rect } from 'react-native-svg';
 
-import { ChartFrame, ChartLegend, useChartSize } from './ChartFrame';
+import { ChartFrame, useChartSize } from './ChartFrame';
+import { chartStyles } from './chartStyles';
 import { positive, ribbonGeometry } from './geometry';
 import { Plot } from './Plot';
 import type { ChartBaseProps, ChartTableRow, RibbonBlock } from './types';
 
-import { accent, chartLayout } from '@/design/tokens';
+import { accent, chartLayout, SPACING } from '@/design/tokens';
 
 export interface RibbonMarker {
   week: number;
@@ -19,8 +21,44 @@ export interface RibbonProps extends ChartBaseProps {
   secondaryBlocks?: readonly RibbonBlock[];
 }
 
-export const ribbonTableRows = (blocks: readonly RibbonBlock[]): ChartTableRow[] =>
-  blocks.map((block) => ({ label: block.label, values: [block.weeks] }));
+const weekPosition = (first: number, last = first): string =>
+  first === last ? `Week ${first}` : `Weeks ${first}–${last}`;
+
+/** Durations size the blocks; inclusive ranges tell the reader where they are. */
+export function ribbonTableRows(blocks: readonly RibbonBlock[]): ChartTableRow[] {
+  let first = 1;
+  return blocks.map((block) => {
+    const last = first + positive(block.weeks) - 1;
+    const row = { label: block.label, values: [weekPosition(first, last)] };
+    first = last + 1;
+    return row;
+  });
+}
+
+/** One name and its position per row, including when a long name wraps. */
+function RibbonKey({
+  rows,
+  blocks = [],
+  testID,
+}: {
+  rows: readonly ChartTableRow[];
+  blocks?: readonly RibbonBlock[];
+  testID: string;
+}) {
+  return (
+    <View testID={testID} style={styles.key}>
+      {rows.map((row, index) => (
+        <View key={`${index}-${row.label}`} style={styles.keyRow}>
+          {blocks[index] ? (
+            <View style={[chartStyles.swatch, { backgroundColor: blocks[index].color }]} />
+          ) : null}
+          <Text style={[chartStyles.caption, styles.keyName]}>{row.label}</Text>
+          <Text style={chartStyles.tick}>{row.values[0]}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
 
 function RibbonBlocks({
   blocks,
@@ -97,14 +135,20 @@ export function Ribbon({
   const width = Math.max(1, size.width - 2 * chartLayout.plotInset);
   const weeks = blocks.reduce((sum, block) => sum + positive(block.weeks), 0);
   const height = chartLayout.ribbonHeight + chartLayout.axisSpace;
+  const stageRows = [...ribbonTableRows(blocks), ...ribbonTableRows(secondaryBlocks)];
+  const markerRows = markers.map((marker) => ({
+    label: marker.label,
+    values: [weekPosition(marker.week)],
+  }));
   const rows = [
-    ...ribbonTableRows(blocks),
-    ...markers.map((marker) => ({ label: marker.label, values: [marker.week] })),
-    ...(currentWeek === undefined ? [] : [{ label: 'You are here', values: [currentWeek] }]),
-    ...ribbonTableRows(secondaryBlocks),
+    ...stageRows,
+    ...markerRows,
+    ...(currentWeek === undefined
+      ? []
+      : [{ label: 'You are here', values: [weekPosition(currentWeek)] }]),
   ];
   return (
-    <ChartFrame {...base} onLayout={size.onLayout} rows={rows} headers={['Weeks / week']}>
+    <ChartFrame {...base} onLayout={size.onLayout} rows={rows} headers={['Arc position']}>
       <Plot width={size.width} height={height}>
         <G x={chartLayout.plotInset}>
           <RibbonBlocks blocks={blocks} width={width} height={chartLayout.ribbonHeight} />
@@ -118,10 +162,18 @@ export function Ribbon({
           </G>
         </G>
       </Plot>
-      <ChartLegend items={[...blocks, ...secondaryBlocks]} />
-      <ChartLegend
-        items={markers.map((marker) => ({ label: marker.label, color: accent.primary }))}
+      <RibbonKey
+        testID="ribbon-stage-key"
+        rows={stageRows}
+        blocks={[...blocks, ...secondaryBlocks]}
       />
+      <RibbonKey testID="ribbon-birth-key" rows={markerRows} />
     </ChartFrame>
   );
 }
+
+const styles = StyleSheet.create({
+  key: { gap: SPACING.sm },
+  keyRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  keyName: { flex: 1 },
+});

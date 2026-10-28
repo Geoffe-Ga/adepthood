@@ -51,13 +51,11 @@ export const birthMarkers = (overview: ApiProgressOverview): RibbonMarker[] =>
   overview.arc.habit_births.flatMap((birth) =>
     birth.week === null || birth.is_carryover
       ? []
-      : [{ week: birth.week, label: `${birth.icon} ${birth.name} · week ${birth.week}` }],
+      : [{ week: birth.week, label: `${birth.name} began` }],
   );
 
 export const carryovers = (overview: ApiProgressOverview): string[] =>
-  overview.arc.habit_births
-    .filter((birth) => birth.is_carryover)
-    .map((birth) => `${birth.icon} ${birth.name}`);
+  overview.arc.habit_births.filter((birth) => birth.is_carryover).map((birth) => birth.name);
 
 /** "week 23 · Yellow", or null when the arc has no known anchor. */
 export function youAreHere(overview: ApiProgressOverview): string | null {

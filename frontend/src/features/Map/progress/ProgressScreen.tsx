@@ -68,9 +68,14 @@ function ArcSection({ overview }: { overview: Overview }) {
         summary={arcSummary(overview)}
       />
       {brought.length > 0 ? (
-        <Text testID="progress-carryovers" style={text.caption}>
-          {`Brought with you: ${brought.join(', ')}`}
-        </Text>
+        <View testID="progress-carryovers">
+          <Text style={text.caption}>Brought with you</Text>
+          {brought.map((name, index) => (
+            <Text key={`${index}-${name}`} style={text.body}>
+              {name}
+            </Text>
+          ))}
+        </View>
       ) : null}
     </EditorialSection>
   );
@@ -165,7 +170,7 @@ function ProgressBody({ overview, held }: { overview: Overview; held: boolean })
 export function ProgressScreen(): React.JSX.Element {
   const read = useProgressOverview();
   return (
-    <ScreenScaffold testID="progress-screen">
+    <ScreenScaffold scroll testID="progress-screen">
       <ScreenHeader
         title="Your progress"
         titleHidden
