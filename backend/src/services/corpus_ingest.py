@@ -103,6 +103,7 @@ from services.botmason import LLMCreditExhaustedError
 from services.classification_ceiling import (
     classifications_today,
     record_classification_attempt,
+    release_classification_attempt,
 )
 from services.corpus_consent import load_consent
 from services.corpus_store import FragmentDraft, delete_fragments_for_entry, record_fragment
@@ -195,6 +196,19 @@ class IngestResult:
     fragment: CorpusFragment | None = None
 
 
+@dataclass(frozen=True)
+class _StagedAttempt:
+    """The allowance one ingest has reserved, named so it can be given back.
+
+    Returned by :func:`_refusal_before_classifying` when every refusal has been
+    ruled out. It carries the attempt row's id because the one compensation the
+    spine makes -- for a call the provider refused to bill -- has to release
+    exactly that row and no other.
+    """
+
+    attempt_id: int
+
+
 # The three non-storing results are value-identical every time, so they are
 # interned rather than rebuilt on each path.
 _NO_CONSENT_RESULT = IngestResult(IngestOutcome.NO_CONSENT)
@@ -284,7 +298,7 @@ async def _classify_and_record(
     return IngestResult(IngestOutcome.STORED, fragment)
 
 
-async def _afford_one_classification(session: AsyncSession, user_id: int) -> bool:
+async def _afford_one_classification(session: AsyncSession, user_id: int) -> int | None:
     """Spend one of ``user_id``'s day's server-paid classifications, or refuse.
 
     Called after both of the spine's refusals and before the dial, so an
@@ -297,22 +311,30 @@ async def _afford_one_classification(session: AsyncSession, user_id: int) -> boo
     provider free to retry against, which is the condition under which a bill
     runs away fastest.
 
+    **Except a refusal to bill (release decision R1-2, #3516).** When the
+    deployment's own provider balance is spent the provider raises
+    :class:`services.botmason.LLMCreditExhaustedError`; the call cost nobody
+    anything and the cause is the deployment's, not the account's, so
+    :func:`ingest_content` releases the attempt staged here, by its id, and
+    commits the release. The staging still precedes the dial -- the release is
+    a compensating delete, never a reordering -- so every other failure, a
+    degraded provider included, stays counted.
+
     The row is staged rather than committed: it lands in the commit
     :func:`_classify_and_record` makes immediately before the provider call, so
     it is durable by the time the dial happens and survives the caller rolling
     back whatever came after.
 
     Returns:
-        ``True`` when a classification may be made, with the attempt already
-        staged against the account. ``False`` when the day's allowance is
-        spent, having staged nothing.
+        The staged attempt's id when a classification may be made, so it can be
+        released if the provider refuses to bill. ``None`` when the day's
+        allowance is spent, having staged nothing.
     """
     now = datetime.now(UTC)
     if await classifications_today(session, user_id, now) >= get_daily_classification_ceiling():
         logger.warning(CLASSIFICATION_CEILING_EVENT, extra={"user_id": user_id})
-        return False
-    await record_classification_attempt(session, user_id, now)
-    return True
+        return None
+    return await record_classification_attempt(session, user_id, now)
 
 
 async def _refusal_before_classifying(
@@ -322,8 +344,8 @@ async def _refusal_before_classifying(
     source: CorpusSource,
     tier: JournalClassification,
     boundary: ReflectionBoundary,
-) -> IngestResult | None:
-    """Every reason not to classify this writing, or ``None`` and a call reserved.
+) -> IngestResult | _StagedAttempt:
+    """Every reason not to classify this writing, or the call it has reserved.
 
     Four refusals in one place, because they are one question -- may this
     deployment ask the app provider about this writing, on this account's
@@ -352,15 +374,15 @@ async def _refusal_before_classifying(
     the rule, the same one the classifier and the store consult, and the same
     one :func:`_withheld_from_classifier`'s ``RETRIEVABLE_TIERS`` is read off.
 
-    **It reserves as well as refuses.** Returning ``None`` has staged one
+    **It reserves as well as refuses.** Returning a :class:`_StagedAttempt` has staged one
     attempt against the account, because the only honest moment to record a
     call is the one after which it is going to be made. There is no separate
     "now actually spend it" step a caller could forget, and no path from here
     to the provider that skips the meter.
 
     Returns:
-        The refusal to report, or ``None`` when the classifier may be called
-        and the attempt has been staged.
+        The refusal to report, or the staged attempt when the classifier may be
+        called.
     """
     consent = await load_consent(session, user_id=user_id, source=source)
     if not consent.granted:
@@ -369,9 +391,10 @@ async def _refusal_before_classifying(
         return _BOUNDARY_REFUSED_RESULT
     if not admits_egress(tier.value):
         return _TIER_REFUSED_RESULT
-    if not await _afford_one_classification(session, user_id):
+    attempt_id = await _afford_one_classification(session, user_id)
+    if attempt_id is None:
         return _CEILING_REACHED_RESULT
-    return None
+    return _StagedAttempt(attempt_id)
 
 
 async def ingest_content(
@@ -402,7 +425,9 @@ async def ingest_content(
     *both* is what keeps this module from stating a tier rule of its own.
     :class:`services.botmason.LLMCreditExhaustedError` is logged here, where the
     account is known, and re-raised, because it is a fact about the deployment
-    rather than about this writing: reporting it as
+    rather than about this writing -- and, by release decision R1-2, not the
+    account's to pay for either, so the attempt staged against its daily
+    allowance is released before the raise. Reporting it as
     :attr:`IngestOutcome.UNCLASSIFIED` would tell a caller offering a hundred
     entries that the provider recognised nothing in any of them, and it would go
     on paying for that answer. Callers that offer one piece of writing catch it
@@ -428,15 +453,15 @@ async def ingest_content(
     budgets. ``None`` -- the default -- leaves the provider layer's own timeout
     and retry budget in charge, which is what every interactive write wants.
     """
-    refusal = await _refusal_before_classifying(
+    reserved = await _refusal_before_classifying(
         session,
         user_id=user_id,
         source=request.source,
         tier=request.tier,
         boundary=boundary,
     )
-    if refusal is not None:
-        return refusal
+    if isinstance(reserved, IngestResult):
+        return reserved
     try:
         return await _classify_and_record(
             session,
@@ -449,6 +474,7 @@ async def ingest_content(
         return _TIER_REFUSED_RESULT
     except LLMCreditExhaustedError as exc:
         _log_credit_exhausted(user_id, provider=exc.provider, source=request.source)
+        await _release_unbilled_attempt(session, user_id=user_id, attempt=reserved)
         raise
 
 
@@ -581,6 +607,24 @@ async def withdraw_journal_entry(session: AsyncSession, *, user_id: int, entry_i
     removed = await delete_fragments_for_entry(session, user_id=user_id, entry_id=entry_id)
     _log_outcome(user_id, entry_id, "withdrawn", removed)
     return removed
+
+
+async def _release_unbilled_attempt(
+    session: AsyncSession, *, user_id: int, attempt: _StagedAttempt
+) -> None:
+    """Give back the attempt a refusal to bill staged, and make that durable.
+
+    Release decision R1-2 (#3516): a classification the deployment's provider
+    refused for lack of credit is absorbed as overhead and does not count
+    against the account's daily allowance. Committed here rather than left to
+    the callers, because the spine cannot know what each does next: the sweep
+    stops its batch on this error without committing, and the journal save
+    suppresses it and commits only as a matter of its own housekeeping. Nothing
+    else is pending to land with it -- :func:`_classify_and_record` ended the
+    transaction before it dialled and nothing has been written since.
+    """
+    await release_classification_attempt(session, user_id=user_id, attempt_id=attempt.attempt_id)
+    await session.commit()
 
 
 def _log_credit_exhausted(user_id: int, *, provider: str, source: CorpusSource) -> None:
