@@ -67,6 +67,11 @@ export interface CorpusInvitationNoteProps {
   completedPasses: number;
   /** Where "Look at the decision" goes -- the screen owns navigation. */
   onOpen: () => void;
+  /**
+   * Told whenever the note appears or goes, so the host can keep one offer on
+   * the page at a time: the sort-the-rest offer (#3500) gives way to this one.
+   */
+  onOfferChange?: (offered: boolean) => void;
 }
 
 /**
@@ -81,9 +86,17 @@ async function offeredNow(): Promise<boolean> {
   }
 }
 
-/** Owns the offer state, the ask-on-increment, and the two ways of declining. */
-function useCorpusInvitation(completedPasses: number) {
+/**
+ * Owns the offer state, the ask-on-increment, and the two ways of declining,
+ * and tells ``onOfferChange`` whenever the note appears or goes.
+ */
+function useCorpusInvitation(completedPasses: number, onOfferChange?: (offered: boolean) => void) {
   const [offer, setOffer] = useState(false);
+
+  useEffect(() => {
+    onOfferChange?.(offer);
+  }, [offer, onOfferChange]);
+
   // An answer given here outranks any read still on the wire. The read for
   // this pass is issued the moment the pass settles, while the previous
   // pass's note is still on screen and pressable, and the server answering it
@@ -130,8 +143,9 @@ function useCorpusInvitation(completedPasses: number) {
 function CorpusInvitationNote({
   completedPasses,
   onOpen,
+  onOfferChange,
 }: CorpusInvitationNoteProps): React.JSX.Element | null {
-  const { offer, decline } = useCorpusInvitation(completedPasses);
+  const { offer, decline } = useCorpusInvitation(completedPasses, onOfferChange);
 
   // Looking is not deciding: a person who opens the screen and closes it has
   // answered "not now", and is not asked again on the very next pass.

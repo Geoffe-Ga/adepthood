@@ -4027,6 +4027,17 @@
             "title": "Best Streak",
             "type": "integer"
           },
+          "cadence_unit": {
+            "default": "days",
+            "description": "The unit ``best_streak`` is counted in: a weekly habit's run is in weeks.",
+            "enum": [
+              "days",
+              "weeks",
+              "months"
+            ],
+            "title": "Cadence Unit",
+            "type": "string"
+          },
           "goals_achieved": {
             "additionalProperties": {
               "type": "boolean"
@@ -11008,8 +11019,13 @@
         "type": "object"
       },
       "VaultConnectionResponse": {
-        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.\n\n``mcp_address`` is the address a person gives an agent they run elsewhere\n(#3534), and the audience every token for that vault names. A managed\nbinding keeps ``vault_url`` private. Its agent address is returned only\nafter authenticated per-allocation discovery reports the exact owned\nresource and this deployment's issuer. Legacy, disabled, malformed or\nunreachable discovery returns ``None``; the stored binding stays connected.",
+        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.\n\n``mcp_address`` is the address a person gives an agent they run elsewhere\n(#3534), and the audience every token for that vault names. A managed\nbinding keeps ``vault_url`` private. Its agent address is returned only\nafter authenticated per-allocation discovery reports the exact owned\nresource and this deployment's issuer. Legacy, disabled, malformed or\nunreachable discovery returns ``None``; the stored binding stays connected.\n\n``classification_key_rejected`` is true when the account's latest settled\nvault classification failed because the writer's own provider key was\nrefused by its vendor (Creek contract 0.26, #3595). It is read from the\naccount's pipeline rows rather than from the connection row, so it holds\nfor the deployment-wide vault's owner too, and it carries no key material\nand no vendor text -- the client owns the sentence it renders.",
         "properties": {
+          "classification_key_rejected": {
+            "default": false,
+            "title": "Classification Key Rejected",
+            "type": "boolean"
+          },
           "connected": {
             "title": "Connected",
             "type": "boolean"

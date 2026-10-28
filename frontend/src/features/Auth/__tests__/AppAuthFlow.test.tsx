@@ -154,6 +154,14 @@ jest.mock('@/features/Journal/NotificationCenterScreen', () => {
   return { __esModule: true, default: Stub };
 });
 
+// The Map's Progress screen (#3528) is a pushed route that reads its own
+// overview; stub it so this suite stays on auth gating.
+jest.mock('@/features/Map/progress/ProgressScreen', () => {
+  const { Text } = require('react-native');
+  const Stub = () => <Text>ProgressScreen</Text>;
+  return { __esModule: true, ProgressScreen: Stub, default: Stub };
+});
+
 import App, { linking } from '@/App';
 import { linking as navigationLinking } from '@/navigation/linking';
 import { useWelcomeStore } from '@/store/useWelcomeStore';

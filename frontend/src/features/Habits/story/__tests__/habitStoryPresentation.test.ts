@@ -6,7 +6,6 @@ import {
   glanceTiles,
   gridRange,
   heatGrid,
-  logLines,
   patternGrid,
   patternSummary,
   rateLine,
@@ -208,23 +207,6 @@ describe('milestones and logs', () => {
       { date: 'Sep 1', text: 'A first Stretch day' },
       { date: 'Oct 1', text: '21 days with this habit' },
       { date: 'Oct 5', text: 'Kept through Purple' },
-    ]);
-  });
-
-  it('lists raw logs with signed amounts and how they were logged', () => {
-    expect(logLines(habitStoryFixture(), () => '7:05 AM')).toEqual([
-      {
-        key: '2026-10-27T14:05:00Z-0',
-        when: 'Oct 27 · 7:05 AM',
-        amount: '+2 pages',
-        detail: 'with the timer',
-      },
-      {
-        key: '2026-10-26T15:00:00Z-1',
-        when: 'Oct 26 · 7:05 AM',
-        amount: '−1 pages',
-        detail: 'logged by hand',
-      },
     ]);
   });
 });

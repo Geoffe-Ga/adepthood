@@ -115,7 +115,12 @@ async def test_ready_managed_address_equals_the_authorized_resource(
     response = await async_client.get(_CONNECTION, headers=headers)
 
     assert response.status_code == HTTPStatus.OK
-    assert response.json() == {"connected": True, "vault_url": None, "mcp_address": expected}
+    assert response.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": expected,
+        "classification_key_rejected": False,
+    }
     assert expected == _RESOURCE
     assert len(boundary.requests) == 1
     assert str(boundary.requests[0].url) == f"{_VAULT}/capabilities"
@@ -145,7 +150,12 @@ async def test_missing_or_mismatched_discovery_keeps_the_address_unavailable(
 
     response = await async_client.get(_CONNECTION, headers=headers)
 
-    assert response.json() == {"connected": True, "vault_url": None, "mcp_address": None}
+    assert response.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -183,7 +193,12 @@ async def test_a_rolled_allocation_acquires_an_address_without_a_new_handoff(
     clock[0] += agent_connection.NEGATIVE_DISCOVERY_TTL_SECONDS
     after = await async_client.get(_CONNECTION, headers=headers)
 
-    assert after.json() == {"connected": True, "vault_url": None, "mcp_address": _RESOURCE}
+    assert after.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": _RESOURCE,
+        "classification_key_rejected": False,
+    }
     assert len(boundary.requests) == 2
 
 
@@ -199,7 +214,12 @@ async def test_unreachable_discovery_keeps_the_managed_binding_connected(
     response = await async_client.get(_CONNECTION, headers=headers)
 
     assert response.status_code == HTTPStatus.OK
-    assert response.json() == {"connected": True, "vault_url": None, "mcp_address": None}
+    assert response.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -253,7 +273,12 @@ async def test_self_connected_address_does_not_require_managed_discovery(
 
     response = await async_client.get(_CONNECTION, headers=headers)
 
-    assert response.json() == {"connected": True, "vault_url": _VAULT, "mcp_address": _RESOURCE}
+    assert response.json() == {
+        "connected": True,
+        "vault_url": _VAULT,
+        "mcp_address": _RESOURCE,
+        "classification_key_rejected": False,
+    }
     assert not boundary.requests
 
 
@@ -283,7 +308,14 @@ async def test_repeated_connection_reads_back_off_unavailable_discovery(
     first = await async_client.get(_CONNECTION, headers=headers)
     second = await async_client.get(_CONNECTION, headers=headers)
     assert (
-        first.json() == second.json() == {"connected": True, "vault_url": None, "mcp_address": None}
+        first.json()
+        == second.json()
+        == {
+            "connected": True,
+            "vault_url": None,
+            "mcp_address": None,
+            "classification_key_rejected": False,
+        }
     )
     assert len(boundary.requests) == 1
     assert not db_session.in_transaction()
@@ -343,7 +375,12 @@ async def test_optional_discovery_cancels_slow_dns_off_the_database_pool(
 
     monkeypatch.setattr("services.creek_vault_stored_client.stored_host_is_undialable", stalled)
     response = await asyncio.wait_for(async_client.get(_CONNECTION, headers=headers), timeout=3.0)
-    assert response.json() == {"connected": True, "vault_url": None, "mcp_address": None}
+    assert response.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }
     assert cancelled.is_set()
     assert not boundary.requests
     assert not db_session.in_transaction()
@@ -362,7 +399,12 @@ async def test_optional_discovery_cancels_slow_handshake_off_the_database_pool(
     boundary.session = db_session
     boundary.pause = asyncio.Event()
     response = await asyncio.wait_for(async_client.get(_CONNECTION, headers=headers), timeout=3.0)
-    assert response.json() == {"connected": True, "vault_url": None, "mcp_address": None}
+    assert response.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }
     assert boundary.cancelled
     assert len(boundary.requests) == 1
     assert not db_session.in_transaction()
@@ -466,7 +508,12 @@ async def test_binding_change_uses_only_the_new_owned_resource(
     )
     boundary.metadata = {"resource": new_resource, "authorization_server": ISSUER}
     response = await async_client.get(_CONNECTION, headers=headers)
-    assert response.json() == {"connected": True, "vault_url": None, "mcp_address": new_resource}
+    assert response.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": new_resource,
+        "classification_key_rejected": False,
+    }
     assert str(boundary.requests[-1].url) == new_vault + "/capabilities"
     assert len(boundary.requests) == 2
 

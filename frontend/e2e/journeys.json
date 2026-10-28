@@ -1046,6 +1046,18 @@
     "issue": 2408
   },
   {
+    "id": "journal.offered-to-sort-the-rest-after-a-reflection",
+    "description": "A writer who has already said yes to sorting their journal, and who wrote before that yes, asks for resonance on a page and, once the pass has completed, finds beside the page -- never in it -- a quiet note saying what sorting gives, how many of their entries are still unsorted, and that nothing is sorted from the note itself (#3500). Its one affirmative, Sort the rest of your writing, only opens the sort-the-rest screen (corpus.sort-the-rest-of-your-writing), where a bounded pass waits for its own confirm: the note never calls POST /corpus/sweep. Not now sets it aside for the session; Do not ask again is kept for the account on this device; a read still in flight cannot bring a declined note back. It is absent at zero unsorted, without a standing yes for the journal, on any read error, and while the consent invitation is on the page -- one offer at a time, and the decision about sorting outranks an offer to sort. No server rule decides this moment: the note asks GET /corpus/consent and GET /corpus/sweep only when the screen's count of completed passes moves, so opening an entry asks nothing. Sorting is free (#3495), so the note carries no price or credit language. Uncovered as a rendered moment: the wire half is covered by corpus.sort-the-rest-of-your-writing and corpus.decide-what-may-be-sorted, and the rendered half is pinned by CorpusSweepOfferNote.test.tsx and JournalEntryScreenCorpusSweepOffer.test.tsx; #3598 tracks a browser spec for the moment itself.",
+    "crosses": {
+      "screen": "frontend/src/features/Journal/JournalEntryScreen.tsx",
+      "client": ["resonance", "corpusConsent", "corpus"],
+      "routes": ["POST /journal/{entry_id}/resonance", "GET /corpus/consent", "GET /corpus/sweep"],
+      "tables": ["corpusconsentevent", "journalentry", "corpusfragment"]
+    },
+    "status": "uncovered",
+    "issue": 3598
+  },
+  {
     "id": "corpus.decline-the-offer-and-be-left-alone",
     "description": "A writer who has never decided about their corpus completes a first resonance pass and is offered the decision; they set it aside with Not now and are not asked again on the very next pass; later they say Do not ask again, and a softer Not now afterwards does not undo it. A cold login on a fresh session reads the same standing, because the decision is the server's to remember rather than the device's; a request with no session is refused; and a neighbour's account is still un-asked until its own first pass opens its own offer. The pass that opens the offer is real -- the lane's provider is the stub, so it resolves as a refunded no-notes 200, which is still a completed pass by design -- so the seam this spec pins is the whole of it: the settlement counting the pass, the read the note makes, the verb and shape of both declines, and that the count itself never crosses the wire. Both halves are green on their own -- the note's tests mock the client, the router's tests never see it -- and this is the one place they agree.",
     "crosses": {
@@ -1357,15 +1369,15 @@
   },
   {
     "id": "map.progress-door",
-    "description": "The private progress overview API is available for the Map's optional Your progress door. The raw progress client reaches that authenticated endpoint with a pinned credential; the current Map surface does not yet call it. Uncovered until #3528 connects the door, validates the response, and drives the ribbon, rhythm, cycles and deliberate energy ledger through a real browser at phone and desktop widths.",
+    "description": "The Map's drawer offers a 'Your progress' door (#3528), hidden when both the habits and practice rings are off, that opens the Progress screen drawn entirely from GET /progress/overview (#3522): the 36-week ribbon of ten labelled stage blocks with habit births as dots, carryovers listed as brought with you and a you-are-here rule; the unnamed 14-day rhythm wave with its end value, stage swatches and a factual caption (served observations, or the fullest fortnight, longest rest and rising-since facts worded locally); per-stage dumbbells from cycle 2 on; and the weekly net-energy columns with their formula printed beside the title. Covered by frontend/e2e/map-progress-door.browser.e2e.test.ts, which anchors an account twenty-two weeks back (tests.e2e.program_anchor, the one out-of-band arrange), logs a month of real check-ins through POST /goal_completions/, opens the door from the Map drawer, and asserts the week-23 you-are-here line, the ribbon, and the energy formula and columns at phone and desktop widths. The ring-toggle gate, the 28-day rhythm gate, the cycles-from-cycle-2 rule and the held-while-reloading render are pinned by Jest beside the screen.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
-      "client": ["progress"],
-      "routes": ["GET /progress/overview"],
+      "client": ["progress", "habits", "goalCompletions"],
+      "routes": ["POST /habits/", "POST /goal_completions/", "GET /progress/overview"],
       "tables": ["stageprogress", "habit", "goal", "goalcompletion", "practicesession"]
     },
-    "status": "uncovered",
-    "issue": 3528
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map-progress-door.browser.e2e.test.ts"
   },
   {
     "id": "map.advance-stage",
@@ -1487,7 +1499,7 @@
   },
   {
     "id": "seed.import-a-folder",
-    "description": "On the web, a person chooses a whole folder -- an Obsidian vault, say -- from 'Bring in what you've written' and reviews it before anything is sent (#3555). The browser's directory input hands over each file's path under the chosen folder; the manifest is built from names and sizes alone, so no file is read until it is sent. Notes (.md, .markdown, .txt, .text) start selected; every other type Creek ingests through /v1/uploads is one optional attachments switch; app settings (.obsidian, .git, .trash, __MACOSX), hidden files, unreadable types, unsendable names, files past the 10 MB cap and two spellings of one path are counted by reason and never sent. The review shows the editable import name (the folder's own name by default), the selected paths and their total size under the existing privacy choice; putting it aside sends nothing, and starting refuses an empty selection, more than 250 MB, or a name the server would refuse. Each document then goes through the existing sequential sender with its filename plus source_namespace and source_relative_path, so Work/Index.md and Home/Index.md land as two fragments (#3554). Pinned by SeedCorpusScreenFolder, useSeedFolder, folderManifest, pickSeedFolder and importDocument tests; uncovered across the seam until #3557's browser journey selects a nested folder and reads the vault back. Pacing under the upload rate limit and resuming after a 429 are #3556.",
+    "description": "On the web, a person chooses a whole folder -- an Obsidian vault, say -- from 'Bring in what you've written' and reviews it before anything is sent (#3555). The browser's directory input hands over each file's path under the chosen folder; the manifest is built from names and sizes alone, so no file is read until it is sent. Notes (.md, .markdown, .txt, .text) start selected; every other type Creek ingests through /v1/uploads is one optional attachments switch; app settings (.obsidian, .git, .trash, __MACOSX), hidden files, unreadable types, unsendable names, files past the 10 MB cap and two spellings of one path are counted by reason and never sent. The review shows the editable import name (the folder's own name by default), the selected paths and their total size under the existing privacy choice; putting it aside sends nothing, and starting refuses an empty selection, more than 250 MB, or a name the server would refuse. Each document then goes through the existing sequential sender with its filename plus source_namespace and source_relative_path, so Work/Index.md and Home/Index.md land as two fragments (#3554). Pinned by SeedCorpusScreenFolder, useSeedFolder, folderManifest, pickSeedFolder and importDocument tests; uncovered across the seam until #3557's browser journey selects a nested folder and reads the vault back. The run paces itself under the endpoint's UPLOAD_RATE_LIMIT (20/minute, a moving window measured from each answer), shows a held document as a calm 'waiting' row, waits out a 429 for exactly its Retry-After (now CORS-exposed) up to three times before settling it as rate_limited, and offers 'Try again' for only the documents that did not go over, under the same identity and tier, at most twice each (#3556). Pinned by useSeedRunPacing, seedUploadPacing and uploadRateDrift tests.",
     "crosses": {
       "screen": "frontend/src/features/Seed/SeedCorpusScreen.tsx",
       "client": ["auth", "setTokenGetter", "corpus"],
@@ -3187,6 +3199,23 @@
     "coveredBy": "frontend/e2e/journal-byok-classification.e2e.test.ts"
   },
   {
+    "id": "settings.managed-vault-rejected-writer-key",
+    "description": "A writer saves a personal journal page with their own provider key while their managed vault's vendor refuses that key (#3595, Creek contract 0.26, Creek-Vault#1877). The lane vault, armed to reject request keys, lists 0.26 in supported_contract_minors and ends the keyed classification job failed, naming failure_code request_key_rejected only to a status poll that declares 0.26. The live server polls that job at 0.26 because the handshake listed it (every other call stays on the 0.22 pin, and a vault below 0.26 keeps hearing 0.22), lands the classification row failed with failure_code request_key_rejected after exactly one admission -- the doomed pass is never re-submitted -- and the production vault client reads classification_key_rejected: true off GET /vault/connection. That boolean is what the Settings hub's API key row and the API key screen render a calm replace-your-key note from; the rendering itself is pinned by the Jest suites ApiKeySettingsScreenKeyRejected.test.tsx and SettingsHubScreen.test.tsx, the negotiation by backend/tests/test_creek_contract_0_26.py, and the no-retry ladder by backend/tests/test_creek_vault_key_rejection.py. No key or vendor text reaches any response, log or row: the vault records the key only by digest.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "setLlmApiKeyGetter", "journal", "vault"],
+      "routes": [
+        "POST /auth/login",
+        "GET /user/vault-key-vendors",
+        "POST /journal/",
+        "GET /vault/connection"
+      ],
+      "tables": ["user", "journalentry", "vaultpipelinerun"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-rejected-key-classification.e2e.test.ts"
+  },
+  {
     "id": "habits.habit-story",
     "description": "One tap on a habit tile's Story glyph opens the Habit Story sheet (#3526), drawn entirely from GET /habits/{habit_id}/story (#3524): the four Glance figures (current run, longest run, returns, days with, in the habit's cadence unit), the day-by-day heat grid, the scheduled-day rate for the last 21 days and all time with its denominator, the tier tiles and weekly tier stack, the weekday by time-of-day grid once there are 28 days, observations and dated milestones, and an Everything door to the raw log list. Covered by frontend/e2e/habit-story.browser.e2e.test.ts, which seeds twenty scheduled days (seventeen kept, rests three and five days back) through the real POST /goal_completions/, opens the sheet from the tile, asserts every Glance figure and the exact denominator line the server computed, walks Everything and back, and checks the tile chip reads as a run. The early-days thresholds, the all-tables view, the held-while-reloading render and the error fallback are pinned by Jest beside the sheet.",
     "crosses": {
@@ -3197,5 +3226,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habit-story.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.habit-ledger",
+    "description": "The Habit Story's Everything door opens the Habit Ledger (#3529): a strip of day cells per program stage, every continuity figure with its unit, the last 7, 21 and 30 days and all time each as met of scheduled with a percentage, the tier totals and weekly tier table, the weekday and weekday by time-of-day tables with a time-not-recorded row, the raw logs newest first grouped by local day with each day's total (paged fifty rows at a time), and Export CSV / Export JSON of the days, logs and weekly tiers through the existing data-export file path. Covered by frontend/e2e/habit-ledger.browser.e2e.test.ts, which seeds ten kept days through the real POST /goal_completions/, opens the Ledger, asserts the all-time denominator line and today's log row at the time and amount GET /habits/{habit_id}/story returned, and completes a CSV download whose rows carry that log. Subtractive tier labels, untimed days, pagination and the JSON export are pinned by Jest beside the screen.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/ledger/HabitLedger.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": ["POST /goal_completions/", "GET /habits/{habit_id}/story"],
+      "tables": ["habit", "goal", "goalcompletion", "goallogevent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-ledger.browser.e2e.test.ts"
   }
 ]

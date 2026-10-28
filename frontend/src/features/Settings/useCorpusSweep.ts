@@ -22,16 +22,26 @@ import { registerStoreReset } from '@/store/registry';
  * renders on another's hub.
  */
 
+/** The one source a sweep sorts: what somebody writes in the app. */
+export const CORPUS_SWEEP_SOURCE = 'journal';
+
 interface SweepState {
   pending: number | null;
+  /**
+   * The journal page's offer (#3500) was set aside -- "Not now", or opened --
+   * this session. Session-scoped on purpose: the offer is not asked again on
+   * the next page opened, but a later session may ask once more. "Do not ask
+   * again" is kept on the device instead (``corpusSweepOfferStorage``).
+   */
+  offerSetAside: boolean;
 }
 
-const useSweepState = create<SweepState>(() => ({ pending: null }));
+const useSweepState = create<SweepState>(() => ({ pending: null, offerSetAside: false }));
 let generation = 0;
 
 registerStoreReset(() => {
   generation += 1;
-  useSweepState.setState({ pending: null });
+  useSweepState.setState({ pending: null, offerSetAside: false });
 });
 
 /** Whether work begun now may still land when it finishes. */
@@ -77,4 +87,19 @@ export async function runSweepPass(): Promise<CorpusSweepResult | null> {
 /** The unsorted count as last known, or ``null`` when it is not known. */
 export function useCorpusSweepPending(): number | null {
   return useSweepState((state) => state.pending);
+}
+
+/** Set the journal page's sweep offer aside for the rest of this session. */
+export function setSweepOfferAside(): void {
+  useSweepState.setState({ offerSetAside: true });
+}
+
+/** Whether the journal page's sweep offer has been set aside this session. */
+export function isSweepOfferSetAside(): boolean {
+  return useSweepState.getState().offerSetAside;
+}
+
+/** The same, as a subscription, so a decline on one mount hides every other. */
+export function useSweepOfferSetAside(): boolean {
+  return useSweepState((state) => state.offerSetAside);
 }

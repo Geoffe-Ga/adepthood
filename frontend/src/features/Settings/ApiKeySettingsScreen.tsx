@@ -15,7 +15,7 @@ import {
 import ConfirmDialog from '../Habits/components/ConfirmDialog';
 
 import { BYOK_DETAIL_DISCLOSURE } from './byokDisclosure';
-import { NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY } from './byokOnlyCopy';
+import { KEY_REJECTED_NOTICE, NO_KEY_HINT, REMOVE_KEY_DIALOG_BODY } from './byokOnlyCopy';
 import { BYOK_PROVIDERS, providerForKey } from './byokProviders';
 import {
   LOCAL_MODEL_OFF_NOTE,
@@ -35,6 +35,7 @@ import {
 import { SETTINGS_ROW_TEXT_INSET, SettingsSwitchRow } from './shared/SettingsSwitchRow';
 import type { SettingsFormState } from './shared/useSettingsForm';
 import { useSettingsFormState, useSettingsSubmit } from './shared/useSettingsForm';
+import { useVaultConnectionState } from './useVaultConnectionState';
 
 import { ScreenScaffold } from '@/components/layout/ScreenScaffold';
 import { LOCAL_MODEL_AVAILABLE } from '@/constants/localModel';
@@ -251,6 +252,8 @@ interface ScreenBodyProps extends LocalModelChoiceProps {
   error: string | null;
   status: string | null;
   storageWarning: string | null;
+  /** The server says the writer's provider refused their key (#3595). */
+  keyRejected: boolean;
   onChangeDraft: (_v: string) => void;
   onToggleReveal: () => void;
   onRequestRemove: () => void;
@@ -402,7 +405,10 @@ const ScreenFooter = ({
   </>
 );
 
-type KeyAreaProps = Omit<ScreenBodyProps, 'storageWarning' | 'onBack' | 'onOpenTimezone'>;
+type KeyAreaProps = Omit<
+  ScreenBodyProps,
+  'storageWarning' | 'keyRejected' | 'onBack' | 'onOpenTimezone'
+>;
 
 /**
  * Everything about the key itself. Greyed and inert while Adepthood's own
@@ -443,8 +449,25 @@ const KeyArea = (props: KeyAreaProps): React.JSX.Element => {
   );
 };
 
+/**
+ * The writer's provider refused their key on the vault's last sort (#3595).
+ * Said here because this is where a key is replaced; the sentence is the
+ * client's own and the server sends only a boolean, so no key and no vendor
+ * text can reach it.
+ */
+const KeyRejectedNotice = (): React.JSX.Element => (
+  <Text
+    style={[settingsFormStyles.body, styles.rejectedNotice]}
+    testID="key-rejected-notice"
+    accessibilityRole="summary"
+  >
+    {KEY_REJECTED_NOTICE}
+  </Text>
+);
+
 const ScreenBody = ({
   storageWarning,
+  keyRejected,
   onBack,
   onOpenTimezone,
   ...keyArea
@@ -454,6 +477,7 @@ const ScreenBody = ({
     <>
       <ScreenTitle />
       <SettingsFeedbackBanner idPrefix="api-key-storage" error={storageWarning} status={null} />
+      {keyRejected ? <KeyRejectedNotice /> : null}
       <LocalModelChoice
         localModel={keyArea.localModel}
         onToggleLocalModel={keyArea.onToggleLocalModel}
@@ -568,6 +592,7 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
   const onChangeDraft = useDraftChange(form);
   const toggleReveal = useCallback(() => setReveal((prev) => !prev), [setReveal]);
   const { onBack, onOpenTimezone } = useScreenNavHandlers(navigation);
+  const { keyRejected } = useVaultConnectionState();
 
   if (isLoading) {
     return (
@@ -587,6 +612,7 @@ export default function ApiKeySettingsScreen({ navigation }: Props = {}): React.
         error={form.error}
         status={form.status}
         storageWarning={storageWarning}
+        keyRejected={keyRejected}
         localModel={localModel}
         onToggleLocalModel={onToggleLocalModel}
         onChangeDraft={onChangeDraft}
@@ -626,6 +652,14 @@ const styles = StyleSheet.create({
     marginTop: SPACING.sm,
     marginBottom: SPACING.lg,
     color: ink.primary,
+  },
+  /** Surface and spacing only: the face is ``settingsFormStyles.body``. */
+  rejectedNotice: {
+    color: ink.primary,
+    backgroundColor: surface.sunken,
+    borderRadius: BORDER_RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.xl,
   },
   hint: {
     fontSize: 14,
