@@ -60,6 +60,11 @@ export interface SeedRunController {
   /** Open the picker and send whatever comes back. */
   choose: () => Promise<void>;
   /**
+   * Queue already-chosen documents and send them one at a time, at the tier
+   * chosen now. How a reviewed folder import enters the same run as a pick.
+   */
+  sendDocuments: (_documents: readonly PickedDocument[]) => Promise<void>;
+  /**
    * Stop the run: nothing still queued is sent, and each such document settles
    * as `cancelled`. The document already in flight is left to finish, because
    * its request is with the server and no client can un-send it.
@@ -85,7 +90,8 @@ function toQueuedDocuments(documents: readonly PickedDocument[], from: number): 
   return documents.map((document, index) => ({
     entry: {
       id: `seed-${from + index}`,
-      name: document.name,
+      // A folder document is named by its path, so two `Index.md` rows differ.
+      name: document.source?.relativePath ?? document.name,
       status: document.seedable ? 'queued' : 'unsupported_format',
     },
     document,
@@ -155,13 +161,21 @@ function orderedItems(run: SeedRunState): SeedItem[] {
   return ordered;
 }
 
-/** The seeding run's state plus the actions the screen offers. */
-export function useSeedRun(): SeedRunController {
-  const [run, dispatch] = useReducer(seedRunReducer, EMPTY_SEED_RUN);
-  const [classification, setClassification] = useState<JournalClassification>(
-    DEFAULT_SEED_CLASSIFICATION,
-  );
-  const [notice, setNotice] = useState<string | null>(null);
+/** The sequential sender a run's picks and reviewed folders both go through. */
+interface RunSender {
+  sendDocuments: (_documents: readonly PickedDocument[]) => Promise<void>;
+  cancel: () => void;
+  isSending: boolean;
+}
+
+/**
+ * Queue documents into the run and send them one at a time, stoppable by
+ * `cancel` and by unmount.
+ */
+function useRunSender(
+  classification: JournalClassification,
+  dispatch: Dispatch<SeedRunAction>,
+): RunSender {
   const [isSending, setIsSending] = useState(false);
   // Monotonic so a document picked twice, or two files of the same name, each
   // get their own row instead of overwriting one another.
@@ -173,12 +187,41 @@ export function useSeedRun(): SeedRunController {
   const cancel = useCallback(() => {
     abortRef.current?.abort();
     dispatch({ type: 'cancel' });
-  }, []);
+  }, [dispatch]);
 
   // The safety net under the navigation guard: a screen can be torn down by
   // routes the guard never sees, and an unmounted run that kept uploading is
   // the exact divergence between what the person saw and what the server holds.
   useEffect(() => () => abortRef.current?.abort(), []);
+
+  const sendDocuments = useCallback(
+    async (documents: readonly PickedDocument[]) => {
+      const queued = toQueuedDocuments(documents, mintedCount.current);
+      mintedCount.current += queued.length;
+      dispatch({ type: 'add', entries: queued.map((item) => item.entry) });
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setIsSending(true);
+      try {
+        await sendSequentially(queued, classification, dispatch, controller.signal);
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [classification, dispatch],
+  );
+
+  return { sendDocuments, cancel, isSending };
+}
+
+/** The seeding run's state plus the actions the screen offers. */
+export function useSeedRun(): SeedRunController {
+  const [run, dispatch] = useReducer(seedRunReducer, EMPTY_SEED_RUN);
+  const [classification, setClassification] = useState<JournalClassification>(
+    DEFAULT_SEED_CLASSIFICATION,
+  );
+  const [notice, setNotice] = useState<string | null>(null);
+  const { sendDocuments, cancel, isSending } = useRunSender(classification, dispatch);
 
   const choose = useCallback(async () => {
     const picked = await pickSeedDocuments();
@@ -187,18 +230,8 @@ export function useSeedRun(): SeedRunController {
       return;
     }
     setNotice(null);
-    const queued = toQueuedDocuments(picked.documents, mintedCount.current);
-    mintedCount.current += queued.length;
-    dispatch({ type: 'add', entries: queued.map((item) => item.entry) });
-    const controller = new AbortController();
-    abortRef.current = controller;
-    setIsSending(true);
-    try {
-      await sendSequentially(queued, classification, dispatch, controller.signal);
-    } finally {
-      setIsSending(false);
-    }
-  }, [classification]);
+    await sendDocuments(picked.documents);
+  }, [sendDocuments]);
 
   const items = useMemo(() => orderedItems(run), [run]);
 
@@ -208,6 +241,7 @@ export function useSeedRun(): SeedRunController {
     classification,
     chooseClassification: setClassification,
     choose,
+    sendDocuments,
     cancel,
     notice,
     isSending,
