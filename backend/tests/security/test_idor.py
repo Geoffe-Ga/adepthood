@@ -35,6 +35,7 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import jwt
@@ -44,13 +45,16 @@ from sqlalchemy import ColumnElement, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select, update
 
+from domain.frequencies import Frequency
 from models.agent_grant import AgentGrant
 from models.completion_suggestion import (
     CompletionSuggestion,
     CompletionTargetType,
     SuggestionStatus,
 )
+from models.corpus_fragment import CorpusFragment
 from models.corpus_invitation_state import CorpusInvitationState
+from models.corpus_sweep import CorpusSweep
 from models.course_stage import CourseStage
 from models.feedback import FeedbackReport
 from models.feedback_triage import FeedbackNote, FeedbackTriageEvent
@@ -76,6 +80,7 @@ from models.user import User
 from models.user_practice import UserPractice
 from models.user_ui_flags import UserUiFlags
 from security.idempotency import hash_idem_key
+from services import frequency_classification as fc
 from services.creek_vault_client import HttpCreekVaultClient
 from services.journal_retention import PURGE_MIN_RETENTION_DAYS
 from services.oauth_authorization import OAUTH_ISSUER_ENV_VAR
@@ -130,6 +135,13 @@ _JOURNAL_PROBE_MESSAGE = "A perfectly ordinary entry."
 # A backlog larger than one, so a stranger's zero cannot coincide with a
 # miscount of a single row.
 _SWEEP_BACKLOG = 2
+
+# A classifier reply naming one position, and words only Alice wrote, so their
+# presence in any provider prompt Bob's pass sent could only mean a crossing.
+_SWEEP_CLASSIFIED_REPLY = json.dumps(
+    {"weights": {Frequency.F5.value: 0.9}, "overall_confidence": 0.9}
+)
+_SWEEP_ALICE_WORDS = "alice-only-backlog-sentinel"
 
 _HABIT_PAYLOAD: dict[str, object] = {
     "name": "Drink Water",
@@ -1647,6 +1659,61 @@ async def test_idor_corpus_sweep_estimate_is_scoped_to_the_caller(
 
     assert alice_body["entries_pending"] == _SWEEP_BACKLOG
     assert bob_body["entries_pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_idor_corpus_sweep_run_cannot_sort_another_accounts_writing(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bob's pass sorts Bob's writing, and nothing of Alice's leaves her journal.
+
+    Both have granted, so the only thing standing between Bob's request and
+    Alice's backlog is the account the token names. Asserted at the provider --
+    no prompt carries Alice's words -- and in the store: Alice gains no
+    fragment, no sweep receipt is filed against her, and her backlog is still
+    hers to sort.
+    """
+    prompts: list[str] = []
+
+    async def recording(**kwargs: object) -> SimpleNamespace:
+        prompts.append(repr(kwargs))
+        return SimpleNamespace(text=_SWEEP_CLASSIFIED_REPLY)
+
+    monkeypatch.setattr(fc, "generate_response", recording)
+    alice_headers, alice_id = await _signup(async_client, "alice_sweep_run")
+    bob_headers, bob_id = await _signup(async_client, "bob_sweep_run")
+    for headers in (alice_headers, bob_headers):
+        granted = await async_client.put(
+            "/corpus/consent/journal", json={"granted": True}, headers=headers
+        )
+        assert granted.status_code == HTTPStatus.OK, granted.text
+
+    for index in range(_SWEEP_BACKLOG):
+        db_session.add(
+            JournalEntry(
+                message=f"{_SWEEP_ALICE_WORDS} {index}",
+                sender="user",
+                user_id=alice_id,
+                classification=JournalClassification.PERSONAL.value,
+                timestamp=datetime.now(UTC),
+            )
+        )
+    await db_session.commit()
+
+    bob_pass = await async_client.post("/corpus/sweep", headers=bob_headers)
+
+    assert bob_pass.status_code == HTTPStatus.OK, bob_pass.text
+    assert bob_pass.json() == {"entries_pending": 0, "entries_sorted": 0, "entries_remaining": 0}
+    assert all(_SWEEP_ALICE_WORDS not in prompt for prompt in prompts)
+    fragment_owners = (
+        (await db_session.execute(select(col(CorpusFragment.user_id)))).scalars().all()
+    )
+    sweep_owners = (await db_session.execute(select(col(CorpusSweep.user_id)))).scalars().all()
+    assert alice_id not in fragment_owners
+    assert alice_id not in sweep_owners
+    assert bob_id not in sweep_owners
+    alice_left = (await async_client.get("/corpus/sweep", headers=alice_headers)).json()
+    assert alice_left["entries_pending"] == _SWEEP_BACKLOG
 
 
 @pytest.mark.asyncio

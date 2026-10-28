@@ -114,6 +114,7 @@ BARRIERED: frozenset[_Route] = frozenset(
         ("POST", "/journal/marginalia/{marginalia_id}/essay"),
         ("POST", "/corpus/import"),
         ("PUT", "/corpus/consent/{source}"),
+        ("POST", "/corpus/sweep"),
         ("GET", "/invitations"),
     }
 )

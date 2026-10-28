@@ -431,6 +431,11 @@ async def _put_corpus_consent(client: AsyncClient, headers: dict[str, str]) -> R
     return await client.put("/corpus/consent/journal", json={"granted": True}, headers=headers)
 
 
+async def _post_corpus_sweep(client: AsyncClient, headers: dict[str, str]) -> Response:
+    """Ask for one more bounded pass over the backlog, the consent route's resume."""
+    return await client.post("/corpus/sweep", headers=headers)
+
+
 # ── Per-endpoint limits pinned exactly ───────────────────────────────────
 
 
@@ -443,6 +448,7 @@ async def _put_corpus_consent(client: AsyncClient, headers: dict[str, str]) -> R
         (_get_content_body, _LIMIT_30),
         (_get_site_resource_body, _LIMIT_30),
         (_put_corpus_consent, _LIMIT_5),
+        (_post_corpus_sweep, _LIMIT_5),
     ],
     ids=[
         "post-practices-pinned-at-5-per-minute",
@@ -450,6 +456,7 @@ async def _put_corpus_consent(client: AsyncClient, headers: dict[str, str]) -> R
         "get-content-body-pinned-at-30-per-minute",
         "get-site-resource-body-pinned-at-30-per-minute",
         "put-corpus-consent-pinned-at-5-per-minute",
+        "post-corpus-sweep-pinned-at-5-per-minute",
     ],
 )
 async def test_per_endpoint_rate_limit_pinned(
@@ -464,6 +471,26 @@ async def test_per_endpoint_rate_limit_pinned(
         return await make_request(async_client, headers)
 
     await _assert_limit_pinned(send, limit)
+
+
+@pytest.mark.asyncio
+async def test_corpus_sweep_budget_is_the_accounts_own(async_client: AsyncClient) -> None:
+    """``POST /corpus/sweep`` is limited per account, not per address.
+
+    Two accounts behind one address: the first spends its whole budget and is
+    refused, and the second is still admitted -- a shared NAT does not make one
+    person's backlog wait on another's.
+    """
+    first = await _signup(async_client, "sweeper-one")
+    second = await _signup(async_client, "sweeper-two")
+
+    async def send() -> Response:
+        return await _post_corpus_sweep(async_client, first)
+
+    await _assert_limit_pinned(send, _LIMIT_5)
+    admitted = await _post_corpus_sweep(async_client, second)
+
+    assert admitted.status_code == HTTPStatus.OK, admitted.text
 
 
 # ── Auth rate limits unchanged ───────────────────────────────────────────
@@ -779,7 +806,7 @@ async def test_a_decorated_route_still_refuses_at_its_own_tighter_limit(
     assert responses[_LIMIT_5].status_code == HTTPStatus.TOO_MANY_REQUESTS
 
 
-# The 36 limits declared with ``@limiter.limit``, frozen. This table is the
+# The 38 limits declared with ``@limiter.limit``, frozen. This table is the
 # ratchet for #2909: the ambient floor was added *underneath* these, and the
 # one way that change could do harm is by disturbing one of them. Reading it
 # back from the limiter proves the decorators registered what the source says,
@@ -802,6 +829,8 @@ _DECLARED_ROUTE_LIMITS: dict[str, tuple[str, ...]] = {
     "routers.botmason.add_balance": ("5 per 1 minute",),
     "routers.corpus.import_corpus_document": ("20 per 1 minute",),
     "routers.corpus.put_corpus_consent": ("5 per 1 minute",),
+    # The resume a repeated consent grant used to be, keyed per account (#3498).
+    "routers.corpus.run_corpus_sweep": ("5 per 1 minute",),
     "routers.course.get_content_body": ("30 per 1 minute",),
     "routers.course.get_site_resource_body": ("30 per 1 minute",),
     "routers.course.get_stage_intro_body": ("30 per 1 minute",),
@@ -853,7 +882,7 @@ def _expected_mounted_paths() -> set[str]:
 
 
 def test_every_declared_route_limit_matches_the_frozen_table() -> None:
-    """The 36 declared limits, including the audited admin wallet correction.
+    """The 38 declared limits, including the audited admin wallet correction.
 
     Also a tripwire for the one regression the new layer could hide: slowapi's
     ``@limiter.exempt`` and ``request_filter`` escape hatches govern the
