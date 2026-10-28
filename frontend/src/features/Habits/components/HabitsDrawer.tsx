@@ -1,10 +1,9 @@
 // The Habits header-drawer body. Replaces the removed in-body overflow menu and
 // hosts, top to bottom: the action rows (Quick Log, Edit, Add Habit, Energy
-// Scaffolding, Stats), the unlock-all confirm gate, the page-controls
+// Scaffolding), the unlock-all confirm gate, the page-controls
 // visibility switch, and the "Show Habits" pager row with its right-aligned
 // Prev/range/Next cluster. Rendered as ScreenDrawer children by HabitsScreen.
 import {
-  BarChart2,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -34,7 +33,7 @@ import { accent, ink, SPACING, surface, touchTarget, type } from '@/design/token
 /** Lucide glyph size in dp for the drawer's row and pager icons. */
 const ICON_SIZE = 20;
 
-type SelectableMode = 'quickLog' | 'stats' | 'edit';
+type SelectableMode = 'quickLog' | 'edit';
 
 export interface HabitsDrawerProps {
   onSelectMode: (_mode: SelectableMode) => void;
@@ -65,7 +64,7 @@ interface ActionRowsProps {
   onClose: () => void;
 }
 
-/** The five mode/action rows; each fires its action then dismisses the drawer. */
+/** The four mode/action rows; each fires its action then dismisses the drawer. */
 function ActionRows({
   onSelectMode,
   onOpenOnboarding,
@@ -77,7 +76,6 @@ function ActionRows({
     { Icon: Pencil, label: 'Edit', run: () => onSelectMode('edit') },
     { Icon: Plus, label: 'Add Habit', run: onOpenAddHabit },
     { Icon: Zap, label: 'Energy Scaffolding', run: onOpenOnboarding },
-    { Icon: BarChart2, label: 'Stats', run: () => onSelectMode('stats') },
   ];
   return (
     <>

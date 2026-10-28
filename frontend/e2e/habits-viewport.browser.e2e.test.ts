@@ -79,12 +79,12 @@ const SEEDED_HABITS: ReadonlyArray<{ name: string; icon: string }> = [
 
 /**
  * Seeded habits made achieved-today, so their streak renders as the coloured
- * "N DAYS — ACHIEVED TODAY!" badge -- the widest text a tile header carries
+ * "N-DAY RUN · KEPT TODAY" badge -- the widest text a tile header carries
  * (#2961). One long single-word name, one multi-word name: the badge must not
  * push either into a mid-word break.
  */
 const ACHIEVED_HABITS: readonly string[] = ['Journalling', 'Gratitude Practice'];
-const ACHIEVED_BADGE_TEXT = 'ACHIEVED TODAY';
+const ACHIEVED_BADGE_TEXT = 'KEPT TODAY';
 /** Subtractive limits per tier, loosest first, as the goal editor orders them. */
 const SUBTRACTIVE_LIMITS: Readonly<Record<string, number>> = { low: 30, clear: 10, stretch: 0 };
 

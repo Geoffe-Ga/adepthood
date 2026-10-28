@@ -82,6 +82,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'habit-reorder.browser.e2e.test.ts',
   'habit-reveal-without-course.browser.e2e.test.ts',
   'habit-same-owner-reauth.browser.e2e.test.ts',
+  'habit-story.browser.e2e.test.ts',
   'habit-subtractive-streak.browser.e2e.test.ts',
   DEMO_TILE_JOURNEY,
   'habits-day-rollover.browser.e2e.test.ts',

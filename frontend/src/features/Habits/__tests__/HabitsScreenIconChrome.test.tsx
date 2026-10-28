@@ -73,7 +73,10 @@ jest.mock('../components/HabitSettingsModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
 jest.mock('../components/AddHabitModal', () => () => null);
-jest.mock('../components/StatsModal', () => ({ __esModule: true, default: jest.fn(() => null) }));
+jest.mock('../story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 import HabitsScreen from '../HabitsScreen';
 
@@ -124,7 +127,6 @@ describe('HabitsScreen top-bar chrome', () => {
     // their presence proves the icon chrome mounts without throwing on native.
     expect(getByTestId('screen-drawer-panel')).toBeTruthy();
     expect(getByText('Quick Log')).toBeTruthy();
-    expect(getByText('Stats')).toBeTruthy();
     expect(getByText('Add Habit')).toBeTruthy();
   });
 });

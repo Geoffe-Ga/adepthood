@@ -30,7 +30,6 @@ const ROW_ORDER_LABELS: readonly string[] = [
   'Edit',
   'Add Habit',
   'Energy Scaffolding',
-  'Stats',
   'Unlock All Habits',
   'Show Habits',
 ];
@@ -90,15 +89,9 @@ describe('HabitsDrawer action rows', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('fires onSelectMode("stats") and closes the drawer', () => {
-    const onSelectMode = jest.fn();
-    const onClose = jest.fn();
-    const { getByRole } = render(
-      <HabitsDrawer {...baseProps} onSelectMode={onSelectMode} onClose={onClose} />,
-    );
-    fireEvent.press(getByRole('button', { name: 'Stats' }));
-    expect(onSelectMode).toHaveBeenCalledWith('stats');
-    expect(onClose).toHaveBeenCalledTimes(1);
+  it('offers no Stats row: the Story opens from each tile (#3526)', () => {
+    const { queryByRole } = render(<HabitsDrawer {...baseProps} />);
+    expect(queryByRole('button', { name: 'Stats' })).toBeNull();
   });
 
   it('fires onSelectMode("edit") and closes the drawer', () => {
@@ -313,7 +306,6 @@ describe('HabitsDrawer row order', () => {
       'Edit',
       'Add Habit',
       'Energy Scaffolding',
-      'Stats',
       'Unlock All Habits',
       'switch',
       'Show Habits',

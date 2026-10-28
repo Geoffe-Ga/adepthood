@@ -174,7 +174,7 @@ describe('HabitTile markers', () => {
 });
 
 // User-visible symptom of the daily-reset bug: the streak chip read
-// "...— Achieved Today!" the morning after a stretch-goal was met,
+// "... · Kept today" the morning after a stretch-goal was met,
 // before the user logged anything new. The fix is anchored at the
 // progress-utility layer, so render-test the chip text to keep the
 // regression nailed at the UI boundary too.
@@ -198,7 +198,7 @@ describe('HabitTile achieved-today banner does not leak across days', () => {
       .join('|');
   };
 
-  it("does not show 'Achieved Today!' when only yesterday hit the stretch goal", () => {
+  it("does not show 'Kept today' when only yesterday hit the stretch goal", () => {
     const stretchedYesterday: Habit = {
       ...habit,
       streak: 7,
@@ -209,10 +209,10 @@ describe('HabitTile achieved-today banner does not leak across days', () => {
       <HabitTile habit={stretchedYesterday} onOpenGoals={() => {}} tz="UTC" />,
     );
     // The chip is rendered upper-cased; match insensitively.
-    expect(findChipText(component).toLowerCase()).not.toContain('achieved today');
+    expect(findChipText(component).toLowerCase()).not.toContain('kept today');
   });
 
-  it("shows 'Achieved Today!' when today's logs hit the stretch goal", () => {
+  it("shows 'Kept today' when today's logs hit the stretch goal", () => {
     const stretchedToday: Habit = {
       ...habit,
       streak: 8,
@@ -224,10 +224,10 @@ describe('HabitTile achieved-today banner does not leak across days', () => {
     const component = renderer.create(
       <HabitTile habit={stretchedToday} onOpenGoals={() => {}} tz="UTC" />,
     );
-    expect(findChipText(component).toLowerCase()).toContain('achieved today');
+    expect(findChipText(component).toLowerCase()).toContain('kept today');
   });
 
-  it("calls a weekly period 'Achieved This Week' after a rest day", () => {
+  it("calls a weekly period 'Kept this week' after a rest day", () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-03-13T12:00:00Z')); // Friday
     try {
@@ -252,14 +252,14 @@ describe('HabitTile achieved-today banner does not leak across days', () => {
         <HabitTile habit={weekly} onOpenGoals={() => {}} tz="UTC" />,
       );
       const text = findChipText(component).toLowerCase();
-      expect(text).toContain('achieved this week');
-      expect(text).not.toContain('achieved today');
+      expect(text).toContain('kept this week');
+      expect(text).not.toContain('kept today');
     } finally {
       jest.useRealTimers();
     }
   });
 
-  it("calls a completed monthly period 'Achieved This Month'", () => {
+  it("calls a completed monthly period 'Kept this month'", () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-03-20T12:00:00Z'));
     try {
@@ -282,7 +282,7 @@ describe('HabitTile achieved-today banner does not leak across days', () => {
       const component = renderer.create(
         <HabitTile habit={monthly} onOpenGoals={() => {}} tz="UTC" />,
       );
-      expect(findChipText(component).toLowerCase()).toContain('achieved this month');
+      expect(findChipText(component).toLowerCase()).toContain('kept this month');
     } finally {
       jest.useRealTimers();
     }

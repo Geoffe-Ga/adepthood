@@ -110,9 +110,9 @@ jest.mock('../components/GoalModal', () => () => null);
 jest.mock('../components/HabitSettingsModal', () => () => null);
 jest.mock('../components/OnboardingModal', () => () => null);
 jest.mock('../components/ReorderHabitsModal', () => () => null);
-jest.mock('../components/StatsModal', () => ({
+jest.mock('../story/HabitStorySheet', () => ({
   __esModule: true,
-  default: jest.fn(() => null),
+  HabitStorySheet: jest.fn(() => null),
 }));
 
 // Wrap the shared color resolver in a jest.fn so page-2 tests can assert which

@@ -28,7 +28,10 @@ jest.mock('@/features/Habits/components/GoalModal', () => () => null);
 jest.mock('@/features/Habits/components/HabitSettingsModal', () => () => null);
 jest.mock('@/features/Habits/components/OnboardingModal', () => () => null);
 jest.mock('@/features/Habits/components/ReorderHabitsModal', () => () => null);
-jest.mock('@/features/Habits/components/StatsModal', () => () => null);
+jest.mock('@/features/Habits/story/HabitStorySheet', () => ({
+  __esModule: true,
+  HabitStorySheet: jest.fn(() => null),
+}));
 
 // ---------------------------------------------------------------------------
 // Depth-preferences store mock — selector-based, mutable per test.

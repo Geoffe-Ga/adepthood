@@ -1691,9 +1691,18 @@ export interface GoalCompletionPayload {
   completed_on?: string;
 }
 
+/** A run threshold a check-in crossed (``schemas/milestone.py``). */
+export interface CheckInMilestone {
+  threshold: number;
+  kind?: 'streak_started' | 'streak_milestone' | 'personal_best' | 'comeback';
+  /** Server-written copy; shown verbatim when present. */
+  label?: string | null;
+  achieved_at?: string | null;
+}
+
 export interface CheckInResult {
   streak: number;
-  milestones: Array<{ threshold: number }>;
+  milestones: CheckInMilestone[];
   reason_code: string;
   /** Authoritative sum across every tier row for the affected habit/day. */
   day_units: number;
