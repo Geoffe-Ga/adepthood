@@ -215,4 +215,112 @@ describe('CorpusInvitationNote', () => {
     expect(mockDismiss).toHaveBeenCalledWith(true);
     expect(queryByTestId(INVITATION)).toBeNull();
   });
+
+  describe('onOfferSettled: when the offer check for a pass has an answer (#3604)', () => {
+    type SettledNote = React.ComponentType<{
+      completedPasses: number;
+      onOpen: () => void;
+      onOfferSettled: (pass: number, offered: boolean) => void;
+    }>;
+    const Note = CorpusInvitationNote as unknown as SettledNote;
+
+    it('reports nothing before the read answers, then the pass and the answer', async () => {
+      let answer: (value: CorpusInvitation) => void = () => {};
+      mockStatus.mockReturnValue(
+        new Promise<CorpusInvitation>((resolve) => {
+          answer = resolve;
+        }),
+      );
+      const onOfferSettled = jest.fn();
+      render(<Note completedPasses={1} onOpen={jest.fn()} onOfferSettled={onOfferSettled} />);
+      await act(async () => {});
+      // "Not showing yet" is not an answer.
+      expect(onOfferSettled).not.toHaveBeenCalled();
+
+      await act(async () => {
+        answer(OFFERED);
+      });
+
+      expect(onOfferSettled).toHaveBeenCalledTimes(1);
+      expect(onOfferSettled).toHaveBeenCalledWith(1, true);
+    });
+
+    it('a silent answer settles as not offered', async () => {
+      mockStatus.mockResolvedValue(SILENT);
+      const onOfferSettled = jest.fn();
+      render(<Note completedPasses={3} onOpen={jest.fn()} onOfferSettled={onOfferSettled} />);
+
+      await waitFor(() => expect(onOfferSettled).toHaveBeenCalledWith(3, false));
+    });
+
+    it('a failed read settles as not offered, so nothing waiting on it waits forever', async () => {
+      mockStatus.mockRejectedValue(new Error('offline'));
+      const onOfferSettled = jest.fn();
+      const view = render(
+        <Note completedPasses={1} onOpen={jest.fn()} onOfferSettled={onOfferSettled} />,
+      );
+
+      await waitFor(() => expect(onOfferSettled).toHaveBeenCalledWith(1, false));
+      expect(view.queryByTestId(INVITATION)).toBeNull();
+    });
+
+    it('a read landing after a decline settles as not offered', async () => {
+      let answerSecondRead: (value: CorpusInvitation) => void = () => {};
+      mockStatus.mockResolvedValueOnce(OFFERED).mockReturnValueOnce(
+        new Promise<CorpusInvitation>((resolve) => {
+          answerSecondRead = resolve;
+        }),
+      );
+      const onOfferSettled = jest.fn();
+      const view = render(
+        <Note completedPasses={1} onOpen={jest.fn()} onOfferSettled={onOfferSettled} />,
+      );
+      await view.findByTestId(INVITATION);
+      view.rerender(
+        <Note completedPasses={2} onOpen={jest.fn()} onOfferSettled={onOfferSettled} />,
+      );
+      fireEvent.press(view.getByTestId(`${INVITATION}-dismiss`));
+
+      await act(async () => {
+        answerSecondRead(OFFERED);
+      });
+
+      expect(onOfferSettled).toHaveBeenLastCalledWith(2, false);
+      expect(view.queryByTestId(INVITATION)).toBeNull();
+    });
+
+    it('a read overtaken by the next pass never settles that next pass', async () => {
+      let answerFirstRead: (value: CorpusInvitation) => void = () => {};
+      let answerSecondRead: (value: CorpusInvitation) => void = () => {};
+      mockStatus
+        .mockReturnValueOnce(
+          new Promise<CorpusInvitation>((resolve) => {
+            answerFirstRead = resolve;
+          }),
+        )
+        .mockReturnValueOnce(
+          new Promise<CorpusInvitation>((resolve) => {
+            answerSecondRead = resolve;
+          }),
+        );
+      const onOfferSettled = jest.fn();
+      const view = render(
+        <Note completedPasses={1} onOpen={jest.fn()} onOfferSettled={onOfferSettled} />,
+      );
+      view.rerender(
+        <Note completedPasses={2} onOpen={jest.fn()} onOfferSettled={onOfferSettled} />,
+      );
+
+      await act(async () => {
+        answerFirstRead(SILENT);
+      });
+      expect(onOfferSettled).not.toHaveBeenCalled();
+
+      await act(async () => {
+        answerSecondRead(SILENT);
+      });
+      expect(onOfferSettled).toHaveBeenCalledTimes(1);
+      expect(onOfferSettled).toHaveBeenCalledWith(2, false);
+    });
+  });
 });

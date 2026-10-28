@@ -457,17 +457,6 @@ export const touchTarget = {
 /** Habit-tile density in spacing UNITS (fed to `spacing(n, scale)`), not px. */
 export const tileDensity = { paddingV: 0.5, barGap: 0.5 } as const;
 
-/** WCAG-AA on the white modal card: #555 = 7.46:1 on #ffffff (AAA normal). */
-export const CHART_AXIS_LABEL_COLOR = '#555555';
-
-export const CHART_STYLE = {
-  backgroundGradientFrom: '#ffffff',
-  backgroundGradientFromOpacity: 0,
-  backgroundGradientTo: '#ffffff',
-  backgroundGradientToOpacity: 0,
-  axisLineOpacity: 0.15,
-} as const;
-
 export const breakpoints = { xs: 0, sm: 360, md: 600, lg: 900, xl: 1200 } as const;
 
 /** Responsive font sizes based on viewport width. */

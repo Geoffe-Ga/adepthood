@@ -1,8 +1,8 @@
 /* eslint-env jest */
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { fireEvent, render, waitFor, within } from '@testing-library/react-native';
-import React from 'react';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
+import React, { Profiler } from 'react';
 
 import { note, resonancePayload } from './resonanceTestKit';
 
@@ -114,14 +114,39 @@ function entry(): JournalMessage {
   } as JournalMessage;
 }
 
+/**
+ * Every commit is checked for the sweep offer, so a single frame in which it
+ * rendered is caught even though a later commit took it away again.
+ */
+const sightings = { offer: 0 };
+let currentView: { queryByTestId: (id: string) => unknown } | null = null;
+
+function noteCommit() {
+  if (currentView?.queryByTestId(OFFER)) sightings.offer += 1;
+}
+
 function renderScreen() {
   const route = { key: 'k', name: 'JournalEntry' as const, params: { entryId: 7 } };
   const navigation = { navigate: jest.fn(), goBack: jest.fn(), push: jest.fn() };
   const Screen = JournalEntryScreen as unknown as React.ComponentType<Record<string, unknown>>;
-  return {
-    ...render(<Screen navigation={navigation} route={route} autosaveDelayMs={100} />),
-    navigation,
-  };
+  const view = render(
+    <Profiler id="journal-entry" onRender={noteCommit}>
+      <Screen navigation={navigation} route={route} autosaveDelayMs={100} />
+    </Profiler>,
+  );
+  currentView = view;
+  return { ...view, navigation };
+}
+
+/** A read the test answers by hand, so the order of arrivals is the test's. */
+function deferred<T>() {
+  let settle: (value: T) => void = () => {};
+  let fail: (reason: Error) => void = () => {};
+  const promise = new Promise<T>((resolve, reject) => {
+    settle = resolve;
+    fail = reject;
+  });
+  return { promise, settle, fail };
 }
 
 /** Load the entry in read mode and press the inline resonance affordance. */
@@ -156,6 +181,8 @@ beforeEach(() => {
 });
 
 beforeEach(async () => {
+  sightings.offer = 0;
+  currentView = null;
   await AsyncStorage.clear();
   setActiveUser(1);
   resetAllStores();
@@ -203,5 +230,98 @@ describe('JournalEntryScreen — the offer to sort the rest of the writing', () 
 
     await waitFor(() => expect(mockEstimate).toHaveBeenCalledTimes(1));
     expect(view.queryByTestId(OFFER)).toBeNull();
+  });
+});
+
+describe('JournalEntryScreen — the sweep offer waits for the invitation to settle (#3604)', () => {
+  it('never shows the sweep offer while a slow invitation read is still out, then yields to it', async () => {
+    const invitation = deferred<CorpusInvitation>();
+    mockStatus.mockReturnValue(invitation.promise);
+    const view = await pressResonance();
+
+    // Every sweep read has answered "offer" while the invitation is still on the wire.
+    await waitFor(() => expect(mockEstimate).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(view.queryByTestId(OFFER)).toBeNull();
+
+    await act(async () => {
+      invitation.settle(OFFERED);
+    });
+
+    await view.findByTestId(INVITATION);
+    expect(view.queryByTestId(OFFER)).toBeNull();
+    // Not one commit carried the sweep offer, not even for a frame.
+    expect(sightings.offer).toBe(0);
+  });
+
+  it('shows the sweep offer once a slow invitation read settles silent', async () => {
+    const invitation = deferred<CorpusInvitation>();
+    mockStatus.mockReturnValue(invitation.promise);
+    const view = await pressResonance();
+    await waitFor(() => expect(mockEstimate).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(view.queryByTestId(OFFER)).toBeNull();
+
+    await act(async () => {
+      invitation.settle(SILENT);
+    });
+
+    await view.findByTestId(OFFER);
+    expect(view.queryByTestId(INVITATION)).toBeNull();
+  });
+
+  it('a failed invitation read counts as settled and silent, so the sweep offer is not held forever', async () => {
+    const invitation = deferred<CorpusInvitation>();
+    mockStatus.mockReturnValue(invitation.promise);
+    const view = await pressResonance();
+    await waitFor(() => expect(mockEstimate).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      invitation.fail(new Error('offline'));
+    });
+
+    await view.findByTestId(OFFER);
+    expect(view.queryByTestId(INVITATION)).toBeNull();
+  });
+
+  it('when the invitation answers first and the sweep reads after, the invitation alone shows', async () => {
+    const estimate = deferred<CorpusSweepEstimate>();
+    mockStatus.mockResolvedValue(OFFERED);
+    mockEstimate.mockReturnValue(estimate.promise);
+    const view = await pressResonance();
+    await view.findByTestId(INVITATION);
+
+    await act(async () => {
+      estimate.settle({ entries_pending: 412 });
+    });
+
+    expect(view.queryByTestId(OFFER)).toBeNull();
+    expect(view.getByTestId(INVITATION)).toBeTruthy();
+    expect(sightings.offer).toBe(0);
+  });
+
+  it('when a silent invitation answers first, the sweep offer shows once its own reads land', async () => {
+    const estimate = deferred<CorpusSweepEstimate>();
+    mockStatus.mockResolvedValue(SILENT);
+    mockEstimate.mockReturnValue(estimate.promise);
+    const view = await pressResonance();
+    await waitFor(() => expect(mockStatus).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(view.queryByTestId(OFFER)).toBeNull();
+
+    await act(async () => {
+      estimate.settle({ entries_pending: 412 });
+    });
+
+    await view.findByTestId(OFFER);
+  });
+
+  it('asks nothing more than before: one invitation read and one sweep chain per pass', async () => {
+    const view = await pressResonance();
+    await view.findByTestId(OFFER);
+
+    expect(mockStatus).toHaveBeenCalledTimes(1);
+    expect(mockConsentList).toHaveBeenCalledTimes(1);
+    expect(mockEstimate).toHaveBeenCalledTimes(1);
   });
 });

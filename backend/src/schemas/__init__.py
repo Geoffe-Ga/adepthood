@@ -10,7 +10,6 @@ from schemas.energy import (
 from schemas.energy import Habit as EnergyHabit
 from schemas.goal import Goal
 from schemas.habit import Habit, HabitWithGoals
-from schemas.habit_stats import HabitStats
 from schemas.milestone import Milestone
 from schemas.pagination import (
     DEFAULT_PAGE_SIZE,
@@ -32,7 +31,6 @@ __all__ = [
     "EnergyPlanResponse",
     "Goal",
     "Habit",
-    "HabitStats",
     "HabitWithGoals",
     "Milestone",
     "Page",

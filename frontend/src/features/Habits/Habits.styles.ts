@@ -411,66 +411,6 @@ export const styles = StyleSheet.create({
     color: accent.onPrimary,
   },
 
-  // ===== Stats Modal =====
-  statsModalContent: {
-    width: '90%',
-    maxHeight: '80%',
-    backgroundColor: COLORS.background.card,
-    borderRadius: BORDER_RADIUS.xl,
-    padding: SPACING.lg,
-    borderTopWidth: 5,
-    ...SHADOWS.large,
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginVertical: SPACING.md,
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: SPACING.md,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderColor: 'transparent',
-  },
-  activeTab: {
-    borderColor: COLORS.success,
-  },
-  tabButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.text.primary,
-  },
-  statsContainer: {
-    padding: SPACING.md,
-  },
-  calendarContainer: {
-    marginVertical: SPACING.md,
-  },
-  // The stats block's own rules live with the shared `StatRow` primitive
-  // (`src/components/StatRow.tsx`) now that the Practice detail screen renders
-  // the same shape. Only the modal's own loading line stays here.
-  statsLoading: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.text.primary,
-  },
-  chartContainer: {
-    marginVertical: SPACING.lg,
-    alignItems: 'center',
-  },
-  chartTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: SPACING.lg,
-    textAlign: 'center',
-    color: COLORS.text.primary,
-  },
-  chart: {
-    borderRadius: BORDER_RADIUS.lg,
-    padding: SPACING.xs,
-  },
-
   // ===== Reorder Modal =====
   reorderModalContent: {
     width: '90%',

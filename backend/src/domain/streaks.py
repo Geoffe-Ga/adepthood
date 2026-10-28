@@ -207,8 +207,9 @@ def current_consecutive_streak(sorted_days_desc: Sequence[date], today: date) ->
 
     The one canonical implementation of the additive streak the frontend
     ``streakFromCompletions`` helper mirrors; both ``GET /habits``
-    (``services.streaks``) and ``GET /habits/{id}/stats`` (``domain.habit_stats``)
-    delegate here so the same goal can never report two different streak counts.
+    (``services.streaks``) and ``GET /habits/{id}/story``
+    (``domain.habit_story_continuity``) delegate here so the same goal can
+    never report two different streak counts.
 
     ``sorted_days_desc`` must be the distinct user-local completion days sorted
     *descending* (most recent first).  Two rules apply:

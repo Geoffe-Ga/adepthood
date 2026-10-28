@@ -1521,17 +1521,6 @@ export interface ApiHabitWithGoals extends ApiHabit {
 
 export type { ApiHabitStory } from './habitStorySchema';
 
-export interface ApiHabitStats {
-  day_labels: string[];
-  values: number[];
-  completions_by_day: number[];
-  longest_streak: number;
-  current_streak: number;
-  total_completions: number;
-  completion_rate: number;
-  completion_dates: string[];
-}
-
 export interface HabitCreatePayload {
   /** Atomic initial ladder; omit on ordinary habit edits. */
   goals?: HabitGoalSetup;
@@ -1711,9 +1700,6 @@ export const habits = {
     return request<unknown>(`/habits/${habitId}/story`, { token }).then((value) =>
       habitStorySchema.parse(value),
     );
-  },
-  getStats(habitId: number, token?: string): Promise<ApiHabitStats> {
-    return request<ApiHabitStats>(`/habits/${habitId}/stats`, { token });
   },
 };
 
@@ -3616,21 +3602,6 @@ export interface PracticeInsightsResponse {
   last_insight: string | null;
 }
 
-/**
- * All-time totals for one practice, served at ``GET /practice-sessions/stats``.
- *
- * Mirrors ``backend/src/schemas/practice.py::PracticeStatsResponse``. The
- * aggregate is keyed on a ``user_practice_id`` the caller owns, and widens
- * server-side to every adoption of the same catalog practice that caller owns
- * — so a practice carried from one stage into the next reports one lifetime
- * figure rather than a per-stage slice. Which sessions count is settled in
- * ``backend/src/domain/practice_stats.py``: those with a positive duration.
- */
-export interface PracticeStatsResponse {
-  total_sessions: number;
-  total_minutes: number;
-}
-
 /** A counted sitting, ordered oldest first by the practice story service. */
 export interface PracticeStorySit {
   timestamp: string;
@@ -3997,18 +3968,6 @@ export const practiceSessions = {
    */
   insights(token?: string): Promise<PracticeInsightsResponse> {
     return request<PracticeInsightsResponse>('/practice-sessions/insights', { token });
-  },
-  /**
-   * All-time totals for one practice (#2449). The aggregate is computed
-   * server-side rather than by paging this client's own session list: a
-   * lifetime figure assembled from pages would grow a request per page and
-   * would still have to re-apply the counting rule in a second place.
-   */
-  stats(userPracticeId: number, token?: string): Promise<PracticeStatsResponse> {
-    return request<PracticeStatsResponse>(
-      `/practice-sessions/stats?user_practice_id=${userPracticeId}`,
-      { token },
-    );
   },
 };
 

@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 HABIT_WITH_GOALS: _AbstractLoad = selectinload(Habit.goals)  # type: ignore[arg-type]
 
 # Habit -> goals -> completions.  Use whenever the caller iterates over
-# completions (e.g. stats endpoints, stage history aggregation).
+# completions (e.g. the Habit Story, stage history aggregation).
 HABIT_WITH_GOALS_AND_COMPLETIONS: _AbstractLoad = HABIT_WITH_GOALS.selectinload(
     Goal.completions  # type: ignore[arg-type]
 )

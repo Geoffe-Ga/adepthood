@@ -14,6 +14,9 @@ const TIMEZONE = 'UTC';
 const LICENSE_KEY = freshLicenseKey();
 const ISO_DATE_LENGTH = 10;
 const HTTP_UNPROCESSABLE_CONTENT = 422;
+const DAYS_PER_WEEK = 7;
+// The day's settled units after the dedupe-and-correct sequence below.
+const LOGGED_UNITS = 10;
 
 const ENERGY_COST = 2;
 const ENERGY_RETURN = 5;
@@ -180,18 +183,21 @@ describe('habits journey against a live server', () => {
     expect(restoredTen.day_units).toBe(10);
   });
 
-  it('reports the check-in in the habit stats', async () => {
-    const stats = await habits.getStats(habitId);
+  it('reports the check-in in the habit story', async () => {
+    const story = await habits.getStory(habitId);
 
-    expect(stats.current_streak).toBe(1);
-    expect(stats.longest_streak).toBe(1);
-    expect(stats.total_completions).toBe(1);
-    expect(stats.completion_rate).toBe(1);
-    expect(stats.completion_dates).toEqual([today]);
-    // The three series are one chart: a drift between them is a wire bug.
-    expect(stats.day_labels.length).toBeGreaterThan(0);
-    expect(stats.values).toHaveLength(stats.day_labels.length);
-    expect(stats.completions_by_day).toHaveLength(stats.day_labels.length);
+    expect(story.today).toBe(today);
+    expect(story.continuity.current_run).toBe(1);
+    expect(story.continuity.longest_run).toBe(1);
+    // One day logged, however many corrections it took to settle its units.
+    expect(story.logged_days).toBe(1);
+    const loggedDays = story.days.filter((day) => day.logged);
+    expect(loggedDays.map((day) => day.date)).toEqual([today]);
+    expect(loggedDays[0]?.units).toBe(LOGGED_UNITS);
+    // The weekday pattern and the calendar are one history: a drift between
+    // them is a wire bug.
+    expect(story.patterns.weekday_units).toHaveLength(DAYS_PER_WEEK);
+    expect(story.patterns.weekday_units.reduce((sum, units) => sum + units, 0)).toBe(LOGGED_UNITS);
   });
 
   it('shows the streak and the embedded completion on a fresh list', async () => {

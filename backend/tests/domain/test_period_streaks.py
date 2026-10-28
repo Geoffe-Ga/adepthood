@@ -3,9 +3,9 @@
 A habit whose goals are ``per_week`` or ``per_month`` counts its streak in
 consecutive met periods (ISO Monday weeks / calendar months), not days. The
 shared parity fixture under ``tests/fixtures/streak_parity`` is evaluated here
-through both server owners -- ``GET /habits``'s ``compute_habit_streak`` and
-``GET /habits/{id}/stats``'s ``compute_habit_stats`` -- and by the frontend's
-``periodStreaks.test.ts``, so client and server cannot drift.
+through ``GET /habits``'s ``compute_habit_streak``, by
+``test_habit_story_parity.py`` through the Habit Story's continuity, and by the
+frontend's ``periodStreaks.test.ts``, so client and server cannot drift.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import domain.dates as dates_module
-from domain.habit_stats import compute_habit_stats
 from domain.streaks import (
     PeriodCadence,
     PeriodUnit,
@@ -91,10 +90,10 @@ def _completions(case: dict[str, Any]) -> list[GoalCompletion]:
 
 
 @pytest.mark.parametrize("case", _CASES, ids=[c["name"] for c in _CASES])
-def test_parity_fixture_through_both_server_owners(
+def test_parity_fixture_through_the_list_streak_owner(
     case: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``GET /habits`` and ``GET /habits/{id}/stats`` report the fixture's numbers."""
+    """``GET /habits`` reports the fixture's current streak."""
     tz = case["timezone"]
     _freeze_today(monkeypatch, date.fromisoformat(case["today"]), tz)
     goals = _goals(case)
@@ -104,11 +103,8 @@ def test_parity_fixture_through_both_server_owners(
     completions = _completions(case)
 
     streak = compute_habit_streak(completions, tz, subtractive, cadence)
-    stats = compute_habit_stats(completions, tz, subtractive, cadence)
 
     assert streak == case["expected"]["current"]
-    assert stats.current_streak == case["expected"]["current"]
-    assert stats.longest_streak == case["expected"]["longest"]
 
 
 @pytest.mark.parametrize("unit", ["per_day", "per_session"])

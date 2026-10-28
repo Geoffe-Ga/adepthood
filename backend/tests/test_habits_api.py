@@ -818,7 +818,7 @@ async def test_habit_endpoints_window_embedded_completions(
 
     A retention-period account otherwise ships its entire completion
     history on every cold load.  Rows older than the 90-day window stay
-    in the database (and still feed the stats endpoint) but are trimmed
+    in the database (and still feed the Habit Story) but are trimmed
     from the ``GET /habits/`` and ``GET /habits/{id}`` transport.
     """
     headers = await _signup(async_client, "windowed")
@@ -836,6 +836,7 @@ async def test_habit_endpoints_window_embedded_completions(
                 user_id=habit_row.user_id,
                 completed_units=units,
                 timestamp=now_naive - timedelta(days=days_back),
+                local_day=(now_naive - timedelta(days=days_back)).date(),
             )
         )
     await db_session.commit()
@@ -848,11 +849,11 @@ async def test_habit_endpoints_window_embedded_completions(
     coll_goal = next(g for h in collection.json() for g in h["goals"] if g["id"] == goal_id)
     assert sorted(c["completed_units"] for c in coll_goal["completions"]) == [2.0]
 
-    # The stats endpoint deliberately keeps the FULL history — windowing
-    # it would silently change all-time aggregates.
-    stats = await async_client.get(f"/habits/{habit_id}/stats", headers=headers)
-    assert stats.status_code == HTTPStatus.OK
-    assert stats.json()["total_completions"] == 2
+    # The Story deliberately keeps the FULL history — windowing it would
+    # silently change all-time aggregates.
+    story = await async_client.get(f"/habits/{habit_id}/story", headers=headers)
+    assert story.status_code == HTTPStatus.OK
+    assert story.json()["logged_days"] == 2
 
 
 @pytest.mark.asyncio
@@ -1003,9 +1004,9 @@ async def test_relock_preserves_completions(async_client: AsyncClient) -> None:
     assert put_resp.status_code == HTTPStatus.OK
     assert put_resp.json()["revealed"] is False
 
-    stats_resp = await async_client.get(f"/habits/{habit_id}/stats", headers=headers)
-    assert stats_resp.status_code == HTTPStatus.OK
-    assert stats_resp.json()["total_completions"] == 1
+    story_resp = await async_client.get(f"/habits/{habit_id}/story", headers=headers)
+    assert story_resp.status_code == HTTPStatus.OK
+    assert story_resp.json()["logged_days"] == 1
 
 
 @pytest.mark.asyncio

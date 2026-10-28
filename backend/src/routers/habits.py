@@ -22,7 +22,6 @@ from domain.habit_links import (
     assert_units_allowed_if_linked,
     clear_practice_habit_links,
 )
-from domain.habit_stats import compute_habit_stats
 from domain.ui_flags import clear_writing_habit_links
 from error_responses import build_router
 from errors import conflict, forbidden, not_found, unprocessable
@@ -37,7 +36,6 @@ from schemas.goal import Goal as GoalSchema
 from schemas.goal import GoalUnitsUpdate
 from schemas.habit import HABIT_NAME_MAX_LENGTH, HabitCreate, HabitGoalsCreate, HabitWithGoals
 from schemas.habit import Habit as HabitSchema
-from schemas.habit_stats import HabitStats
 from schemas.habit_story import HabitStoryResponse
 from schemas.pagination import paginate_query
 from security import TextTooLongError, sanitize_user_text
@@ -59,7 +57,7 @@ _MAX_HABITS_PER_USER = 100
 
 # Rolling transport window for embedded completions (issue #294).  90 days
 # matches the longest stage window in the APTITUDE program; rows older than
-# this stay in the DB (and in the stats endpoint's all-time aggregates) but
+# this stay in the DB (and in the Habit Story's all-time aggregates) but
 # are trimmed from the habit GETs so payloads stop growing with account age.
 # Streaks are NOT bounded by this window — ``_populate_streaks_for`` reads
 # the full history via its own slim query.
@@ -528,7 +526,7 @@ async def _get_habit_with_completions(
 
     ``windowed=True`` (the habit GETs) trims embedded completions to the
     rolling transport window (issue #294); ``windowed=False`` keeps the
-    full history for all-time consumers like the stats endpoint.
+    full history for all-time consumers like the Habit Story.
     """
     loader = (
         habit_with_recent_completions(_recent_completions_cutoff(), current_user)
@@ -597,24 +595,6 @@ async def update_goal_units(
         extra={"user_id": current_user, "habit_id": habit.id, "goal_count": len(goals)},
     )
     return goals
-
-
-@router.get("/{habit_id}/stats", response_model=HabitStats)
-async def get_habit_stats(
-    habit_id: RowIdPath,
-    current_user: Annotated[int, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-    user_tz: Annotated[str, Depends(current_user_timezone)],
-) -> HabitStats:
-    """Return aggregated statistics for a habit's goal completions."""
-    # Reveal progression is list-owned; a stats read intentionally remains
-    # non-mutating and does not expose lock state in its response.
-    # All-time aggregates: deliberately NOT windowed (issue #294).
-    habit = await _get_habit_with_completions(habit_id, current_user, session, windowed=False)
-    completions = [c for goal in habit.goals for c in goal.completions if c.user_id == current_user]
-    subtractive = subtractive_context_for_goals(habit.goals, habit.start_date)
-    cadence = period_cadence_for_goals(habit.goals, habit.start_date)
-    return compute_habit_stats(completions, user_tz, subtractive, cadence)
 
 
 @router.get("/{habit_id}/story", response_model=HabitStoryResponse)
