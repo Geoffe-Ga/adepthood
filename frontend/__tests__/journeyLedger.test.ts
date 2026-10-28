@@ -403,16 +403,16 @@ describe('the ledger gate fails on a route the production client cannot issue', 
       crosses: {
         screen: SCREEN,
         client: ['habits'],
-        routes: ['GET /habits/{habit_id}/stats'],
+        routes: ['GET /habits/{habit_id}/story'],
         tables: ['habit'],
       },
     });
     const environment = baseEnvironment({
-      routes: new Set(['GET /habits/{habit_id}/stats']),
+      routes: new Set(['GET /habits/{habit_id}/story']),
       clientRoutes: new Set(['GET /habits/*/completions']),
     });
 
-    expect(onlyProblem([entry], environment)).toContain('GET /habits/{habit_id}/stats');
+    expect(onlyProblem([entry], environment)).toContain('GET /habits/{habit_id}/story');
   });
 });
 

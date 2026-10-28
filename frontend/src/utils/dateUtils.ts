@@ -339,10 +339,9 @@ export const subtractiveStreakFromCompletions = (
  *
  * Walks the full ``[startDate, today]`` window in the user's TZ and
  * tracks the longest consecutive run of days that stayed within the
- * clear threshold.  Use this for the stats overlay's "longest streak"
- * field — the additive ``computeLongestStreak`` counts logged days,
+ * clear threshold.  An additive longest streak counts logged days,
  * which is the inverse of what a subtractive habit cares about and
- * produces a contradictory display (e.g. "Current: 30 · Longest: 0"
+ * produces a contradictory pair (e.g. "Current: 30 · Longest: 0"
  * for a 30-day perfect abstention).
  *
  * Returns 0 when the habit has not started yet.  Walks ``cursor`` from

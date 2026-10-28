@@ -4,7 +4,6 @@ import { StyleSheet } from 'react-native';
 import { legalFontSizes } from '../../../../e2e/textCensus';
 import { fonts, INTERACTIVE_TEXT_MIN } from '../../../design/tokens';
 import { modePickerStyles } from '../components/ModePicker';
-import { practiceStatsBlockStyles } from '../components/PracticeStatsBlock';
 import { stageSelectorStyles } from '../components/StageSelector';
 import { catalogListStyles } from '../screens/PracticeCatalogList';
 import { practiceDetailStyles } from '../screens/PracticeDetailScreen';
@@ -80,11 +79,10 @@ const REGION: Readonly<Record<string, Region>> = {
   'detail.eyebrow': 'detailHeader',
   'detail.heading': 'detailHeader',
   'detail.badgeText': 'detailHeader',
-  // The details body: section labels, their copy, the stats block.
+  // The details body: section labels and their copy.
   'detail.sectionLabel': 'detailSections',
   'detail.sectionText': 'detailSections',
   'detail.bullet': 'detailSections',
-  'stats.heading': 'detailSections',
   // The details actions, the stage picker card and the load error.
   'detail.actionButtonText': 'detailActions',
   'detail.pickerHeading': 'detailActions',
@@ -121,7 +119,6 @@ const sheets: Readonly<Record<string, unknown>> = {
   'session.timer': MEDITATION_TIMER_LABEL,
   ...namespaced('catalog', catalogListStyles),
   ...namespaced('stage', stageSelectorStyles),
-  ...namespaced('stats', practiceStatsBlockStyles),
   ...namespaced('detail', practiceDetailStyles),
   ...namespaced('picker', modePickerStyles),
 };

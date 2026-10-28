@@ -69,7 +69,7 @@ describe('closed client diagnostics', () => {
   });
   it('maps numeric resource paths to templates and discards private queries and unknown paths', () => {
     expect(diagnosticRoute('/journal/123/notes?search=private')).toBe('/journal/{entry_id}/notes');
-    expect(diagnosticRoute('/habits/42/stats?name=private')).toBe('/habits/{habit_id}/stats');
+    expect(diagnosticRoute('/habits/42/story?name=private')).toBe('/habits/{habit_id}/story');
     expect(diagnosticRoute('/journal/?search=private')).toBe('/journal/');
     expect(diagnosticRoute('/private note')).toBe('unknown_route');
   });

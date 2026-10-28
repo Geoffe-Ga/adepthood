@@ -64,7 +64,6 @@ export const FORBIDDEN_DEMO_WIRE: readonly ForbiddenWire[] = [
   },
   { method: 'PUT', path: /^\/goals\/\d+$/u, route: 'PUT /goals/{goal_id}' },
   { method: 'POST', path: /^\/goal_completions\/$/u, route: 'POST /goal_completions/' },
-  { method: 'GET', path: /^\/habits\/\d+\/stats$/u, route: 'GET /habits/{habit_id}/stats' },
   { method: 'GET', path: /^\/habits\/\d+\/story$/u, route: 'GET /habits/{habit_id}/story' },
 ];
 

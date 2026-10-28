@@ -15,7 +15,6 @@ import {
   calculateNetEnergy,
   calculateTodaysProgress,
   getProgressBarColor,
-  generateStatsForHabit,
   clampPercentage,
   isGoalAchieved,
   isHabitUnlocked,
@@ -32,6 +31,7 @@ import {
   buildPagedHabits,
   periodOf,
   unitsInCurrentPeriod,
+  periodLongestStreak,
   STAGE_ORDER,
   STAGE_DURATIONS_DAYS,
 } from '../HabitUtils';
@@ -2049,20 +2049,20 @@ describe('cadence-period scoring', () => {
     const habit: Habit = {
       ...habitWithDays([], subtractiveGoals),
       start_date: new Date('2026-03-13T12:00:00Z'),
-      completions: [
-        {
-          id: 'today-over-daily-clear-limit',
-          timestamp: new Date('2000-01-01T00:00:00Z'),
-          local_day: '2026-03-13',
-          completed_units: 2,
-        },
-      ],
+      completions: [],
     };
 
     // 2 of a 7-per-week clear limit: the open week is met (#2819), where the
     // old day walk scored the same log against a 1/day limit and broke it.
-    const stats = generateStatsForHabit(habit, 'UTC');
-    expect(stats.currentStreak).toBe(1);
-    expect(stats.longestStreak).toBe(1);
+    // The tile's optimistic check-in recomputes the period streak.
+    const logged = logHabitUnits(habit, 2, new Date('2026-03-13T12:00:00Z'), 'UTC');
+    expect(logged.streak).toBe(1);
+    const cadence = {
+      kind: 'week' as const,
+      periodTarget: 7,
+      startDay: '2026-03-13',
+      subtractive: true,
+    };
+    expect(periodLongestStreak([{ day: '2026-03-13', units: 2 }], '2026-03-13', cadence)).toBe(1);
   });
 });

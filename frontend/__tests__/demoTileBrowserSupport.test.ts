@@ -45,7 +45,6 @@ function concrete(id: number): Array<{ method: string; url: string; label: strin
     },
     { method: 'PUT', url: `${API}/goals/${id}`, label: `PUT /goals/${id}` },
     { method: 'POST', url: `${API}/goal_completions/`, label: 'POST /goal_completions/' },
-    { method: 'GET', url: `${API}/habits/${id}/stats`, label: `GET /habits/${id}/stats` },
     { method: 'GET', url: `${API}/habits/${id}/story`, label: `GET /habits/${id}/story` },
   ];
 }
@@ -63,16 +62,16 @@ describe('forbiddenDemoRequests', () => {
 
   it('flags a query-string variant by its pathname', () => {
     expect(
-      forbiddenDemoRequests([{ method: 'GET', url: `${API}/habits/3/stats?x=1` }], API),
-    ).toEqual(['GET /habits/3/stats']);
+      forbiddenDemoRequests([{ method: 'GET', url: `${API}/habits/3/story?x=1` }], API),
+    ).toEqual(['GET /habits/3/story']);
   });
 
   it.each([
     ['the habit list read', 'GET', `${API}/habits/`],
     ['the habit list read with a query', 'GET', `${API}/habits/?paginate=true`],
     ['a new habit', 'POST', `${API}/habits/`],
-    ['a per-habit read that is not stats', 'GET', `${API}/habits/3`],
-    ['the stats path with another method', 'POST', `${API}/habits/3/stats`],
+    ['a per-habit read that is not the story', 'GET', `${API}/habits/3`],
+    ['the story path with another method', 'POST', `${API}/habits/3/story`],
     ['the completions path with another method', 'GET', `${API}/goal_completions/`],
     ['a deeper path under a forbidden one', 'PUT', `${API}/habits/3/extra`],
     ['the frontend origin', 'DELETE', `${FRONTEND}/habits/3`],
@@ -89,7 +88,7 @@ describe('isHabitsListGet', () => {
 
   it.each([
     ['GET', `${API}/habits/3`],
-    ['GET', `${API}/habits/3/stats`],
+    ['GET', `${API}/habits/3/story`],
     ['POST', `${API}/habits/`],
     ['GET', `${FRONTEND}/habits/`],
     ['GET', `${FRONTEND}/habits`],
