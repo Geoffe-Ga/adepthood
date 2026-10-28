@@ -3158,6 +3158,23 @@
     "coveredBy": "frontend/e2e/journal-byok-classification.e2e.test.ts"
   },
   {
+    "id": "settings.managed-vault-rejected-writer-key",
+    "description": "A writer saves a personal journal page with their own provider key while their managed vault's vendor refuses that key (#3595, Creek contract 0.26, Creek-Vault#1877). The lane vault, armed to reject request keys, lists 0.26 in supported_contract_minors and ends the keyed classification job failed, naming failure_code request_key_rejected only to a status poll that declares 0.26. The live server polls that job at 0.26 because the handshake listed it (every other call stays on the 0.22 pin, and a vault below 0.26 keeps hearing 0.22), lands the classification row failed with failure_code request_key_rejected after exactly one admission -- the doomed pass is never re-submitted -- and the production vault client reads classification_key_rejected: true off GET /vault/connection. That boolean is what the Settings hub's API key row and the API key screen render a calm replace-your-key note from; the rendering itself is pinned by the Jest suites ApiKeySettingsScreenKeyRejected.test.tsx and SettingsHubScreen.test.tsx, the negotiation by backend/tests/test_creek_contract_0_26.py, and the no-retry ladder by backend/tests/test_creek_vault_key_rejection.py. No key or vendor text reaches any response, log or row: the vault records the key only by digest.",
+    "crosses": {
+      "screen": "frontend/src/features/Settings/ApiKeySettingsScreen.tsx",
+      "client": ["auth", "setTokenGetter", "setLlmApiKeyGetter", "journal", "vault"],
+      "routes": [
+        "POST /auth/login",
+        "GET /user/vault-key-vendors",
+        "POST /journal/",
+        "GET /vault/connection"
+      ],
+      "tables": ["user", "journalentry", "vaultpipelinerun"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/vault-rejected-key-classification.e2e.test.ts"
+  },
+  {
     "id": "habits.habit-story",
     "description": "The Habit Story foundation reads owned lifetime history, native-cadence rates and known timing through the new endpoint. The Habits screen entry, client method and real-wire UI coverage are implemented in #3526; this registration declares that gap while the read API lands.",
     "crosses": {

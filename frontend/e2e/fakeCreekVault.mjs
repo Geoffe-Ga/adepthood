@@ -81,6 +81,8 @@ const ADEPTHOOD_DELETE_ATTEMPTS = 3;
 const CONTRACT_VERSION = '0.22.0';
 const CONTRACT_MINOR = '0.22';
 const READING_MINOR = '0.25';
+/** The minor whose failed job names why (Creek contract 0.26, Creek-Vault#1877). */
+const FAILURE_CODE_MINOR = '0.26';
 let readingsAdvertised = false;
 const CONTRACT_HEADER = 'x-creek-contract-version';
 const CEILING_HEADER = 'x-creek-tier-ceiling';
@@ -185,6 +187,14 @@ let pipelineAdvertised = false;
 let pipelineJobsHeld = false;
 /** Opaque handles and counts only; no request key survives the admitting call. */
 const pipelineJobs = new Map();
+/**
+ * A journey can model a vendor that refuses the writer's key (#3595): this vault
+ * then lists 0.26, and a keyed classification admitted meanwhile ends `failed`
+ * -- with `failure_code` only for a poll that declares 0.26, as Creek answers.
+ */
+let requestKeysRejected = false;
+/** Handles whose keyed pass the vendor refused. Opaque ids only. */
+const rejectedJobs = new Set();
 /** The vendors a managed Creek vault spends a writer's own key for. */
 const REQUEST_KEY_PROVIDERS = ['anthropic', 'openai'];
 const PROVIDER_HEADER = 'x-creek-provider';
@@ -240,9 +250,9 @@ function capabilities(response) {
     ontology_version: ONTOLOGY_VERSION,
     request_key_providers: requestKeysAdvertised ? REQUEST_KEY_PROVIDERS : [],
     status: 'ok',
-    supported_contract_minors: readingsAdvertised
-      ? [CONTRACT_MINOR, READING_MINOR]
-      : [CONTRACT_MINOR],
+    supported_contract_minors: [CONTRACT_MINOR]
+      .concat(readingsAdvertised ? [READING_MINOR] : [])
+      .concat(requestKeysRejected ? [FAILURE_CODE_MINOR] : []),
     tier_model: { ceilings: ADMITTED_TIERS, default: 'open', intimate_never_egresses: true },
     vault: { available: true },
   });
@@ -642,11 +652,20 @@ async function pipelineCall(request, response, pathname) {
   if (!pipelineAdvertised) return false;
   const jobId = pathname.startsWith('/v1/jobs/') ? pathname.slice('/v1/jobs/'.length) : null;
   if (request.method === 'GET' && jobId !== null) {
-    received.push({ method: 'GET', path: pathname, externalId: null, tier: null });
+    const declared = request.headers[CONTRACT_HEADER] ?? null;
+    received.push({ method: 'GET', path: pathname, externalId: null, tier: null, declared });
     const result = pipelineJobs.get(jobId);
     if (result === undefined) refuse(response, HTTP_NOT_FOUND, 'invalid_request');
     else if (pipelineJobsHeld) {
       send(response, HTTP_OK, { status: 'ok', job_id: jobId, state: 'running' });
+    } else if (rejectedJobs.has(jobId)) {
+      send(response, HTTP_OK, {
+        status: 'ok',
+        job_id: jobId,
+        state: 'failed',
+        result: null,
+        ...(declared === FAILURE_CODE_MINOR ? { failure_code: 'request_key_rejected' } : {}),
+      });
     } else send(response, HTTP_OK, { status: 'ok', job_id: jobId, state: 'succeeded', result });
     return true;
   }
@@ -679,6 +698,9 @@ async function pipelineCall(request, response, pathname) {
     return true;
   }
   const handle = randomUUID();
+  if (requestKeysRejected && typeof request.headers[PROVIDER_KEY_HEADER] === 'string') {
+    rejectedJobs.add(handle);
+  }
   pipelineJobs.set(handle, {
     status: 'ok',
     tier_ceiling: 'personal',
@@ -829,6 +851,15 @@ const server = createServer((request, response) => {
     ) {
       request.resume();
       requestKeysAdvertised = pathname === '/__lane/advertise-request-keys';
+      send(response, HTTP_OK, { status: 'ok' });
+      return;
+    }
+    if (
+      request.method === 'POST' &&
+      ['/__lane/reject-request-keys', '/__lane/accept-request-keys'].includes(pathname)
+    ) {
+      request.resume();
+      requestKeysRejected = pathname === '/__lane/reject-request-keys';
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }

@@ -78,6 +78,35 @@ describe('useVaultConnectionState', () => {
     expect(result.current.state).toEqual({ kind: 'managed', agentAddress: null });
   });
 
+  test('carries a refused writer key from the same read (#3595)', async () => {
+    mockConnection.mockResolvedValue({
+      connected: false,
+      vault_url: null,
+      mcp_address: null,
+      classification_key_rejected: true,
+    });
+
+    const { result } = renderHook(() => useVaultConnectionState());
+
+    expect(result.current.keyRejected).toBe(false);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.keyRejected).toBe(true);
+    expect(result.current.state).toEqual({ kind: 'none' });
+    expect(mockConnection).toHaveBeenCalledTimes(1);
+  });
+
+  test('reads an absent refused-key flag, and a failed read, as not refused', async () => {
+    mockConnection.mockResolvedValueOnce({ connected: true, vault_url: null, mcp_address: null });
+    const answered = renderHook(() => useVaultConnectionState());
+    await waitFor(() => expect(answered.result.current.loading).toBe(false));
+    expect(answered.result.current.keyRejected).toBe(false);
+
+    mockConnection.mockRejectedValueOnce(new Error('offline'));
+    const failed = renderHook(() => useVaultConnectionState());
+    await waitFor(() => expect(failed.result.current.loading).toBe(false));
+    expect(failed.result.current.keyRejected).toBe(false);
+  });
+
   test('reads a failed read as unknown, never as none, and reports it once', async () => {
     mockConnection.mockRejectedValue(new Error('offline'));
     const onError = jest.fn();

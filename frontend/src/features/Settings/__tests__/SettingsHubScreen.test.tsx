@@ -55,7 +55,12 @@ const mockUiFlagsGet = jest.fn(() =>
 // (#3017); each test that cares says what the server answers. The default is a
 // vault at an address, so every other suite here renders the hub as before.
 const mockVaultConnection = jest.fn<
-  Promise<{ connected: boolean; vault_url: string | null; mcp_address: string | null }>,
+  Promise<{
+    connected: boolean;
+    vault_url: string | null;
+    mcp_address: string | null;
+    classification_key_rejected?: boolean;
+  }>,
   []
 >(() => Promise.resolve({ connected: true, vault_url: 'https://v.example', mcp_address: null }));
 
@@ -89,6 +94,7 @@ jest.mock('@/storage/writingOfferStorage', () => ({
 }));
 
 import { BYOK_HUB_DISCLOSURE } from '../byokDisclosure';
+import { KEY_REJECTED_HUB_DESCRIPTION } from '../byokOnlyCopy';
 import { LEGAL_DOCUMENTS } from '../legalLinks';
 import SettingsHubScreen from '../SettingsHubScreen';
 
@@ -900,5 +906,33 @@ describe('SettingsHubScreen — opened on the writing-habit row (#3006)', () => 
     });
     expect(queryByTestId('writing-habit-picker')).toBeNull();
     expect(scrollTo).not.toHaveBeenCalled();
+  });
+});
+
+describe('SettingsHubScreen — a refused writer key (#3595)', () => {
+  test('the API key row says the provider turned the key down, on the same read', async () => {
+    mockVaultConnection.mockImplementationOnce(() =>
+      Promise.resolve({
+        connected: true,
+        vault_url: null,
+        mcp_address: null,
+        classification_key_rejected: true,
+      }),
+    );
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() =>
+      expect(getByTestId('settings-row-api-key').props.accessibilityHint).toBe(
+        KEY_REJECTED_HUB_DESCRIPTION,
+      ),
+    );
+    expect(mockVaultConnection).toHaveBeenCalledTimes(1);
+  });
+
+  test('without a refusal the row keeps its standing disclosure', async () => {
+    const { getByTestId } = render(<SettingsHubScreen />);
+
+    await waitFor(() => expect(mockVaultConnection).toHaveBeenCalled());
+    expect(getByTestId('settings-row-api-key').props.accessibilityHint).toBe(BYOK_HUB_DISCLOSURE);
   });
 });
