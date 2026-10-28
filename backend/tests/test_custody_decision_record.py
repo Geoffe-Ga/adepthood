@@ -112,6 +112,10 @@ _OWNER_DECISIONS: dict[str, frozenset[str]] = {
     # vendor is Privatemode, Decision 3.3 condition (f) is waived on
     # vendor-asserted evidence, and (c) and (e) are waived with substitutes.
     "2026-10-21": frozenset({"attested-vendor-and-waivers"}),
+    # The owner's 2026-10-27 release decision R5-1: the four independent
+    # reviews stop being phase gates. They are still not done, so nothing may
+    # claim they were.
+    "2026-10-27": frozenset({"reviewer-gates-waived"}),
 }
 # Anchors under which the owner has actually supplied a budget or staffing
 # figure. None exist yet, so no money cell can be owner-sourced until the
@@ -1821,3 +1825,51 @@ def test_the_twin_records_the_two_kinds_of_waiver_and_the_spend_boundary() -> No
     }
     unchanged = " ".join(str(entry) for entry in _as_list(_vendor_amendment().get("unchanged")))
     assert "No spend is authorized by this record" in unchanged
+
+
+# --------------------------------------------------------------------------
+# The owner's 2026-10-27 amendment: reviewer gates waived (release decision R5-1)
+# --------------------------------------------------------------------------
+
+_GATES_WAIVED_ANCHOR = "owner:2026-10-27#reviewer-gates-waived"
+_GATES_WAIVED_HEADING = "## Amendment 2026-10-27: reviewer gates waived by owner"
+
+
+def _gates_waived_amendment() -> dict[str, object]:
+    """The twin's 2026-10-27 amendment entry, or an empty object if it is gone."""
+    entries = [
+        _as_dict(entry)
+        for entry in _as_list(_card().get("amendments"))
+        if _as_dict(entry).get("date") == "2026-10-27"
+    ]
+    return entries[0] if entries else {}
+
+
+def test_the_reviewer_gate_waiver_keeps_every_claim_boundary() -> None:
+    """Waiving the gates lets phases proceed; it certifies nothing (R5-1).
+
+    The owner dropped the four independent reviews as phase gates. The reviews
+    were not done, so the 2026-10-14 text stays, every review stays owed, and
+    the amendment restates the boundaries a reader could otherwise think it
+    lifted: no independent-review claim, the operator-blind claim uncertified
+    under B24, and no "end-to-end" or "operator-blind" claim at all.
+    """
+    text = _flat(_adr_text())
+    reviewers = text[text.index("## Reviewers") : text.index("## Rejected alternatives")]
+    amendment = text[text.index(_GATES_WAIVED_HEADING) : text.index("## Rejected alternatives")]
+
+    # Appended, not rewritten: the 2026-10-14 gate text survives above it.
+    assert reviewers.index("This does not meet this record's independent-review gate") < (
+        reviewers.index(_GATES_WAIVED_HEADING)
+    )
+    assert _GATES_WAIVED_ANCHOR in amendment
+    assert "Phases (b)-(d) may proceed on adversarial AI review plus owner review" in amendment
+    assert "independent, external or outside party has checked" in amendment
+    assert "stays uncertified under B24" in amendment
+    assert 'no copy may claim "end-to-end" or "operator-blind"' in amendment
+    assert "real paying users" in amendment
+    statuses = {_as_dict(entry).get("status") for entry in _as_list(_card()["reviewers"])}
+    assert statuses == {_REVIEW_OWED}
+    twin = _gates_waived_amendment()
+    assert twin.get("source") == _GATES_WAIVED_ANCHOR
+    assert _card()["unlocks_public_claims"] is False

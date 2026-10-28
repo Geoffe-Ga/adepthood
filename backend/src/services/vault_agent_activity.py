@@ -17,15 +17,16 @@ published fields before this module sees it.
 
 1. a ``client_id`` of one of the account's grants -- the agent's own name (or
    the consent page's words for one that gave none), or "an agent you stopped"
-   once revoked. This is how every agent call will be stamped once
-   Creek-Vault#1976 lands; until then it matches only a static consumer an
-   operator happened to name after one;
+   once revoked. Since Creek-Vault#1976, this is how Creek stamps every
+   agent call;
 2. ``adepthood``, the app's own calls on a self-connected vault;
-3. the account's managed-vault consumer identity, which the app's calls and
-   every agent's ``sub`` share today -- "Adepthood or one of your agents", or
-   just "Adepthood" while no agent has ever been approved;
-4. the account's derived agent subject (a self-connected vault's ``sub``) --
-   "one of your agents", since the stamp cannot say which;
+3. the account's managed-vault consumer identity, which the app's calls carry
+   and every agent's ``sub`` carried before Creek-Vault#1976 -- "Adepthood or
+   one of your agents", or just "Adepthood" while no agent has ever been
+   approved;
+4. the account's derived agent subject (a self-connected vault's ``sub``, on
+   calls stamped before Creek-Vault#1976) -- "one of your agents", since the
+   stamp cannot say which;
 5. anything else: "something else with access to your vault".
 
 **Degrading.** No vault, a vault that does not advertise the read, and every

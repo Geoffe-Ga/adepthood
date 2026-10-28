@@ -99,6 +99,21 @@
       "to_be_confirmed": [
         "Whether Privatemode offers the per-activation caps of Creek-Vault ADR-0016 Decision 3 item 4, which that record documents on another vendor's admin API. The Creek build issue (creek-vault:#1896) confirms it; if it does not exist, the choice returns to the owner rather than proceeding without the brake."
       ]
+    },
+    {
+      "date": "2026-10-27",
+      "source": "owner:2026-10-27#reviewer-gates-waived",
+      "authority": "repo:prompts/claude-comms/2026-10-27-release-decisions.md",
+      "release_decision": "R5-1",
+      "changes": [
+        "The four independent reviews in reviewers stop being phase gates: phases (b)-(d) may proceed on adversarial AI review plus owner review."
+      ],
+      "unchanged": [
+        "Every reviewers entry stays not_yet_consulted; no review has happened.",
+        "No public copy may say an independent, external or outside party has checked or will check this design.",
+        "unlocks_public_claims stays false; the claim that Adepthood cannot read your journal stays uncertified under B24 (#3076), and no end-to-end or operator-blind claim is made."
+      ],
+      "reentry_trigger": "Revisit when there are real paying users or budget allows."
     }
   ],
   "selected_option": "BD",
