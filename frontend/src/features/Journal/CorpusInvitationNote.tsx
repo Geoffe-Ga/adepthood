@@ -72,6 +72,22 @@ export interface CorpusInvitationNoteProps {
    * the page at a time: the sort-the-rest offer (#3500) gives way to this one.
    */
   onOfferChange?: (offered: boolean) => void;
+  /**
+   * Told once the offer check for a pass has an answer, whichever way it went
+   * (#3604): the pass it answered and whether the note is offered. "Not
+   * showing yet" is not an answer, so a host that must not put a lesser offer
+   * on the page first waits for this rather than for ``onOfferChange``. A
+   * failed read settles as not offered -- silence, never a wait without end --
+   * and so does a read landing after a decline. A read overtaken by the next
+   * pass never reports.
+   */
+  onOfferSettled?: (pass: number, offered: boolean) => void;
+}
+
+/** What the host hears from the invitation about its offer. */
+interface OfferListeners {
+  onOfferChange?: (offered: boolean) => void;
+  onOfferSettled?: (pass: number, offered: boolean) => void;
 }
 
 /**
@@ -88,10 +104,18 @@ async function offeredNow(): Promise<boolean> {
 
 /**
  * Owns the offer state, the ask-on-increment, and the two ways of declining,
- * and tells ``onOfferChange`` whenever the note appears or goes.
+ * tells ``onOfferChange`` whenever the note appears or goes, and
+ * ``onOfferSettled`` once each pass's read has answered.
  */
-function useCorpusInvitation(completedPasses: number, onOfferChange?: (offered: boolean) => void) {
+function useCorpusInvitation(
+  completedPasses: number,
+  { onOfferChange, onOfferSettled }: OfferListeners,
+) {
   const [offer, setOffer] = useState(false);
+  // Held in a ref so a host passing a fresh callback each render does not
+  // re-issue the read: the read is keyed to the pass alone.
+  const settledListener = useRef(onOfferSettled);
+  settledListener.current = onOfferSettled;
 
   useEffect(() => {
     onOfferChange?.(offer);
@@ -121,7 +145,10 @@ function useCorpusInvitation(completedPasses: number, onOfferChange?: (offered: 
     if (completedPasses <= 0) return undefined;
     let active = true;
     void offeredNow().then((value) => {
-      if (active && !declined.current) setOffer(value);
+      if (!active) return;
+      const offered = value && !declined.current;
+      if (!declined.current) setOffer(offered);
+      settledListener.current?.(completedPasses, offered);
     });
     return () => {
       active = false;
@@ -143,9 +170,9 @@ function useCorpusInvitation(completedPasses: number, onOfferChange?: (offered: 
 function CorpusInvitationNote({
   completedPasses,
   onOpen,
-  onOfferChange,
+  ...listeners
 }: CorpusInvitationNoteProps): React.JSX.Element | null {
-  const { offer, decline } = useCorpusInvitation(completedPasses, onOfferChange);
+  const { offer, decline } = useCorpusInvitation(completedPasses, listeners);
 
   // Looking is not deciding: a person who opens the screen and closes it has
   // answered "not now", and is not asked again on the very next pass.

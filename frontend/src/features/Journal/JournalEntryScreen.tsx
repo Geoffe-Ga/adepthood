@@ -5101,7 +5101,8 @@ function EntryCreekSurface({ ctl }: { ctl: Controller }): React.JSX.Element | nu
  *
  * The offer to sort the rest of the writing (#3500) shares this host so the
  * page carries one offer at a time: it gives way while the invitation shows,
- * because the decision about sorting outranks an offer to sort.
+ * because the decision about sorting outranks an offer to sort -- and it waits
+ * for the invitation's check on each pass to settle before it may show (#3604).
  */
 function EntryCorpusInvitation({
   ctl,
@@ -5110,20 +5111,33 @@ function EntryCorpusInvitation({
   ctl: Controller;
   navigation: ScreenNavigation;
 }): React.JSX.Element {
+  const { completedPasses } = ctl.resonance;
   const [invitationShowing, setInvitationShowing] = useState(false);
+  // The pass whose invitation check has answered (#3604). Until it matches the
+  // current pass the sweep offer waits: an invitation not showing *yet* has
+  // not lost, and the lower offer must never take the page first. The answer
+  // and whether it shows land in one update, so no frame sees "settled" with
+  // a stale "not showing". A failed read settles as not showing, so the wait
+  // always ends.
+  const [settledPass, setSettledPass] = useState(0);
+  const onInvitationSettled = useCallback((pass: number, offered: boolean) => {
+    setSettledPass(pass);
+    setInvitationShowing(offered);
+  }, []);
   const onOpen = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
   const onOpenSweep = useCallback(() => navigation.navigate('CorpusSweep'), [navigation]);
   return (
     <>
       <CorpusInvitationNote
-        completedPasses={ctl.resonance.completedPasses}
+        completedPasses={completedPasses}
         onOpen={onOpen}
         onOfferChange={setInvitationShowing}
+        onOfferSettled={onInvitationSettled}
       />
       <CorpusSweepOfferNote
-        completedPasses={ctl.resonance.completedPasses}
+        completedPasses={completedPasses}
         onOpen={onOpenSweep}
-        suppressed={invitationShowing}
+        suppressed={invitationShowing || settledPass !== completedPasses}
       />
     </>
   );
