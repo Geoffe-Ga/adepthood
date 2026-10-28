@@ -28,7 +28,29 @@ import { vault } from '@/api';
  * which is the one failure shape every caller handles.
  */
 export async function readVaultConnection(): Promise<VaultConnectionState> {
-  return readConnectionState(await vault.connection());
+  return (await readVaultConnectionAnswer()).state;
+}
+
+/** One answer of the read: the connection, and whether the writer's key was refused. */
+interface VaultConnectionAnswer {
+  state: VaultConnectionState;
+  keyRejected: boolean;
+}
+
+/**
+ * The same read, keeping the refused-key flag (#3595) beside the state.
+ *
+ * The flag rides this response rather than a second one so a screen that shows
+ * both asks once. It is independent of the connection state: the
+ * deployment-wide vault's owner reads `connected: false` and can still have
+ * had a key refused.
+ */
+async function readVaultConnectionAnswer(): Promise<VaultConnectionAnswer> {
+  const connection = await vault.connection();
+  return {
+    state: readConnectionState(connection),
+    keyRejected: connection.classification_key_rejected === true,
+  };
 }
 
 /**
@@ -44,6 +66,8 @@ export interface VaultConnectionRead {
   state: VaultConnectionState;
   setState: Dispatch<SetStateAction<VaultConnectionState>>;
   loading: boolean;
+  /** The writer's provider refused their key on the last vault sort (#3595). False until said. */
+  keyRejected: boolean;
 }
 
 /**
@@ -62,6 +86,7 @@ export interface VaultConnectionRead {
 export function useVaultConnectionState(onError?: () => void): VaultConnectionRead {
   const [state, setState] = useState<VaultConnectionState>(CONNECTION_UNKNOWN);
   const [loading, setLoading] = useState(true);
+  const [keyRejected, setKeyRejected] = useState(false);
   const onErrorRef = useRef(onError);
 
   useEffect(() => {
@@ -70,9 +95,11 @@ export function useVaultConnectionState(onError?: () => void): VaultConnectionRe
 
   useEffect(() => {
     let live = true;
-    void readVaultConnection()
+    void readVaultConnectionAnswer()
       .then((answer) => {
-        if (live) setState(answer);
+        if (!live) return;
+        setState(answer.state);
+        setKeyRejected(answer.keyRejected);
       })
       .catch(() => {
         if (!live) return;
@@ -87,5 +114,5 @@ export function useVaultConnectionState(onError?: () => void): VaultConnectionRe
     };
   }, []);
 
-  return { state, setState, loading };
+  return { state, setState, loading, keyRejected };
 }
