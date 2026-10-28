@@ -74,6 +74,7 @@ async def inspect_run(session: AsyncSession, email: str, *, arrange: bool) -> di
         "job_id": None if run is None else run.job_id,
         "outcome": None if run is None else run.outcome,
         "attempt_count": None if run is None else run.attempt_count,
+        "failure_code": None if run is None else run.failure_code,
     }
 
 

@@ -66,6 +66,7 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultJobFailureCode,
     VaultJournalWithdrawResult,
     VaultLetter,
     VaultLetterRequest,
@@ -1367,11 +1368,31 @@ def _parse_pending_pipeline_job(
     """Project a non-success status only when it carries no terminal result."""
     if payload.get("result") is not None:
         return None
+    state = VaultPipelineJobState(str(raw_state))
     return VaultPipelineJob(
         job_id=job.job_id,
         stage=job.stage,
-        state=VaultPipelineJobState(str(raw_state)),
+        state=state,
+        failure_code=(
+            _job_failure_code(payload.get("failure_code"))
+            if state is VaultPipelineJobState.FAILED
+            else None
+        ),
     )
+
+
+_JOB_FAILURE_CODES = {code.value: code for code in VaultJobFailureCode}
+
+
+def _job_failure_code(raw: object) -> VaultJobFailureCode | None:
+    """Read Creek 0.26's ``failure_code`` leniently: a known code, else ``None``.
+
+    Absent (a vault below 0.26, or a caller that declared an older minor),
+    ``null``, wrong-typed, or a code published after this build all read as
+    "no reason given" -- the failed job is still a failed job, and only a code
+    adepthood can act on changes what it does next.
+    """
+    return _JOB_FAILURE_CODES.get(raw) if isinstance(raw, str) else None
 
 
 def _parse_succeeded_pipeline_job(

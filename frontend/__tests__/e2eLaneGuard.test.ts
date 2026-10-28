@@ -211,6 +211,7 @@ const EXPECTED_JOURNEYS = [
   'vault-agent-consent.e2e.test.ts',
   'vault-agent-openclaw.e2e.test.ts',
   'vault-connection.e2e.test.ts',
+  'vault-rejected-key-classification.e2e.test.ts',
   'voice-drafts-shelf.e2e.test.ts',
   'voice-readiness.e2e.test.ts',
 ];

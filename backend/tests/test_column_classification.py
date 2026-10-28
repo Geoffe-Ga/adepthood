@@ -151,6 +151,7 @@ _PLAINTEXT_COLUMNS: dict[str, frozenset[str]] = {
             "vaultactivation.custody_mode",
             "vaultactivation.state",
             "vaultpipelinefollowup.trigger",
+            "vaultpipelinerun.failure_code",
             "vaultpipelinerun.follow_up_trigger",
             "vaultpipelinerun.outcome",
             "vaultpipelinerun.stage",

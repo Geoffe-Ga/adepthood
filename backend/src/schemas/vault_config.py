@@ -114,8 +114,16 @@ class VaultConnectionResponse(OwnedResourcePublic):
     after authenticated per-allocation discovery reports the exact owned
     resource and this deployment's issuer. Legacy, disabled, malformed or
     unreachable discovery returns ``None``; the stored binding stays connected.
+
+    ``classification_key_rejected`` is true when the account's latest settled
+    vault classification failed because the writer's own provider key was
+    refused by its vendor (Creek contract 0.26, #3595). It is read from the
+    account's pipeline rows rather than from the connection row, so it holds
+    for the deployment-wide vault's owner too, and it carries no key material
+    and no vendor text -- the client owns the sentence it renders.
     """
 
     connected: bool
     vault_url: str | None
     mcp_address: str | None
+    classification_key_rejected: bool = False
