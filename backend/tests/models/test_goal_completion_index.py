@@ -1,6 +1,6 @@
 """Index coverage for the high-write :class:`GoalCompletion` table.
 
-Streak/stats reads filter on ``goal_id`` / ``user_id`` and sort by
+Streak/Story reads filter on ``goal_id`` / ``user_id`` and sort by
 ``timestamp``; without a covering composite index every such query
 full-scans and sorts this hottest-write table (audit §5.3). This pins the
 index onto the model metadata so the migration and model cannot drift.

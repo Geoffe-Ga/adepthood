@@ -451,18 +451,6 @@ async def test_idor_habit_delete_returns_403(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_idor_habit_stats_returns_403(async_client: AsyncClient) -> None:
-    alice_headers, _ = await _signup(async_client, "alice_stats")
-    bob_headers, _ = await _signup(async_client, "bob_stats")
-
-    create = await async_client.post("/habits/", json=_HABIT_PAYLOAD, headers=alice_headers)
-    habit_id = create.json()["id"]
-
-    resp = await async_client.get(f"/habits/{habit_id}/stats", headers=bob_headers)
-    assert resp.status_code == HTTPStatus.FORBIDDEN
-
-
-@pytest.mark.asyncio
 async def test_idor_habit_story_returns_403(async_client: AsyncClient) -> None:
     """The lifetime Story read retains the owned-habit authorization boundary."""
     alice_headers, _ = await _signup(async_client, "alice_story")
@@ -796,17 +784,15 @@ async def test_idor_practice_session_create_returns_403(
     assert getattr(denials[0], "user_id", None) == bob_id
 
 
-@pytest.mark.parametrize("route", ["stats", "story"])
 @pytest.mark.asyncio
-async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
+async def test_idor_practice_session_story_returns_403_and_leaks_nothing(
     async_client: AsyncClient,
     db_session: AsyncSession,
     caplog: pytest.LogCaptureFixture,
-    route: str,
 ) -> None:
     """Bob cannot read the all-time totals for Alice's practice.
 
-    ``GET /practice-sessions/stats`` takes ``user_practice_id`` from the query
+    ``GET /practice-sessions/story`` takes ``user_practice_id`` from the query
     string, so the path-parameter ownership dependencies never see it.  An
     unguarded read is a quiet one: it persists nothing and raises nothing, it
     would simply hand a stranger a count of how often a victim practises and how
@@ -821,7 +807,7 @@ async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
     doubles as an existence oracle.  The caller-scoped fan-out is the second:
     the aggregate widens from the named adoption to every adoption of the same
     catalog practice, and two people adopting the same preset is the ordinary
-    case, so the baseline below pins that Bob's own stats call sees only Bob's
+    case, so the baseline below pins that Bob's own Story call sees only Bob's
     minutes even though he and Alice sat the very same practice.
     """
     alice_headers, alice_id = await _signup(async_client, "alice_ps_stats")
@@ -841,7 +827,7 @@ async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
 
     with caplog.at_level(logging.WARNING):
         attack = await async_client.get(
-            f"/practice-sessions/{route}",
+            "/practice-sessions/story",
             params={"user_practice_id": alice_practice_id},
             headers=bob_headers,
         )
@@ -856,7 +842,7 @@ async def test_idor_practice_session_stats_returns_403_and_leaks_nothing(
     # be about ownership -- and it reports his empty history, not Alice's two
     # sits on the very same catalog practice.
     baseline = await async_client.get(
-        f"/practice-sessions/{route}",
+        "/practice-sessions/story",
         params={"user_practice_id": bob_practice_id},
         headers=bob_headers,
     )
@@ -885,8 +871,7 @@ async def _probe_missing_user_practice(
             json=_session_window_payload(_DEFINITELY_MISSING_ID),
             headers=headers,
         )
-    paths = {"stats_query": "/practice-sessions/stats", "story_query": "/practice-sessions/story"}
-    path = paths.get(spelling, "/practice-sessions/")
+    path = "/practice-sessions/story" if spelling == "story_query" else "/practice-sessions/"
     return await async_client.get(
         path,
         params={"user_practice_id": _DEFINITELY_MISSING_ID},
@@ -894,7 +879,7 @@ async def _probe_missing_user_practice(
     )
 
 
-@pytest.mark.parametrize("spelling", ["body", "query", "stats_query", "story_query"])
+@pytest.mark.parametrize("spelling", ["body", "query", "story_query"])
 @pytest.mark.asyncio
 async def test_practice_session_missing_user_practice_is_404_and_unaudited(
     async_client: AsyncClient,
@@ -1213,7 +1198,7 @@ async def test_idor_practice_approved_visible_to_all(
         ("GET", f"/habits/{_DEFINITELY_MISSING_ID}"),
         ("PUT", f"/habits/{_DEFINITELY_MISSING_ID}"),
         ("DELETE", f"/habits/{_DEFINITELY_MISSING_ID}"),
-        ("GET", f"/habits/{_DEFINITELY_MISSING_ID}/stats"),
+        ("GET", f"/habits/{_DEFINITELY_MISSING_ID}/story"),
         ("GET", f"/journal/{_DEFINITELY_MISSING_ID}"),
         ("DELETE", f"/journal/{_DEFINITELY_MISSING_ID}"),
         ("GET", f"/goal-groups/{_DEFINITELY_MISSING_ID}"),

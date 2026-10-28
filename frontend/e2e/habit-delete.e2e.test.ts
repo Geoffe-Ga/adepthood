@@ -105,6 +105,6 @@ describe('deleting a habit with history against a live server', () => {
     // The goals went with it. A habit row deleted while its goals survived
     // would still pass the list assertion above, and would orphan every
     // completion hanging off them.
-    await expect(habits.getStats(habitId)).rejects.toMatchObject({ status: 404 });
+    await expect(habits.getStory(habitId)).rejects.toMatchObject({ status: 404 });
   });
 });

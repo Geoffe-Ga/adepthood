@@ -5,7 +5,7 @@ the caller's IANA zone.  Each call is a cheap single-column PK SELECT, but
 the pattern compounds across dependencies and helpers.  These tests pin the
 contract that a request resolves the zone at most once: the duplicate
 check-in path (the worst historical offender) and a representative
-habit-stats read both stay at a single ``user.timezone`` SELECT.
+Habit Story read both stay at a single ``user.timezone`` SELECT.
 """
 
 from __future__ import annotations
@@ -145,17 +145,17 @@ async def test_duplicate_checkin_issues_at_most_one_timezone_lookup(
 
 
 @pytest.mark.asyncio
-async def test_habit_stats_issues_at_most_one_timezone_lookup(
+async def test_habit_story_issues_at_most_one_timezone_lookup(
     async_client: AsyncClient,
     db_session: AsyncSession,
     tz_select_counter: _TimezoneSelectCounter,
 ) -> None:
-    """A habit-stats read resolves the zone at most once."""
+    """A Habit Story read resolves the zone at most once."""
     headers, user_id = await _signup(async_client)
     goal = await _seed_goal(db_session, user_id)
 
     tz_select_counter.count = 0
-    resp = await async_client.get(f"/habits/{goal.habit_id}/stats", headers=headers)
+    resp = await async_client.get(f"/habits/{goal.habit_id}/story", headers=headers)
 
     assert resp.status_code == HTTPStatus.OK
     assert tz_select_counter.count <= 1
