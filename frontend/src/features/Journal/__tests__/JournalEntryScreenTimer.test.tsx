@@ -16,7 +16,7 @@ import type { CheckOffRequest } from '../writingHabitCheckOff';
  * second, so whatever subtree hosts it repaints ten times a second, and the one
  * subtree that must not is the one holding the writer's own text fields.
  */
-import type { JournalMessage } from '@/api';
+import { uiFlags, type JournalMessage } from '@/api';
 import { DEFAULT_IDLE_DELAY_MS } from '@/hooks/useIdle';
 import { saveWritingOfferAnswered } from '@/storage/writingOfferStorage';
 
@@ -27,6 +27,7 @@ const mockList = jest.fn() as jest.MockedFunction<(_id: number) => Promise<{ ite
 jest.mock('@/context/AuthContext', () => require('./authContextTestKit'));
 
 jest.mock('@/api', () => ({
+  ...require('./journalUiFlagsTestKit'),
   journal: {
     get: (...a: unknown[]) => (mockGet as unknown as (...x: unknown[]) => unknown)(...a),
     create: jest.fn(() => Promise.resolve({ id: 7 })),
@@ -130,6 +131,7 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.useRealTimers();
+  jest.restoreAllMocks();
 });
 
 describe('JournalEntryScreen — where the writing timer appears', () => {
@@ -324,10 +326,14 @@ describe('JournalEntryScreen — an unlinked timer points to Settings', () => {
   });
 
   it('shows the link-a-habit note at the end of a quick-launched session when no habit is linked', async () => {
+    const warnings = jest.spyOn(console, 'warn');
+    // The ordinary flags read must confirm no link; the null initial state is not an answer.
+    useWritingHabitLinkStore.getState().reset();
     const { getByTestId, queryByTestId } = renderScreen({ writingSession: LAUNCH });
 
     await settle(TWENTY_MINUTES_MS);
 
+    expect(warnings.mock.calls.some(([code]) => code === 'linked_habit_failed')).toBe(false);
     const banner = getByTestId('writing-session-banner');
     await within(banner).findByTestId('link-habit-nudge');
     expect(within(banner).getByTestId('link-habit-nudge-settings')).toBeTruthy();
@@ -439,6 +445,7 @@ describe('JournalEntryScreen — an unlinked timer points to Settings', () => {
   });
 
   it('shows nothing while the link is unknown: a failed read is not "unlinked"', async () => {
+    jest.spyOn(uiFlags, 'get').mockRejectedValue(new Error('offline'));
     useWritingHabitLinkStore.setState({ habitId: null, hydrated: false });
     const { getByTestId, queryByTestId } = renderScreen({ writingSession: LAUNCH });
 
