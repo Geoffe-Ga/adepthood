@@ -29,9 +29,17 @@ import binascii
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from domain.creek_vault import VaultUploadStatus
+from domain.upload_source import (
+    MAX_SOURCE_NAMESPACE_LENGTH,
+    MAX_SOURCE_RELATIVE_PATH_LENGTH,
+    is_safe_source_namespace,
+    is_safe_source_relative_path,
+    normalize_source_text,
+    source_basename,
+)
 from models.journal_entry import JournalClassification
 
 # The decoded-bytes ceiling for one document. Ten megabytes comfortably admits a
@@ -130,6 +138,18 @@ def _is_safe_filename(value: str) -> bool:
     return value == value.strip()
 
 
+def _require_path_to_name_the_file(relative_path: str, filename: str) -> None:
+    """Refuse a folder path whose last component is not this document's filename.
+
+    Compared in the one normal form the identity is computed over, so an NFD
+    filename beside an NFC path still names the same file. The message is
+    static: neither value is quoted back.
+    """
+    if source_basename(relative_path) != normalize_source_text(filename):
+        message = "source_relative_path must end in the filename"
+        raise ValueError(message)
+
+
 class UploadDocumentRequest(BaseModel):
     """One user-supplied document submitted for the vault to ingest.
 
@@ -162,6 +182,30 @@ class UploadDocumentRequest(BaseModel):
     classification: JournalClassification = Field(
         description="The privacy tier the uploader chose for this document."
     )
+    # The optional folder identity (#3554): sent together or not at all, and only
+    # by a folder import. Hashed into the upload's opaque id and never forwarded,
+    # stored, or opened as a path. Out of ``repr()`` like the bytes, because a
+    # folder's name and a note's place in it are the writer's own words.
+    source_namespace: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SOURCE_NAMESPACE_LENGTH,
+        description=(
+            "Folder imports only: the stable name of this import, by default the "
+            "chosen folder's name. Sent together with source_relative_path."
+        ),
+        repr=False,
+    )
+    source_relative_path: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SOURCE_RELATIVE_PATH_LENGTH,
+        description=(
+            "Folder imports only: the '/'-separated path from the chosen folder's root "
+            "to this file, ending in its filename. Sent together with source_namespace."
+        ),
+        repr=False,
+    )
 
     @field_validator("filename")
     @classmethod
@@ -177,6 +221,54 @@ class UploadDocumentRequest(BaseModel):
             message = "filename must be a single plain name without path separators"
             raise ValueError(message)
         return value
+
+    @field_validator("source_namespace")
+    @classmethod
+    def _normalize_namespace(cls, value: str | None) -> str | None:
+        """Admit a printable, unpadded import name, in NFC.
+
+        The message is static: the refused value never reaches an error, which
+        a client may log or forward verbatim.
+        """
+        if value is None:
+            return None
+        if not is_safe_source_namespace(value):
+            message = "source_namespace must be a printable name without surrounding spaces"
+            raise ValueError(message)
+        return normalize_source_text(value)
+
+    @field_validator("source_relative_path")
+    @classmethod
+    def _normalize_relative_path(cls, value: str | None) -> str | None:
+        """Admit a plain '/'-separated path inside the chosen folder, in NFC.
+
+        See :func:`domain.upload_source.is_safe_source_relative_path` for every
+        shape refused. Static message, for the same reason as the namespace.
+        """
+        if value is None:
+            return None
+        if not is_safe_source_relative_path(value):
+            message = "source_relative_path must be a relative path of plain names joined by '/'"
+            raise ValueError(message)
+        return normalize_source_text(value)
+
+    @model_validator(mode="after")
+    def _require_a_whole_source(self) -> UploadDocumentRequest:
+        """Require both folder fields or neither, naming this very file.
+
+        Half a source is refused rather than ignored: silently falling back to
+        the filename-only identity is exactly the collision a folder import
+        sends a source to avoid. The path's last component must be the
+        validated filename, or the identity would address some other document.
+        """
+        namespace, path = self.source_namespace, self.source_relative_path
+        if namespace is None and path is None:
+            return self
+        if namespace is None or path is None:
+            message = "source_namespace and source_relative_path must be sent together"
+            raise ValueError(message)
+        _require_path_to_name_the_file(path, self.filename)
+        return self
 
 
 # What each upload outcome tells the person who sent the document. Every line

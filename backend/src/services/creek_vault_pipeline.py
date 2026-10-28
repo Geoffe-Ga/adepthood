@@ -618,10 +618,7 @@ async def _await_job(
     job: VaultPipelineJob,
 ) -> tuple[VaultPipelineOutcome, _StageCounts]:
     """Translate the shared status-polling result under the caller's clock."""
-    result = await _poll_statuses(client, job)
-    if isinstance(result, VaultPipelineJob):
-        return VaultPipelineOutcome.FAILED, _NOTHING_REACHED
-    return _counts_from_result(result)
+    return _counts_from_result(await _poll_statuses(client, job))
 
 
 @dataclass(frozen=True)
@@ -649,6 +646,7 @@ def _finish_run(
     run.fragments_seen = counts.seen
     run.fragments_touched = counts.touched
     run.fragments_lost = counts.lost
+    run.failure_code = counts.stored_failure_code
     session.add(run)
 
 
@@ -991,7 +989,7 @@ async def _attempt_committed_run(
             extra={"stage": stage.value},
         )
         return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.ATTEMPTED)
-    if _poll_needs_reconciliation(run, outcome):
+    if _poll_needs_reconciliation(run, outcome, counts):
         return _RunResult(run_id=run.id, outcome=VaultPipelineOutcome.ATTEMPTED)
     await _commit_finished_run(session, run, outcome, counts)
     return _RunResult(run_id=run.id, outcome=outcome)
@@ -1163,7 +1161,10 @@ async def _retry_once(
 async def _land_result(
     session: AsyncSession,
     run: VaultPipelineRun,
-    result: VaultClassificationPass | VaultLinkPass | tuple[VaultPipelineOutcome, _StageCounts],
+    result: VaultClassificationPass
+    | VaultLinkPass
+    | VaultPipelineJob
+    | tuple[VaultPipelineOutcome, _StageCounts],
 ) -> VaultPipelineOutcome:
     """Persist a synchronous or job-produced terminal result and its real counts."""
     outcome, counts = result if isinstance(result, tuple) else _counts_from_result(result)
@@ -1229,7 +1230,8 @@ async def _reconcile_existing_job(
     polled = await _poll_until_terminal(client, job)
     if polled is None:
         return await _finish_exhausted_run(session, run, ambiguous=True)
-    if not isinstance(polled, VaultPipelineJob):
+    # A failed job that names its reason (a refused writer key) is final too.
+    if not isinstance(polled, VaultPipelineJob) or polled.failure_code is not None:
         return await _land_result(session, run, polled)
     await _clear_job(session, run)
     return None

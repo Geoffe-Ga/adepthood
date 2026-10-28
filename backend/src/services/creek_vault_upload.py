@@ -85,6 +85,7 @@ from domain.creek_vault import (
     tier_ceiling_for,
     wire_ceiling_for,
 )
+from domain.upload_source import normalize_source_text
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,6 +102,18 @@ _EXTERNAL_ID_DIGEST_CHARS = 32
 # appear in neither an integer nor a filename, so no pair of distinct
 # (owner, filename) inputs can collide by rearrangement across the boundary.
 _IDENTITY_SEPARATOR = "\x00"
+
+# Domain marker opening every *folder* identity pre-image (#3554). A legacy
+# pre-image opens with the owner's decimal id, so it begins with a digit or a
+# minus sign; this begins with a letter, so no folder identity can ever share a
+# pre-image -- and so an id -- with a single-file upload. The version suffix
+# leaves room to change the framing without colliding with this one.
+_FOLDER_IDENTITY_DOMAIN = b"adepthood-upload-folder-v1\x00"
+
+# Width of the big-endian length prefix framing each folder-identity field.
+# Length-prefixing rather than separating means no character a namespace or
+# path could contain can move a boundary between them.
+_FRAME_LENGTH_BYTES = 8
 
 
 class UploadDegradeReason(enum.StrEnum):
@@ -157,14 +170,40 @@ _UPLOADED_EVENT = "creek vault upload stored"
 
 
 @dataclass(frozen=True)
+class FolderSource:
+    """Where in an imported folder one document sat: its folder identity (#3554).
+
+    ``namespace`` is the import's stable name and ``relative_path`` the
+    ``/``-separated path from that folder's root to the file, both already
+    validated by :mod:`domain.upload_source` at the request door. Bundled as one
+    value so "both or neither" is a property of the type rather than a rule
+    every caller has to remember: an :class:`UploadedDocument` either has a
+    source or it does not.
+
+    Identity metadata only -- hashed into the external id, never opened as a
+    path, never forwarded. Both fields stay out of ``repr()`` because a folder
+    name and a note's path are the writer's own words about their life, as
+    private as the bytes.
+    """
+
+    namespace: str = field(repr=False)
+    relative_path: str = field(repr=False)
+
+
+@dataclass(frozen=True)
 class UploadedDocument:
     """One document as the caller received it, before any vault vocabulary applies.
 
     The router's own DTO stops at the router: this is the same document expressed
     in terms this layer owns, so :func:`store_upload` depends on the schema
-    package no more than the write path does. Bundling the five facts also keeps
+    package no more than the write path does. Bundling the facts also keeps
     the call site readable -- five loose keyword arguments in a row is where a
     filename and a classification get transposed silently.
+
+    ``source`` is set only for a document imported from a folder, and is what
+    keeps two same-named notes in different subfolders apart -- see
+    :func:`upload_external_id`. ``None`` is a single-file upload, addressed
+    exactly as it always was.
 
     ``content_base64`` is excluded from ``repr()`` for the same reason it is on
     :class:`~domain.creek_vault.VaultUploadRequest`: this object is the document,
@@ -176,6 +215,7 @@ class UploadedDocument:
     content_base64: str = field(repr=False)
     classification: str
     created_at: datetime
+    source: FolderSource | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -205,7 +245,34 @@ _UNSUPPORTED_OUTCOME = VaultUploadOutcome(
 _DEGRADED_OUTCOME = VaultUploadOutcome(status=VaultUploadStatus.DEGRADED, vault_ref=None, tags=())
 
 
-def upload_external_id(owner_user_id: int, filename: str) -> str:
+def _framed(text: str) -> bytes:
+    """Encode ``text`` behind a fixed-width length prefix, for unambiguous framing."""
+    encoded = text.encode()
+    return len(encoded).to_bytes(_FRAME_LENGTH_BYTES, "big") + encoded
+
+
+def _folder_identity(owner_user_id: int, source: FolderSource) -> bytes:
+    """Build the domain-separated pre-image of one folder document's identity.
+
+    Account, namespace and relative path, each length-framed after the domain
+    marker. Both source strings are normalized here as well as at the request
+    door, so any caller -- not only the router -- gets one id per place.
+    The filename is not a separate field: the path's last component *is* the
+    filename, which the request schema enforces.
+    """
+    return b"".join(
+        (
+            _FOLDER_IDENTITY_DOMAIN,
+            _framed(str(owner_user_id)),
+            _framed(normalize_source_text(source.namespace)),
+            _framed(normalize_source_text(source.relative_path)),
+        )
+    )
+
+
+def upload_external_id(
+    owner_user_id: int, filename: str, source: FolderSource | None = None
+) -> str:
     """Derive the stable fragment id one user's document is always addressed by.
 
     A pure function of the upload's identity -- who uploaded it and what they
@@ -226,8 +293,19 @@ def upload_external_id(owner_user_id: int, filename: str) -> str:
     Including the owner is what keeps two users' identically-named files apart;
     without it, everyone's ``notes.pdf`` would be one shared fragment that each
     upload overwrote.
+
+    A document imported from a folder carries a :class:`FolderSource`, and its
+    identity is the account plus *where in the folder* it sat rather than its
+    bare name (#3554) -- otherwise every ``Index.md`` in a vault would be one
+    fragment. The same account, namespace and path always yield the same id, so
+    re-importing a folder updates its notes in place. Without a source the
+    pre-image is byte-for-byte what it has always been, so no fragment a user
+    already uploaded is orphaned.
     """
-    identity = f"{owner_user_id}{_IDENTITY_SEPARATOR}{filename}".encode()
+    if source is not None:
+        identity = _folder_identity(owner_user_id, source)
+    else:
+        identity = f"{owner_user_id}{_IDENTITY_SEPARATOR}{filename}".encode()
     digest = hashlib.sha256(identity).hexdigest()[:_EXTERNAL_ID_DIGEST_CHARS]
     return f"{_EXTERNAL_ID_PREFIX}{digest}"
 
@@ -383,7 +461,7 @@ def _upload_request_for(
     log which upload it withheld.
     """
     return VaultUploadRequest(
-        external_id=upload_external_id(document.owner_user_id, document.filename),
+        external_id=upload_external_id(document.owner_user_id, document.filename, document.source),
         filename=document.filename,
         content_base64=document.content_base64,
         tier=tier_ceiling,

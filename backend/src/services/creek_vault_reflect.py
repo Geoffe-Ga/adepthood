@@ -77,19 +77,22 @@ from domain.creek_vault import (
     CreekCapability,
     CreekVaultClient,
     CreekVaultError,
+    VaultKeyProvider,
     VaultReflection,
     VaultReflectionNote,
     VaultReflectionStatus,
     VaultRelatedEddy,
     VaultRelatedPraxis,
     VaultTierCeiling,
+    spent_request_key,
     tier_ceiling_for,
 )
 from domain.privacy_tier import admits_egress
 from domain.resonance import ResonanceLLM
 from services.botmason import LLMResponse
 from services.creek_vault_read import log_read_degraded
-from services.marginalia import VAULT_RECEIPT, InferenceReceipt, receipt_since
+from services.creek_vault_relay import forwarded_key_vendor
+from services.marginalia import InferenceReceipt, receipt_since, vault_receipt
 from services.reflection_boundary import (
     VaultSourceUnavailableError,
     VaultSourceUnavailableReason,
@@ -151,6 +154,12 @@ class VaultResonanceLLM:
     normalized vault failure is recorded and raised as
     :class:`~services.reflection_boundary.VaultSourceUnavailableError`, and a
     care escalation leaves this seam un-caught.
+
+    A dial inside :func:`~services.creek_vault_relay.forwarding_provider_key`
+    relays the writer's key in place of a credit (#3437). Notes the vault's
+    receipt does not say that key paid for are then no answer at all (#3483):
+    a local or pool fallback, a forged key, or a handshake that changed before
+    the dial would otherwise be a free reading.
     """
 
     def __init__(
@@ -165,6 +174,7 @@ class VaultResonanceLLM:
         self._body = body
         self._tier_ceiling = tier_ceiling
         self._related = VaultRelatedSurfaces()
+        self._spent_key: VaultKeyProvider | None = None
 
     @property
     def related(self) -> VaultRelatedSurfaces:
@@ -176,6 +186,23 @@ class VaultResonanceLLM:
         nothing their vault said.
         """
         return self._related
+
+    @property
+    def spent_key(self) -> VaultKeyProvider | None:
+        """The vendor whose writer key the kept notes' receipt says paid, else ``None``."""
+        return self._spent_key
+
+    def _require_spent_key(self, reflection: VaultReflection) -> None:
+        """Refuse notes a relayed key was to pay for but, by the vault's receipt, did not.
+
+        Raises:
+            VaultSourceUnavailableError: ``KEY_NOT_SPENT``, carrying no content.
+        """
+        spent = spent_request_key(reflection.inference_source)
+        relayed = forwarded_key_vendor()
+        if relayed is not None and spent is not relayed:
+            raise VaultSourceUnavailableError(VaultSourceUnavailableReason.KEY_NOT_SPENT)
+        self._spent_key = spent
 
     async def _reflection(self) -> VaultReflection:
         """Ask the vault, recording a degrade and raising it as unavailable.
@@ -208,12 +235,14 @@ class VaultResonanceLLM:
         marginalia contract; an answer with nothing to anchor is an empty notes
         list; and a failure raises (see :meth:`_reflection`). The first is the
         only one that records related pages, so what :attr:`related` reports
-        always belongs to notes the writer is about to read.
+        always belongs to notes the writer is about to read -- and the only one
+        held to a relayed key's receipt, since an empty answer gives nothing away.
         """
         del prompt
         reflection = await self._reflection()
         if not _carries_notes(reflection):
             return _marginalia_contract(())
+        self._require_spent_key(reflection)
         self._related = VaultRelatedSurfaces(
             praxis=reflection.related_praxis, eddies=reflection.related_eddies
         )
@@ -240,11 +269,12 @@ def reflection_receipt(
     The twin of :func:`related_surfaces`, and type-tested here for the same
     reason. A :class:`VaultResonanceLLM` that returned at all was answered by
     the vault -- it holds no other source, so there is nothing it could have
-    substituted. Any other source is the app provider, read off the responses
-    it metered at or after ``mark``; ``None`` when none answered.
+    substituted -- and its receipt names the writer key the vault reported
+    spending, if any (#3483). Any other source is the app provider, read off the
+    responses it metered at or after ``mark``; ``None`` when none answered.
     """
     if isinstance(llm, VaultResonanceLLM):
-        return VAULT_RECEIPT
+        return vault_receipt(llm.spent_key)
     return receipt_since(usage, mark)
 
 

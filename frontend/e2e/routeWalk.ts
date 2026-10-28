@@ -82,6 +82,13 @@ export const SKIPPED: readonly SkippedRoute[] = [
     name: 'Voice transcription (VoiceDrafts)',
     reason: 'a paid transcription; the shelf is censused, no draft is transcribed',
   },
+  {
+    name: 'CorpusSweep',
+    reason:
+      'its Settings row shows only under a standing yes to sorting with writing still ' +
+      'unsorted (#3499); the walking account has neither, and granting would send its ' +
+      'writing to the provider -- the screen is pinned by CorpusSweepScreen.test.tsx',
+  },
 ];
 
 const SEEDED_HABITS = [

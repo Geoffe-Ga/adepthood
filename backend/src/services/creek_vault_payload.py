@@ -57,6 +57,7 @@ from uuid import UUID
 
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
+    INFERENCE_SOURCE_PATTERN,
     CreekCapability,
     CreekVaultCareEscalationError,
     CreekVaultPayloadError,
@@ -65,6 +66,7 @@ from domain.creek_vault import (
     VaultIngestAction,
     VaultIngestRequest,
     VaultIngestResult,
+    VaultJobFailureCode,
     VaultJournalWithdrawResult,
     VaultLetter,
     VaultLetterRequest,
@@ -554,6 +556,20 @@ def _reflection_status(raw: object) -> VaultReflectionStatus | None:
     return None if value is None else VaultReflectionStatus(value)
 
 
+def _inference_source(raw: object) -> str | None:
+    """Return the vault's route receipt when it is a published value, else ``None`` (#3483).
+
+    Contract 0.19's ``inference_source`` names the route that answered. It is
+    optional -- an older vault, an unchanged letter and an unlabelled route all
+    omit it -- so absence is an ordinary answer, and so is anything outside the
+    published vocabulary: an unreadable label is read as no receipt at all, never
+    guessed into one, because what adepthood bills on is the receipt.
+    """
+    if isinstance(raw, str) and INFERENCE_SOURCE_PATTERN.fullmatch(raw):
+        return raw
+    return None
+
+
 def _reflection_essay(raw: object) -> str | None:
     """Return a reflection's free prose when it is prose, else ``None``.
 
@@ -649,6 +665,7 @@ def _readable_reflection(
         routed_tier=routed_tier,
         related_praxis=_related_praxis_pages(payload.get("related_praxis")),
         related_eddies=_related_eddy_pages(payload.get("related_eddies")),
+        inference_source=_inference_source(payload.get("inference_source")),
     )
 
 
@@ -996,7 +1013,12 @@ def _readable_letter(
     letter = _letter_text(payload)
     if action is None or fragment_id is None or letter is None:
         return None
-    return VaultLetter(letter=letter, vault_ref=fragment_id, action=action)
+    return VaultLetter(
+        letter=letter,
+        vault_ref=fragment_id,
+        action=action,
+        inference_source=_inference_source(payload.get("inference_source")),
+    )
 
 
 def _parse_http_letter_result(
@@ -1346,11 +1368,31 @@ def _parse_pending_pipeline_job(
     """Project a non-success status only when it carries no terminal result."""
     if payload.get("result") is not None:
         return None
+    state = VaultPipelineJobState(str(raw_state))
     return VaultPipelineJob(
         job_id=job.job_id,
         stage=job.stage,
-        state=VaultPipelineJobState(str(raw_state)),
+        state=state,
+        failure_code=(
+            _job_failure_code(payload.get("failure_code"))
+            if state is VaultPipelineJobState.FAILED
+            else None
+        ),
     )
+
+
+_JOB_FAILURE_CODES = {code.value: code for code in VaultJobFailureCode}
+
+
+def _job_failure_code(raw: object) -> VaultJobFailureCode | None:
+    """Read Creek 0.26's ``failure_code`` leniently: a known code, else ``None``.
+
+    Absent (a vault below 0.26, or a caller that declared an older minor),
+    ``null``, wrong-typed, or a code published after this build all read as
+    "no reason given" -- the failed job is still a failed job, and only a code
+    adepthood can act on changes what it does next.
+    """
+    return _JOB_FAILURE_CODES.get(raw) if isinstance(raw, str) else None
 
 
 def _parse_succeeded_pipeline_job(

@@ -144,6 +144,26 @@ async def load_consent(
     return _state_of(source, await _newest_event(session, user_id, source))
 
 
+async def standing_consent_change(
+    session: AsyncSession, *, user_id: int, source: CorpusSource
+) -> ConsentChange:
+    """The decision in force, as a change that appended nothing.
+
+    What ``POST /corpus/sweep`` resumes under. The sweep is attributed to a
+    decision, and before this function the only producer of one was
+    :func:`set_consent` -- so the only way to reach a remainder was to send a
+    decision again. Resuming is not deciding, so this reads and writes nothing:
+    the same two functions :func:`load_consent` composes, projected into the
+    shape :func:`services.corpus_backfill.backfill_after_consent` already takes.
+
+    ``event`` is the newest row whatever it says, so a revocation stands as a
+    revocation and an account that never answered reports ``None``; the sweep's
+    own refusals decide what either of those reaches, which is nothing.
+    """
+    standing = await _newest_event(session, user_id, source)
+    return ConsentChange(state=_state_of(source, standing), event=standing)
+
+
 async def load_every_consent(session: AsyncSession, *, user_id: int) -> list[ConsentState]:
     """One state per source, in the enum's own order, decided or not.
 
