@@ -61,6 +61,14 @@ import { fileURLToPath } from 'node:url';
  * and is recorded with `action: 'failed'`, so the folder-import journey can
  * fail one document of several and prove its retry keeps the same identity.
  *
+ * `POST /__lane/lose-upload-reply` arms the opposite case for the upload whose
+ * digest it names (#3229): that `POST /v1/uploads` is stored exactly as any
+ * other -- the fragment is created or edited and the ledger records its real
+ * action -- and only then is its reply spoiled, answered 200 with a body that
+ * is not JSON (a proxy error page served as success). The ledger entry carries
+ * `reply: 'unreadable'`, so a journey can prove the vault kept a document the
+ * server could not confirm.
+ *
  * `GET /__lane/uploads` reports what actually arrived: every `/v1` request in
  * order, and the fragments the ledger holds. Requests are recorded by shape and
  * by a digest of the bytes, never by the bytes -- which is what lets a spec
@@ -177,6 +185,13 @@ const fragments = new Map();
  * land. A digest, never the bytes: the journey computes it from its own fixture.
  */
 const uploadFailuresArmed = new Set();
+/**
+ * Content digests whose next upload this vault stores and then answers with
+ * {@link UNREADABLE_REPLY}, armed only by the unconfirmed-upload journey (#3229).
+ */
+const uploadReplyLossesArmed = new Set();
+/** A 2xx body adepthood cannot decode: what a proxy error page served as 200 looks like. */
+const UNREADABLE_REPLY = '<html>proxy error page</html>';
 
 /** One deterministic transport fault, armed only by the withdrawal journey. */
 let voiceDraftDeleteFailuresRemaining = 0;
@@ -338,6 +353,9 @@ async function uploads(request, response) {
     return;
   }
   const { fragment, action } = store('upload', body.external_id, digest);
+  // Committed above, before the reply is chosen: the order a real vault has
+  // no way to undo once its answer is lost on the way back.
+  const replyLost = uploadReplyLossesArmed.delete(digest);
   received.push({
     method: 'POST',
     path: '/v1/uploads',
@@ -346,7 +364,13 @@ async function uploads(request, response) {
     ceiling: request.headers[CEILING_HEADER] ?? null,
     digest,
     action,
+    ...(replyLost ? { reply: 'unreadable' } : {}),
   });
+  if (replyLost) {
+    response.writeHead(HTTP_OK, { 'Content-Type': 'text/html' });
+    response.end(UNREADABLE_REPLY);
+    return;
+  }
   send(response, HTTP_OK, {
     action,
     affected_fragment_ids: [fragment.fragmentId],
@@ -944,13 +968,18 @@ const server = createServer((request, response) => {
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }
-    if (request.method === 'POST' && pathname === '/__lane/fail-upload') {
+    if (
+      request.method === 'POST' &&
+      (pathname === '/__lane/fail-upload' || pathname === '/__lane/lose-upload-reply')
+    ) {
       const body = await readJson(request);
       if (typeof body?.digest !== 'string' || !/^[0-9a-f]{64}$/u.test(body.digest)) {
         refuse(response, HTTP_BAD_REQUEST, 'invalid_request');
         return;
       }
-      uploadFailuresArmed.add(body.digest);
+      (pathname === '/__lane/fail-upload' ? uploadFailuresArmed : uploadReplyLossesArmed).add(
+        body.digest,
+      );
       send(response, HTTP_OK, { status: 'ok' });
       return;
     }

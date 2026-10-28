@@ -161,6 +161,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'screen-title-heading.browser.e2e.test.ts',
   'seed-folder-import.browser.e2e.test.ts',
   'seed-leave-mid-run.browser.e2e.test.ts',
+  'seed-upload-unconfirmed.browser.e2e.test.ts',
   'settings-corpus-sharing.browser.e2e.test.ts',
   'settings-gain-copy.browser.e2e.test.ts',
   'text-order.browser.e2e.test.ts',
