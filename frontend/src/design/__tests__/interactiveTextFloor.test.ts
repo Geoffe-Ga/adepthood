@@ -111,6 +111,10 @@ const AUDITED_NON_INTERACTIVE_CAPTIONS = [
   // its tap targets are the open CTA (editorialType.action) and two
   // ReflectionDismiss controls (editorialType.note).
   'features/Journal/CorpusInvitationNote.tsx::label',
+  // Audited: the sort-the-rest offer (#3500) is the invitation's twin -- the
+  // same read-only eyebrow over the same open CTA and two ReflectionDismiss
+  // controls.
+  'features/Journal/CorpusSweepOfferNote.tsx::label',
   // Audited: the expanded Creek panel's section eyebrow and lifecycle/count
   // captions are read-only metadata. Its only tap target is the collapsed
   // header, whose two labels both use editorialType.action.
