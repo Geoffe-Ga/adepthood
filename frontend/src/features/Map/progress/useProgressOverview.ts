@@ -37,7 +37,10 @@ function useOverviewContext() {
 }
 type OverviewContext = ReturnType<typeof useOverviewContext>;
 
-/** A read may only land for the account, session and credential that asked for it. */
+/**
+ * A read may only land for the account, session and credential that asked for
+ * it: the same guard `usePracticeStory` and `usePaymentScope` keep.
+ */
 function identityIsCurrent(context: OverviewContext): boolean {
   const { scope, token, session } = context;
   return (
