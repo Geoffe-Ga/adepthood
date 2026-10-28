@@ -130,7 +130,10 @@ async def _to_vault(client: CreekVaultClient, document: UploadedDocument) -> Vau
 
     The whole branch is a call and a projection. The tier decision, the
     handshake, the degrade vocabulary and the withholding of a tier Creek's
-    wire cannot express all stay where they already are.
+    wire cannot express all stay where they already are. So does the one
+    refusal that propagates instead of degrading: a managed document over the
+    replay ceiling raises ``ManagedUploadTooLargeError`` through here, for the
+    router to answer (see :func:`~services.creek_vault_upload.store_upload`).
     """
     outcome = await store_upload(client, document)
     return VaultImportResult(status=outcome.status, vault_ref=outcome.vault_ref, tags=outcome.tags)

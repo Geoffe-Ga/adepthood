@@ -510,7 +510,20 @@ async def _vault_refusal(client: CreekVaultClient) -> VaultUploadOutcome | None:
 async def store_upload(
     client: CreekVaultClient, document: UploadedDocument, /
 ) -> VaultUploadOutcome:
-    """Forward one document to the vault, degrading rather than raising.
+    """Forward one document to the vault, degrading every vault failure to an outcome.
+
+    Two things propagate rather than degrade, and both are refusals of the
+    request itself rather than failures of the vault:
+
+    * ``ValueError`` from :func:`~domain.creek_vault.tier_ceiling_for` for an
+      unknown classification (step 1).
+    * :class:`~services.creek_vault_upload_limits.ManagedUploadTooLargeError`
+      (also a ``ValueError``) from the adapter, for a managed-vault document
+      whose encoded request exceeds the replay ceiling (#3051). Nothing was
+      sent, and a retry cannot succeed, so it is not an outcome: the router
+      answers it as ``413 managed_document_too_large``. While the operator has
+      suspended vault sends that refusal yields to the suspension, which
+      degrades like any other unsent call (#3618).
 
     The order of checks is load-bearing:
 
@@ -533,8 +546,8 @@ async def store_upload(
     5. On a durable upload the call returns :attr:`VaultUploadStatus.ACCEPTED`
        with the fragment ref and whatever tags the vault's own pipeline assigned.
 
-    Never raises :class:`~domain.creek_vault.CreekVaultError`: the router answers
-    the user from the status alone.
+    Never raises :class:`~domain.creek_vault.CreekVaultError`: for every vault
+    failure the router answers the user from the status alone.
     """
     tier_ceiling = tier_ceiling_for(document.classification)
     request = _upload_request_for(document, tier_ceiling)
