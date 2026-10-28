@@ -58,6 +58,7 @@
   "/habits/{habit_id}/completions",
   "/habits/{habit_id}/goals/units",
   "/habits/{habit_id}/stats",
+  "/habits/{habit_id}/story",
   "/health",
   "/health/live",
   "/health/ready",

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { DirectVendorError, readImageDirect } from './byokDirect';
 import { flattenGoalCompletions } from './flattenGoalCompletions';
+import { habitStorySchema, type ApiHabitStory } from './habitStorySchema';
 import { isDeviceKnownOffline, setNetworkOnlineGetter } from './networkSignal';
 import {
   apiGoalGroupSchema,
@@ -1469,6 +1470,8 @@ export interface ApiHabitWithGoals extends ApiHabit {
   goals: ApiGoal[];
 }
 
+export type { ApiHabitStory } from './habitStorySchema';
+
 export interface ApiHabitStats {
   day_labels: string[];
   values: number[];
@@ -1654,6 +1657,11 @@ export const habits = {
   },
   delete(habitId: number, token?: string): Promise<void> {
     return request<void>(`/habits/${habitId}`, { method: 'DELETE', token });
+  },
+  getStory(habitId: number, token?: string): Promise<ApiHabitStory> {
+    return request<unknown>(`/habits/${habitId}/story`, { token }).then((value) =>
+      habitStorySchema.parse(value),
+    );
   },
   getStats(habitId: number, token?: string): Promise<ApiHabitStats> {
     return request<ApiHabitStats>(`/habits/${habitId}/stats`, { token });

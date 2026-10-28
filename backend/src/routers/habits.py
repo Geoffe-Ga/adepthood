@@ -38,10 +38,12 @@ from schemas.goal import GoalUnitsUpdate
 from schemas.habit import HABIT_NAME_MAX_LENGTH, HabitCreate, HabitGoalsCreate, HabitWithGoals
 from schemas.habit import Habit as HabitSchema
 from schemas.habit_stats import HabitStats
+from schemas.habit_story import HabitStoryResponse
 from schemas.pagination import paginate_query
 from security import TextTooLongError, sanitize_user_text
 from services.checkin import lock_habit_for_completion_mutation
 from services.habit_auto_reveal import reconcile_habit_auto_reveals
+from services.habit_story import read_habit_story
 from services.streaks import (
     compute_habit_streak,
     period_cadence_for_goals,
@@ -613,3 +615,18 @@ async def get_habit_stats(
     subtractive = subtractive_context_for_goals(habit.goals, habit.start_date)
     cadence = period_cadence_for_goals(habit.goals, habit.start_date)
     return compute_habit_stats(completions, user_tz, subtractive, cadence)
+
+
+@router.get("/{habit_id}/story", response_model=HabitStoryResponse)
+async def get_habit_story(
+    habit_id: RowIdPath,
+    response: Response,
+    current_user: Annotated[int, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user_tz: Annotated[str, Depends(current_user_timezone)],
+) -> HabitStoryResponse:
+    """Return owned lifetime habit history with explicit cadence and timing coverage."""
+    habit = await _get_habit_with_completions(habit_id, current_user, session, windowed=False)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Authorization"
+    return await read_habit_story(session, habit, current_user, user_tz)

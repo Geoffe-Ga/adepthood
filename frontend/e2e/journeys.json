@@ -3144,5 +3144,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/journal-byok-classification.e2e.test.ts"
+  },
+  {
+    "id": "habits.habit-story",
+    "description": "The Habit Story foundation reads owned lifetime history, native-cadence rates and known timing through the new endpoint. The Habits screen entry, client method and real-wire UI coverage are implemented in #3526; this registration declares that gap while the read API lands.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/HabitsScreen.tsx",
+      "client": ["habits"],
+      "routes": ["GET /habits/{habit_id}/story"],
+      "tables": ["habit", "goal", "goalcompletion", "goallogevent"]
+    },
+    "status": "uncovered",
+    "issue": 3526
   }
 ]
