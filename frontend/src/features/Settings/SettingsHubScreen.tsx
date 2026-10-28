@@ -7,6 +7,7 @@ import {
   BookOpen,
   Download,
   FileText,
+  FolderSync,
   FolderUp,
   Globe,
   KeyRound,
@@ -17,7 +18,7 @@ import {
   Trash2,
   Vault,
 } from 'lucide-react-native';
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { BYOK_HUB_DISCLOSURE } from './byokDisclosure';
@@ -28,8 +29,11 @@ import {
   CORPUS_SORTING_HUB_LEAD,
 } from './corpusConsentCopy';
 import { CorpusConsentRows } from './CorpusConsentRows';
+import { CORPUS_SWEEP_ROW_LABEL, corpusSweepRowDescription } from './corpusSweepCopy';
 import { LEGAL_DOCUMENTS } from './legalLinks';
 import { SettingsRow } from './shared/SettingsRow';
+import { useCorpusConsent } from './useCorpusConsent';
+import { refreshSweepEstimate, useCorpusSweepPending } from './useCorpusSweep';
 import { useVaultConnectionState } from './useVaultConnectionState';
 import { vaultComesFirst } from './vaultConnectionState';
 
@@ -136,8 +140,42 @@ const PrivacySection = (): React.JSX.Element => {
   );
 };
 
+/** The one source the backlog sweep sorts: what somebody writes in the app. */
+const SWEPT_SOURCE = 'journal';
+
+/**
+ * "Sort the rest of your writing" (#3499): the way to finish sorting writing
+ * that predates the decision to sort it, one bounded pass at a time.
+ *
+ * Shown only when it can do something. Without a standing yes for what is
+ * written here a pass sorts nothing, and with nothing unsorted there is
+ * nothing to sort -- so the row is absent in both cases, and while the count
+ * is unknown. It is an offer like the rest of this group: it says how much is
+ * waiting and nothing about what is missed.
+ */
+const CorpusSweepRow = ({ onOpen }: { onOpen: () => void }): React.JSX.Element | null => {
+  const { decisions } = useCorpusConsent();
+  const granted =
+    decisions?.some((decision) => decision.source === SWEPT_SOURCE && decision.granted) ?? false;
+  const pending = useCorpusSweepPending();
+  useEffect(() => {
+    if (granted) void refreshSweepEstimate();
+  }, [granted]);
+  if (!granted || pending === null || pending === 0) return null;
+  return (
+    <SettingsRow
+      icon={FolderSync}
+      label={CORPUS_SWEEP_ROW_LABEL}
+      description={corpusSweepRowDescription(pending)}
+      onPress={onOpen}
+      testID="settings-row-corpus-sweep"
+    />
+  );
+};
+
 interface CorpusSectionProps {
   onSeedCorpus: () => void;
+  onCorpusSweep: () => void;
   onCorpusConsent: () => void;
   onVault: () => void;
   seedDescription: string;
@@ -158,6 +196,7 @@ interface CorpusSectionProps {
  */
 const CorpusSection = ({
   onSeedCorpus,
+  onCorpusSweep,
   onCorpusConsent,
   onVault,
   seedDescription,
@@ -180,6 +219,7 @@ const CorpusSection = ({
         onPress={onSeedCorpus}
         testID="settings-row-seed-corpus"
       />
+      <CorpusSweepRow onOpen={onCorpusSweep} />
       <Text style={[t.caption, styles.sortingLead]} testID="settings-corpus-sorting-lead">
         {CORPUS_SORTING_HUB_LEAD}
       </Text>
@@ -347,6 +387,7 @@ const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.El
   const seedRow = useSeedCorpusRow(navigation);
   const openExportData = useCallback(() => navigation.navigate('ExportData'), [navigation]);
   const openCorpusConsent = useCallback(() => navigation.navigate('CorpusConsent'), [navigation]);
+  const openCorpusSweep = useCallback(() => navigation.navigate('CorpusSweep'), [navigation]);
   const openDeleteAccount = useCallback(() => navigation.navigate('DeleteAccount'), [navigation]);
   const openVault = useCallback(() => navigation.navigate('VaultSettings'), [navigation]);
   const onLogout = useCallback(() => void logout(), [logout]);
@@ -368,6 +409,7 @@ const SettingsHubScreen = ({ route }: SettingsHubScreenProps = {}): React.JSX.El
       <CorpusSection
         onSeedCorpus={seedRow.onSeedCorpus}
         seedDescription={seedRow.seedDescription}
+        onCorpusSweep={openCorpusSweep}
         onCorpusConsent={openCorpusConsent}
         onVault={openVault}
       />

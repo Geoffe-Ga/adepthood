@@ -172,6 +172,7 @@ const EXPECTED_JOURNEYS = [
   'corpus-consent.e2e.test.ts',
   'corpus-import.e2e.test.ts',
   'corpus-invitation.e2e.test.ts',
+  'corpus-sweep.e2e.test.ts',
   'course-read-next.e2e.test.ts',
   'course.e2e.test.ts',
   'data-export.e2e.test.ts',
