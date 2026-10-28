@@ -4,11 +4,12 @@ import { dayKeyToInstant } from '../../../utils/dateUtils';
 import type { Goal, Habit } from '../Habits.types';
 import {
   formatStreakAdjective,
+  computeCurrentStreak,
   formatStreakCount,
-  generateStatsForHabit,
   logHabitUnits,
   periodCurrentStreak,
   periodLongestStreak,
+  periodStreakCadence,
   streakPeriodKind,
   type PeriodStreakCadence,
 } from '../HabitUtils';
@@ -78,13 +79,29 @@ afterEach(() => {
 });
 
 describe('shared client/server streak parity fixture', () => {
-  it.each(cases.map((c) => [c.name, c] as const))('%s', (_name, c) => {
-    freezeToday(c);
+  it.each(cases.map((c) => [c.name, c] as const))(
+    '%s: the tile streak matches the server',
+    (_name, c) => {
+      freezeToday(c);
+      const habit = habitFor(c);
 
-    const stats = generateStatsForHabit(habitFor(c), c.timezone);
+      expect(computeCurrentStreak(habit, habit.completions ?? [], c.timezone)).toBe(
+        c.expected.current,
+      );
+    },
+  );
 
-    expect(stats.currentStreak).toBe(c.expected.current);
-    expect(stats.longestStreak).toBe(c.expected.longest);
+  // The client keeps no day-cadence longest streak — the server's Story owns
+  // it — so the longest leg covers the period walk the tile shares.
+  const periodCases = cases.flatMap((c) => {
+    const cadence = periodStreakCadence(habitFor(c), c.timezone);
+    return cadence ? [[c.name, c, cadence] as const] : [];
+  });
+  it.each(periodCases)('%s: the period walk longest matches the server', (_name, c, cadence) => {
+    const days = c.completions.map(([day, units]) => ({ day, units }));
+
+    expect(periodCurrentStreak(days, c.today, cadence)).toBe(c.expected.current);
+    expect(periodLongestStreak(days, c.today, cadence)).toBe(c.expected.longest);
   });
 });
 

@@ -806,14 +806,22 @@ Run one supported document at a time, then a mixed multi-file batch if the UI pe
 
 ### 11.3 Daily use, goals, and stats
 
-- [ ] Check in each goal tier/unit; count, star fill, streak, date, and stats change once.
+Stats live in four places, all read from the server's one counting rule: the Habit Story
+sheet (the tile's Story glyph), the Habit Ledger (Story → Everything), the Practice Story
+(Practice → practice details), and the Map's "Your progress" door.
+
+- [ ] Check in each goal tier/unit; count, star fill, streak, date, and the Habit Story
+      sheet's runs, rates, and calendar change once.
+- [ ] The Habit Ledger (Story → Everything) lists every log with its day, units, and source,
+      and agrees with the Story's calendar.
 - [ ] Long-press/alternate interaction for stretch goals is discoverable and accessible.
 - [ ] Edit name/icon/start date/goals/units and verify history is preserved intentionally.
 - [ ] Undo completions and backdated (past-day) logs affect only intended days and time zone.
 - [ ] Day rollover while the screen stays mounted updates eligibility and today state without
       refresh.
-- [ ] Weekly, streak, and aggregate stats handle no data, one event, many events, DST,
-      timezone change, future data, and legacy rows.
+- [ ] The Habit Story, the Practice Story, and the Map's "Your progress" door handle no data,
+      one event, many events, DST, timezone change, future data, and legacy rows, and report
+      the same streak the tile shows.
 
 ### 11.4 Reveal, reorder, and deletion
 

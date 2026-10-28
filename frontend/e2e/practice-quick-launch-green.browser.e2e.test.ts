@@ -126,7 +126,8 @@ interface SessionKept {
   duration_minutes: number;
 }
 
-interface PracticeStats {
+/** The lifetime totals this spec reads off `GET /practice-sessions/story`. */
+interface PracticeStoryTotals {
   total_sessions: number;
   total_minutes: number;
 }
@@ -191,17 +192,17 @@ function isSessionPost(request: Request): boolean {
   return request.method() === 'POST' && new URL(request.url()).pathname === SESSIONS_PATH;
 }
 
-async function readStats(
+async function readStoryTotals(
   request: APIRequestContext,
   token: string,
   userPracticeId: number,
-): Promise<PracticeStats> {
+): Promise<PracticeStoryTotals> {
   const response = await request.get(
-    `${backendUrl()}/practice-sessions/stats?user_practice_id=${userPracticeId}`,
+    `${backendUrl()}/practice-sessions/story?user_practice_id=${userPracticeId}`,
     { headers: bearer(token) },
   );
-  expect(response.ok(), 'reading the practice stats back failed').toBe(true);
-  return (await response.json()) as PracticeStats;
+  expect(response.ok(), 'reading the practice story back failed').toBe(true);
+  return (await response.json()) as PracticeStoryTotals;
 }
 
 test('records a quick-launched writing session once Green has actually opened', async ({
@@ -242,7 +243,7 @@ test('records a quick-launched writing session once Green has actually opened', 
   await sessionPosts.expectSinceMark(1, 'a quick-launched session was not posted exactly once');
   await page.clock.fastForward(AFTER_THE_STOP);
   expect(sessionPosts.sinceMark(), 'a finished session was posted again').toBe(1);
-  const afterOne = await readStats(page.request, token, selectionId);
+  const afterOne = await readStoryTotals(page.request, token, selectionId);
   expect(afterOne.total_sessions).toBe(1);
   expect(Math.abs(afterOne.total_minutes - WRITTEN_MINUTES)).toBeLessThanOrEqual(
     DURATION_TOLERANCE_MINUTES,
@@ -270,7 +271,7 @@ test('records a quick-launched writing session once Green has actually opened', 
   );
 
   // --- The server kept the two sessions, for the minutes each one ran. ---
-  const afterTwo = await readStats(page.request, token, selectionId);
+  const afterTwo = await readStoryTotals(page.request, token, selectionId);
   expect(afterTwo.total_sessions).toBe(BOTH_SESSIONS);
   expect(
     Math.abs(afterTwo.total_minutes - (WRITTEN_MINUTES + PRACTICE_MINUTES)),

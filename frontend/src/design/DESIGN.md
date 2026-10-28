@@ -157,7 +157,7 @@ Eight rules, each one a reviewer can answer yes or no:
 **Primitives** — reach for these before adding a bare `<Text>`:
 `components/layout/ScreenHeader.tsx` (eyebrow → title → lead, right `action`
 slot, `titleHidden` when navigation paints the title), `components/layout/EditorialSection.tsx` (titled band),
-`components/RadioOption.tsx`, `components/StatRow.tsx`,
+`components/RadioOption.tsx`,
 `components/TextField.tsx`, `components/Button.tsx` variants, and
 `features/Journal/ReflectionDismiss.tsx` with `variant="close"` (the icon-only
 X that landed via #2862) as the reference for glyph-over-word.

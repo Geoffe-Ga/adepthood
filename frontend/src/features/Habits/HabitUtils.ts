@@ -1,20 +1,17 @@
 import { v4 as uuidv4 } from 'uuid';
 
-import type { ApiHabitStats } from '../../api';
 import { STAGE_DURATIONS_DAYS } from '../../constants/program';
 import { brightenColor, colors, STAGE_COLORS, STAGE_ORDER } from '../../design/tokens';
 import {
   DEFAULT_TIMEZONE,
   addDaysInTZ,
-  MS_PER_DAY,
   dayKeyInTZ,
   streakFromCompletions,
-  subtractiveLongestStreakFromCompletions,
   subtractiveStreakFromCompletions,
   todayInUserTZ,
 } from '../../utils/dateUtils';
 
-import type { Goal, Habit, Completion, HabitStatsData } from './Habits.types';
+import type { Goal, Habit, Completion } from './Habits.types';
 
 export { STAGE_ORDER };
 // Re-export so existing call sites stay valid; canonical definition lives in src/constants/program.ts.
@@ -553,71 +550,6 @@ export const getProgressBarColor = (
   return stageColor;
 };
 
-const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const emptyStats = (): HabitStatsData => ({
-  values: new Array(DAYS_IN_WEEK).fill(0) as number[],
-  completionsByDay: new Array(DAYS_IN_WEEK).fill(0) as number[],
-  dayLabels: DAY_LABELS,
-  longestStreak: 0,
-  currentStreak: 0,
-  totalCompletions: 0,
-  completionRate: 0,
-  completionDates: [],
-});
-
-/**
- * Bucket completions by the backend's canonical ``local_day``
- * (BUG-FE-HABIT-002), falling back to timestamp conversion only for legacy
- * cached rows created before that field existed.
- *
- * This keeps a Sunday-night Pacific completion in Sunday's bucket rather
- * than Monday's (which is what its UTC audit timestamp may say). The
- * day-of-week index is derived from the canonical local date so the
- * chart agrees with the user's perception, not the server's clock.
- */
-const aggregateByDayOfWeek = (completions: Completion[], tz: string) => {
-  const unitsByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
-  const countsByDay = new Array(DAYS_IN_WEEK).fill(0) as number[];
-  const daysWithCompletions = new Set<string>();
-
-  for (const c of completions) {
-    const localDayKey = completionDayKey(c, tz);
-    // Anchor at noon to avoid DST shoulder-day weekday skew.
-    const localDate = new Date(`${localDayKey}T12:00:00Z`);
-    const dayIdx = localDate.getUTCDay() % DAYS_IN_WEEK;
-    unitsByDay[dayIdx] = unitsByDay[dayIdx]! + c.completed_units;
-    countsByDay[dayIdx] = countsByDay[dayIdx]! + 1;
-    daysWithCompletions.add(localDayKey);
-  }
-
-  return { unitsByDay, countsByDay, daysWithCompletions };
-};
-
-const computeLongestStreak = (sortedDays: Date[]): number => {
-  let longest = 0;
-  let current = 0;
-  for (let i = 0; i < sortedDays.length; i++) {
-    const day = sortedDays[i]!;
-    if (i === 0) {
-      current = 1;
-    } else {
-      const prev = sortedDays[i - 1]!;
-      const diff = (day.getTime() - prev.getTime()) / MS_PER_DAY;
-      current = diff === 1 ? current + 1 : 1;
-    }
-    if (current > longest) longest = current;
-  }
-  return longest;
-};
-
-const computeCompletionRate = (sortedDays: Date[], totalUniqueDays: number): number => {
-  if (sortedDays.length === 0) return 0;
-  const firstDay = sortedDays[0]!;
-  const lastDay = sortedDays[sortedDays.length - 1]!;
-  const spanDays = Math.floor((lastDay.getTime() - firstDay.getTime()) / MS_PER_DAY) + 1;
-  return spanDays > 0 ? totalUniqueDays / spanDays : 0;
-};
-
 /**
  * The goal that speaks for a habit's streak cadence. Frequency is shared by
  * every tier, so the clear tier wins; without one, the polarity rule's
@@ -744,7 +676,7 @@ export const periodLongestStreak = (
 };
 
 /** The habit's weekly / monthly streak cadence, or `null` for day cadences. */
-const periodStreakCadence = (habit: Habit, tz: string): PeriodStreakCadence | null => {
+export const periodStreakCadence = (habit: Habit, tz: string): PeriodStreakCadence | null => {
   const goal = streakCadenceGoal(habit);
   if (!goal) return null;
   const { kind } = periodOf(goal);
@@ -799,7 +731,7 @@ const subtractiveStreakInputs = (
  *
  * A weekly / monthly habit counts met periods instead (#2819).
  */
-const computeCurrentStreak = (
+export const computeCurrentStreak = (
   habit: Habit,
   completions: ReadonlyArray<Completion>,
   tz: string,
@@ -827,121 +759,6 @@ const computeCurrentStreak = (
     tz,
   );
 };
-
-/**
- * Longest streak across the habit's life — subtractive-aware.
- *
- * For additive habits, defers to the existing
- * :func:`computeLongestStreak` which counts consecutive logged days.
- * For subtractive habits, walks ``[start_date, today]`` and tracks the
- * longest no-transgression run; without this the stats overlay shows
- * a contradictory "Current: 7 · Longest: 0" pair for any habit whose
- * current streak is non-zero but has no log entries (the
- * ``computeLongestStreak`` input is empty in that case).
- *
- * A weekly / monthly habit counts met periods instead (#2819).
- */
-const computeLongestStreakFor = (
-  habit: Habit,
-  completions: ReadonlyArray<Completion>,
-  sortedDays: Date[],
-  tz: string,
-): number => {
-  const cadence = periodStreakCadence(habit, tz);
-  if (cadence) {
-    return periodLongestStreak(toDayUnits(completions, tz), todayInUserTZ(tz), cadence);
-  }
-  const subtractive = subtractiveStreakInputs(habit, tz);
-  if (subtractive) {
-    return subtractiveLongestStreakFromCompletions(
-      {
-        completions: completions.map((c) => ({
-          timestamp: c.local_day ?? c.timestamp,
-          completed_units: c.completed_units,
-        })),
-        clearThreshold: subtractive.clearThreshold,
-        startDate: subtractive.startDate,
-      },
-      tz,
-    );
-  }
-  return computeLongestStreak(sortedDays);
-};
-
-const collectCompletionDates = (sortedDays: Date[]): string[] =>
-  sortedDays.filter((d) => !isNaN(d.getTime())).map((d) => d.toISOString().slice(0, 10));
-
-/**
- * Compute real stats from a habit's completions array.
- *
- * Day-of-week indices: 0=Sun, 1=Mon, … 6=Sat (matching JS `getDay()`).
- *
- * `tz` selects the calendar used for day-of-week buckets and streak
- * computation (BUG-FE-HABIT-002 / -207).  Defaults to UTC for legacy
- * callers; screens reading from the auth context should pass
- * `user.timezone`.
- */
-export const generateStatsForHabit = (
-  habit: Habit,
-  tz: string = DEFAULT_TIMEZONE,
-): HabitStatsData => {
-  const rawCompletions = habit.completions;
-  // Subtractive habits accrue a streak even with zero rows — abstaining every
-  // day since `start_date` is the success case, not the no-data case — so
-  // emptyStats() would zero out an active abstention chain.
-  const emptyStreakStats = (): HabitStatsData => ({
-    ...emptyStats(),
-    currentStreak: computeCurrentStreak(habit, [], tz),
-    longestStreak: computeLongestStreakFor(habit, [], [], tz),
-  });
-  if (!rawCompletions || rawCompletions.length === 0) {
-    return emptyStreakStats();
-  }
-
-  // Additive habits: a persisted "did not complete" (`completed_units == 0`)
-  // row is ignored like an absent day across every stat field — matching the
-  // backend owner `_additive_stats`, which filters once at entry so buckets,
-  // streaks, rate, and total all describe actual completions. Subtractive
-  // habits keep those rows — a zero-log day is an abstention win, not a gap.
-  const isSubtractive = subtractiveStreakInputs(habit, tz) !== null;
-  const completions = isSubtractive
-    ? rawCompletions
-    : rawCompletions.filter((c) => c.completed_units > 0);
-  if (completions.length === 0) {
-    return emptyStreakStats();
-  }
-
-  const { unitsByDay, countsByDay, daysWithCompletions } = aggregateByDayOfWeek(completions, tz);
-
-  const sortedDays = Array.from(daysWithCompletions)
-    .map((s) => new Date(s + 'T00:00:00Z'))
-    .sort((a, b) => a.getTime() - b.getTime());
-
-  return {
-    values: unitsByDay,
-    completionsByDay: countsByDay,
-    dayLabels: DAY_LABELS,
-    longestStreak: computeLongestStreakFor(habit, completions, sortedDays, tz),
-    currentStreak: computeCurrentStreak(habit, completions, tz),
-    totalCompletions: completions.length,
-    completionRate: computeCompletionRate(sortedDays, daysWithCompletions.size),
-    completionDates: collectCompletionDates(sortedDays),
-  };
-};
-
-/**
- * Convert an API habit stats response (snake_case) to local HabitStatsData (camelCase).
- */
-export const toLocalHabitStats = (api: ApiHabitStats): HabitStatsData => ({
-  values: api.values,
-  completionsByDay: api.completions_by_day,
-  dayLabels: api.day_labels,
-  longestStreak: api.longest_streak,
-  currentStreak: api.current_streak,
-  totalCompletions: api.total_completions,
-  completionRate: api.completion_rate,
-  completionDates: api.completion_dates,
-});
 
 // Logs a number of units for the given habit. The additive optimistic streak
 // advances once per user-local day; a subtractive streak is already earned by

@@ -146,7 +146,7 @@ describe('error responses without a usable JSON detail', () => {
       }),
     );
 
-    await expect(habits.getStats(1)).rejects.toMatchObject({
+    await expect(habits.getStory(1)).rejects.toMatchObject({
       name: 'ApiError',
       status: 404,
       detail: 'Request failed',
@@ -158,7 +158,7 @@ describe('error responses without a usable JSON detail', () => {
       Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) }),
     );
 
-    await expect(habits.getStats(1)).rejects.toMatchObject({
+    await expect(habits.getStory(1)).rejects.toMatchObject({
       name: 'ApiError',
       status: 404,
       detail: 'Request failed',
@@ -194,7 +194,7 @@ describe('array-form Pydantic error detail', () => {
   test('uses the msg of a single entry as the detail', async () => {
     rejectWith([{ loc: ['body', 'license_key'], msg: TOO_LONG_MSG, type: 'string_too_long' }]);
 
-    await expect(habits.getStats(1)).rejects.toMatchObject({
+    await expect(habits.getStory(1)).rejects.toMatchObject({
       name: 'ApiError',
       status: 422,
       detail: TOO_LONG_MSG,
@@ -207,19 +207,19 @@ describe('array-form Pydantic error detail', () => {
       { loc: ['body', 'license_key'], msg: TOO_LONG_MSG, type: 'string_too_long' },
     ]);
 
-    expect(await detailOf(habits.getStats(1))).toBe(`Field required; ${TOO_LONG_MSG}`);
+    expect(await detailOf(habits.getStory(1))).toBe(`Field required; ${TOO_LONG_MSG}`);
   });
 
   test('falls back to a generic message when no entry carries a string msg', async () => {
     rejectWith([{ loc: ['body', 'license_key'], type: 'missing' }, { msg: 42 }]);
 
-    expect(await detailOf(habits.getStats(1))).toBe('Request failed');
+    expect(await detailOf(habits.getStory(1))).toBe('Request failed');
   });
 
   test('falls back to a generic message for an empty array', async () => {
     rejectWith([]);
 
-    expect(await detailOf(habits.getStats(1))).toBe('Request failed');
+    expect(await detailOf(habits.getStory(1))).toBe('Request failed');
   });
 
   test('never echoes the submitted input or the ctx object back to the client', async () => {
@@ -233,7 +233,7 @@ describe('array-form Pydantic error detail', () => {
       },
     ]);
 
-    const detail = await detailOf(habits.getStats(1));
+    const detail = await detailOf(habits.getStory(1));
 
     expect(detail).toBe(TOO_LONG_MSG);
     expect(detail).not.toContain(LICENSE_KEY);
@@ -244,7 +244,7 @@ describe('array-form Pydantic error detail', () => {
   test('still prefers a plain string detail over the array branch', async () => {
     rejectWith('license_required', 400);
 
-    await expect(habits.getStats(1)).rejects.toMatchObject({
+    await expect(habits.getStory(1)).rejects.toMatchObject({
       status: 400,
       detail: 'license_required',
     });
