@@ -2,10 +2,12 @@
 /* global describe, test, expect, jest */
 import { act, renderHook } from '@testing-library/react-native';
 
-import { MAX_FOLDER_ENUMERATED_FILES } from '../folderManifest';
+import { MAX_FOLDER_ENUMERATED_FILES, MAX_FOLDER_SELECTED_BYTES } from '../folderManifest';
 import type { DirectoryInputLike, FolderPickerHost } from '../pickSeedFolder';
+import { MAX_SEED_DOCUMENT_BYTES } from '../readSeedDocument';
 import {
   SEED_FOLDER_EMPTY_NOTICE,
+  SEED_FOLDER_OVER_BYTES,
   SEED_FOLDER_PATHLESS_NOTICE,
   SEED_FOLDER_TOO_MANY_NOTICE,
 } from '../seedFolderCopy';
@@ -155,6 +157,22 @@ describe('useSeedFolder', () => {
   test('will not start when nothing is selected', async () => {
     const { send, hook } = await reviewing([file('My Vault/diagram.png')]);
     expect(hook.result.current.review?.blocker).not.toBeNull();
+    await act(async () => {
+      await hook.result.current.start();
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test('will not start a selection past the folder byte bound', async () => {
+    // Each note is as large as one document may be, so none is skipped on its
+    // own; together they pass the bound on what one import may select.
+    const count = Math.floor(MAX_FOLDER_SELECTED_BYTES / MAX_SEED_DOCUMENT_BYTES) + 1;
+    const heavy = Array.from({ length: count }, (_value, index) =>
+      file(`My Vault/${index}.md`, MAX_SEED_DOCUMENT_BYTES),
+    );
+    const { send, hook } = await reviewing(heavy);
+    expect(hook.result.current.review?.selection.entries).toHaveLength(count);
+    expect(hook.result.current.review?.blocker).toBe(SEED_FOLDER_OVER_BYTES);
     await act(async () => {
       await hook.result.current.start();
     });
