@@ -1369,15 +1369,15 @@
   },
   {
     "id": "map.progress-door",
-    "description": "The private progress overview API is available for the Map's optional Your progress door. The raw progress client reaches that authenticated endpoint with a pinned credential; the current Map surface does not yet call it. Uncovered until #3528 connects the door, validates the response, and drives the ribbon, rhythm, cycles and deliberate energy ledger through a real browser at phone and desktop widths.",
+    "description": "The Map's drawer offers a 'Your progress' door (#3528), hidden when both the habits and practice rings are off, that opens the Progress screen drawn entirely from GET /progress/overview (#3522): the 36-week ribbon of ten labelled stage blocks with habit births as dots, carryovers listed as brought with you and a you-are-here rule; the unnamed 14-day rhythm wave with its end value, stage swatches and a factual caption (served observations, or the fullest fortnight, longest rest and rising-since facts worded locally); per-stage dumbbells from cycle 2 on; and the weekly net-energy columns with their formula printed beside the title. Covered by frontend/e2e/map-progress-door.browser.e2e.test.ts, which anchors an account twenty-two weeks back (tests.e2e.program_anchor, the one out-of-band arrange), logs a month of real check-ins through POST /goal_completions/, opens the door from the Map drawer, and asserts the week-23 you-are-here line, the ribbon, and the energy formula and columns at phone and desktop widths. The ring-toggle gate, the 28-day rhythm gate, the cycles-from-cycle-2 rule and the held-while-reloading render are pinned by Jest beside the screen.",
     "crosses": {
       "screen": "frontend/src/features/Map/MapScreen.tsx",
-      "client": ["progress"],
-      "routes": ["GET /progress/overview"],
+      "client": ["progress", "habits", "goalCompletions"],
+      "routes": ["POST /habits/", "POST /goal_completions/", "GET /progress/overview"],
       "tables": ["stageprogress", "habit", "goal", "goalcompletion", "practicesession"]
     },
-    "status": "uncovered",
-    "issue": 3528
+    "status": "covered",
+    "coveredBy": "frontend/e2e/map-progress-door.browser.e2e.test.ts"
   },
   {
     "id": "map.advance-stage",
@@ -3238,5 +3238,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habit-story.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.habit-ledger",
+    "description": "The Habit Story's Everything door opens the Habit Ledger (#3529): a strip of day cells per program stage, every continuity figure with its unit, the last 7, 21 and 30 days and all time each as met of scheduled with a percentage, the tier totals and weekly tier table, the weekday and weekday by time-of-day tables with a time-not-recorded row, the raw logs newest first grouped by local day with each day's total (paged fifty rows at a time), and Export CSV / Export JSON of the days, logs and weekly tiers through the existing data-export file path. Covered by frontend/e2e/habit-ledger.browser.e2e.test.ts, which seeds ten kept days through the real POST /goal_completions/, opens the Ledger, asserts the all-time denominator line and today's log row at the time and amount GET /habits/{habit_id}/story returned, and completes a CSV download whose rows carry that log. Subtractive tier labels, untimed days, pagination and the JSON export are pinned by Jest beside the screen.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/ledger/HabitLedger.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": ["POST /goal_completions/", "GET /habits/{habit_id}/story"],
+      "tables": ["habit", "goal", "goalcompletion", "goallogevent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-ledger.browser.e2e.test.ts"
   }
 ]

@@ -4027,6 +4027,17 @@
             "title": "Best Streak",
             "type": "integer"
           },
+          "cadence_unit": {
+            "default": "days",
+            "description": "The unit ``best_streak`` is counted in: a weekly habit's run is in weeks.",
+            "enum": [
+              "days",
+              "weeks",
+              "months"
+            ],
+            "title": "Cadence Unit",
+            "type": "string"
+          },
           "goals_achieved": {
             "additionalProperties": {
               "type": "boolean"
