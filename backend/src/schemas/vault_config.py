@@ -29,6 +29,10 @@ repairs and never raises, so it is not an echo path.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from enum import StrEnum
+from types import MappingProxyType
+
 from pydantic import BaseModel, Field, field_validator
 
 from models.user_vault_config import VAULT_URL_MAX_LENGTH
@@ -97,6 +101,46 @@ class VaultConnectionRequest(BaseModel):
         return value.strip()
 
 
+class VaultClassificationState(StrEnum):
+    """How far the account's vault sorting has got, from its latest landed pass (#3577).
+
+    Read from the newest classification row that *wrote labels* -- outcome
+    ``completed`` or ``incomplete`` -- so a later pass that failed, came back
+    ambiguous, or is still in flight never hides what the writing last had done
+    to it.
+
+    ``INCOMPLETE`` covers both of its persisted causes on purpose: a pass that
+    skipped fragments, and a managed rules floor that finished its own work
+    while the semantic sort is still due. The row does not keep which classifier
+    ran, and the person's next step is the same for both: none.
+    """
+
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+    NOT_RUN = "not_run"
+
+
+#: What each state tells the person, or ``None`` when the honest answer is
+#: silence -- the ``VOICE_READINESS_MESSAGES`` precedent
+#: (:mod:`schemas.voice_readiness`): the server knows which way the sort ended,
+#: so the client renders this sentence and never writes its own. ``COMPLETE`` is
+#: the norm and says nothing, and ``NOT_RUN`` says nothing because there is no
+#: rough sort to mistake for a finished one. The ``INCOMPLETE`` sentence names
+#: no count, no date and no remedy: background passes run without the writer's
+#: key today, so promising when the fuller sort lands would be a guess, and a
+#: call to action would be the pressure NORTH-STAR §5 forbids.
+VAULT_CLASSIFICATION_MESSAGES: Mapping[VaultClassificationState, str | None] = MappingProxyType(
+    {
+        VaultClassificationState.COMPLETE: None,
+        VaultClassificationState.INCOMPLETE: (
+            "Some of your writing has only had a rough sort so far. A fuller sort has not "
+            "finished yet. Nothing is waiting on you."
+        ),
+        VaultClassificationState.NOT_RUN: None,
+    }
+)
+
+
 class VaultConnectionResponse(OwnedResourcePublic):
     """What a user may be told about their own vault connection.
 
@@ -121,9 +165,25 @@ class VaultConnectionResponse(OwnedResourcePublic):
     account's pipeline rows rather than from the connection row, so it holds
     for the deployment-wide vault's owner too, and it carries no key material
     and no vendor text -- the client owns the sentence it renders.
+
+    ``classification_state`` answers a different question from a different row
+    (#3577): has the writing had its full sort yet? It is the outcome of the
+    latest classification pass that *landed labels*, so a newer failed pass --
+    a refused key included -- leaves it where it was; the two fields can both
+    stand at once and do not contradict, because one is about the sort the
+    writing has had and the other about why the latest attempt at more stopped.
+    ``None`` when the account has no vault the pipeline writes to: neither a
+    stored connection nor the deployment-wide vault it owns. That owner reads
+    ``connected: false`` and still gets a state, for the reason
+    ``classification_key_rejected`` holds for them. ``classification_message``
+    is the server's sentence for the state, ``None`` except for ``incomplete``
+    (:data:`VAULT_CLASSIFICATION_MESSAGES`). Neither carries a count or any
+    content.
     """
 
     connected: bool
     vault_url: str | None
     mcp_address: str | None
     classification_key_rejected: bool = False
+    classification_state: VaultClassificationState | None = None
+    classification_message: str | None = None

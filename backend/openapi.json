@@ -11067,6 +11067,16 @@
         "title": "VaultAgentActivityOutcome",
         "type": "string"
       },
+      "VaultClassificationState": {
+        "description": "How far the account's vault sorting has got, from its latest landed pass (#3577).\n\nRead from the newest classification row that *wrote labels* -- outcome\n``completed`` or ``incomplete`` -- so a later pass that failed, came back\nambiguous, or is still in flight never hides what the writing last had done\nto it.\n\n``INCOMPLETE`` covers both of its persisted causes on purpose: a pass that\nskipped fragments, and a managed rules floor that finished its own work\nwhile the semantic sort is still due. The row does not keep which classifier\nran, and the person's next step is the same for both: none.",
+        "enum": [
+          "complete",
+          "incomplete",
+          "not_run"
+        ],
+        "title": "VaultClassificationState",
+        "type": "string"
+      },
       "VaultConnectionRequest": {
         "description": "Where a user's own vault lives and the credential that opens it.\n\n``api_key`` is write-only by construction: it exists on this request and on\nno response, so there is no code path that could return it and no reviewer\nwho has to check that none does.",
         "properties": {
@@ -11089,12 +11099,33 @@
         "type": "object"
       },
       "VaultConnectionResponse": {
-        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.\n\n``mcp_address`` is the address a person gives an agent they run elsewhere\n(#3534), and the audience every token for that vault names. A managed\nbinding keeps ``vault_url`` private. Its agent address is returned only\nafter authenticated per-allocation discovery reports the exact owned\nresource and this deployment's issuer. Legacy, disabled, malformed or\nunreachable discovery returns ``None``; the stored binding stays connected.\n\n``classification_key_rejected`` is true when the account's latest settled\nvault classification failed because the writer's own provider key was\nrefused by its vendor (Creek contract 0.26, #3595). It is read from the\naccount's pipeline rows rather than from the connection row, so it holds\nfor the deployment-wide vault's owner too, and it carries no key material\nand no vendor text -- the client owns the sentence it renders.",
+        "description": "What a user may be told about their own vault connection.\n\nWhether one exists, and where it points. Not the credential -- see the\nmodule docstring -- and not the surrogate row id either, per the\nno-``user_id`` invariant :class:`OwnedResourcePublic` exists to state.\n\n``connected`` is carried explicitly rather than left to be inferred from a\nnull URL, so a client renders \"you have not connected a vault\" from a field\nthat says so instead of from an absence it has to interpret.\n\n``mcp_address`` is the address a person gives an agent they run elsewhere\n(#3534), and the audience every token for that vault names. A managed\nbinding keeps ``vault_url`` private. Its agent address is returned only\nafter authenticated per-allocation discovery reports the exact owned\nresource and this deployment's issuer. Legacy, disabled, malformed or\nunreachable discovery returns ``None``; the stored binding stays connected.\n\n``classification_key_rejected`` is true when the account's latest settled\nvault classification failed because the writer's own provider key was\nrefused by its vendor (Creek contract 0.26, #3595). It is read from the\naccount's pipeline rows rather than from the connection row, so it holds\nfor the deployment-wide vault's owner too, and it carries no key material\nand no vendor text -- the client owns the sentence it renders.\n\n``classification_state`` answers a different question from a different row\n(#3577): has the writing had its full sort yet? It is the outcome of the\nlatest classification pass that *landed labels*, so a newer failed pass --\na refused key included -- leaves it where it was; the two fields can both\nstand at once and do not contradict, because one is about the sort the\nwriting has had and the other about why the latest attempt at more stopped.\n``None`` when the account has no vault the pipeline writes to: neither a\nstored connection nor the deployment-wide vault it owns. That owner reads\n``connected: false`` and still gets a state, for the reason\n``classification_key_rejected`` holds for them. ``classification_message``\nis the server's sentence for the state, ``None`` except for ``incomplete``\n(:data:`VAULT_CLASSIFICATION_MESSAGES`). Neither carries a count or any\ncontent.",
         "properties": {
           "classification_key_rejected": {
             "default": false,
             "title": "Classification Key Rejected",
             "type": "boolean"
+          },
+          "classification_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Classification Message"
+          },
+          "classification_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VaultClassificationState"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "connected": {
             "title": "Connected",
