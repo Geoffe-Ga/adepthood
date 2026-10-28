@@ -33,7 +33,7 @@ import { CORPUS_SWEEP_ROW_LABEL, corpusSweepRowDescription } from './corpusSweep
 import { LEGAL_DOCUMENTS } from './legalLinks';
 import { SettingsRow } from './shared/SettingsRow';
 import { useCorpusConsent } from './useCorpusConsent';
-import { refreshSweepEstimate, useCorpusSweepPending } from './useCorpusSweep';
+import { CORPUS_SWEEP_SOURCE, refreshSweepEstimate, useCorpusSweepPending } from './useCorpusSweep';
 import { useVaultConnectionState } from './useVaultConnectionState';
 import { vaultComesFirst } from './vaultConnectionState';
 
@@ -140,9 +140,6 @@ const PrivacySection = (): React.JSX.Element => {
   );
 };
 
-/** The one source the backlog sweep sorts: what somebody writes in the app. */
-const SWEPT_SOURCE = 'journal';
-
 /**
  * "Sort the rest of your writing" (#3499): the way to finish sorting writing
  * that predates the decision to sort it, one bounded pass at a time.
@@ -156,7 +153,8 @@ const SWEPT_SOURCE = 'journal';
 const CorpusSweepRow = ({ onOpen }: { onOpen: () => void }): React.JSX.Element | null => {
   const { decisions } = useCorpusConsent();
   const granted =
-    decisions?.some((decision) => decision.source === SWEPT_SOURCE && decision.granted) ?? false;
+    decisions?.some((decision) => decision.source === CORPUS_SWEEP_SOURCE && decision.granted) ??
+    false;
   const pending = useCorpusSweepPending();
   useEffect(() => {
     if (granted) void refreshSweepEstimate();
