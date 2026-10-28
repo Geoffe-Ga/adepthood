@@ -47,6 +47,8 @@ def lifetime_days_with(days: Sequence[HabitStoryDay], context: HabitStoryContext
 
 def count_returns(days: Sequence[HabitStoryDay], context: HabitStoryContext) -> int:
     """Count met native units following an unmet scheduled unit, excluding first use."""
+    # ``days`` is date-ascending, so the dict's insertion order is chronological;
+    # ``pairwise`` depends on that to compare each period with the one before it.
     outcomes = list(scheduled_outcomes(days, context).items())
     first_met = next((native_day(day.date, context) for day in days if day.met), None)
     return sum(
