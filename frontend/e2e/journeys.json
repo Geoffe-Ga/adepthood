@@ -3156,5 +3156,17 @@
     },
     "status": "covered",
     "coveredBy": "frontend/e2e/habit-story.browser.e2e.test.ts"
+  },
+  {
+    "id": "habits.habit-ledger",
+    "description": "The Habit Story's Everything door opens the Habit Ledger (#3529): a strip of day cells per program stage, every continuity figure with its unit, the last 7, 21 and 30 days and all time each as met of scheduled with a percentage, the tier totals and weekly tier table, the weekday and weekday by time-of-day tables with a time-not-recorded row, the raw logs newest first grouped by local day with each day's total (paged fifty rows at a time), and Export CSV / Export JSON of the days, logs and weekly tiers through the existing data-export file path. Covered by frontend/e2e/habit-ledger.browser.e2e.test.ts, which seeds ten kept days through the real POST /goal_completions/, opens the Ledger, asserts the all-time denominator line and today's log row at the time and amount GET /habits/{habit_id}/story returned, and completes a CSV download whose rows carry that log. Subtractive tier labels, untimed days, pagination and the JSON export are pinned by Jest beside the screen.",
+    "crosses": {
+      "screen": "frontend/src/features/Habits/ledger/HabitLedger.tsx",
+      "client": ["habits", "goalCompletions"],
+      "routes": ["POST /goal_completions/", "GET /habits/{habit_id}/story"],
+      "tables": ["habit", "goal", "goalcompletion", "goallogevent"]
+    },
+    "status": "covered",
+    "coveredBy": "frontend/e2e/habit-ledger.browser.e2e.test.ts"
   }
 ]
