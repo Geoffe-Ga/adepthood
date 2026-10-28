@@ -31,6 +31,7 @@ feature exists for.
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from functools import partial
@@ -60,6 +61,7 @@ from schemas.vault_config import VAULT_API_KEY_MAX_LENGTH
 from services import creek_vault_client as vault_client_module
 from services import creek_vault_url_resolution, journal_encryption
 from services.creek_vault_client import HttpCreekVaultClient, LocalFallbackCreekVaultClient
+from services.creek_vault_upload_limits import MANAGED_UPLOAD_BODY_BYTES
 from tests.test_creek_vault_http_client import _handshake_payload
 
 # The marker real ciphertext carries. Imported as a literal rather than off the
@@ -908,3 +910,101 @@ async def test_managed_connection_resolution_enforces_the_replay_body_limit(
         with pytest.raises(ValueError, match="managed_document_too_large"):
             await client.upload(request)
     assert calls == ["GET"]
+
+
+# A document under the 10 MiB application cap whose base64 JSON envelope is over
+# the managed replay ceiling: 900,000 bytes encode to 1,200,000 characters.
+_OVER_REPLAY_DOCUMENT_BYTES = 900_000
+_OVER_REPLAY_SENTINEL = b"OVER-REPLAY-SENTINEL"
+_OVER_REPLAY_CONTENT_B64 = base64.b64encode(
+    _OVER_REPLAY_SENTINEL + b"x" * (_OVER_REPLAY_DOCUMENT_BYTES - len(_OVER_REPLAY_SENTINEL))
+).decode("ascii")
+_OVER_REPLAY_FILENAME = "Über field notes 界.md"
+_UPLOAD_ROUTE = "/v1/uploads"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_keyed")
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param((True, False), id="managed-single-file"),
+        pytest.param((True, True), id="managed-folder-import"),
+        pytest.param((False, False), id="self-hosted-single-file"),
+        pytest.param((False, True), id="self-hosted-folder-import"),
+    ],
+)
+async def test_the_import_route_bounds_only_a_managed_vaults_envelope(
+    async_client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    case: tuple[bool, bool],
+) -> None:
+    """End to end through the real resolver and transport (#3051).
+
+    A managed account's over-ceiling document is refused with the private 413
+    before its bytes leave adepthood: only the capability probe reaches the
+    vault, nothing names the document, and nothing logs it. A self-hosted
+    account sends the same document, keeping its 10 MiB allowance.
+    """
+    managed, folder = case
+    headers, user_id = await _signup(async_client, f"envelope-{managed}-{folder}")
+    await _connect(async_client, headers, _VAULT_A_URL, _KEY_A)
+    if managed:
+        config = (await db_session.execute(select(UserVaultConfig))).scalar_one()
+        config.provisioned = True
+        db_session.add(
+            VaultActivation(
+                user_id=user_id,
+                activation_id="envelope",
+                consumer_identity="envelope",
+                state=VaultActivationState.READY.value,
+            )
+        )
+        await db_session.commit()
+    calls: list[tuple[str, str]] = []
+    uploaded: list[int] = []
+
+    def handle(incoming: Request) -> Response:
+        """Answer the probe; keep an upload; refuse anything else."""
+        calls.append((incoming.method, incoming.url.path))
+        if incoming.url.path.endswith(_UPLOAD_ROUTE):
+            uploaded.append(len(incoming.content))
+            return Response(HTTPStatus.OK, json={"action": "created", "fragment_id": "frag-1"})
+        if incoming.method == "GET":
+            return Response(HTTPStatus.OK, json=_handshake_payload(capabilities=["upload"]))
+        return Response(HTTPStatus.NOT_FOUND)
+
+    body: dict[str, str] = {
+        "filename": _OVER_REPLAY_FILENAME,
+        "content_base64": _OVER_REPLAY_CONTENT_B64,
+        "classification": "personal",
+    }
+    if folder:
+        body |= {
+            "source_namespace": "My Vault",
+            "source_relative_path": f"Work/{_OVER_REPLAY_FILENAME}",
+        }
+    async with AsyncClient(transport=MockTransport(handle)) as http:
+        monkeypatch.setattr(
+            vault_client_module,
+            "HttpCreekVaultClient",
+            partial(HttpCreekVaultClient, http_client=http),
+        )
+        response = await async_client.post("/corpus/import", headers=headers, json=body)
+
+    if managed:
+        assert response.status_code == HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+        assert response.json()["detail"] == "managed_document_too_large"
+        assert uploaded == []
+        assert all(method == "GET" for method, _path in calls)
+    else:
+        assert response.status_code == HTTPStatus.ACCEPTED, response.text
+        assert response.json()["stored"] is True
+        assert len(uploaded) == 1
+        assert uploaded[0] > MANAGED_UPLOAD_BODY_BYTES
+    assert _OVER_REPLAY_CONTENT_B64[:64] not in response.text
+    assert _OVER_REPLAY_FILENAME not in response.text
+    assert _OVER_REPLAY_CONTENT_B64[:64] not in caplog.text
+    assert _KEY_A not in caplog.text

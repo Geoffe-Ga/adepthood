@@ -63,6 +63,11 @@ from services.creek_vault_upload import (
     store_upload,
     upload_external_id,
 )
+from services.creek_vault_upload_limits import (
+    MANAGED_UPLOAD_BODY_BYTES,
+    encoded_upload_body,
+    guard_managed_upload_body,
+)
 from tests.test_creek_vault_http_client import Handler as _VaultHandler
 from tests.test_creek_vault_http_client import _handshake_payload as _vault_capability_payload
 from tests.vault_client_doubles import NoPipelineVaultDouble
@@ -1257,3 +1262,30 @@ class TestManagedUploadBodyLimit:
         else:
             assert (await client.upload(request)).stored
             assert len(routes.uploads[0].content) > 1024 * 1024
+
+
+class TestManagedUploadEncoding:
+    """The bound measures the bytes the transport actually sends (#3051)."""
+
+    @pytest.mark.parametrize(
+        "filename",
+        ["notes.txt", "界" * 200 + ".txt", 'quote " back\\slash \u2028.md'],
+        ids=["ascii", "unicode", "escapes"],
+    )
+    def test_measures_exactly_what_httpx_encodes(self, filename: str) -> None:
+        """A transport upgrade that changed its ``json=`` encoding must fail here."""
+        body = {
+            "filename": filename,
+            "content_base64": base64.b64encode(b"x" * 1001).decode("ascii"),
+            "external_id": upload_external_id(_OWNER_ID, filename),
+            "timestamp": _CREATED_AT.isoformat(),
+            "tier": "personal",
+        }
+        assert encoded_upload_body(body) == httpx.Request("POST", _UPLOAD_URL, json=body).content
+
+    def test_a_self_hosted_body_is_never_measured(self) -> None:
+        """Only the managed replay is bounded; self-hosted keeps the application cap."""
+        body = {"content_base64": "A" * (2 * MANAGED_UPLOAD_BODY_BYTES)}
+        guard_managed_upload_body(body, managed=False)
+        with pytest.raises(ValueError, match="managed_document_too_large"):
+            guard_managed_upload_body(body, managed=True)
