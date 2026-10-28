@@ -814,6 +814,8 @@ async def test_one_time_handoff_is_encrypted_idempotent_and_never_returned(
         "vault_url": None,
         "mcp_address": None,
         "classification_key_rejected": False,
+        "classification_state": "not_run",
+        "classification_message": None,
     }
     assert _VAULT_URL not in public_connection.text
 

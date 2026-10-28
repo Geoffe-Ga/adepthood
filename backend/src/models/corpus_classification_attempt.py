@@ -47,10 +47,13 @@ from sqlmodel import Field, SQLModel
 class CorpusClassificationAttempt(SQLModel, table=True):
     """One provider call the app paid for on an account's behalf.
 
-    Append-only: never updated and never deleted by application code, like
-    every other accounting log here. It is deleted with its account, which is
-    what ``ondelete="CASCADE"`` says -- an erased account's spending is not
-    evidence anybody is entitled to keep.
+    Append-only: never updated, and deleted by application code in exactly one
+    case -- a call the deployment's provider refused to bill for lack of
+    credit, which release decision R1-2 (#3516) absorbs as overhead, so the
+    spine releases the one row it staged for it (see
+    :func:`services.classification_ceiling.release_classification_attempt`).
+    It is deleted with its account, which is what ``ondelete="CASCADE"`` says --
+    an erased account's spending is not evidence anybody is entitled to keep.
     """
 
     __tablename__ = "corpusclassificationattempt"

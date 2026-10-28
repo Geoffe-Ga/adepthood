@@ -335,6 +335,8 @@ async def test_removing_a_connection_returns_that_user_to_the_fallback(
         "vault_url": None,
         "mcp_address": None,
         "classification_key_rejected": False,
+        "classification_state": None,
+        "classification_message": None,
     }
 
 
@@ -636,6 +638,8 @@ async def test_one_users_connection_is_invisible_to_another(async_client: AsyncC
         "vault_url": None,
         "mcp_address": None,
         "classification_key_rejected": False,
+        "classification_state": None,
+        "classification_message": None,
     }
     assert _VAULT_A_URL not in seen.text
 
