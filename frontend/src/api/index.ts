@@ -14,6 +14,8 @@ import {
   corpusConsentListSchema,
   corpusConsentSchema,
   corpusInvitationSchema,
+  corpusSweepEstimateSchema,
+  corpusSweepSchema,
   acceptSuggestionResultSchema,
   completionSuggestionListResponseSchema,
   completionDetectionResponseSchema,
@@ -81,6 +83,8 @@ import {
   type CorpusConsentListT,
   type CorpusConsentT,
   type CorpusInvitationT,
+  type CorpusSweepEstimateT,
+  type CorpusSweepT,
   type VoiceDraftT,
   type MarginaliaSourceT,
   type PassProvenanceT,
@@ -2238,6 +2242,15 @@ export interface ImportDocumentInput {
  * the app computing a second answer to a question the server has already
  * answered, and answering it differently the day the two disagree.
  */
+/** How much of an account's writing is still unsorted (``GET /corpus/sweep``). */
+export type CorpusSweepEstimate = CorpusSweepEstimateT;
+/** What one bounded sweep pass did, and what it left (``POST /corpus/sweep``). */
+export type CorpusSweepResult = CorpusSweepT;
+
+const corpusSweepEstimateResponseSchema =
+  corpusSweepEstimateSchema as unknown as z.ZodType<CorpusSweepEstimate>;
+const corpusSweepResponseSchema = corpusSweepSchema as unknown as z.ZodType<CorpusSweepResult>;
+
 export const corpus = {
   /**
    * Hand one document to this account's corpus and report where it landed.
@@ -2297,6 +2310,42 @@ export const corpus = {
     return request<VoiceReadinessT>('/corpus/voice-readiness', {
       token,
       schema: voiceReadinessSchema as unknown as z.ZodType<VoiceReadinessT>,
+    });
+  },
+
+  /**
+   * How much of this account's own writing is still unsorted.
+   *
+   * Asked whether or not the account has agreed to sorting -- the server
+   * answers the count either way, so a surface can decide what to offer. No
+   * trailing slash: the router mounts ``/corpus/sweep`` directly.
+   */
+  sweepEstimate(token?: string): Promise<CorpusSweepEstimate> {
+    return request<CorpusSweepEstimate>('/corpus/sweep', {
+      token,
+      schema: corpusSweepEstimateResponseSchema,
+    });
+  },
+
+  /**
+   * Sort the next bounded share of this account's backlog, and say what is left.
+   *
+   * No body: the shipped route takes none, and it is free, so there is no price
+   * to acknowledge. Deliberately not retried, like ``corpusConsent.set`` -- a
+   * pass spends a provider call per entry it reaches, and a lost response is one
+   * a person should be told about rather than one the client sends again. A
+   * ``429`` (the per-account limit) reaches the caller as an ``ApiError``.
+   *
+   * A pass can sort nothing and leave a remainder (no standing consent, or
+   * entries the classifier places nowhere), so callers offer another pass on a
+   * person's request and never loop waiting for zero.
+   */
+  sweep(token?: string): Promise<CorpusSweepResult> {
+    return request<CorpusSweepResult>('/corpus/sweep', {
+      method: 'POST',
+      token,
+      schema: corpusSweepResponseSchema,
+      retry: false,
     });
   },
 };
