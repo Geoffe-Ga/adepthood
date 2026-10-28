@@ -172,7 +172,7 @@ describe('chart variants and accessible detail', () => {
     fireEvent.press(view.getByRole('button', { name: 'Show as table' }));
     expect(view.getByText('You are here')).toBeTruthy();
     expect(view.getByText('Water begins')).toBeTruthy();
-    expect(view.getByText('4')).toBeTruthy();
+    expect(view.getByText('Week 4')).toBeTruthy();
   });
 
   it('keeps week-one ribbon markers fully inside the SVG canvas', () => {

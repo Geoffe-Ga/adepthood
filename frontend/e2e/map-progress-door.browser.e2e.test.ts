@@ -29,10 +29,9 @@ const CURRENT_WEEK = 23;
 const LOGGED_SPAN_DAYS = 30;
 const MINUTES_PER_DAY = 20;
 const VIEWPORTS = [
+  { name: 'small-phone', width: 320, height: 568 },
   { name: 'phone', width: 390, height: 844 },
   { name: 'desktop', width: 1280, height: 720 },
-  { name: 'phone-full', width: 390, height: 2600 },
-  { name: 'desktop-full', width: 1280, height: 2000 },
 ] as const;
 
 async function seedWalks(request: APIRequestContext, token: string): Promise<void> {
@@ -85,6 +84,23 @@ async function openProgressFromMap(page: Page): Promise<void> {
   expect((await read).status()).toBe(200);
 }
 
+async function scrollToEnergy(page: Page, viewport: { width: number; height: number }) {
+  const energyControl = page.getByTestId('progress-energy-columns').getByRole('button');
+  await page.mouse.move(viewport.width / 2, viewport.height / 2);
+  // Wheel input is asynchronous. Keep paging as a person would until the final
+  // control reaches the viewport, rather than racing one huge wheel event.
+  await expect
+    .poll(async () => {
+      await page.mouse.wheel(0, viewport.height);
+      return energyControl.evaluate((element) => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.top >= 0 && bounds.bottom <= window.innerHeight;
+      });
+    })
+    .toBe(true);
+  await expect(energyControl).toBeInViewport();
+}
+
 test('the Map door opens the arc, rhythm and energy ledger the server computed', async ({
   page,
 }, testInfo) => {
@@ -107,6 +123,40 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
 
   for (const viewport of VIEWPORTS) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await screen.evaluate((element) => element.scrollTo(0, 0));
+    const key = screen.getByTestId('ribbon-stage-key');
+    const rows = await key.evaluate((element) =>
+      Array.from(element.children).map((row) => {
+        const { left, right, top, bottom } = row.getBoundingClientRect();
+        return { left, right, top, bottom, text: row.textContent };
+      }),
+    );
+    expect(rows).toHaveLength(10);
+    for (const [index, row] of rows.entries()) {
+      expect(row.left).toBeGreaterThanOrEqual(0);
+      expect(row.right).toBeLessThanOrEqual(viewport.width);
+      expect(row.text).toMatch(/Weeks \d+–\d+/);
+      if (index > 0) expect(row.top).toBeGreaterThanOrEqual(rows[index - 1]!.bottom);
+    }
+    await expect(screen.getByTestId('ribbon-birth-key')).toContainText(`${HABIT} began`);
+    await expect(screen.getByTestId('ribbon-birth-key')).not.toContainText('🚶');
     await page.screenshot({ path: testInfo.outputPath(`map-progress-${viewport.name}.png`) });
+
+    await scrollToEnergy(page, viewport);
+    await expect.poll(() => screen.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+    await screen.evaluate((element) => element.scrollTo(0, 0));
+    const ribbon = screen.getByTestId('progress-ribbon');
+    await ribbon.getByRole('button', { name: 'Show as table' }).click();
+    await expect(ribbon).toContainText('Weeks 1–3');
+    await expect(ribbon).toContainText('Weeks 4–6');
+    await expect(ribbon).toContainText('Weeks 31–36');
+    await expect(ribbon).toContainText('You are here');
+    await expect(ribbon).toContainText(`Week ${CURRENT_WEEK}`);
+    await expect(ribbon).not.toContainText('Weeks / week');
+    await screen.evaluate((element) => element.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath(`map-progress-table-${viewport.name}.png`) });
+    await scrollToEnergy(page, viewport);
+    await ribbon.getByRole('button', { name: 'Show chart' }).click();
   }
 });

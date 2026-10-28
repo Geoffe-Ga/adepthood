@@ -34,10 +34,10 @@ describe('the arc', () => {
   it('marks births on their weeks and lists carryovers as brought with you', () => {
     const overview = progressOverviewFixture();
     expect(birthMarkers(overview)).toEqual([
-      { week: 1, label: '📝 Morning pages · week 1' },
-      { week: 10, label: '🚶 Evening walk · week 10' },
+      { week: 1, label: 'Morning pages began' },
+      { week: 10, label: 'Evening walk began' },
     ]);
-    expect(carryovers(overview)).toEqual(['💧 Water']);
+    expect(carryovers(overview)).toEqual(['Water']);
   });
 
   it('names where you are, or nothing without an anchor', () => {
