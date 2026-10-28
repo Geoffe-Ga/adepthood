@@ -4,7 +4,11 @@ import { act, renderHook } from '@testing-library/react-native';
 
 import { MAX_FOLDER_ENUMERATED_FILES } from '../folderManifest';
 import type { DirectoryInputLike, FolderPickerHost } from '../pickSeedFolder';
-import { SEED_FOLDER_EMPTY_NOTICE, SEED_FOLDER_TOO_MANY_NOTICE } from '../seedFolderCopy';
+import {
+  SEED_FOLDER_EMPTY_NOTICE,
+  SEED_FOLDER_PATHLESS_NOTICE,
+  SEED_FOLDER_TOO_MANY_NOTICE,
+} from '../seedFolderCopy';
 import { useSeedFolder } from '../useSeedFolder';
 
 interface FakeFile {
@@ -177,6 +181,23 @@ describe('useSeedFolder', () => {
     const { hook } = await reviewing(many);
     expect(hook.result.current.review).toBeNull();
     expect(hook.result.current.notice).toBe(SEED_FOLDER_TOO_MANY_NOTICE);
+  });
+
+  test('says folders are not supported here when the browser hands over files without paths', async () => {
+    const pathless = [file('Index.md'), file('Home.md')].map((handle) => ({
+      ...handle,
+      webkitRelativePath: '',
+    }));
+    const { send, hook } = await reviewing(pathless);
+    expect(hook.result.current.review).toBeNull();
+    expect(hook.result.current.notice).toBe(SEED_FOLDER_PATHLESS_NOTICE);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test('still reviews a folder where only some files lack a path', async () => {
+    const { hook } = await reviewing([...VAULT, { ...file('stray.md'), webkitRelativePath: '' }]);
+    expect(hook.result.current.review?.manifest.skipped.unsafe_path).toBe(1);
+    expect(hook.result.current.notice).toBeNull();
   });
 
   test('says nothing and opens nothing when the dialog is dismissed', async () => {

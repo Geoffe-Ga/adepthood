@@ -13,6 +13,7 @@ import {
   type FolderSkipReason,
 } from './folderManifest';
 import { MAX_SEED_DOCUMENT_LABEL } from './readSeedDocument';
+import { SEED_CHOOSE_LABEL } from './seedCopy';
 
 /** The button beside "choose files", shown only where a folder can be chosen. */
 export const SEED_CHOOSE_FOLDER_LABEL = 'Choose a folder';
@@ -22,6 +23,15 @@ export const SEED_FOLDER_EMPTY_NOTICE = "That folder is empty, so there's nothin
 export const SEED_FOLDER_TOO_MANY_NOTICE =
   `That folder holds more than ${MAX_FOLDER_ENUMERATED_FILES.toLocaleString()} files. ` +
   'Choose a smaller folder, or one inside it.';
+
+/**
+ * Some browsers (iOS Safari, some Android ones) offer the folder picker but
+ * hand back loose files with no place inside a folder, so nothing could be
+ * imported under its path.
+ */
+export const SEED_FOLDER_PATHLESS_NOTICE =
+  "This browser hands over files without their folder, so a whole folder can't come in here. " +
+  `${SEED_CHOOSE_LABEL} instead.`;
 
 export const SEED_FOLDER_REVIEW_TITLE = 'Before anything is sent';
 

@@ -31,6 +31,7 @@ import { browserFolderPickerHost, pickSeedFolder, type FolderPickerHost } from '
 import {
   folderStartBlocker,
   SEED_FOLDER_EMPTY_NOTICE,
+  SEED_FOLDER_PATHLESS_NOTICE,
   SEED_FOLDER_TOO_MANY_NOTICE,
 } from './seedFolderCopy';
 import { isSafeSourceNamespace, normalizeSourceText } from './seedSourcePath';
@@ -100,10 +101,19 @@ function toReview(pending: PendingFolder): SeedFolderReview {
 /** What choosing a folder leaves behind: a folder to review, or a notice. */
 type ChosenFolder = { pending: PendingFolder } | { notice: string | null };
 
+/**
+ * Whether the browser handed over files with no place in a folder at all: it
+ * claims folder support but returns loose files, as iOS Safari does.
+ */
+function isPathless(files: readonly File[]): boolean {
+  return files.length > 0 && files.every((picked) => picked.webkitRelativePath === '');
+}
+
 /** Open the folder dialog and sort what came back, reading no file. */
 async function chooseAndSort(picker: FolderPickerHost<File> | null): Promise<ChosenFolder> {
   const picked = await pickSeedFolder(picker);
   if (picked.kind !== 'picked') return { notice: null };
+  if (isPathless(picked.files)) return { notice: SEED_FOLDER_PATHLESS_NOTICE };
   const built = buildFolderManifest(picked.files);
   if (built.kind === 'empty') return { notice: SEED_FOLDER_EMPTY_NOTICE };
   if (built.kind === 'too_many') return { notice: SEED_FOLDER_TOO_MANY_NOTICE };
