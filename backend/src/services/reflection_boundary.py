@@ -72,6 +72,11 @@ class VaultSourceUnavailableReason(StrEnum):
     #: recorded by the read-degrade log with its own reason; this word says only
     #: that the operation was refused rather than answered elsewhere.
     NO_ANSWER = "no_answer"
+    #: The writer's key was relayed and so paid in place of a credit, but the
+    #: vault's receipt does not say it spent that key: a local or pool fallback,
+    #: a forged key, or a handshake that changed before the dial (#3483). The
+    #: answer is not kept, so no pass is ever free.
+    KEY_NOT_SPENT = "key_not_spent"
 
 
 class VaultSourceUnavailableError(Exception):
