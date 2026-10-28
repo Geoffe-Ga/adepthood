@@ -809,7 +809,12 @@ async def test_one_time_handoff_is_encrypted_idempotent_and_never_returned(
     assert _CREDENTIAL not in raw
     assert config.provisioned is True
     public_connection = await async_client.get("/vault/connection", headers=headers)
-    assert public_connection.json() == {"connected": True, "vault_url": None, "mcp_address": None}
+    assert public_connection.json() == {
+        "connected": True,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }
     assert _VAULT_URL not in public_connection.text
 
 
