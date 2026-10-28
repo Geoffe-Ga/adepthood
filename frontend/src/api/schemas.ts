@@ -1580,6 +1580,13 @@ export const vaultConnectionResponseSchema = z.object({
    * managed vault whose address stays private.
    */
   mcp_address: z.string().nullable(),
+  /**
+   * The account's latest settled vault classification stopped because the
+   * writer's own provider key was refused (Creek contract 0.26, #3595).
+   * Optional so a server from before the field still parses; absent reads as
+   * not refused. A boolean and nothing else: no key, no vendor text.
+   */
+  classification_key_rejected: z.boolean().optional(),
 });
 
 export type VaultConnectionT = z.infer<typeof vaultConnectionResponseSchema>;

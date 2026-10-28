@@ -330,7 +330,12 @@ async def test_removing_a_connection_returns_that_user_to_the_fallback(
     assert removed.status_code == HTTPStatus.NO_CONTENT
     assert isinstance(await _client_for(db_session, user_id), LocalFallbackCreekVaultClient)
     after = await async_client.get(_CONNECTION_PATH, headers=headers)
-    assert after.json() == {"connected": False, "vault_url": None, "mcp_address": None}
+    assert after.json() == {
+        "connected": False,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -626,7 +631,12 @@ async def test_one_users_connection_is_invisible_to_another(async_client: AsyncC
     seen = await async_client.get(_CONNECTION_PATH, headers=beta_headers)
 
     assert seen.status_code == HTTPStatus.OK
-    assert seen.json() == {"connected": False, "vault_url": None, "mcp_address": None}
+    assert seen.json() == {
+        "connected": False,
+        "vault_url": None,
+        "mcp_address": None,
+        "classification_key_rejected": False,
+    }
     assert _VAULT_A_URL not in seen.text
 
 
