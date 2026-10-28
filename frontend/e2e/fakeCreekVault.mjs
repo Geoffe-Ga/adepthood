@@ -514,7 +514,23 @@ async function writeLetter(request, response, externalId) {
     tier: body.tier,
     tier_ceiling: ceiling,
     title: VOICE_DRAFT_TITLE,
+    // A re-read letter called no model, so it names no route (Creek's own cell).
+    ...(action === 'unchanged' ? {} : { inference_source: answeringRoute(request) }),
   });
+}
+
+/**
+ * The route a model-backed answer names in `inference_source` (contract 0.19):
+ * `request_key:<vendor>` when this vault spent a writer key it advertises,
+ * otherwise its own local model. Adepthood bills on this receipt (#3483).
+ */
+function answeringRoute(request) {
+  const provider = request.headers[PROVIDER_HEADER];
+  const keyed =
+    requestKeysAdvertised &&
+    REQUEST_KEY_PROVIDERS.includes(provider) &&
+    typeof request.headers[PROVIDER_KEY_HEADER] === 'string';
+  return keyed ? `request_key:${provider}` : 'local';
 }
 
 /**
@@ -555,6 +571,7 @@ async function reflect(request, response) {
   send(response, HTTP_OK, {
     essay: null,
     essay_grounded: false,
+    inference_source: answeringRoute(request),
     notes: [{ kind: 'pattern', note: LANE_REFLECTION_NOTE, quote: firstSentence(body.content) }],
     related_eddies: [],
     related_praxis: [],
@@ -661,11 +678,6 @@ async function pipelineCall(request, response, pathname) {
     });
     return true;
   }
-  const provider = request.headers[PROVIDER_HEADER];
-  const keyedProvider =
-    requestKeysAdvertised &&
-    REQUEST_KEY_PROVIDERS.includes(provider) &&
-    typeof request.headers[PROVIDER_KEY_HEADER] === 'string';
   const handle = randomUUID();
   pipelineJobs.set(handle, {
     status: 'ok',
@@ -680,7 +692,7 @@ async function pipelineCall(request, response, pathname) {
     praxis_marked: 0,
     tags_extracted: 1,
     complete: true,
-    inference_source: keyedProvider ? `request_key:${provider}` : 'local',
+    inference_source: answeringRoute(request),
   });
   send(response, HTTP_ACCEPTED, { status: 'accepted', job_id: handle, state: 'queued' });
   return true;

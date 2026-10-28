@@ -57,6 +57,7 @@ from uuid import UUID
 
 from domain.constants import TOTAL_STAGES
 from domain.creek_vault import (
+    INFERENCE_SOURCE_PATTERN,
     CreekCapability,
     CreekVaultCareEscalationError,
     CreekVaultPayloadError,
@@ -554,6 +555,20 @@ def _reflection_status(raw: object) -> VaultReflectionStatus | None:
     return None if value is None else VaultReflectionStatus(value)
 
 
+def _inference_source(raw: object) -> str | None:
+    """Return the vault's route receipt when it is a published value, else ``None`` (#3483).
+
+    Contract 0.19's ``inference_source`` names the route that answered. It is
+    optional -- an older vault, an unchanged letter and an unlabelled route all
+    omit it -- so absence is an ordinary answer, and so is anything outside the
+    published vocabulary: an unreadable label is read as no receipt at all, never
+    guessed into one, because what adepthood bills on is the receipt.
+    """
+    if isinstance(raw, str) and INFERENCE_SOURCE_PATTERN.fullmatch(raw):
+        return raw
+    return None
+
+
 def _reflection_essay(raw: object) -> str | None:
     """Return a reflection's free prose when it is prose, else ``None``.
 
@@ -649,6 +664,7 @@ def _readable_reflection(
         routed_tier=routed_tier,
         related_praxis=_related_praxis_pages(payload.get("related_praxis")),
         related_eddies=_related_eddy_pages(payload.get("related_eddies")),
+        inference_source=_inference_source(payload.get("inference_source")),
     )
 
 
@@ -996,7 +1012,12 @@ def _readable_letter(
     letter = _letter_text(payload)
     if action is None or fragment_id is None or letter is None:
         return None
-    return VaultLetter(letter=letter, vault_ref=fragment_id, action=action)
+    return VaultLetter(
+        letter=letter,
+        vault_ref=fragment_id,
+        action=action,
+        inference_source=_inference_source(payload.get("inference_source")),
+    )
 
 
 def _parse_http_letter_result(

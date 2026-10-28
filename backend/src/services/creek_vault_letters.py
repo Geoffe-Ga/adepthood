@@ -44,8 +44,11 @@ from domain.creek_vault import (
     CreekVaultCareEscalationError,
     CreekVaultError,
     CreekVaultLetterClient,
+    VaultKeyProvider,
+    VaultLetter,
     VaultLetterRequest,
     VaultSendSuspendedError,
+    spent_request_key,
     tier_ceiling_for,
 )
 from domain.privacy_tier import admits_egress
@@ -53,6 +56,7 @@ from domain.resonance import accept_vault_letter
 from errors import service_unavailable
 from models.journal_entry import JournalEntry
 from models.marginalia import Marginalia
+from services.creek_vault_relay import forwarded_key_vendor
 from services.creek_vault_voice_drafts import (
     drop_staged_mirror_intent,
     stage_mirror_intent,
@@ -240,6 +244,18 @@ async def _dial_and_count(
     return answer
 
 
+def _key_not_spent(written: VaultLetter, relayed_vendor: VaultKeyProvider | None) -> bool:
+    """Whether a relayed key was to pay for ``written`` and, by the vault's receipt, did not.
+
+    An ``unchanged`` letter is re-read without a model call and carries no
+    receipt, so it is held to the same rule: a stored letter the key never paid
+    for is not handed out free on a second ask.
+    """
+    return relayed_vendor is not None and spent_request_key(written.inference_source) is not (
+        relayed_vendor
+    )
+
+
 async def _dial_letter(
     client: CreekVaultLetterClient, request: VaultLetterRequest
 ) -> VaultLetterAnswer:
@@ -247,7 +263,11 @@ async def _dial_letter(
 
     :class:`VaultSendSuspendedError` is matched first: it proves nothing left
     the server, which is what lets the caller drop the intent. A care
-    escalation is a published answer, not a fault, and is reported as such.
+    escalation is a published answer, not a fault, and is reported as such. A
+    letter a relayed key was to pay for
+    (:func:`~services.creek_vault_relay.forwarding_provider_key`) is ``FAILED``
+    unless the vault's receipt says that key paid (#3483): it may be stored, so
+    the intent stays owed, but it is never cached as one the writer got free.
     """
     external_id = request.external_id
     try:
@@ -263,16 +283,30 @@ async def _dial_letter(
             _LETTER_DEGRADED_EVENT, extra={"external_id": external_id, "reason": "vault_error"}
         )
         return VaultLetterAnswer(VaultLetterOutcome.FAILED)
+    return _answer_written(written, external_id)
+
+
+def _answer_written(written: VaultLetter, external_id: str) -> VaultLetterAnswer:
+    """Map a letter the vault returned onto ``WRITTEN``, or ``FAILED`` with its reason word.
+
+    Refused first when a relayed key was to pay and the receipt says it did not
+    (#3483), then when the text is not a letter at all.
+    """
+    if _key_not_spent(written, forwarded_key_vendor()):
+        return _degraded(external_id, "key_not_spent")
     letter = accept_vault_letter(written.letter)
     if letter is None:
-        _LOGGER.warning(
-            _LETTER_DEGRADED_EVENT, extra={"external_id": external_id, "reason": "not_a_letter"}
-        )
-        return VaultLetterAnswer(VaultLetterOutcome.FAILED)
+        return _degraded(external_id, "not_a_letter")
     _LOGGER.info(
         _LETTER_WRITTEN_EVENT, extra={"external_id": external_id, "action": written.action.value}
     )
     return VaultLetterAnswer(VaultLetterOutcome.WRITTEN, letter)
+
+
+def _degraded(external_id: str, reason: str) -> VaultLetterAnswer:
+    """Log one content-free degrade under ``reason`` and answer ``FAILED``."""
+    _LOGGER.warning(_LETTER_DEGRADED_EVENT, extra={"external_id": external_id, "reason": reason})
+    return VaultLetterAnswer(VaultLetterOutcome.FAILED)
 
 
 def log_letter_unavailable(note: Marginalia, reason: VaultSourceUnavailableReason) -> None:
