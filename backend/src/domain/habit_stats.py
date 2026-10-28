@@ -10,6 +10,7 @@ from domain.streaks import (
     PeriodCadence,
     SubtractiveContext,
     current_consecutive_streak,
+    longest_consecutive_streak,
     period_current_streak,
     period_longest_streak,
     subtractive_current_streak,
@@ -62,14 +63,7 @@ def _longest_streak(sorted_dates: list[date]) -> int:
     abstention wins; this additive walk only ever sees days the user actually
     logged, so the two cannot share an implementation.
     """
-    longest = 0
-    run = 0
-    prev: date | None = None
-    for d in sorted_dates:
-        run = run + 1 if (prev is not None and (d - prev).days == 1) else 1
-        longest = max(longest, run)
-        prev = d
-    return longest
+    return longest_consecutive_streak(sorted_dates)
 
 
 def _completion_rate(sorted_dates: list[date], user_timezone: str) -> float:
