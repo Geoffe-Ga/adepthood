@@ -125,9 +125,10 @@ function verifyServedHistories(overview: ApiProgressOverview): void {
   const journalBirth = overview.arc.habit_births.find((birth) => birth.name === HABIT);
   expect(journalBirth).toMatchObject({ is_carryover: false, week: 1, stage_number: 1 });
   expect(journalBirth?.unit_histories?.[0]?.days.at(-1)?.units).toBe(MINUTES_PER_DAY);
-  expect(overview.arc.habit_births.find((birth) => birth.name === PURPLE_HABIT)?.stage_number).toBe(
-    2,
-  );
+  expect(overview.arc.habit_births.find((birth) => birth.name === PURPLE_HABIT)).toMatchObject({
+    week: 3,
+    stage_number: 2,
+  });
 }
 
 test('the Map door opens the arc, rhythm and energy ledger the server computed', async ({
@@ -144,7 +145,7 @@ test('the Map door opens the arc, rhythm and energy ledger the server computed',
       energy_cost: 0,
       energy_return: 0,
       stage: 'Purple',
-      start_date: isoDaysAgo(ANCHOR_DAYS_AGO - 21),
+      start_date: isoDaysAgo(ANCHOR_DAYS_AGO - 14),
       revealed: true,
       goals: {
         target_unit: 'minutes',

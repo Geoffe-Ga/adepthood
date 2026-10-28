@@ -171,9 +171,9 @@ def _current_week(data: OverviewInput, start: date | None) -> int | None:
 
 
 def _overview_birth(data: OverviewInput, habit: Habit, start: date | None) -> HabitBirth:
-    """Adoption colour follows its calendar position, including zero-offset Beige."""
+    """Keep the recorded adoption stage; dates fill only unknown provenance."""
     birth = _birth(habit, start)
-    if birth.week is not None:
+    if birth.stage_number is None and birth.week is not None:
         birth.stage_number = next(
             stage.stage_number
             for stage in _arc_stages(data, start)

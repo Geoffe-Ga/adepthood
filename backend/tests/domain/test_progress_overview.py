@@ -88,7 +88,7 @@ def test_arc_uses_ten_native_durations_and_canonical_birth_stage() -> None:
     assert result.arc.stages[3].aspect == "Community"
     assert result.arc.stages[3].practice_ask_minutes == 15
     assert result.arc.stages[-1].opens_on == START + timedelta(weeks=30)
-    assert result.arc.habit_births[0].stage_number == 1
+    assert result.arc.habit_births[0].stage_number == 4
     assert result.arc.habit_births[0].week == 1
 
 
@@ -435,9 +435,10 @@ def test_habit_history_uses_daily_logged_units_and_keeps_measures_separate() -> 
 
 
 @pytest.mark.parametrize(("offset", "stage"), [(0, 1), (20, 1), (21, 2), (168, 9), (210, 10)])
-def test_adoption_colour_follows_the_recorded_programme_date(offset: int, stage: int) -> None:
-    """Stored stage labels cannot shift a habit's adoption colour along the arc."""
+def test_unknown_adoption_stage_falls_back_to_the_programme_date(offset: int, stage: int) -> None:
+    """Missing stage labels can still use a known date within the programme."""
     habit = _habit(start=START + timedelta(days=offset))
+    habit.stage = ""
     birth = build_progress_overview(replace(_input(252), habits=[habit])).arc.habit_births[0]
     assert birth.stage_number == stage
 
@@ -461,3 +462,12 @@ def test_unit_history_stops_at_the_programme_boundary_and_keeps_explicit_carryov
     assert len(history.days) == 252
     assert history.days[-1].units == 3
     assert sum(day.units for day in history.days) == 3
+
+
+def test_recorded_adoption_stage_survives_an_offset_programme_anchor() -> None:
+    """Week-three Frequency Practice is still Purple when that is its stored stage."""
+    habit = _habit(start=START + timedelta(weeks=2))
+    habit.stage = "Purple"
+    birth = build_progress_overview(replace(_input(30), habits=[habit])).arc.habit_births[0]
+    assert birth.week == 3
+    assert birth.stage_number == 2
