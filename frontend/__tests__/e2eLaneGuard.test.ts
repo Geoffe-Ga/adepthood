@@ -58,6 +58,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'invitation-reason-copy.browser.e2e.test.ts',
   'action-rows.browser.e2e.test.ts',
   'api-key-remove.browser.e2e.test.ts',
+  'auth-account-switch-purge.browser.e2e.test.ts',
   AUTH_OVERFLOW_JOURNEY,
   'client-diagnostics.browser.e2e.test.ts',
   'corpus-vault-first.browser.e2e.test.ts',
