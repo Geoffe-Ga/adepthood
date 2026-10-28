@@ -236,10 +236,24 @@ def current_consecutive_streak(sorted_days_desc: Sequence[date], today: date) ->
     return streak
 
 
+def longest_consecutive_streak(sorted_days_asc: Sequence[date]) -> int:
+    """Count the longest run of consecutive recorded additive days."""
+    longest = 0
+    run = 0
+    previous: date | None = None
+    for day in sorted_days_asc:
+        run = run + 1 if previous is not None and (day - previous).days == 1 else 1
+        longest = max(longest, run)
+        previous = day
+    return longest
+
+
 def subtractive_current_streak(
     day_totals: dict[date, float],
     user_timezone: str,
     ctx: SubtractiveContext,
+    *,
+    today: date | None = None,
 ) -> int:
     """Count consecutive abstention days for a subtractive habit.
 
@@ -248,7 +262,7 @@ def subtractive_current_streak(
     transgression (total above the threshold) or when the cursor crosses
     ``ctx.start_date``.  Returns 0 when the habit has not begun yet.
     """
-    today = today_in_tz(user_timezone)
+    today = today if today is not None else today_in_tz(user_timezone)
     if ctx.start_date > today:
         return 0
     streak = 0
@@ -265,6 +279,8 @@ def subtractive_longest_streak(
     day_totals: dict[date, float],
     user_timezone: str,
     ctx: SubtractiveContext,
+    *,
+    today: date | None = None,
 ) -> int:
     """Longest no-transgression run across ``[start_date, today]``.
 
@@ -272,7 +288,7 @@ def subtractive_longest_streak(
     run (tracking the maximum), and a transgression resets it.  Returns 0 when
     the habit has not begun yet.
     """
-    today = today_in_tz(user_timezone)
+    today = today if today is not None else today_in_tz(user_timezone)
     if ctx.start_date > today:
         return 0
     longest = 0
