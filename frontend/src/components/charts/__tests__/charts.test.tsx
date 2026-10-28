@@ -28,7 +28,7 @@ describe('progress chart kit', () => {
     [<DotStrip key="dots" points={points} summary={summary} />, ['20']],
     [<HBars key="bars" bars={[{ label: 'Dawn', value: 5 }]} summary={summary} />, ['5']],
     [<HeatGrid key="heat" weeks={[[{ label: 'Monday', level: 2 }]]} summary={summary} />, ['2']],
-    [<Ribbon key="ribbon" blocks={blocks} summary={summary} />, ['3']],
+    [<Ribbon key="ribbon" blocks={blocks} summary={summary} />, ['Weeks 1–3']],
     [<Wave key="wave" points={points} summary={summary} />, ['20']],
   ] as const)('offers the same values as a table with a spoken summary (%#)', (element, values) => {
     const view = render(element);
