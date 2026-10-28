@@ -14,7 +14,7 @@
  * your vault" about writing that is not there would be the one sentence on this
  * screen nobody could check.
  */
-import { MAX_SEED_DOCUMENT_LABEL } from './readSeedDocument';
+import { MANAGED_SEED_DOCUMENT_LABEL, MAX_SEED_DOCUMENT_LABEL } from './readSeedDocument';
 import type { SeedItemStatus, SeedRunTally } from './seedRun';
 
 import type { CorpusDestination } from '@/features/Journal/corpusDestination';
@@ -94,8 +94,12 @@ export const SEED_STATUS_LINES: Record<SeedItemStatus, string> = {
   // outside everything either side could read, and it was never sent.
   unsupported_format: 'Nothing here reads this kind of file, so it was never sent.',
   too_large: `Larger than ${MAX_SEED_DOCUMENT_LABEL}, which is as much as one document can carry.`,
+  // The managed vault's request ceiling (#3051), checked on the server before a
+  // byte of the document left it, so "nothing was stored" is a fact. The same
+  // file can never fit, so this offers a smaller file rather than another go.
   managed_too_large:
-    'Too large for this managed vault. Nothing was sent to it. Choose a file under 750 KB and try again.',
+    'Too large for your vault, so nothing was stored. Your vault takes files up to about ' +
+    `${MANAGED_SEED_DOCUMENT_LABEL}; a smaller file, or this one split in parts, will go over.`,
   unreadable: "This file wouldn't open on this device.",
   // Decided on device from the platform's own connectivity signal, before any
   // request was made, so "wasn't sent" is a fact rather than a guess.
