@@ -137,6 +137,7 @@ const EXPECTED_BROWSER_JOURNEYS = [
   'managed-vault-own-key.browser.e2e.test.ts',
   'map-continue-course.browser.e2e.test.ts',
   'map-legibility.browser.e2e.test.ts',
+  'map-progress-door.browser.e2e.test.ts',
   'map-stage-persona.browser.e2e.test.ts',
   'map-wavelength-phases.browser.e2e.test.ts',
   'practice-catalog-details.browser.e2e.test.ts',

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import cast
 
@@ -22,7 +23,7 @@ from models.practice_session import PracticeSession
 from models.stage_content import StageContent
 from models.stage_progress import StageProgress
 from models.user_practice import UserPractice
-from schemas.stage import HabitHistoryItem, PracticeHistoryItem
+from schemas.stage import CadenceUnit, HabitHistoryItem, PracticeHistoryItem
 
 # The stage every user starts at, and the only stage a row is ever created at.
 _STAGE_1 = 1
@@ -462,10 +463,29 @@ async def _fetch_stage_habits(
     return list(result.scalars().all())
 
 
+@dataclass(frozen=True, slots=True)
+class _HabitGoalStats:
+    """Per-tier completion counts and the goal cadence a habit's run is counted in."""
+
+    tier_counts: dict[str, int] = field(default_factory=dict)
+    frequency_units: dict[str, str] = field(default_factory=dict)
+
+
+#: The run unit a goal cadence counts in; daily and per-session runs count days.
+_CADENCE_UNITS: dict[str, CadenceUnit] = {"per_week": "weeks", "per_month": "months"}
+
+
+def _cadence_unit(stats: _HabitGoalStats) -> CadenceUnit:
+    """The Clear tier speaks for the habit's shared cadence, else any tier does."""
+    units = stats.frequency_units
+    frequency_unit = units.get("clear") or next(iter(units.values()), "per_day")
+    return _CADENCE_UNITS.get(frequency_unit, "days")
+
+
 async def _fetch_goal_completion_stats(
     session: AsyncSession, user_id: int, habit_ids: list[int]
-) -> dict[int, dict[str, int]]:
-    """Return ``{habit_id: {tier: completion_count}}`` in a single JOIN query.
+) -> dict[int, _HabitGoalStats]:
+    """Return each habit's per-tier completion counts and cadence in one JOIN query.
 
     A LEFT OUTER JOIN keeps goals without any completions in the result set,
     so callers can still mark their tier as ``False``. The user filter is on
@@ -480,6 +500,7 @@ async def _fetch_goal_completion_stats(
             Goal.habit_id,
             Goal.tier,
             func.count(col(GoalCompletion.id)).label("completion_count"),
+            func.max(col(Goal.frequency_unit)).label("frequency_unit"),
         )
         .select_from(Goal)
         .outerjoin(
@@ -491,20 +512,22 @@ async def _fetch_goal_completion_stats(
         .group_by(col(Goal.habit_id), col(Goal.tier))
     )
 
-    stats: dict[int, dict[str, int]] = {hid: {} for hid in habit_ids}
+    stats = {hid: _HabitGoalStats() for hid in habit_ids}
     for row in result.all():
-        stats[row.habit_id][row.tier] = int(row.completion_count or 0)
+        stats[row.habit_id].tier_counts[row.tier] = int(row.completion_count or 0)
+        stats[row.habit_id].frequency_units[row.tier] = row.frequency_unit
     return stats
 
 
-def _build_history_item(habit: Habit, tier_counts: dict[str, int]) -> HabitHistoryItem:
+def _build_history_item(habit: Habit, stats: _HabitGoalStats) -> HabitHistoryItem:
     """Roll a habit's per-tier completion counts up into a history item."""
     return HabitHistoryItem(
         name=habit.name,
         icon=habit.icon,
-        goals_achieved={tier: count > 0 for tier, count in tier_counts.items()},
+        goals_achieved={tier: count > 0 for tier, count in stats.tier_counts.items()},
         best_streak=habit.streak,
-        total_completions=sum(tier_counts.values()),
+        cadence_unit=_cadence_unit(stats),
+        total_completions=sum(stats.tier_counts.values()),
     )
 
 
@@ -527,4 +550,7 @@ async def get_stage_habit_history(
     # a static-typing hint, not a runtime guard, so it costs nothing here.
     habit_ids = [cast("int", h.id) for h in habits]
     stats_by_habit = await _fetch_goal_completion_stats(session, user_id, habit_ids)
-    return [_build_history_item(h, stats_by_habit.get(cast("int", h.id), {})) for h in habits]
+    return [
+        _build_history_item(h, stats_by_habit.get(cast("int", h.id), _HabitGoalStats()))
+        for h in habits
+    ]

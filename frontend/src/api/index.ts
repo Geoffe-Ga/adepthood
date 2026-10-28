@@ -4,6 +4,7 @@ import { DirectVendorError, readImageDirect } from './byokDirect';
 import { flattenGoalCompletions } from './flattenGoalCompletions';
 import { habitStorySchema, type ApiHabitStory } from './habitStorySchema';
 import { isDeviceKnownOffline, setNetworkOnlineGetter } from './networkSignal';
+import { progressOverviewSchema, type ApiProgressOverview } from './progressOverviewSchema';
 import {
   apiGoalGroupSchema,
   accountDeletionReceiptSchema,
@@ -3028,6 +3029,8 @@ export interface HabitHistoryItem {
   icon: string;
   goals_achieved: Record<string, boolean>;
   best_streak: number;
+  /** The unit ``best_streak`` counts in (#3528); absent from older servers, read as days. */
+  cadence_unit?: 'days' | 'weeks' | 'months';
   total_completions: number;
 }
 
@@ -3108,9 +3111,13 @@ export const wheel = {
 };
 
 /** Raw private whole-person progress series; the Map reader validates its shape. */
+export type { ApiProgressOverview } from './progressOverviewSchema';
+
 export const progress = {
-  overview(token?: string): Promise<unknown> {
-    return request<unknown>('/progress/overview', { token });
+  overview(token?: string): Promise<ApiProgressOverview> {
+    return request<unknown>('/progress/overview', { token }).then((value) =>
+      progressOverviewSchema.parse(value),
+    );
   },
 };
 

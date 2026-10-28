@@ -2,7 +2,7 @@
  * Narrative helpers for the Map's journey read + stage-detail modal.
  *
  * These turn the raw stage-history payload into a single progression sentence
- * and a ranked list of headline stats, so the modal reads as a story rather
+ * and a fixed list of headline stats, so the modal reads as a story rather
  * than a pile of disparate counts. Pure functions — no React, no I/O.
  */
 
@@ -26,7 +26,7 @@ export const unlockTimeline = (daysUntil: number | null): string => {
   return `Opens in ${daysUntil} day${daysUntil === 1 ? '' : 's'}`;
 };
 
-/** A single ranked headline stat (largest contribution first). */
+/** A headline stat for the stage modal, in a fixed order (never ranked by size). */
 export interface RankedStat {
   key: string;
   label: string;
@@ -45,11 +45,15 @@ export const formatMinutes = (minutes: number): string => {
   return `${wholeMinutes} min`;
 };
 
-/** Total sessions + total minutes + best habit streak, derived once. */
+type RunUnit = 'days' | 'weeks' | 'months';
+const SINGULAR: Record<RunUnit, string> = { days: 'day', weeks: 'week', months: 'month' };
+
+/** Total sessions + total minutes + the longest habit run and its unit, derived once. */
 interface JourneyTotals {
   sessions: number;
   minutes: number;
-  bestStreak: number;
+  longestRun: number;
+  runUnit: RunUnit;
   practiceCount: number;
   habitCount: number;
 }
@@ -57,23 +61,31 @@ interface JourneyTotals {
 const totalsFor = (history: StageHistoryResponse): JourneyTotals => {
   const sessions = history.practices.reduce((sum, p) => sum + p.sessions_completed, 0);
   const minutes = history.practices.reduce((sum, p) => sum + p.total_minutes, 0);
-  const bestStreak = history.habits.reduce((max, h) => Math.max(max, h.best_streak), 0);
+  const longest = history.habits.reduce<(typeof history.habits)[number] | null>(
+    (best, habit) => (best === null || habit.best_streak > best.best_streak ? habit : best),
+    null,
+  );
   return {
     sessions,
     minutes,
-    bestStreak,
+    longestRun: longest?.best_streak ?? 0,
+    runUnit: longest?.cadence_unit ?? 'days',
     practiceCount: history.practices.length,
     habitCount: history.habits.length,
   };
 };
 
+/** "14 days", "1 week": a run counted in its habit's own cadence (#3528). */
+const runLength = (count: number, unit: RunUnit): string =>
+  `${count} ${count === 1 ? SINGULAR[unit] : unit}`;
+
 /**
  * One progression sentence summarising the stage's activity. Reads as a story
- * ("You logged 12 sessions across 1 practice and held a 14-day streak.") rather
- * than a bare count list.
+ * ("You logged 12 sessions across 1 practice and kept a run of 14 days.")
+ * rather than a bare count list, and never says "streak" (ADR 0003).
  */
 export const progressionSentence = (history: StageHistoryResponse): string => {
-  const { sessions, bestStreak, practiceCount, habitCount } = totalsFor(history);
+  const { sessions, longestRun, runUnit, practiceCount, habitCount } = totalsFor(history);
   const clauses: string[] = [];
   if (sessions > 0) {
     clauses.push(
@@ -82,8 +94,8 @@ export const progressionSentence = (history: StageHistoryResponse): string => {
       }`,
     );
   }
-  if (bestStreak > 0) {
-    clauses.push(`held a ${bestStreak}-day streak`);
+  if (longestRun > 0) {
+    clauses.push(`kept a run of ${runLength(longestRun, runUnit)}`);
   } else if (habitCount > 0) {
     clauses.push(`began building ${habitCount} habit${habitCount === 1 ? '' : 's'}`);
   }
@@ -91,18 +103,20 @@ export const progressionSentence = (history: StageHistoryResponse): string => {
   return `You ${clauses.join(' and ')}.`;
 };
 
-/** Headline stats ranked largest-first, dropping zero-value rows. */
+/**
+ * The stage's headline stats in a fixed order -- sessions, time, longest run --
+ * dropping zero rows. Never sorted by size: ADR 0003 bans ranking figures.
+ */
 export const rankedStats = (history: StageHistoryResponse): RankedStat[] => {
-  const { sessions, minutes, bestStreak } = totalsFor(history);
-  const hours = Math.round(minutes / MINUTES_PER_HOUR);
+  const { sessions, minutes, longestRun, runUnit } = totalsFor(history);
+  const inHours = minutes >= MINUTES_PER_HOUR;
   return [
     { key: 'sessions', label: 'Sessions', value: sessions },
-    { key: 'minutes', label: minutes >= MINUTES_PER_HOUR ? 'Hours' : 'Minutes', value: minutes },
-    { key: 'streak', label: 'Best streak (days)', value: bestStreak },
-  ]
-    .map((stat) =>
-      stat.key === 'minutes' && minutes >= MINUTES_PER_HOUR ? { ...stat, value: hours } : stat,
-    )
-    .filter((stat) => stat.value > 0)
-    .sort((a, b) => b.value - a.value);
+    {
+      key: 'minutes',
+      label: inHours ? 'Hours' : 'Minutes',
+      value: inHours ? Math.round(minutes / MINUTES_PER_HOUR) : minutes,
+    },
+    { key: 'run', label: `Longest run (${runUnit})`, value: longestRun },
+  ].filter((stat) => stat.value > 0);
 };
