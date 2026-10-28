@@ -104,6 +104,7 @@ import httpx
 
 from domain.creek_vault import (
     CONTRACT_VERSION,
+    JOB_FAILURE_CODE_SINCE_MINOR,
     CreekCapability,
     CreekCapabilityUnsupportedError,
     CreekVaultAuthError,
@@ -726,7 +727,8 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
     and is caught by :meth:`HttpCreekVaultClient._probe`.
     """
     contract_version = _require_str(payload, "contract_version")
-    if not _contract_minor_supported(_require_str_sequence(payload, "supported_contract_minors")):
+    supported = _require_str_sequence(payload, "supported_contract_minors")
+    if not _contract_minor_supported(supported):
         raise _IncompatibleContractVersionError
     vault = payload.get("vault")
     if not isinstance(vault, Mapping) or vault.get("available") is not True:
@@ -740,6 +742,7 @@ def _parse_handshake(payload: Mapping[str, object]) -> HandshakeResult:
         request_key_providers=parse_request_key_providers(payload.get("request_key_providers")),
         keyless_inference=_parse_keyless_inference(payload.get("keyless_inference")),
         agent_mcp=parse_agent_mcp(payload.get("agent_mcp"), minor=payload.get("contract_minor")),
+        supported_contract_minors=frozenset(supported),
     )
 
 
@@ -1105,6 +1108,27 @@ class _CallDepartures:
 _STANDING_CALL = _CallDepartures()
 _UNVERSIONED_CALL = _CallDepartures(contract_versioned=False)
 _READING_CALL = _CallDepartures(contract_minor="0.25", deadline=30.0)
+
+# The job-status poll against a vault that serves contract 0.26, which is the
+# minor whose failed job says *why* it failed (Creek-Vault#1877). Only this read
+# departs: the body it changes is the status document, and every other call --
+# the admission that carries the writer's key included -- stays on the pin.
+_FAILURE_CODE_POLL = _CallDepartures(contract_minor=JOB_FAILURE_CODE_SINCE_MINOR)
+
+
+def _job_status_departures(handshake: HandshakeResult) -> _CallDepartures:
+    """Declare 0.26 on a job poll only to a vault that listed it, else the pin.
+
+    Creek refuses any minor its ``supported_contract_minors`` does not name, and
+    the deployed managed vaults run older images. Asking for the newer body
+    unconditionally would turn every poll against them into a ``409``, so an
+    older vault keeps hearing the pinned minor and answers the old body, whose
+    failed job simply carries no code.
+    """
+    if handshake.serves_minor(JOB_FAILURE_CODE_SINCE_MINOR):
+        return _FAILURE_CODE_POLL
+    return _STANDING_CALL
+
 
 # The departures one reflection runs under: keyed, like the letter route beside
 # it, and one of the two calls that ask for the standing deadline *explicitly*.
@@ -2624,6 +2648,7 @@ class HttpCreekVaultClient:
                 "GET",
                 f"{self._url}{_JOBS_PATH}/{job.job_id}",
                 ceiling=_PIPELINE_WIRE_CEILING,
+                departures=_job_status_departures(self._last_handshake),
             )
         except _HTTP_CALL_TIMED_OUT_ERRORS:
             raise VaultCallTimedOutError(_PIPELINE_FAILED_MESSAGE) from None
